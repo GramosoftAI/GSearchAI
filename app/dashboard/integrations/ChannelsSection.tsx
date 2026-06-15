@@ -8,6 +8,8 @@ import { getCookie } from "../../config/cookies";
 import GoogleDriveFolderModal from "./GoogleDriveFolderModal";
 import SharePointFolderModal from "./SharePointFolderModal";
 import IntegrationConnectModal from "./IntegrationConnectModal";
+import EmailConfigModal from "./EmailConfigModal";
+import OutlookFolderModal from "./OutlookFolderModal";
 
 const { Title, Text } = Typography;
 
@@ -15,13 +17,15 @@ export default function ChannelsSection() {
   const { data: session } = useSession() as any;
   const [googleModal, setGoogleModal] = useState(false);
   const [sharePointModal, setSharePointModal] = useState(false);
+  const [emailModal, setEmailModal] = useState(false);
+  const [outlookModal, setOutlookModal] = useState(false);
   
   // The selected agent's info when opening the folder/site selection modal
   const [agentkbres, setagentkbres] = useState("");
   const [selectedAgent, setSelectedAgent] = useState<{ id: string; name: string } | null>(null);
 
   // States to orchestrate the new IntegrationConnectModal
-  const [connectModalType, setConnectModalType] = useState<"google" | "sharepoint" | null>(null);
+  const [connectModalType, setConnectModalType] = useState<"google" | "sharepoint" | "email" | "outlook" | null>(null);
   const [support, setSupport] = useState<string | null>(null);
 
   // OAuth Registration effects (running after NextAuth callback redirect)
@@ -127,12 +131,14 @@ export default function ChannelsSection() {
     setSelectedAgent(agent);
     setagentkbres(kbId);
     
-    // Save to local storage for retrieval post-OAuth redirect
-    localStorage.setItem("my_saved_kb_id", kbId);
-    localStorage.setItem("files", connectModalType === "google" ? "google" : "share");
+    const currentType = connectModalType;
+    setConnectModalType(null); // Close modal
     
-    // Update local simulated sync state so the UI registers this connection for local/dummy use
-    const providerKey = connectModalType === "google" ? "google_drive" : "sharepoint";
+    const providerKey = 
+      currentType === "google" ? "google_drive" : 
+      currentType === "sharepoint" ? "sharepoint" : 
+      currentType === "email" ? "email" : "outlook";
+      
     const existing = localStorage.getItem(`mock_connections_${agent.id}`);
     const list = existing ? JSON.parse(existing) : [];
     if (!list.includes(providerKey)) {
@@ -140,14 +146,21 @@ export default function ChannelsSection() {
       localStorage.setItem(`mock_connections_${agent.id}`, JSON.stringify(list));
     }
 
-    const currentType = connectModalType;
-    setConnectModalType(null); // Close modal
-
-    // Trigger OAuth
-    if (currentType === "google") {
-      signIn("google");
+    if (currentType === "email") {
+      setEmailModal(true);
+    } else if (currentType === "outlook") {
+      setOutlookModal(true);
     } else {
-      signIn("azure-ad");
+      // Save to local storage for retrieval post-OAuth redirect
+      localStorage.setItem("my_saved_kb_id", kbId);
+      localStorage.setItem("files", currentType === "google" ? "google" : "share");
+      
+      // Trigger OAuth
+      if (currentType === "google") {
+        signIn("google");
+      } else {
+        signIn("azure-ad");
+      }
     }
   };
 
@@ -159,17 +172,23 @@ export default function ChannelsSection() {
     const type = connectModalType;
     setConnectModalType(null); // Close select modal
 
-    if (session?.refreshToken) {
-      // Session is active, set support to trigger the registration useEffect
-      setSupport(type === "google" ? "google" : "share");
+    if (type === "email") {
+      setEmailModal(true);
+    } else if (type === "outlook") {
+      setOutlookModal(true);
     } else {
-      // Session is not active, redirect to sign in to obtain credentials
-      localStorage.setItem("my_saved_kb_id", kbId);
-      localStorage.setItem("files", type === "google" ? "google" : "share");
-      if (type === "google") {
-        signIn("google");
+      if (session?.refreshToken) {
+        // Session is active, set support to trigger the registration useEffect
+        setSupport(type === "google" ? "google" : "share");
       } else {
-        signIn("azure-ad");
+        // Session is not active, redirect to sign in to obtain credentials
+        localStorage.setItem("my_saved_kb_id", kbId);
+        localStorage.setItem("files", type === "google" ? "google" : "share");
+        if (type === "google") {
+          signIn("google");
+        } else {
+          signIn("azure-ad");
+        }
       }
     }
   };
@@ -241,6 +260,65 @@ export default function ChannelsSection() {
               </Button>
             </div>
           </Card>
+
+          {/* Email Card */}
+          <Card
+            hoverable
+            className="group relative overflow-hidden bg-[var(--app-surface)] border border-[var(--app-border)] rounded-3xl transition-all duration-300 hover:shadow-xl hover:shadow-blue-900/5 hover:-translate-y-1"
+            styles={{ body: { padding: "24px sm:32px" } }}
+          >
+            <div className="p-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center w-[40px] h-[40px] bg-red-500/10 rounded-lg">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M4 4H20C21.1 4 22 4.9 22 6V18C22 19.1 21.1 20 20 20H4C2.9 20 2 19.1 2 18V6C2 4.9 2.9 4 4 4Z" stroke="#EA4335" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M22 6L12 13L2 6" stroke="#EA4335" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="font-semibold text-[var(--app-text)]">Email Inbox</h2>
+                  <p className="text-sm text-gray-500">SMTP, IMAP support mailboxes</p>
+                </div>
+              </div>
+
+              <Button
+                type="primary"
+                onClick={() => setConnectModalType("email")}
+                className="bg-purple-500 hover:bg-purple-600 border-none text-white px-6 py-2 rounded-xl h-11 font-semibold transition-transform active:scale-95"
+              >
+                Connect
+              </Button>
+            </div>
+          </Card>
+
+          {/* Outlook Card */}
+          <Card
+            hoverable
+            className="group relative overflow-hidden bg-[var(--app-surface)] border border-[var(--app-border)] rounded-3xl transition-all duration-300 hover:shadow-xl hover:shadow-blue-900/5 hover:-translate-y-1"
+            styles={{ body: { padding: "24px sm:32px" } }}
+          >
+            <div className="p-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center w-[40px] h-[40px] bg-blue-500/10 rounded-lg">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M20 4H4C2.9 4 2.01 4.9 2.01 6L2 18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V6C22 4.9 21.1 4 20 4ZM20 18H4V8L12 13L20 8V18ZM12 11L4 6H20L12 11Z" fill="#0078D4"/>
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="font-semibold text-[var(--app-text)]">Microsoft Outlook</h2>
+                  <p className="text-sm text-gray-500">Outlook email, contact folders</p>
+                </div>
+              </div>
+
+              <Button
+                type="primary"
+                onClick={() => setConnectModalType("outlook")}
+                className="bg-purple-500 hover:bg-purple-600 border-none text-white px-6 py-2 rounded-xl h-11 font-semibold transition-transform active:scale-95"
+              >
+                Connect
+              </Button>
+            </div>
+          </Card>
         </div>
       </Flex>
 
@@ -276,6 +354,27 @@ export default function ChannelsSection() {
           setSharePointModal(false);
         }}
         session={session?.user?.email}
+      />
+
+      <EmailConfigModal
+        open={emailModal}
+        agentId={selectedAgent?.id || ""}
+        agentName={selectedAgent?.name || "Agent"}
+        onClose={() => setEmailModal(false)}
+        onSuccess={() => {
+          setEmailModal(false);
+        }}
+      />
+
+      <OutlookFolderModal
+        open={outlookModal}
+        kbId={agentkbres}
+        onClose={() => setOutlookModal(false)}
+        onSuccess={() => {
+          setOutlookModal(false);
+        }}
+        session={session?.user?.email || ""}
+        agentName={selectedAgent?.name || "Agent"}
       />
     </>
   );

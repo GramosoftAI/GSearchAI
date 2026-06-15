@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import GlobalProvider from "./components/provider/GlobalProvider";
 import { Toaster } from "react-hot-toast";
+import { AntdRegistry } from "@ant-design/nextjs-registry";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,12 +31,14 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full ">
-        <GlobalProvider>
-          {children}
-          <Toaster position="top-right"  toastOptions={{
-          duration: 5000, // 3 seconds
-        }}/>
-        </GlobalProvider>
+        <AntdRegistry>
+          <GlobalProvider>
+            {children}
+            <Toaster position="top-right"  toastOptions={{
+            duration: 5000, // 3 seconds
+          }}/>
+          </GlobalProvider>
+        </AntdRegistry>
       </body>
     </html>
   );

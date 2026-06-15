@@ -18,7 +18,7 @@ interface Agent {
 
 interface Props {
   open: boolean;
-  type: "google" | "sharepoint";
+  type: "google" | "sharepoint" | "email" | "outlook";
   onClose: () => void;
   onConnect: (agent: { id: string; name: string }, kbId: string) => void;
   onAdd: (agent: { id: string; name: string }, kbId: string) => void;
@@ -43,8 +43,14 @@ export default function IntegrationConnectModal({
   // Disconnect endpoint
   const [disconnectKb] = useAxios<any>({ endpoint: "DISCONNECT", hideErrorMsg: true });
 
-  const providerLabel = type === "google" ? "Google Drive" : "SharePoint";
-  const providerKey = type === "google" ? "google_drive" : "sharepoint";
+  const providerLabel = 
+    type === "google" ? "Google Drive" : 
+    type === "sharepoint" ? "SharePoint" : 
+    type === "email" ? "Email" : "Outlook";
+  const providerKey = 
+    type === "google" ? "google_drive" : 
+    type === "sharepoint" ? "sharepoint" : 
+    type === "email" ? "email" : "outlook";
 
   // Helper to fetch details for a single agent to check connection
   // Helper to fetch/create KB ID for a single agent
