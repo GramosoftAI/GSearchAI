@@ -62,7 +62,27 @@ export default function GoogleDriveFolderModal({
         headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
       });
       const data = await res.json();
-      setItems(mapItems(data?.data?.items || []));
+      const newItems = mapItems(data?.data?.items || []);
+      setItems(newItems);
+
+      if (parentId) {
+        let parentIsSelected = false;
+        setSelectedFolders((prev) => {
+          parentIsSelected = prev.includes(parentId);
+          if (parentIsSelected) {
+            const newFolderIds = newItems.filter((i) => i.isFolder).map((i) => i.id);
+            return [...new Set([...prev, ...newFolderIds])];
+          }
+          return prev;
+        });
+        setSelectedFiles((prev) => {
+          if (parentIsSelected) {
+            const newFileIds = newItems.filter((i) => !i.isFolder).map((i) => i.id);
+            return [...new Set([...prev, ...newFileIds])];
+          }
+          return prev;
+        });
+      }
     } catch (err) {
       console.log(err);
       message.error("Failed to load files");
@@ -118,10 +138,28 @@ export default function GoogleDriveFolderModal({
         { headers: { Authorization: `Bearer ${token}`, accept: "application/json" } }
       );
       const data = await res.json();
+      const newItems = mapItems(data?.data?.items || []);
       setExpandedFolders((prev) => ({
         ...prev,
-        [folder.id]: mapItems(data?.data?.items || []),
+        [folder.id]: newItems,
       }));
+
+      let parentIsSelected = false;
+      setSelectedFolders((prev) => {
+        parentIsSelected = prev.includes(folder.id);
+        if (parentIsSelected) {
+          const newFolderIds = newItems.filter((i) => i.isFolder).map((i) => i.id);
+          return [...new Set([...prev, ...newFolderIds])];
+        }
+        return prev;
+      });
+      setSelectedFiles((prev) => {
+        if (parentIsSelected) {
+          const newFileIds = newItems.filter((i) => !i.isFolder).map((i) => i.id);
+          return [...new Set([...prev, ...newFileIds])];
+        }
+        return prev;
+      });
     } catch (err) {
       console.log(err);
     } finally {
@@ -129,21 +167,45 @@ export default function GoogleDriveFolderModal({
     }
   };
 
+  const getAllDescendants = (folderId: string): DriveItem[] => {
+    const children = expandedFolders[folderId] || [];
+    let descendants = [...children];
+    for (const child of children) {
+      if (child.isFolder) {
+        descendants = descendants.concat(getAllDescendants(child.id));
+      }
+    }
+    return descendants;
+  };
+
   const toggleItem = (item: DriveItem) => {
+    const isCurrentlySelected = item.isFolder
+      ? selectedFolders.includes(item.id)
+      : selectedFiles.includes(item.id);
+
     if (item.isFolder) {
-      setSelectedFolders((prev) =>
-        prev.includes(item.id) ? prev.filter((id) => id !== item.id) : [...prev, item.id]
-      );
+      const descendants = getAllDescendants(item.id);
+      const descendantFolders = descendants.filter((d) => d.isFolder).map((d) => d.id);
+      const descendantFiles = descendants.filter((d) => !d.isFolder).map((d) => d.id);
+
+      if (isCurrentlySelected) {
+        setSelectedFolders((prev) => prev.filter((id) => id !== item.id && !descendantFolders.includes(id)));
+        setSelectedFiles((prev) => prev.filter((id) => !descendantFiles.includes(id)));
+      } else {
+        setSelectedFolders((prev) => [...new Set([...prev, item.id, ...descendantFolders])]);
+        setSelectedFiles((prev) => [...new Set([...prev, ...descendantFiles])]);
+      }
     } else {
-      setSelectedFiles((prev) =>
-        prev.includes(item.id) ? prev.filter((id) => id !== item.id) : [...prev, item.id]
-      );
+      if (isCurrentlySelected) {
+        setSelectedFiles((prev) => prev.filter((id) => id !== item.id));
+      } else {
+        setSelectedFiles((prev) => [...new Set([...prev, item.id])]);
+      }
     }
   };
 
   const isSelected = (item: DriveItem) =>
     item.isFolder ? selectedFolders.includes(item.id) : selectedFiles.includes(item.id);
- console.log("asdfghjkl1234567890987623erfghjjbvcxqwertyu")
   const handleSync = async () => {
     try {
       setLoading(true);
@@ -173,6 +235,50 @@ export default function GoogleDriveFolderModal({
   const filteredItems = search.trim()
     ? items.filter((i) => i.name.toLowerCase().includes(search.toLowerCase()))
     : items;
+
+  const isAllSelected = filteredItems.length > 0 && filteredItems.every(item => isSelected(item));
+
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      let descendantFolderIds = new Set<string>();
+      let descendantFileIds = new Set<string>();
+
+      filteredItems.forEach(item => {
+        if (item.isFolder) {
+          descendantFolderIds.add(item.id);
+          const descendants = getAllDescendants(item.id);
+          descendants.forEach(d => {
+            if (d.isFolder) descendantFolderIds.add(d.id);
+            else descendantFileIds.add(d.id);
+          });
+        } else {
+          descendantFileIds.add(item.id);
+        }
+      });
+
+      setSelectedFolders(prev => prev.filter(id => !descendantFolderIds.has(id)));
+      setSelectedFiles(prev => prev.filter(id => !descendantFileIds.has(id)));
+    } else {
+      let newFolderIds = new Set<string>();
+      let newFileIds = new Set<string>();
+
+      filteredItems.forEach(item => {
+        if (item.isFolder) {
+          newFolderIds.add(item.id);
+          const descendants = getAllDescendants(item.id);
+          descendants.forEach(d => {
+            if (d.isFolder) newFolderIds.add(d.id);
+            else newFileIds.add(d.id);
+          });
+        } else {
+          newFileIds.add(item.id);
+        }
+      });
+
+      setSelectedFolders(prev => [...new Set([...prev, ...newFolderIds])]);
+      setSelectedFiles(prev => [...new Set([...prev, ...newFileIds])]);
+    }
+  };
 
   const totalSelected = selectedFiles.length + selectedFolders.length;
 
@@ -587,7 +693,13 @@ export default function GoogleDriveFolderModal({
 
         {/* Column header */}
         <div className="gd-col-header">
-          <span />
+          <div
+            className={`gd-checkbox ${isAllSelected ? "gd-checkbox--checked" : ""}`}
+            onClick={toggleSelectAll}
+            style={{ cursor: "pointer" }}
+          >
+            {isAllSelected && <CheckOutlined style={{ fontSize: 11 }} />}
+          </div>
           <span />
           <span />
           <span>Name</span>
