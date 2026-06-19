@@ -13,6 +13,7 @@
   --app-on-primary: #ffffff;
   --app-active-bg: #ecfdf5;
   --app-hover: #f1f5f9;
+  --neutral: #ebdfdf;
 }
 
 @theme inline {
@@ -35,6 +36,7 @@
   --app-on-primary: #052e2b;
   --app-active-bg: #12352f;
   --app-hover: #1e293b;
+  --neutral: #ebdfdf;
 }
 
 body {

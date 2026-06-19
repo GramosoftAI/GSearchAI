@@ -1,8 +1,8 @@
 "use client";
 
-import { Flex, Typography, Button, Input, Tooltip, Avatar, Drawer, Grid, Upload, message } from "antd";
+import { Flex, Typography, Button, Input, Tooltip, Avatar, Drawer, Grid, Upload, message, Dropdown } from "antd";
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { LuBot, LuHistory, LuSearch, LuPlus, LuPaperclip, LuFileText,} from "react-icons/lu";
+import { LuBot, LuHistory, LuSearch, LuPlus, LuPaperclip, LuFileText, LuBookOpen, LuGitBranch, LuVolume2 } from "react-icons/lu";
 import {
   FiUser,
   FiSend,
@@ -11,6 +11,11 @@ import {
   FiX,
   FiCopy,
   FiEdit2,
+  FiThumbsUp,
+  FiThumbsDown,
+  FiShare,
+  FiRefreshCcw,
+  FiMoreHorizontal,
 } from "react-icons/fi";
 import { MdBarChart as MdBarChartIcon } from "react-icons/md";
 import { PiGraphLight } from "react-icons/pi";
@@ -433,8 +438,17 @@ const handleSaveEdit = (index: number) => {
   setIsTyping(true);
 };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") handleSend();
+  const handleKeyDown = (e: any) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    } else if (e.key === "ArrowUp" && !input) {
+      e.preventDefault();
+      const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
+      if (lastUserMsg) {
+        setInput(lastUserMsg.content);
+      }
+    }
   };
 
   return (
@@ -459,13 +473,6 @@ const handleSaveEdit = (index: number) => {
                   <Text className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-soft)] opacity-80 truncate">
                     {wsStatus === "open" ? "Link Stabilized" : "Syncing Link Core..."}
                   </Text>
-                  <Switch
-                  checked={isEnabled}
-                  onChange={(checked) => {
-                    setIsEnabled(checked);
-                    console.log(checked); // true or false
-                  }}
-                />
                 </Flex>
               </Flex>
             </Flex>}
@@ -515,7 +522,7 @@ const handleSaveEdit = (index: number) => {
 
             return (
               <div key={i} className={`flex w-full ${isUser ? "justify-end" : "justify-start"} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
-                <div className={`flex gap-3 max-w-[88%] md:max-w-[75%] ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+                <div className={`flex gap-3 transition-all duration-300 ${editingMessageIndex === i ? "w-full max-w-[95%] md:max-w-[85%]" : "max-w-[88%] md:max-w-[75%]"} ${isUser ? "flex-row-reverse" : "flex-row"}`}>
                   
                   <Avatar 
                     size={32}
@@ -523,7 +530,7 @@ const handleSaveEdit = (index: number) => {
                     className={`${isUser ? "bg-emerald-500/10 !text-emerald-600" : "bg-[#285d91]/10 !text-[#285d91]"} shadow-none shrink-0 border border-current/10 font-bold`}
                   />
 
-                  <div className="flex flex-col space-y-1">
+                  <div className={`flex flex-col space-y-1 ${editingMessageIndex === i ? "flex-1 min-w-0" : ""}`}>
                     <span className={`text-[9px] font-bold text-[var(--app-text-soft)] px-1 ${isUser ? "text-right" : "text-left"}`}>
                       {msg.timestamp}
                     </span>
@@ -536,23 +543,52 @@ const handleSaveEdit = (index: number) => {
                         : "bg-[var(--app-surface-muted)] text-[var(--app-text)] rounded-tl-none border-[var(--app-border)]/40 font-normal"
                     }`}>
                       
-                      {/* Dynamic File Rendering UI Framework */}
-                      <div className="absolute -bottom-10 right-0 opacity-0 group-hover:opacity-100 transition-all duration-200 flex gap-2 z-20">
-                          <button
-                            onClick={() => handleCopyMessage(msg.content)}
-                            className="bg-neutral-800 text-white p-2 rounded-lg hover:bg-neutral-700 cursor-pointer"
-                          >
-                            <FiCopy size={14} />
-                          </button>
+                      {!isUser && msg.sources && msg.sources.length > 0 && (
+                        <div className="absolute top-3 right-3 opacity-60 hover:opacity-100 transition-opacity z-10">
+                          <Tooltip title="Show Sources">
+                            <Switch
+                              size="small"
+                              checked={isEnabled}
+                              onChange={(checked) => setIsEnabled(checked)}
+                            />
+                          </Tooltip>
+                        </div>
+                      )}
 
-                          {isUser && (
-                          <button
-                            onClick={() => handleEditMessage(i, msg.content)} // <-- Ingu 'i' add seiyapattuள்ளது
-                            className="bg-neutral-800 text-white p-2 rounded-lg hover:bg-neutral-700 cursor-pointer"
-                          >
-                            <FiEdit2 size={14} />
-                          </button>
-                        )}
+                      {/* Dynamic File Rendering UI Framework */}
+                      <div className={`absolute -bottom-10 ${isUser ? "right-0" : "left-0"} opacity-0 group-hover:opacity-100 transition-all duration-200 flex gap-2 z-20`}>
+                          <Tooltip title="Copy message" placement="bottom">
+                            <button
+                              onClick={() => handleCopyMessage(msg.content)}
+                              className="text-[var(--app-text)] p-2 cursor-pointer font-bold transition-colors hover:opacity-80"
+                            >
+                              <FiCopy size={16} strokeWidth={2} />
+                            </button>
+                          </Tooltip>
+
+                          {isUser ? (
+                            <Tooltip title="Edit message" placement="bottom">
+                              <button
+                                onClick={() => handleEditMessage(i, msg.content)}
+                                className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80"
+                              >
+                                <FiEdit2 size={16} strokeWidth={2} />
+                              </button>
+                            </Tooltip>
+                          ) : (
+                            <>
+                              <Tooltip title="Helpful" placement="bottom">
+                                <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80">
+                                  <FiThumbsUp size={16} strokeWidth={2} />
+                                </button>
+                              </Tooltip>
+                              <Tooltip title="Not helpful" placement="bottom">
+                                <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80">
+                                  <FiThumbsDown size={16} strokeWidth={2} />
+                                </button>
+                              </Tooltip>
+                            </>
+                          )}
                         </div>
                       {hasImage && (
                         <div className="mb-3 overflow-hidden rounded-xl max-w-[280px] border border-white/10 shadow-sm">
@@ -583,28 +619,30 @@ const handleSaveEdit = (index: number) => {
                       >
                         {/* Inline Editing Mode checking */}
                         {editingMessageIndex === i ? (
-                        <div className="flex flex-col gap-3 my-2 w-full animate-in fade-in duration-200">
+                        <div className="flex flex-col gap-3 my-2 animate-in fade-in duration-200">
                           <Input.TextArea
                             value={tempEditText}
                             onChange={(e) => setTempEditText(e.target.value)}
                             autoSize={{ minRows: 2, maxRows: 6 }}
-                            className="!bg-[var(--app-surface)] !text-[var(--app-text)] !border-[var(--app-border)] focus:!border-[#285d91] focus:!ring-1 focus:!ring-[#285d91] rounded-2xl p-4 shadow-sm transition-all resize-none placeholder-[var(--app-text-muted)]"
+                            className="!bg-transparent !text-white !border-none !shadow-none focus:!shadow-none focus:!outline-none hover:!border-none transition-all resize-none"
                             placeholder="Edit your message..."
+                            style={{ WebkitTextFillColor: "white", color: "white", fontWeight: "bold", boxShadow: "none" }}
                           />
-                          
                           <div className="flex gap-2 justify-end">
-                            <Button 
-                              className="rounded-full border border-[var(--app-border)] text-[var(--app-text-soft)] bg-transparent hover:!bg-slate-100/10 hover:!text-[var(--app-text)] px-4 h-9 font-medium transition-all"
+                            <Button
+                              className="!bg-transparent rounded-full !border-none hover:!bg-white/10 px-4 h-9 font-medium transition-all"
+                              style={{ WebkitTextFillColor: "rgba(255,255,255,0.8)", fontWeight: "normal" ,boxShadow: "none",borderRadius: "9999px"}}
                               onClick={() => setEditingMessageIndex(null)}
                             >
                               Cancel
                             </Button>
                             <Button 
                               type="primary" 
-                              className="rounded-full !bg-[#10a37f] hover:!bg-[#0d8567] !border-none text-white px-5 h-9 font-semibold shadow-sm transition-all"
+                              className="!rounded-full !bg-[var(--neutral)] hover:opacity-90 !border-none px-5 h-9 font-semibold shadow-sm transition-all"
+                              style={{ WebkitTextFillColor: "black", fontWeight: "bold", boxShadow: "none", borderRadius: "9999px" }}
                               onClick={() => handleSaveEdit(i)}
                             >
-                              Save & Send
+                              Send
                             </Button>
                           </div>
                         </div>
@@ -770,14 +808,15 @@ const handleSaveEdit = (index: number) => {
                 </Tooltip>
               </Upload>
 
-              <Input
+              <Input.TextArea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={agent ? `Message ${agent.name}...` : "Choose an operational agent node..."}
                 disabled={!agent || wsStatus !== "open"}
                 bordered={false}
-                className="w-full !py-2.5 !px-2 !bg-transparent !font-semibold !text-xs md:!text-sm !text-[var(--app-text)] !placeholder:text-[var(--app-text-soft)]/70 focus:outline-none"
+                autoSize={{ minRows: 1, maxRows: 6 }}
+                className="w-full !py-2.5 !px-2 !bg-transparent !font-semibold !text-xs md:!text-sm !text-[var(--app-text)] !placeholder:text-[var(--app-text-soft)]/70 focus:outline-none resize-none"
               />
               
               <Tooltip title="Press Enter to send" placement="topRight">
