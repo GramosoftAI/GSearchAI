@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Modal, Button, Spin, Input, message } from "antd";
 import {
   FolderOpenOutlined,
@@ -44,7 +44,14 @@ export default function GoogleDriveFolderModal({
   const [breadcrumbs, setBreadcrumbs] = useState<{ id: string; name: string }[]>([]);
   const [search, setSearch] = useState("");
   const [expandedFolders, setExpandedFolders] = useState<Record<string, DriveItem[]>>({});
+  const [cachedFolderContents, setCachedFolderContents] = useState<Record<string, DriveItem[]>>({});
   const [loadingFolders, setLoadingFolders] = useState<string[]>([]);
+
+  const selectedFoldersRef = useRef<string[]>([]);
+  useEffect(() => {
+    selectedFoldersRef.current = selectedFolders;
+  }, [selectedFolders]);
+
   const mapItems = (raw: any[]): DriveItem[] =>
     raw.map((item) => ({
       id: item.id,
@@ -66,22 +73,12 @@ export default function GoogleDriveFolderModal({
       setItems(newItems);
 
       if (parentId) {
-        let parentIsSelected = false;
-        setSelectedFolders((prev) => {
-          parentIsSelected = prev.includes(parentId);
-          if (parentIsSelected) {
-            const newFolderIds = newItems.filter((i) => i.isFolder).map((i) => i.id);
-            return [...new Set([...prev, ...newFolderIds])];
-          }
-          return prev;
-        });
-        setSelectedFiles((prev) => {
-          if (parentIsSelected) {
-            const newFileIds = newItems.filter((i) => !i.isFolder).map((i) => i.id);
-            return [...new Set([...prev, ...newFileIds])];
-          }
-          return prev;
-        });
+        if (selectedFoldersRef.current.includes(parentId)) {
+          const newFolderIds = newItems.filter((i) => i.isFolder).map((i) => i.id);
+          const newFileIds = newItems.filter((i) => !i.isFolder).map((i) => i.id);
+          setSelectedFolders((prev) => [...new Set([...prev, ...newFolderIds])]);
+          setSelectedFiles((prev) => [...new Set([...prev, ...newFileIds])]);
+        }
       }
     } catch (err) {
       console.log(err);
@@ -99,6 +96,7 @@ export default function GoogleDriveFolderModal({
       setSelectedFiles([]);
       setSelectedFolders([]);
       setExpandedFolders({});
+      setCachedFolderContents({});
     }
   }, [open]);
 
@@ -131,6 +129,15 @@ export default function GoogleDriveFolderModal({
       setExpandedFolders(next);
       return;
     }
+
+    if (cachedFolderContents[folder.id]) {
+      setExpandedFolders((prev) => ({
+        ...prev,
+        [folder.id]: cachedFolderContents[folder.id],
+      }));
+      return;
+    }
+
     setLoadingFolders((prev) => [...prev, folder.id]);
     try {
       const res = await fetch(
@@ -143,23 +150,17 @@ export default function GoogleDriveFolderModal({
         ...prev,
         [folder.id]: newItems,
       }));
+      setCachedFolderContents((prev) => ({
+        ...prev,
+        [folder.id]: newItems,
+      }));
 
-      let parentIsSelected = false;
-      setSelectedFolders((prev) => {
-        parentIsSelected = prev.includes(folder.id);
-        if (parentIsSelected) {
-          const newFolderIds = newItems.filter((i) => i.isFolder).map((i) => i.id);
-          return [...new Set([...prev, ...newFolderIds])];
-        }
-        return prev;
-      });
-      setSelectedFiles((prev) => {
-        if (parentIsSelected) {
-          const newFileIds = newItems.filter((i) => !i.isFolder).map((i) => i.id);
-          return [...new Set([...prev, ...newFileIds])];
-        }
-        return prev;
-      });
+      if (selectedFoldersRef.current.includes(folder.id)) {
+        const newFolderIds = newItems.filter((i) => i.isFolder).map((i) => i.id);
+        const newFileIds = newItems.filter((i) => !i.isFolder).map((i) => i.id);
+        setSelectedFolders((prev) => [...new Set([...prev, ...newFolderIds])]);
+        setSelectedFiles((prev) => [...new Set([...prev, ...newFileIds])]);
+      }
     } catch (err) {
       console.log(err);
     } finally {
@@ -168,7 +169,7 @@ export default function GoogleDriveFolderModal({
   };
 
   const getAllDescendants = (folderId: string): DriveItem[] => {
-    const children = expandedFolders[folderId] || [];
+    const children = cachedFolderContents[folderId] || expandedFolders[folderId] || [];
     let descendants = [...children];
     for (const child of children) {
       if (child.isFolder) {
@@ -178,7 +179,7 @@ export default function GoogleDriveFolderModal({
     return descendants;
   };
 
-  const toggleItem = (item: DriveItem) => {
+  const toggleItem = async (item: DriveItem) => {
     const isCurrentlySelected = item.isFolder
       ? selectedFolders.includes(item.id)
       : selectedFiles.includes(item.id);
@@ -194,6 +195,31 @@ export default function GoogleDriveFolderModal({
       } else {
         setSelectedFolders((prev) => [...new Set([...prev, item.id, ...descendantFolders])]);
         setSelectedFiles((prev) => [...new Set([...prev, ...descendantFiles])]);
+
+        if (!cachedFolderContents[item.id]) {
+          try {
+            const res = await fetch(
+              `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/${kbId}/google-drive/files?parent_id=${item.id}`,
+              { headers: { Authorization: `Bearer ${token}`, accept: "application/json" } }
+            );
+            const data = await res.json();
+            const newItems = mapItems(data?.data?.items || []);
+            
+            setCachedFolderContents((prev) => ({
+              ...prev,
+              [item.id]: newItems,
+            }));
+
+            if (selectedFoldersRef.current.includes(item.id)) {
+              const newFolderIds = newItems.filter((i) => i.isFolder).map((i) => i.id);
+              const newFileIds = newItems.filter((i) => !i.isFolder).map((i) => i.id);
+              setSelectedFolders((prev) => [...new Set([...prev, ...newFolderIds])]);
+              setSelectedFiles((prev) => [...new Set([...prev, ...newFileIds])]);
+            }
+          } catch (err) {
+            console.log(err);
+          }
+        }
       }
     } else {
       if (isCurrentlySelected) {
