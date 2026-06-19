@@ -4,41 +4,31 @@ import AzureADProvider from "next-auth/providers/azure-ad";
 export const authOptions = {
   providers: [
     GoogleProvider({
+      id: "google",
+      name: "Google",
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
       authorization: {
         params: {
           scope:
-            "openid email profile https://www.googleapis.com/auth/drive.readonly",
-          access_type:"offline",
+            "openid email profile https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.labels",
+          access_type: "offline",
           prompt: "consent",
         },
       },
     }),
-  AzureADProvider({
-    clientId: process.env.AZURE_AD_CLIENT_ID!,
-    clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,
-    tenantId: "common",
-    authorization: {
-      params: {
-        scope:
-          "openid profile email offline_access User.Read Files.Read.All",
-      },
-    },
-  }),
-  GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    AzureADProvider({
+      clientId: process.env.AZURE_AD_CLIENT_ID!,
+      clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,
+      tenantId: "common",
       authorization: {
         params: {
           scope:
-            "openid email profile https://www.googleapis.com/auth/gmail.readonly",
-          access_type:"offline",
-          prompt: "consent",
+            "openid profile email offline_access User.Read Files.Read.All Mail.Read",
         },
       },
     }),
-],
+  ],
   // AzureADProvider({
   //     clientId: process.env.AZURE_AD_CLIENT_ID!,
   //     clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,

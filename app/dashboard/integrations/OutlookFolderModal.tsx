@@ -10,6 +10,7 @@ import {
   MailOutlined
 } from "@ant-design/icons";
 import { toast } from "react-hot-toast";
+import { getCookie } from "../../config/cookies";
 
 const { Text } = Typography;
 
@@ -17,7 +18,7 @@ interface Props {
   open: boolean;
   kbId: string;
   onClose: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (payload: any) => void;
   session: string;
   agentName: string;
 }
@@ -76,21 +77,42 @@ export default function OutlookFolderModal({
     setSyncing(true);
     setSyncProgress(0);
 
-    const interval = setInterval(() => {
-      setSyncProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setTimeout(() => {
+    const performSync = async () => {
+      const token = getCookie("AUTH_TOKEN") || "";
+      try {
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/${kbId}/outlook/sync`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ folder_ids: selectedFolders, email: session }),
+          }
+        );
+        if (!res.ok) throw new Error("Sync failed");
+
+        let progress = 0;
+        const interval = setInterval(() => {
+          progress += 20;
+          setSyncProgress(progress);
+          if (progress >= 100) {
+            clearInterval(interval);
             setSyncing(false);
             toast.success("Outlook folders synchronized successfully!");
-            onSuccess?.();
+            onSuccess?.({ folder_ids: selectedFolders, email: session });
             onClose();
-          }, 500);
-          return 100;
-        }
-        return prev + 10;
-      });
-    }, 250);
+          }
+        }, 150);
+      } catch (err) {
+        console.error(err);
+        toast.error("Outlook sync failed");
+        setSyncing(false);
+      }
+    };
+
+    performSync();
   };
 
   const filteredFolders = search.trim()

@@ -1,24 +1,21 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Card, Flex, Button, Tooltip, Typography } from "antd";
+import { Card, Flex, Button, Typography, Modal, Spin } from "antd";
 import Image from "next/image";
 import { signIn, useSession } from "next-auth/react";
 import { getCookie } from "../../config/cookies";
 import GoogleDriveFolderModal from "./GoogleDriveFolderModal";
 import SharePointFolderModal from "./SharePointFolderModal";
 import IntegrationConnectModal from "./IntegrationConnectModal";
-import EmailConfigModal from "./EmailConfigModal";
-import OutlookFolderModal from "./OutlookFolderModal";
+import { toast } from "react-hot-toast";
 
-const { Title, Text } = Typography;
+const { Title } = Typography;
 
 export default function ChannelsSection() {
   const { data: session } = useSession() as any;
   const [googleModal, setGoogleModal] = useState(false);
   const [sharePointModal, setSharePointModal] = useState(false);
-  const [emailModal, setEmailModal] = useState(false);
-  const [outlookModal, setOutlookModal] = useState(false);
   
   // The selected agent's info when opening the folder/site selection modal
   const [agentkbres, setagentkbres] = useState("");
@@ -27,6 +24,9 @@ export default function ChannelsSection() {
   // States to orchestrate the new IntegrationConnectModal
   const [connectModalType, setConnectModalType] = useState<"google" | "sharepoint" | "email" | "outlook" | null>(null);
   const [support, setSupport] = useState<string | null>(null);
+
+  const [syncingGmail, setSyncingGmail] = useState(false);
+  const [syncingOutlook, setSyncingOutlook] = useState(false);
 
   // OAuth Registration effects (running after NextAuth callback redirect)
   useEffect(() => {
@@ -71,7 +71,6 @@ export default function ChannelsSection() {
     if (agentkbres && support === "google") {
       sendGoogleData();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, agentkbres, support]);
 
   useEffect(() => {
@@ -114,6 +113,172 @@ export default function ChannelsSection() {
     }
   }, [session, agentkbres, support]);
 
+  // Gmail OAuth Registration & Auto-Sync Effect
+  useEffect(() => {
+    if (!session?.refreshToken) return;
+    if (!agentkbres) return;
+    if (support !== "email") return;
+
+    const registerAndSyncGmail = async () => {
+      setSyncingGmail(true);
+      const token = getCookie("AUTH_TOKEN");
+      const client = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+      const secret = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_SECRET;
+      try {
+        // 1. Register Gmail
+        const registerResponse = await fetch(
+          `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/${agentkbres}/gmail/register`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              credentials: {
+                client_id: client,
+                client_secret: secret,
+                refresh_token: session?.refreshToken,
+                token_uri: "https://oauth2.googleapis.com/token",
+                primary_admin_email: session?.user?.email,
+              },
+            }),
+          }
+        );
+
+        if (!registerResponse.ok) {
+          throw new Error("Gmail registration failed");
+        }
+
+        // 2. Sync Gmail
+        const syncPayload = {
+          folder_ids: ["INBOX", "SENT"],
+          email: session?.user?.email,
+        };
+
+        const syncResponse = await fetch(
+          `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/${agentkbres}/gmail/sync`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(syncPayload),
+          }
+        );
+
+        if (!syncResponse.ok) {
+          throw new Error("Gmail sync failed");
+        }
+
+        // Save connection state locally (fallback)
+        const agentId = selectedAgent?.id || localStorage.getItem("selected_agent_id_temp") || agentkbres;
+        const existing = localStorage.getItem(`mock_connections_${agentId}`);
+        const list = existing ? JSON.parse(existing) : [];
+        if (!list.includes("email")) {
+          list.push("email");
+          localStorage.setItem(`mock_connections_${agentId}`, JSON.stringify(list));
+        }
+
+        toast.success("Gmail synced successfully!");
+        setSupport(null);
+      } catch (error) {
+        console.error("Error with Gmail integration:", error);
+        toast.error("Failed to complete Gmail integration sync.");
+      } finally {
+        setSyncingGmail(false);
+      }
+    };
+
+    registerAndSyncGmail();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, agentkbres, support]);
+
+  // Outlook OAuth Registration & Auto-Sync Effect
+  useEffect(() => {
+    if (!session?.refreshToken) return;
+    if (!agentkbres) return;
+    if (support !== "outlook") return;
+
+    const registerAndSyncOutlook = async () => {
+      setSyncingOutlook(true);
+      const token = getCookie("AUTH_TOKEN");
+      const client = process.env.AZURE_AD_CLIENT_ID || process.env.NEXT_PUBLIC_MS_CLIENT_ID;
+      const secret = process.env.AZURE_AD_CLIENT_SECRET || process.env.NEXT_PUBLIC_MS_CLIENT_SECRET;
+      const tenant = session.tenantId || process.env.AZURE_AD_TENANT_ID || "common";
+      try {
+        // 1. Register Outlook
+        const registerResponse = await fetch(
+          `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/${agentkbres}/outlook/register`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              credentials: {
+                client_id: client,
+                client_secret: secret,
+                refresh_token: session?.refreshToken,
+                token_uri: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+                tenant_id: tenant,
+                primary_admin_email: session?.user?.email,
+              },
+            }),
+          }
+        );
+
+        if (!registerResponse.ok) {
+          throw new Error("Outlook registration failed");
+        }
+
+        // 2. Sync Outlook
+        const syncPayload = {
+          folder_ids: ["Inbox", "Sent Items"],
+          email: session?.user?.email,
+        };
+
+        const syncResponse = await fetch(
+          `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/${agentkbres}/outlook/sync`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(syncPayload),
+          }
+        );
+
+        if (!syncResponse.ok) {
+          throw new Error("Outlook sync failed");
+        }
+
+        // Save connection state locally (fallback)
+        const agentId = selectedAgent?.id || localStorage.getItem("selected_agent_id_temp") || agentkbres;
+        const existing = localStorage.getItem(`mock_connections_${agentId}`);
+        const list = existing ? JSON.parse(existing) : [];
+        if (!list.includes("outlook")) {
+          list.push("outlook");
+          localStorage.setItem(`mock_connections_${agentId}`, JSON.stringify(list));
+        }
+
+        toast.success("Outlook synced successfully!");
+        setSupport(null);
+      } catch (error) {
+        console.error("Error registering Outlook:", error);
+        toast.error("Failed to register Outlook integration.");
+      } finally {
+        setSyncingOutlook(false);
+      }
+    };
+
+    registerAndSyncOutlook();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, agentkbres, support]);
+
   // Load saved OAuth parameters from local storage after page redirect
   useEffect(() => {
     const savedKbId = localStorage.getItem("my_saved_kb_id");
@@ -130,27 +295,30 @@ export default function ChannelsSection() {
   const handleConnectAgent = (agent: { id: string; name: string }, kbId: string) => {
     setSelectedAgent(agent);
     setagentkbres(kbId);
+    localStorage.setItem("selected_agent_id_temp", agent.id);
     
     const currentType = connectModalType;
     setConnectModalType(null); // Close modal
     
-    const providerKey = 
-      currentType === "google" ? "google_drive" : 
-      currentType === "sharepoint" ? "sharepoint" : 
-      currentType === "email" ? "email" : "outlook";
-      
-    const existing = localStorage.getItem(`mock_connections_${agent.id}`);
-    const list = existing ? JSON.parse(existing) : [];
-    if (!list.includes(providerKey)) {
-      list.push(providerKey);
-      localStorage.setItem(`mock_connections_${agent.id}`, JSON.stringify(list));
-    }
-
     if (currentType === "email") {
-      setEmailModal(true);
+      localStorage.setItem("my_saved_kb_id", kbId);
+      localStorage.setItem("files", "email");
+      signIn("google");
     } else if (currentType === "outlook") {
-      setOutlookModal(true);
+      localStorage.setItem("my_saved_kb_id", kbId);
+      localStorage.setItem("files", "outlook");
+      signIn("azure-ad");
     } else {
+      const providerKey = 
+        currentType === "google" ? "google_drive" : "sharepoint";
+        
+      const existing = localStorage.getItem(`mock_connections_${agent.id}`);
+      const list = existing ? JSON.parse(existing) : [];
+      if (!list.includes(providerKey)) {
+        list.push(providerKey);
+        localStorage.setItem(`mock_connections_${agent.id}`, JSON.stringify(list));
+      }
+
       // Save to local storage for retrieval post-OAuth redirect
       localStorage.setItem("my_saved_kb_id", kbId);
       localStorage.setItem("files", currentType === "google" ? "google" : "share");
@@ -168,14 +336,27 @@ export default function ChannelsSection() {
   const handleAddFolders = (agent: { id: string; name: string }, kbId: string) => {
     setSelectedAgent(agent);
     setagentkbres(kbId);
+    localStorage.setItem("selected_agent_id_temp", agent.id);
     
     const type = connectModalType;
     setConnectModalType(null); // Close select modal
 
     if (type === "email") {
-      setEmailModal(true);
+      if (session?.refreshToken) {
+        setSupport("email");
+      } else {
+        localStorage.setItem("my_saved_kb_id", kbId);
+        localStorage.setItem("files", "email");
+        signIn("google");
+      }
     } else if (type === "outlook") {
-      setOutlookModal(true);
+      if (session?.refreshToken) {
+        setSupport("outlook");
+      } else {
+        localStorage.setItem("my_saved_kb_id", kbId);
+        localStorage.setItem("files", "outlook");
+        signIn("azure-ad");
+      }
     } else {
       if (session?.refreshToken) {
         // Session is active, set support to trigger the registration useEffect
@@ -357,26 +538,29 @@ export default function ChannelsSection() {
         session={session?.user?.email}
       />
 
-      <EmailConfigModal
-        open={emailModal}
-        agentId={selectedAgent?.id || ""}
-        agentName={selectedAgent?.name || "Agent"}
-        onClose={() => setEmailModal(false)}
-        onSuccess={() => {
-          setEmailModal(false);
-        }}
-      />
 
-      <OutlookFolderModal
-        open={outlookModal}
-        kbId={agentkbres}
-        onClose={() => setOutlookModal(false)}
-        onSuccess={() => {
-          setOutlookModal(false);
-        }}
-        session={session?.user?.email || ""}
-        agentName={selectedAgent?.name || "Agent"}
-      />
+
+      {/* Auto-Syncing Loader Modal */}
+      <Modal
+        open={syncingGmail || syncingOutlook}
+        footer={null}
+        closable={false}
+        centered
+        width={400}
+        className="sync-loading-modal"
+      >
+        <div className="flex flex-col items-center justify-center p-8 text-center">
+          <Spin size="large" className="mb-6" />
+          <h3 className="text-lg font-bold text-[var(--app-text)] mb-2">
+            Synchronizing with {syncingGmail ? "Gmail" : "Outlook"}
+          </h3>
+          <p className="text-xs text-[var(--app-text-muted)] max-w-xs m-0">
+            Establishing secure connection and indexing folders (INBOX, SENT). This may take a few moments...
+          </p>
+        </div>
+      </Modal>
+
+
     </>
   );
 }
