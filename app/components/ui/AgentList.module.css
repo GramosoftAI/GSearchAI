@@ -26,7 +26,7 @@
 
 /* Dropdown items */
 .dropdown :global(.ant-select-item) {
-  color: #000 !important;
+  color: var(--app-text) !important;
   background: var(--app-surface) !important;
 }
 
@@ -34,5 +34,5 @@
 .dropdown :global(.ant-select-item-option-active),
 .dropdown :global(.ant-select-item-option-selected) {
   background: var(--app-hover) !important;
-  color: #000 !important;
+  color: var(--app-text) !important;
 }

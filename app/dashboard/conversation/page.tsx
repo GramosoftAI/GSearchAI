@@ -3,6 +3,7 @@
 import { Flex, Typography, Button, Input, Tooltip, Avatar, Drawer, Grid, Upload, message, Spin, Table, Dropdown } from "antd";
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { LuBot, LuHistory, LuSearch, LuPlus, LuPaperclip, LuFileText, LuDownload, LuBookOpen, LuBell, LuSettings } from "react-icons/lu";
+import { FaBrain } from "react-icons/fa";
 import {
   FiUser,
   FiSend,
@@ -103,6 +104,28 @@ async function fetchSessions(agent: Agents): Promise<ChatSession[]> {
   }
 }
 
+async function fetchAgentSources(agentId: string): Promise<any[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/knowledge-bases/agents/${agentId}?limit=100&offset=0`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) throw new Error(`${res.status}`);
+    const result = await res.json();
+    const data = result.data ?? result;
+    return Array.isArray(data)
+      ? data
+      : Array.isArray(data?.sources)
+        ? data.sources
+        : Array.isArray(data?.kbs)
+          ? data.kbs
+          : [];
+  } catch (e) {
+    console.error("fetchAgentSources failed:", e);
+    return [];
+  }
+}
+
+
 async function getFilePreview(kb_id: string): Promise<string> {
   const response = await fetch(
     `${API_BASE_URL}/files/${kb_id}/preview`,
@@ -181,10 +204,43 @@ function extractCitedFilenames(text: string): string[] {
   return Array.from(filenames);
 }
 
+function cleanAndExtractSources(content: string, existingSources?: SourceMetadata[]): { cleanedContent: string, sources: SourceMetadata[] } {
+  if (!content) return { cleanedContent: "", sources: [] };
+
+  const citedFilenames = extractCitedFilenames(content);
+
+  const cleanedContent = content
+    .replace(/(?:\[Source:\s*.+?\]|\(Source:\s*.+?\))/g, "")
+    .trim();
+
+  let finalSources: SourceMetadata[] = existingSources && existingSources.length > 0 ? [...existingSources] : [];
+
+  if (finalSources.length === 0 && citedFilenames.length > 0) {
+    finalSources = citedFilenames.map(name => ({
+      id: '',
+      source: name,
+      kb_id: '',
+    } as SourceMetadata));
+  }
+
+  return { cleanedContent, sources: finalSources };
+}
+
 type AgentListResponse = {
   data?: {
     agents?: Agent[];
   };
+};
+
+const GragLogoAvatar = ({ size = 32 }: { size?: number }) => {
+  return (
+    <div 
+      className="rounded-full flex items-center justify-center bg-[#285d91] text-[#0a0f1d] shrink-0 border border-[#285d91]/20 shadow-none font-bold"
+      style={{ width: `${size}px`, height: `${size}px` }}
+    >
+      <FaBrain size={size * 0.55} />
+    </div>
+  );
 };
 
 export default function ChatPlaygroundPage() {
@@ -219,6 +275,8 @@ export default function ChatPlaygroundPage() {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [isEnabled, setIsEnabled] = useState(true);
   const wsSourcesRef = useRef<SourceMetadata[]>([]);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const [shouldLoadLatestOnFetch, setShouldLoadLatestOnFetch] = useState(false);
 
   // ─── IPPO ADD PANNA VENDIYA STATES ───────────────────────────────────
   const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null);
@@ -230,6 +288,7 @@ export default function ChatPlaygroundPage() {
   // Left Drawer Sources States
   const [isSourcesDrawerOpen, setIsSourcesDrawerOpen] = useState(false);
   const [activeSources, setActiveSources] = useState<SourceMetadata[]>([]);
+  const [agentSources, setAgentSources] = useState<any[]>([]);
   const [selectedSourceForPreview, setSelectedSourceForPreview] = useState<SourceMetadata | null>(null);
   const [sourcesDrawerPreviewUrl, setSourcesDrawerPreviewUrl] = useState("");
   const [sourcesDrawerPreviewType, setSourcesDrawerPreviewType] = useState<"pdf" | "csv" | "excel" | "other" | "image">("other");
@@ -254,31 +313,125 @@ export default function ChatPlaygroundPage() {
 
   // ─── Persistence Logic ──────────────────────────────────────────────────────
   useEffect(() => {
-    getAgents(undefined, (payload) => {
+    getAgents(undefined, async (payload) => {
       const agents = payload?.data?.agents ?? [];
       setBotsCache(agents);
       const list = mapAgentsToList(agents);
       setAgentList(list);
+
+      // Parse URL parameters on load
+      if (typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        const urlAgentId = params.get("agentId") || params.get("agent_id");
+        const urlSessionId = params.get("sessionId") || params.get("session_id");
+
+        if (urlAgentId) {
+          const matchedAgent = agents.find(a => a.id === urlAgentId);
+          if (matchedAgent) {
+            setAgent({ id: matchedAgent.id, name: matchedAgent.name });
+
+            // Fetch sessions for this agent
+            const data = await fetchSessions(matchedAgent);
+            setSessions(data);
+
+            if (urlSessionId) {
+              const matchedSession = data.find(s => s.id === urlSessionId);
+              if (matchedSession) {
+                setCurrentSessionId(matchedSession.id);
+                const mappedMessages = (matchedSession.messages || []).map((msg: any) => {
+                  const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
+                  return {
+                    role: msg.role,
+                    content: cleanedContent,
+                    file: msg.file,
+                    sources: sources.length > 0 ? sources : undefined,
+                    timestamp: msg.created_at
+                      ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                      : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                  };
+                });
+                setMessages(mappedMessages);
+              }
+            } else {
+              // Start a new session (show "New chat" by default on agent load)
+              const newSessionId = `session_${Date.now()}`;
+              const newSession: any = {
+                id: newSessionId,
+                agentId: matchedAgent.id,
+                agentName: matchedAgent.name,
+                messages: [],
+                updatedAt: Date.now()
+              };
+              setSessions([newSession]);
+              setCurrentSessionId(newSessionId);
+              setMessages([]);
+            }
+            setInitialLoadDone(true);
+            return;
+          }
+        }
+      }
+      setInitialLoadDone(true);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (agent) {
-      (async () => {
-        const data = await fetchSessions(agent);
-        setSessions(prev => {
-          const tempSessions = prev.filter(s => s.id.startsWith("session_") && (s.agentId === agent.id || s.agent_id === agent.id));
-          const filteredData = data.filter(s => !tempSessions.some(temp => temp.id === s.id));
-          return [...tempSessions, ...filteredData];
-        });
-      })();
-    }
+    if (!agent) return;
+    if (!initialLoadDone) return;
+
+    (async () => {
+      const data = await fetchSessions(agent);
+      setSessions(prev => {
+        const tempSessions = prev.filter(s => s.id.startsWith("session_") && (s.agentId === agent.id || s.agent_id === agent.id));
+        const filteredData = data.filter(s => !tempSessions.some(temp => temp.id === s.id));
+        return [...tempSessions, ...filteredData];
+      });
+
+      if (shouldLoadLatestOnFetch) {
+        setShouldLoadLatestOnFetch(false);
+        // Always start with a new empty session when selecting/switching agent
+        startNewChat(agent, data);
+      }
+    })();
+
     return () => {
       ws.current?.close();
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     };
-  }, [agent]);
+  }, [agent, initialLoadDone, shouldLoadLatestOnFetch]);
+
+  // Fetch agent sources whenever the agent changes
+  useEffect(() => {
+    if (!agent?.id) {
+      setAgentSources([]);
+      return;
+    }
+    (async () => {
+      const sources = await fetchAgentSources(agent.id);
+      setAgentSources(sources);
+    })();
+  }, [agent?.id]);
+
+  // URL Search Parameters Syncer Effect
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (agent?.id) {
+        url.searchParams.set("agentId", agent.id);
+      } else {
+        url.searchParams.delete("agentId");
+      }
+
+      if (currentSessionId) {
+        url.searchParams.set("sessionId", currentSessionId);
+      } else {
+        url.searchParams.delete("sessionId");
+      }
+
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, [agent?.id, currentSessionId]);
 
   // ─── WebSocket Logic ────────────────────────────────────────────────────────
 
@@ -453,7 +606,19 @@ export default function ChatPlaygroundPage() {
 
   // ─── Actions ───────────────────────────────────────────────────────────────
 
-  const startNewChat = (selectedAgent: { id: string; name: string }) => {
+  const startNewChat = (selectedAgent: { id: string; name: string }, currentSessionsList?: ChatSession[]) => {
+    const listToSearch = currentSessionsList || sessions;
+    const existingEmptySession = listToSearch.find(s => 
+      (s.agentId === selectedAgent.id || s.agent_id === selectedAgent.id) &&
+      s.id.startsWith("session_") &&
+      (!s.messages || s.messages.length === 0)
+    );
+
+    if (existingEmptySession) {
+      loadSession(existingEmptySession);
+      return;
+    }
+
     const newSessionId = `session_${Date.now()}`;
     const newSession: any = {
       id: newSessionId,
@@ -471,15 +636,18 @@ export default function ChatPlaygroundPage() {
   const loadSession = (session: ChatSession) => {
     setCurrentSessionId(session.id);
 
-    const mappedMessages = (session.messages || []).map((msg: any) => ({
-      role: msg.role,
-      content: msg.content,
-      file: msg.file,
-      sources: msg.sources,
-      timestamp: msg.created_at
-        ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-        : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    }));
+    const mappedMessages = (session.messages || []).map((msg: any) => {
+      const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
+      return {
+        role: msg.role,
+        content: cleanedContent,
+        file: msg.file,
+        sources: sources.length > 0 ? sources : undefined,
+        timestamp: msg.created_at
+          ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+          : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+    });
 
     setMessages(mappedMessages);
     setAgent({
@@ -497,6 +665,60 @@ export default function ChatPlaygroundPage() {
       setMessages([]);
       setAgent(null);
     }
+  };
+
+  const handleAgentChange = (id: string, name: string) => {
+    setAgent({ id, name });
+    setShouldLoadLatestOnFetch(true);
+  };
+
+  const handleRegenerate = (index: number) => {
+    if (wsStatus !== "open") {
+      message.error("WebSocket link is not stable. Please wait.");
+      return;
+    }
+
+    let userMessageIndex = -1;
+    for (let j = index; j >= 0; j--) {
+      if (messages[j].role === "user") {
+        userMessageIndex = j;
+        break;
+      }
+    }
+    
+    if (userMessageIndex === -1 || !agent?.id) return;
+    
+    const userMsg = messages[userMessageIndex];
+    
+    const updatedMessages = messages.slice(0, userMessageIndex + 1);
+    setMessages(updatedMessages);
+    
+    ws.current?.send(JSON.stringify({
+      query: userMsg.content,
+      file: userMsg.file ? { name: userMsg.file.name, type: userMsg.file.type } : null
+    }));
+    
+    wsSourcesRef.current = [];
+    setStreamingText("");
+    setIsTyping(true);
+  };
+
+  const handleShareSession = () => {
+    if (!agent?.id || !currentSessionId) {
+      message.warning("No active session to share.");
+      return;
+    }
+    
+    const shareUrl = `${window.location.origin}${window.location.pathname}?agentId=${agent.id}&sessionId=${currentSessionId}`;
+    
+    navigator.clipboard.writeText(shareUrl)
+      .then(() => {
+        message.success("Share link copied to clipboard!");
+      })
+      .catch((err) => {
+        console.error("Failed to copy share link:", err);
+        message.error("Failed to copy share link.");
+      });
   };
 
   // Process files dynamically before upload triggers
@@ -628,11 +850,62 @@ export default function ChatPlaygroundPage() {
     setIsTyping(true);
   };
 
-  const handleOpenSourcesDrawer = (sources: SourceMetadata[]) => {
-    setActiveSources(sources);
+  const cleanCompare = (name1: string, name2: string) => {
+    const n1 = getFileName(name1).toLowerCase().replace(/[^a-z0-9.]/g, '');
+    const n2 = getFileName(name2).toLowerCase().replace(/[^a-z0-9.]/g, '');
+    if (!n1 || !n2) return false;
+    return n1 === n2 || n1.includes(n2) || n2.includes(n1);
+  };
+
+  const enhanceSources = useCallback((sourcesToEnhance: SourceMetadata[], currentAgentSources: any[]) => {
+    if (!sourcesToEnhance || sourcesToEnhance.length === 0) return [];
+    return sourcesToEnhance.map(src => {
+      if (src.kb_id) {
+        const matched = currentAgentSources.find(as => 
+          (as.id === src.kb_id || as.kb_id === src.kb_id) ||
+          cleanCompare(as.name || as.source || "", src.source)
+        );
+        if (matched) {
+          return {
+            ...src,
+            kb_id: src.kb_id || matched.id || matched.kb_id || "",
+            s3_path: src.s3_path || matched.s3_path || "",
+            parsed_path: src.parsed_path || matched.parsed_path || "",
+            content_type: src.content_type || matched.content_type || "",
+          };
+        }
+        return src;
+      }
+      
+      const matched = currentAgentSources.find(as => 
+        cleanCompare(as.name || as.source || "", src.source)
+      );
+
+      if (matched) {
+        return {
+          ...src,
+          id: matched.id || src.id,
+          kb_id: matched.id || matched.kb_id || "",
+          s3_path: matched.s3_path || "",
+          parsed_path: matched.parsed_path || "",
+          content_type: matched.content_type || "",
+        };
+      }
+      return src;
+    });
+  }, []);
+
+  const handleOpenSourcesDrawer = async (sources: SourceMetadata[]) => {
+    let currentSources = agentSources;
+    if (agent?.id && currentSources.length === 0) {
+      currentSources = await fetchAgentSources(agent.id);
+      setAgentSources(currentSources);
+    }
+    const enhanced = enhanceSources(sources, currentSources);
+    setActiveSources(enhanced);
     setIsSourcesDrawerOpen(true);
-    if (sources.length > 0) {
-      handleSelectSourceForPreview(sources[0]);
+    if (enhanced.length > 0) {
+      handleSelectSourceForPreview(enhanced[0]);
     }
   };
 
@@ -781,11 +1054,7 @@ export default function ChatPlaygroundPage() {
           <div className="w-full">
             <AgentList
               selectedId={agent?.id}
-              onChange={(id: string, name: string) => {
-                const existing = sessions.find(s => s.agentId === id);
-                if (existing) loadSession(existing);
-                else startNewChat({ id, name });
-              }}
+              onChange={handleAgentChange}
             />
           </div>
         </div>
@@ -885,7 +1154,7 @@ export default function ChatPlaygroundPage() {
   };
 
   return (
-    <div className="h-[calc(100vh-60px)] w-full flex bg-[var(--app-surface)] antialiased selection:bg-[#285d91]/20 overflow-hidden relative">
+    <div className="h-[calc(100vh-96px)] w-full flex bg-[var(--app-surface)] antialiased selection:bg-[#285d91]/20 overflow-hidden relative">
       {/* Desktop Left Sidebar */}
       {screen.md && (
         <div 
@@ -967,12 +1236,15 @@ export default function ChatPlaygroundPage() {
             return (
               <div key={i} className={`flex w-full ${isUser ? "justify-end" : "justify-start"} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
                 <div className={`flex gap-3 transition-all duration-300 ${editingMessageIndex === i ? "w-full max-w-[95%] md:max-w-[85%]" : "max-w-[88%] md:max-w-[75%]"} ${isUser ? "flex-row-reverse" : "flex-row"}`}>
-
-                  <Avatar
-                    size={32}
-                    icon={isUser ? <FiUser /> : <LuBot />}
-                    className={`${isUser ? "bg-emerald-500/10 !text-emerald-600" : "bg-[#285d91]/10 !text-[#285d91]"} shadow-none shrink-0 border border-current/10 font-bold`}
-                  />
+                  {isUser ? (
+                    <Avatar
+                      size={32}
+                      icon={<FiUser />}
+                      className="bg-emerald-500/10 !text-emerald-600 shadow-none shrink-0 border border-current/10 font-bold"
+                    />
+                  ) : (
+                    <GragLogoAvatar size={32} />
+                  )}
 
                   <div className={`flex flex-col space-y-1 ${editingMessageIndex === i ? "flex-1 min-w-0" : ""}`}>
                     <span className={`text-[9px] font-bold text-[var(--app-text-soft)] px-1 ${isUser ? "text-right" : "text-left"}`}>
@@ -1018,13 +1290,19 @@ export default function ChatPlaygroundPage() {
                                   <FiThumbsDown size={16} strokeWidth={2} />
                                 </button>
                               </Tooltip>
-                              <Tooltip title="Share" placement="bottom">
-                                <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80">
+                              {/* <Tooltip title="Share" placement="bottom">
+                                <button 
+                                  onClick={handleShareSession}
+                                  className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80"
+                                >
                                   <FiUpload size={16} strokeWidth={2} />
                                 </button>
-                              </Tooltip>
+                              </Tooltip> */}
                               <Tooltip title="Regenerate" placement="bottom">
-                                <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80">
+                                <button 
+                                  onClick={() => handleRegenerate(i)}
+                                  className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80"
+                                >
                                   <FiRotateCw size={16} strokeWidth={2} />
                                 </button>
                               </Tooltip>
@@ -1129,7 +1407,7 @@ export default function ChatPlaygroundPage() {
           {isTyping && (
             <div className="flex w-full justify-start animate-in fade-in duration-300">
               <div className="flex gap-3 max-w-[80%] items-start">
-                <Avatar size={32} icon={<LuBot />} className="bg-[#285d91]/10 !text-[#285d91] shrink-0 border border-[#285d91]/10" />
+                <GragLogoAvatar size={32} />
                 <div className="flex flex-col space-y-1">
                   <span className="text-[9px] font-bold text-[var(--app-text-soft)] italic px-1">Processing...</span>
                   <div className="p-4 bg-[var(--app-surface-muted)]/60 border border-[var(--app-border)]/40 text-[var(--app-text)] rounded-2xl rounded-tl-none shadow-sm">
@@ -1178,22 +1456,9 @@ export default function ChatPlaygroundPage() {
               </div>
             )}
 
-            {/* Input Text Area (Top row) */}
-            <Input.TextArea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Type a message..."
-              disabled={!agent || wsStatus !== "open"}
-              bordered={false}
-              autoSize={{ minRows: 2, maxRows: 6 }}
-              className="w-full !p-1 !bg-transparent !font-semibold !text-xs md:!text-sm !text-[var(--app-text)] !placeholder:text-[var(--app-text-soft)]/50 focus:outline-none resize-none"
-            />
-
-            {/* Controls Row (Bottom row) */}
-            <Flex align="center" justify="space-between" className="border-t border-[var(--app-border)]/20 pt-2 shrink-0">
-              
-              {/* Media Upload Node Trigger Trigger */}
+            {/* Input Row (Single line layout) */}
+            <Flex align="center" gap={8} className="w-full">
+              {/* Media Upload Node Trigger */}
               <Upload
                 beforeUpload={handleBeforeUpload}
                 showUploadList={false}
@@ -1210,26 +1475,30 @@ export default function ChatPlaygroundPage() {
                 </Tooltip>
               </Upload>
 
-              {/* Right Controls: Voice + Send */}
-              <Flex align="center" gap={8}>
-                {/* <Button
-                  type="text"
-                  icon={<FiMic className="text-xs text-[var(--app-text-soft)]" />}
-                  className="flex items-center gap-1.5 px-3 py-1.5 h-8 rounded-lg bg-[var(--app-surface)] border border-[var(--app-border)]/60 text-xs font-semibold text-[var(--app-text-soft)] hover:text-[var(--app-text)] transition-all cursor-pointer shadow-sm shrink-0"
+              {/* Input Text Area */}
+              <div className="flex-1 min-w-0">
+                <Input.TextArea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Type a message..."
+                  disabled={!agent || wsStatus !== "open"}
+                  bordered={false}
+                  autoSize={{ minRows: 1, maxRows: 6 }}
+                  className="w-full !p-1 !bg-transparent !font-semibold !text-xs md:!text-sm !text-[var(--app-text)] !placeholder:text-[var(--app-text-soft)]/50 focus:outline-none resize-none align-middle"
+                />
+              </div>
+
+              {/* Send Button */}
+              <Tooltip title="Press Enter to send" placement="topRight">
+                <button
+                  onClick={handleSend}
+                  disabled={!agent || (!input.trim() && !attachedFile) || wsStatus !== "open"}
+                  className="w-8 h-8 bg-[#285d91] text-white rounded-lg flex items-center justify-center hover:bg-[#1e4873] active:scale-95 disabled:opacity-20 disabled:hover:scale-100 disabled:bg-[var(--app-text-soft)]/20 transition-all shrink-0 shadow-md shadow-blue-900/10 cursor-pointer"
                 >
-                  Voice
-                </Button> */}
-                
-                <Tooltip title="Press Enter to send" placement="topRight">
-                  <button
-                    onClick={handleSend}
-                    disabled={!agent || (!input.trim() && !attachedFile) || wsStatus !== "open"}
-                    className="w-8 h-8 bg-[#285d91] text-white rounded-lg flex items-center justify-center hover:bg-[#1e4873] active:scale-95 disabled:opacity-20 disabled:hover:scale-100 disabled:bg-[var(--app-text-soft)]/20 transition-all shrink-0 shadow-md shadow-blue-900/10 cursor-pointer"
-                  >
-                    <FiSend size={13} />
-                  </button>
-                </Tooltip>
-              </Flex>
+                  <FiSend size={13} />
+                </button>
+              </Tooltip>
             </Flex>
           </div>
           
