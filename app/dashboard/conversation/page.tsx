@@ -1,9 +1,8 @@
 "use client";
 
 import { Flex, Typography, Button, Input, Tooltip, Avatar, Drawer, Grid, Upload, message, Spin, Table, Dropdown } from "antd";
-import { Flex, Typography, Button, Input, Tooltip, Avatar, Drawer, Grid, Upload, message, Dropdown } from "antd";
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { LuBot, LuHistory, LuSearch, LuPlus, LuPaperclip, LuFileText, LuBookOpen, LuGitBranch, LuVolume2 } from "react-icons/lu";
+import { LuBot, LuHistory, LuSearch, LuPlus, LuPaperclip, LuFileText, LuDownload, LuBookOpen, LuBell, LuSettings } from "react-icons/lu";
 import {
   FiUser,
   FiSend,
@@ -12,6 +11,13 @@ import {
   FiX,
   FiCopy,
   FiEdit2,
+  FiThumbsUp,
+  FiThumbsDown,
+  FiUpload,
+  FiRotateCw,
+  FiMoreHorizontal,
+  FiMic,
+  FiMenu,
 } from "react-icons/fi";
 import { MdBarChart as MdBarChartIcon } from "react-icons/md";
 import { PiGraphLight } from "react-icons/pi";
@@ -622,54 +628,299 @@ export default function ChatPlaygroundPage() {
     setIsTyping(true);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") handleSend();
+  const handleOpenSourcesDrawer = (sources: SourceMetadata[]) => {
+    setActiveSources(sources);
+    setIsSourcesDrawerOpen(true);
+    if (sources.length > 0) {
+      handleSelectSourceForPreview(sources[0]);
+    }
+  };
+
+  const handleSelectSourceForPreview = async (source: SourceMetadata) => {
+    setSelectedSourceForPreview(source);
+    if (!source.kb_id) {
+      return;
+    }
+
+    const nameForFallback = getFileName(source.source).toLowerCase();
+    const isParsedType = source.content_type === "parsed" ||
+      source.parsed_path !== undefined ||
+      nameForFallback.endsWith(".pdf") ||
+      nameForFallback.endsWith(".docx") ||
+      nameForFallback.endsWith(".doc") ||
+      nameForFallback.endsWith(".txt");
+
+    // Set active tab default based on parsed capability
+    const defaultTab = isParsedType ? "original" : "parsed";
+    setSourcesDrawerPreviewTab(defaultTab);
+    setParsedTextContent("");
+
+    try {
+      setSourcesDrawerPreviewLoading(true);
+      setSourcesDrawerPreviewType("other");
+      setSourcesDrawerCsvData([]);
+      setExcelSheets({});
+      setExcelSheetNames([]);
+      setActiveExcelSheet("");
+      if (sourcesDrawerPreviewUrl) {
+        URL.revokeObjectURL(sourcesDrawerPreviewUrl);
+      }
+      setSourcesDrawerPreviewUrl("");
+
+      // 1. If it is a parsed type, fetch clean text content
+      if (isParsedType) {
+        try {
+          setParsedTextLoading(true);
+          const cleanText = await getCleanTextContent(source.kb_id);
+          setParsedTextContent(cleanText);
+        } catch (err) {
+          console.error("Clean text fetch error:", err);
+          setParsedTextContent("Unable to load extracted text content.");
+        } finally {
+          setParsedTextLoading(false);
+        }
+      }
+
+      // 2. Fetch binary preview file using Blob URL Strategy
+      const blobUrl = await getFilePreview(source.kb_id);
+      setSourcesDrawerPreviewUrl(blobUrl);
+
+      const name = getFileName(source.source).toLowerCase();
+
+      // Fetch blob to determine content type and parse binary spreadsheets
+      const blobRes = await fetch(blobUrl);
+      const blob = await blobRes.blob();
+      const contentType = blob.type.toLowerCase();
+
+      const isPDF = contentType.includes("pdf") || name.endsWith(".pdf");
+      const isImage = contentType.includes("image/") || name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".webp") || name.endsWith(".gif");
+      const isCSV = contentType.includes("csv") || name.endsWith(".csv");
+      const isExcel = contentType.includes("excel") || contentType.includes("spreadsheet") ||
+        contentType.includes("vnd.ms-excel") || contentType.includes("vnd.openxmlformats-officedocument.spreadsheetml.sheet") ||
+        name.endsWith(".xls") || name.endsWith(".xlsx");
+
+      if (isPDF) {
+        setSourcesDrawerPreviewType("pdf");
+      } else if (isImage) {
+        setSourcesDrawerPreviewType("image");
+      } else if (isCSV || isExcel) {
+        setSourcesDrawerPreviewType(isCSV ? "csv" : "excel");
+        const arrayBuffer = await blob.arrayBuffer();
+        const XLSX = await import("xlsx");
+        const workbook = XLSX.read(arrayBuffer, { type: "array" });
+
+        const sheetsData: { [sheetName: string]: string[][] } = {};
+        workbook.SheetNames.forEach((sheetName) => {
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+          sheetsData[sheetName] = jsonData.map((row: any) =>
+            Array.isArray(row)
+              ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+              : []
+          );
+        });
+
+        setExcelSheets(sheetsData);
+        setExcelSheetNames(workbook.SheetNames);
+        setActiveExcelSheet(workbook.SheetNames[0] || "");
+      } else {
+        setSourcesDrawerPreviewType("other");
+      }
+    } catch (error: any) {
+      console.error("Preview error:", error);
+      let errorMsg = "Unable to load document";
+      if (error.status === 403) {
+        errorMsg = "Permission denied";
+      } else if (error.status === 404) {
+        errorMsg = "File not found";
+      }
+      message.error(errorMsg);
+    } finally {
+      setSourcesDrawerPreviewLoading(false);
+    }
+  };
+
+  const htmlContent = React.useMemo(() => {
+    if (!parsedTextContent) return "";
+    try {
+      const markedObj = marked as any;
+      return typeof markedObj === "function" ? markedObj(parsedTextContent) : markedObj.parse(parsedTextContent);
+    } catch (e) {
+      console.error(e);
+      return parsedTextContent;
+    }
+  }, [parsedTextContent]);
+
+  const renderSidebar = () => {
+    return (
+      <div className="w-full h-full flex flex-col bg-[var(--app-surface-muted)]/80 backdrop-blur-md overflow-hidden">
+        {/* Syncing Status Switch on the top-left of the sidebar */}
+        <div className="p-4 border-b border-[var(--app-border)]/40 flex items-center justify-between shrink-0 select-none bg-[var(--app-surface-muted)]">
+          <Flex align="center" gap={6} className="min-w-0">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${wsStatus === "open" ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
+            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--app-text-soft)] truncate">
+              {wsStatus === "open" ? "LINK STABILIZED" : "SYNCING LINK CORE..."}
+            </span>
+          </Flex>
+          <Switch
+            size="small"
+            checked={isEnabled}
+            onChange={(checked) => {
+              setIsEnabled(checked);
+              console.log(checked);
+            }}
+            className="shrink-0"
+          />
+        </div>
+
+        {/* Sidebar Top: Operational Node / AgentList */}
+        <div className="p-4 border-b border-[var(--app-border)]/40 bg-[var(--app-surface-muted)]/50">
+          <span className="text-[10px] font-extrabold uppercase tracking-widest text-[var(--app-text-soft)] block mb-2 opacity-80">
+            Operational Node
+          </span>
+          <div className="w-full">
+            <AgentList
+              selectedId={agent?.id}
+              onChange={(id: string, name: string) => {
+                const existing = sessions.find(s => s.agentId === id);
+                if (existing) loadSession(existing);
+                else startNewChat({ id, name });
+              }}
+            />
+          </div>
+        </div>
+
+        {/* New Chat Button */}
+        <div className="px-4 py-3 shrink-0">
+          <button
+            onClick={() => {
+              if (agent) {
+                startNewChat(agent);
+              } else {
+                message.warning("Please select an agent node first.");
+              }
+              setMobileSidebarOpen(false);
+            }}
+            className="w-full flex items-center justify-center gap-2 border border-[var(--app-border)] hover:bg-[var(--app-hover)] text-[var(--app-text)] font-semibold rounded-xl py-2.5 transition-all text-xs cursor-pointer shadow-sm bg-[var(--app-surface)]"
+          >
+            <FiEdit2 size={13} className="text-[var(--app-text-soft)]" />
+            <span>New chat</span>
+          </button>
+        </div>
+
+        {/* Chats History Section */}
+        <div className="flex-1 flex flex-col min-h-0 px-2">
+          <div className="px-3 py-2 flex items-center justify-between">
+            <span className="text-[10px] font-extrabold uppercase tracking-widest text-[var(--app-text-soft)] opacity-80">
+              Chats
+            </span>
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[var(--app-border)]/30 text-[var(--app-text-soft)]">
+              {sessions.length} sessions
+            </span>
+          </div>
+
+          <div className="flex-1 overflow-y-auto space-y-1 custom-scrollbar pr-1">
+            {sessions.length > 0 ? (
+              sessions.map((s) => {
+                const isActiveSession = currentSessionId === s.id;
+                return (
+                  <div
+                    key={s.id}
+                    onClick={() => {
+                      loadSession(s);
+                      setMobileSidebarOpen(false);
+                    }}
+                    className={`group relative p-2.5 rounded-xl cursor-pointer transition-all border flex items-center justify-between ${
+                      isActiveSession
+                        ? "bg-[#285d91]/15 text-[#285d91] border-transparent font-extrabold"
+                        : "bg-transparent hover:bg-[var(--app-hover)] text-[var(--app-text-soft)] border-transparent"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <span className="text-sm shrink-0">💬</span>
+                      <span className="text-xs truncate block pr-2">
+                        {s.title || "Untitled Session"}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[9px] opacity-65 font-bold group-hover:hidden">
+                        {s.message_count || 0}
+                      </span>
+                      <FiTrash2
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteSession(e, s.id);
+                        }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-[var(--app-text-soft)] hover:text-red-500 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="py-12 text-center opacity-40">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--app-text-muted)]">No active chats</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+
+      </div>
+    );
+  };
+
+  const handleKeyDown = (e: any) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    } else if (e.key === "ArrowUp" && !input) {
+      e.preventDefault();
+      const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
+      if (lastUserMsg) {
+        setInput(lastUserMsg.content);
+      }
+    }
   };
 
   return (
-    <div className="h-[calc(100vh-60px)] md:h-[calc(100vh-100px)] w-full flex items-center justify-center p-0 md:p-8 bg-[var(--app-bg-deep)]/20 antialiased selection:bg-[#285d91]/20">
-      
-      <Flex vertical className="w-full h-full bg-gradient-to-b from-[var(--app-surface)] via-[var(--app-surface)]/95 to-[var(--app-surface)] rounded-none md:rounded-[28px] border-0 md:border border-[var(--app-border)]/60 shadow-2xl overflow-hidden relative">
-        
+    <div className="h-[calc(100vh-60px)] w-full flex bg-[var(--app-surface)] antialiased selection:bg-[#285d91]/20 overflow-hidden relative">
+      {/* Desktop Left Sidebar */}
+      {screen.md && (
+        <div 
+          className="h-full border-r border-[var(--app-border)]/40 flex flex-col bg-[var(--app-surface-muted)] shrink-0 transition-all duration-300 overflow-hidden"
+          style={{ width: desktopSidebarOpen ? "260px" : "0px", borderRightWidth: desktopSidebarOpen ? "1px" : "0px" }}
+        >
+          {renderSidebar()}
+        </div>
+      )}
+
+      {/* Mobile Left Sidebar Drawer */}
+      {!screen.md && (
+        <Drawer
+          placement="left"
+          onClose={() => setMobileSidebarOpen(false)}
+          open={mobileSidebarOpen}
+          width={260}
+          closeIcon={null}
+          styles={{
+            body: { padding: 0, background: 'var(--app-surface-muted)', height: '100%' }
+          }}
+        >
+          {renderSidebar()}
+        </Drawer>
+      )}
+
+      {/* Main Chat Container */}
+      <Flex vertical className="flex-1 h-full overflow-hidden relative bg-transparent">
+
         {/* Top Header */}
-        <div className="w-full px-4 md:px-8 py-4 border-b border-[var(--app-border)]/40 backdrop-blur-md bg-[var(--app-surface)]/50 sticky top-0 z-40 transition-all">
-          <Flex justify="space-between" align="center" className="gap-2">
+        <div className="w-full px-4 md:px-8 py-3 border-b border-[var(--app-border)]/40 backdrop-blur-md bg-[var(--app-surface)]/50 sticky top-0 z-40 transition-all shrink-0">
+          <Flex justify="space-between" align="center" className="gap-2 w-full">
             
-           {screen.md && <Flex align="center" gap={12} className="min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#285d91] to-[#3a7cb3] text-white flex items-center justify-center shadow-md shadow-blue-900/10 shrink-0">
-                <LuBot size={20} className="animate-pulse" />
-              </div>
-              <Flex vertical className="min-w-0">
-                <Title level={5} className="!m-0 !text-[var(--app-text)] !font-extrabold tracking-tight truncate text-sm md:text-base">
-                  {agent?.name || "Neural Cortex"}
-                </Title>
-                <Flex align="center" gap={5} className="mt-0.5">
-                  <span className={`w-1.5 h-1.5 rounded-full ${wsStatus === "open" ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
-                  <Text className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-soft)] opacity-80 truncate">
-                    {wsStatus === "open" ? "Link Stabilized" : "Syncing Link Core..."}
-                  </Text>
-                  <Switch
-                  checked={isEnabled}
-                  onChange={(checked) => {
-                    setIsEnabled(checked);
-                    console.log(checked); // true or false
-                  }}
-                />
-                </Flex>
-              </Flex>
-            </Flex>}
-            
-            <Flex align="center" gap={8} className="shrink-0">
-              <div className="scale-90 md:scale-100 origin-right">
-                <AgentList
-                  selectedId={agent?.id}
-                  onChange={(id: string, name: string) => {
-                    const existing = sessions.find(s => s.agentId === id);
-                    if (existing) loadSession(existing);
-                    else startNewChat({ id, name });
-                  }}
-                />
-              </div>
+            {/* Left side: Hamburger and Logo */}
+            <Flex align="center" gap={4} className="min-w-0">
               <Button 
                 type="text" 
                 icon={<FiMenu className="text-lg text-[var(--app-text-soft)]" />} 
@@ -715,9 +966,9 @@ export default function ChatPlaygroundPage() {
 
             return (
               <div key={i} className={`flex w-full ${isUser ? "justify-end" : "justify-start"} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
-                <div className={`flex gap-3 max-w-[88%] md:max-w-[75%] ${isUser ? "flex-row-reverse" : "flex-row"}`}>
-                  
-                  <Avatar 
+                <div className={`flex gap-3 transition-all duration-300 ${editingMessageIndex === i ? "w-full max-w-[95%] md:max-w-[85%]" : "max-w-[88%] md:max-w-[75%]"} ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+
+                  <Avatar
                     size={32}
                     icon={isUser ? <FiUser /> : <LuBot />}
                     className={`${isUser ? "bg-emerald-500/10 !text-emerald-600" : "bg-[#285d91]/10 !text-[#285d91]"} shadow-none shrink-0 border border-current/10 font-bold`}
@@ -730,29 +981,62 @@ export default function ChatPlaygroundPage() {
 
                     {/* <div className={`p-4 md:p-5 rounded-2xl transition-all duration-200 shadow-sm border ${ */}
                     <div
-                          className={`group relative p-4 md:p-5 rounded-2xl transition-all duration-200 shadow-sm border ${
-                      isUser 
-                        ? "bg-[#285d91] text-white rounded-tr-none border-[#285d91]/20 font-medium" 
-                        : "bg-[var(--app-surface-muted)] text-[var(--app-text)] rounded-tl-none border-[var(--app-border)]/40 font-normal"
-                    }`}>
-                      
+                      className={`group relative p-4 md:p-5 rounded-2xl transition-all duration-200 shadow-sm border ${isUser
+                          ? "bg-[#285d91] text-white rounded-tr-none border-[#285d91]/20 font-medium"
+                          : "bg-[var(--app-surface-muted)] text-[var(--app-text)] rounded-tl-none border-[var(--app-border)]/40 font-normal"
+                        }`}
+                    >
                       {/* Dynamic File Rendering UI Framework */}
-                      <div className="absolute -bottom-10 right-0 opacity-0 group-hover:opacity-100 transition-all duration-200 flex gap-2 z-20">
-                          <button
-                            onClick={() => handleCopyMessage(msg.content)}
-                            className="bg-neutral-800 text-white p-2 rounded-lg hover:bg-neutral-700 cursor-pointer"
-                          >
-                            <FiCopy size={14} />
-                          </button>
+                      <div className={`absolute -bottom-10 ${isUser ? "right-0" : "left-0"} opacity-0 group-hover:opacity-100 transition-all duration-200 flex gap-2 z-20`}>
+                          <Tooltip title="Copy message" placement="bottom">
+                            <button
+                              onClick={() => handleCopyMessage(msg.content)}
+                              className="text-[var(--app-text)] p-2 cursor-pointer font-bold transition-colors hover:opacity-80"
+                            >
+                              <FiCopy size={16} strokeWidth={2} />
+                            </button>
+                          </Tooltip>
 
-                          {isUser && (
-                          <button
-                            onClick={() => handleEditMessage(i, msg.content)} // <-- Ingu 'i' add seiyapattuள்ளது
-                            className="bg-neutral-800 text-white p-2 rounded-lg hover:bg-neutral-700 cursor-pointer"
-                          >
-                            <FiEdit2 size={14} />
-                          </button>
-                        )}
+                          {isUser ? (
+                            <Tooltip title="Edit message" placement="bottom">
+                              <button
+                                onClick={() => handleEditMessage(i, msg.content)}
+                                className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80"
+                              >
+                                <FiEdit2 size={16} strokeWidth={2} />
+                              </button>
+                            </Tooltip>
+                          ) : (
+                            <>
+                              <Tooltip title="Helpful" placement="bottom">
+                                <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80">
+                                  <FiThumbsUp size={16} strokeWidth={2} />
+                                </button>
+                              </Tooltip>
+                              <Tooltip title="Not helpful" placement="bottom">
+                                <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80">
+                                  <FiThumbsDown size={16} strokeWidth={2} />
+                                </button>
+                              </Tooltip>
+                              <Tooltip title="Share" placement="bottom">
+                                <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80">
+                                  <FiUpload size={16} strokeWidth={2} />
+                                </button>
+                              </Tooltip>
+                              <Tooltip title="Regenerate" placement="bottom">
+                                <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80">
+                                  <FiRotateCw size={16} strokeWidth={2} />
+                                </button>
+                              </Tooltip>
+                              {msg.sources && msg.sources.length > 0 && (
+                                <Tooltip title="View sources" placement="bottom">
+                                  <button onClick={() => handleOpenSourcesDrawer(msg.sources)} className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80">
+                                    <LuBookOpen size={16} strokeWidth={2} />
+                                  </button>
+                                </Tooltip>
+                              )}
+                            </>
+                          )}
                         </div>
                       {hasImage && (
                         <div className="mb-3 overflow-hidden rounded-xl max-w-[280px] border border-white/10 shadow-sm">
@@ -776,103 +1060,44 @@ export default function ChatPlaygroundPage() {
                         </Flex>
                       )}
 
-                      {msg.content &&                  
-                      <div 
-                        className={`text-xs md:text-sm leading-relaxed font-medium ${!isUser ? "text-[var(--app-text)]" : ""}`}
-                        style={isUser ? { color: "#ffffff", WebkitTextFillColor: "#ffffff", fontWeight: "bold" } : undefined}
-                      >
-                        {/* Inline Editing Mode checking */}
-                        {editingMessageIndex === i ? (
-                        <div className="flex flex-col gap-3 my-2 w-full animate-in fade-in duration-200">
-                          <Input.TextArea
-                            value={tempEditText}
-                            onChange={(e) => setTempEditText(e.target.value)}
-                            autoSize={{ minRows: 2, maxRows: 6 }}
-                            className="!bg-[var(--app-surface)] !text-[var(--app-text)] !border-[var(--app-border)] focus:!border-[#285d91] focus:!ring-1 focus:!ring-[#285d91] rounded-2xl p-4 shadow-sm transition-all resize-none placeholder-[var(--app-text-muted)]"
-                            placeholder="Edit your message..."
-                          />
-                          
-                          <div className="flex gap-2 justify-end">
-                            <Button 
-                              className="rounded-full border border-[var(--app-border)] text-[var(--app-text-soft)] bg-transparent hover:!bg-slate-100/10 hover:!text-[var(--app-text)] px-4 h-9 font-medium transition-all"
-                              onClick={() => setEditingMessageIndex(null)}
-                            >
-                              Cancel
-                            </Button>
-                            <Button 
-                              type="primary" 
-                              className="rounded-full !bg-[#10a37f] hover:!bg-[#0d8567] !border-none text-white px-5 h-9 font-semibold shadow-sm transition-all"
-                              onClick={() => handleSaveEdit(i)}
-                            >
-                              Save & Send
-                            </Button>
-                          </div>
-                        </div>
-                      ) : (
-                        // Normal Display Mode
-                        <span className="whitespace-pre-wrap mr-2 leading-7">{msg.content}</span>
-                      )}
-
-                        {!isUser && msg.sources && msg.sources.length > 0 && isEnabled && (
-                          <div className="flex justify-end">
-                          <span className="inline-flex items-center gap-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 px-2.5 py-0.5 rounded-full border border-neutral-700/50 shadow-sm transition-colors align-middle select-none cursor-pointer">
-                            <LuFileText size={11} className="text-[#3a7cb3]" />
-                            <span className="text-[11px] font-bold tracking-tight">
-                              {/* {msg.sources[0].fileName} */}
-                              {msg.sources[0].fileName.startsWith("http") ? (
-                                      <a
-                                        href={msg.sources[0].fileName}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-[11px] font-bold tracking-tight text-blue-400 hover:underline"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        {msg.sources[0].fileName}
-                                      </a>
-                                    ) : (
-                                      <span className="text-[11px] font-bold tracking-tight">
-                                        {msg.sources[0].fileName}
-                                      </span>
-                                    )}
-                            </span>
-
-                            {msg.sources.length > 1 && (
-                              <Tooltip
-                                title={
-                                  <div className="flex flex-col gap-1 p-1">
-                                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-300 block mb-1">Additional Sources:</span>
-                                    
-                                    {msg.sources.slice(1).map((src: any, idx: number) => (
-                                              <div
-                                                key={idx}
-                                                className="text-xs border-b border-white/10 pb-1 last:border-0"
-                                              >
-                                                {src.fileName.startsWith("http") ? (
-                                                  <a
-                                                    href={src.fileName}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="text-blue-400 hover:underline"
-                                                  >
-                                                    {src.fileName}
-                                                  </a>
-                                                ) : (
-                                                  src.fileName
-                                                )}
-                                              </div>
-                                            ))}
-                                  </div>
-                                }
-                                placement="top"
-                              >
-                                <span className="text-[10px] font-black text-neutral-400 pl-0.5">
-                                  +{msg.sources.length - 1}
-                                </span>
-                              </Tooltip>
-                            )}
-                          </span>
-                          </div>
-                        )}
+                      {msg.content &&
+                        <div
+                          className={`text-xs md:text-sm leading-relaxed font-medium ${!isUser ? "text-[var(--app-text)]" : ""}`}
+                          style={isUser ? { color: "#ffffff", WebkitTextFillColor: "#ffffff", fontWeight: "bold" } : undefined}
+                        >
+                          {/* Inline Editing Mode checking */}
+                          {editingMessageIndex === i ? (
+                            <div className="flex flex-col gap-3 my-2 animate-in fade-in duration-200">
+                              <Input.TextArea
+                                value={tempEditText}
+                                onChange={(e) => setTempEditText(e.target.value)}
+                                autoSize={{ minRows: 2, maxRows: 6 }}
+                                className="!bg-transparent !text-white !border-none !shadow-none focus:!shadow-none focus:!outline-none hover:!border-none transition-all resize-none"
+                                placeholder="Edit your message..."
+                                style={{ WebkitTextFillColor: "white", color: "white", fontWeight: "bold", boxShadow: "none" }}
+                              />
+                              <div className="flex gap-2 justify-end">
+                                <Button
+                                  className="!bg-transparent rounded-full !border-none hover:!bg-white/10 px-4 h-9 font-medium transition-all"
+                                  style={{ WebkitTextFillColor: "rgba(255,255,255,0.8)", fontWeight: "normal" ,boxShadow: "none",borderRadius: "9999px"}}
+                                  onClick={() => setEditingMessageIndex(null)}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button 
+                                  type="primary" 
+                                  className="!rounded-full !bg-[var(--neutral)] hover:opacity-90 !border-none px-5 h-9 font-semibold shadow-sm transition-all"
+                                  style={{ WebkitTextFillColor: "black", fontWeight: "bold", boxShadow: "none", borderRadius: "9999px" }}
+                                  onClick={() => handleSaveEdit(i)}
+                                >
+                                  Send
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            // Normal Display Mode
+                            <span className="whitespace-pre-wrap mr-2 leading-7">{msg.content}</span>
+                          )}
 
                         </div>}
 
@@ -893,80 +1118,7 @@ export default function ChatPlaygroundPage() {
                       )}
                     </div>
 
-                    {/* Assistant feedback row below the bubble */}
-                    {!isUser && (
-                      <div className="flex items-center gap-1 mt-1 text-[var(--app-text-muted)] text-sm opacity-0 group-hover:opacity-100 md:opacity-60 md:hover:opacity-100 transition-opacity pl-1 select-none">
-                        <Tooltip title="Copy">
-                          <Button
-                            type="text"
-                            size="small"
-                            icon={<FiCopy size={13} />}
-                            onClick={() => handleCopyMessage(msg.content)}
-                            className="hover:bg-[var(--app-hover)] text-[var(--app-text-soft)]"
-                          />
-                        </Tooltip>
-                        <Tooltip title="Good response">
-                          <Button
-                            type="text"
-                            size="small"
-                            icon={<FiThumbsUp size={13} />}
-                            className="hover:bg-[var(--app-hover)] text-[var(--app-text-soft)]"
-                          />
-                        </Tooltip>
-                        <Tooltip title="Bad response">
-                          <Button
-                            type="text"
-                            size="small"
-                            icon={<FiThumbsDown size={13} />}
-                            className="hover:bg-[var(--app-hover)] text-[var(--app-text-soft)]"
-                          />
-                        </Tooltip>
-                        <Tooltip title="Share">
-                          <Button
-                            type="text"
-                            size="small"
-                            icon={<FiUpload size={13} />}
-                            className="hover:bg-[var(--app-hover)] text-[var(--app-text-soft)]"
-                          />
-                        </Tooltip>
-                        <Tooltip title="Regenerate">
-                          <Button
-                            type="text"
-                            size="small"
-                            icon={<FiRotateCw size={13} />}
-                            className="hover:bg-[var(--app-hover)] text-[var(--app-text-soft)]"
-                          />
-                        </Tooltip>
 
-                        {msg.sources && msg.sources.length > 0 && (
-                          <Dropdown
-                            menu={{
-                              items: [
-                                {
-                                  key: "view-sources",
-                                  label: (
-                                    <span className="flex items-center gap-2 text-xs font-semibold">
-                                      <LuBookOpen size={13} className="text-[var(--app-text-soft)]" />
-                                      <span>View sources</span>
-                                    </span>
-                                  ),
-                                  onClick: () => handleOpenSourcesDrawer(msg.sources),
-                                },
-                              ],
-                            }}
-                            trigger={["click"]}
-                            placement="bottomLeft"
-                          >
-                            <Button
-                              type="text"
-                              size="small"
-                              icon={<FiMoreHorizontal size={13} />}
-                              className="hover:bg-[var(--app-hover)] text-[var(--app-text-soft)]"
-                            />
-                          </Dropdown>
-                        )}
-                      </div>
-                    )}
                   </div>
 
                 </div>
@@ -1030,12 +1182,7 @@ export default function ChatPlaygroundPage() {
             <Input.TextArea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
+              onKeyDown={handleKeyDown}
               placeholder="Type a message..."
               disabled={!agent || wsStatus !== "open"}
               bordered={false}
@@ -1063,25 +1210,26 @@ export default function ChatPlaygroundPage() {
                 </Tooltip>
               </Upload>
 
-              <Input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={agent ? `Message ${agent.name}...` : "Choose an operational agent node..."}
-                disabled={!agent || wsStatus !== "open"}
-                bordered={false}
-                className="w-full !py-2.5 !px-2 !bg-transparent !font-semibold !text-xs md:!text-sm !text-[var(--app-text)] !placeholder:text-[var(--app-text-soft)]/70 focus:outline-none"
-              />
-              
-              <Tooltip title="Press Enter to send" placement="topRight">
-                <button
-                  onClick={handleSend}
-                  disabled={!agent || (!input.trim() && !attachedFile) || wsStatus !== "open"}
-                  className="w-9 h-9 bg-[#285d91] text-white rounded-xl flex items-center justify-center hover:bg-[#1e4873] active:scale-95 disabled:opacity-20 disabled:hover:scale-100 disabled:bg-[var(--app-text-soft)]/20 transition-all shrink-0 shadow-md shadow-blue-900/10"
+              {/* Right Controls: Voice + Send */}
+              <Flex align="center" gap={8}>
+                {/* <Button
+                  type="text"
+                  icon={<FiMic className="text-xs text-[var(--app-text-soft)]" />}
+                  className="flex items-center gap-1.5 px-3 py-1.5 h-8 rounded-lg bg-[var(--app-surface)] border border-[var(--app-border)]/60 text-xs font-semibold text-[var(--app-text-soft)] hover:text-[var(--app-text)] transition-all cursor-pointer shadow-sm shrink-0"
                 >
-                  <FiSend size={15} />
-                </button>
-              </Tooltip>
+                  Voice
+                </Button> */}
+                
+                <Tooltip title="Press Enter to send" placement="topRight">
+                  <button
+                    onClick={handleSend}
+                    disabled={!agent || (!input.trim() && !attachedFile) || wsStatus !== "open"}
+                    className="w-8 h-8 bg-[#285d91] text-white rounded-lg flex items-center justify-center hover:bg-[#1e4873] active:scale-95 disabled:opacity-20 disabled:hover:scale-100 disabled:bg-[var(--app-text-soft)]/20 transition-all shrink-0 shadow-md shadow-blue-900/10 cursor-pointer"
+                  >
+                    <FiSend size={13} />
+                  </button>
+                </Tooltip>
+              </Flex>
             </Flex>
           </div>
           
