@@ -20,6 +20,7 @@
     "googleapis": "^173.0.0",
     "js-cookie": "^3.0.7",
     "lucide-react": "^1.8.0",
+    "marked": "^18.0.5",
     "next": "16.2.4",
     "next-auth": "^4.24.14",
     "react": "19.2.4",
@@ -32,6 +33,7 @@
     "react-router-dom": "^7.15.1",
     "recharts": "^3.8.1",
     "sonner": "^2.0.7",
+    "xlsx": "^0.18.5",
     "zod": "^4.3.6",
     "zustand": "^5.0.12"
   },
