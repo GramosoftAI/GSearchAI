@@ -235,7 +235,7 @@ type AgentListResponse = {
 const GragLogoAvatar = ({ size = 32 }: { size?: number }) => {
   return (
     <div 
-      className="rounded-full flex items-center justify-center bg-[#285d91] text-[#0a0f1d] shrink-0 border border-[#285d91]/20 shadow-none font-bold"
+      className="rounded-xl flex items-center justify-center bg-[#285d91] text-white shrink-0 border border-[#285d91]/20 shadow-none font-bold"
       style={{ width: `${size}px`, height: `${size}px` }}
     >
       <FaBrain size={size * 0.55} />
@@ -275,6 +275,8 @@ export default function ChatPlaygroundPage() {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [isEnabled, setIsEnabled] = useState(true);
   const wsSourcesRef = useRef<SourceMetadata[]>([]);
+  const currentSessionIdRef = useRef<string | null>(null);
+  const activeQuerySessionIdRef = useRef<string | null>(null);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [shouldLoadLatestOnFetch, setShouldLoadLatestOnFetch] = useState(false);
 
@@ -302,6 +304,23 @@ export default function ChatPlaygroundPage() {
   const [excelSheets, setExcelSheets] = useState<{ [sheetName: string]: string[][] }>({});
   const [excelSheetNames, setExcelSheetNames] = useState<string[]>([]);
   const [activeExcelSheet, setActiveExcelSheet] = useState<string>("");
+
+  const resetChatStates = () => {
+    setIsTyping(false);
+    setStreamingText("");
+    streamingTextRef.current = "";
+    setAttachedFile(null);
+    setEditingMessageIndex(null);
+    setTempEditText("");
+    setIsSourcesDrawerOpen(false);
+    setActiveSources([]);
+    setSelectedSourceForPreview(null);
+    activeQuerySessionIdRef.current = null;
+  };
+
+  useEffect(() => {
+    currentSessionIdRef.current = currentSessionId;
+  }, [currentSessionId]);
 
   function mapAgentsToList(agents: Agent[]) {
     return agents.map((agent) => ({
@@ -455,6 +474,7 @@ export default function ChatPlaygroundPage() {
     ws.current = socket;
 
     socket.onopen = () => {
+      if (ws.current !== socket) return;
       setWsStatus("open");
       console.log("opend");
       if (reconnectTimeoutRef.current) {
@@ -463,6 +483,8 @@ export default function ChatPlaygroundPage() {
     };
 
     socket.onmessage = (event) => {
+      if (ws.current !== socket) return;
+      if (activeQuerySessionIdRef.current !== currentSessionIdRef.current) return;
       const rawData = String(event.data);
       console.log("onmessage");
       if (!rawData.startsWith("{")) { //&& !rawData.startsWith("[")) rawData.length === 1 || (
@@ -549,6 +571,7 @@ export default function ChatPlaygroundPage() {
           wsSourcesRef.current = [];
           setStreamingText("");
           setIsTyping(false);
+          activeQuerySessionIdRef.current = null;
 
           if (agent) {
             (async () => {
@@ -578,6 +601,7 @@ export default function ChatPlaygroundPage() {
     };
 
     socket.onclose = () => {
+      if (ws.current !== socket) return;
       setWsStatus("closed");
       console.log("conlose");
       reconnectTimeoutRef.current = setTimeout(() => {
@@ -588,6 +612,7 @@ export default function ChatPlaygroundPage() {
     };
 
     socket.onerror = () => {
+      if (ws.current !== socket) return;
       setWsStatus("error");
     };
   }, [agent?.id]);
@@ -619,6 +644,11 @@ export default function ChatPlaygroundPage() {
       return;
     }
 
+    if (isTyping) {
+      connectWs();
+    }
+    resetChatStates();
+
     const newSessionId = `session_${Date.now()}`;
     const newSession: any = {
       id: newSessionId,
@@ -634,6 +664,11 @@ export default function ChatPlaygroundPage() {
   };
 
   const loadSession = (session: ChatSession) => {
+    if (isTyping) {
+      connectWs();
+    }
+    resetChatStates();
+
     setCurrentSessionId(session.id);
 
     const mappedMessages = (session.messages || []).map((msg: any) => {
@@ -668,6 +703,7 @@ export default function ChatPlaygroundPage() {
   };
 
   const handleAgentChange = (id: string, name: string) => {
+    resetChatStates();
     setAgent({ id, name });
     setShouldLoadLatestOnFetch(true);
   };
@@ -687,6 +723,8 @@ export default function ChatPlaygroundPage() {
     }
     
     if (userMessageIndex === -1 || !agent?.id) return;
+    
+    activeQuerySessionIdRef.current = currentSessionId;
     
     const userMsg = messages[userMessageIndex];
     
@@ -811,6 +849,7 @@ export default function ChatPlaygroundPage() {
     streamingTextRef.current = "";
     wsSourcesRef.current = [];
     setStreamingText("");
+    activeQuerySessionIdRef.current = targetSessionId;
     setIsTyping(true);
   };
 
@@ -847,6 +886,7 @@ export default function ChatPlaygroundPage() {
     }));
 
     wsSourcesRef.current = [];
+    activeQuerySessionIdRef.current = currentSessionId;
     setIsTyping(true);
   };
 

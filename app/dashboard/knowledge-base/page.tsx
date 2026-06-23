@@ -228,7 +228,7 @@ export default function KnowledgeBasePage() {
     modalTabs.push({ value: 'original', label: 'Original Document' });
   }
   if (previewItem?.parsed_path) {
-    modalTabs.push({ value: 'parsed', label: 'Extracted Text (Parsed)' });
+    modalTabs.push({ value: 'parsed', label: 'Extracted Text' });
   }
 
   return (
