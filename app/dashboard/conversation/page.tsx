@@ -1049,7 +1049,7 @@ export default function ChatPlaygroundPage() {
         {/* Sidebar Top: Operational Node / AgentList */}
         <div className="p-4 border-b border-[var(--app-border)]/40 bg-[var(--app-surface-muted)]/50">
           <span className="text-[10px] font-extrabold uppercase tracking-widest text-[var(--app-text-soft)] block mb-2 opacity-80">
-            Operational Node
+            Select Agent
           </span>
           <div className="w-full">
             <AgentList
@@ -1651,7 +1651,7 @@ export default function ChatPlaygroundPage() {
                   <div className="w-full h-full flex flex-col justify-start overflow-hidden">
                     {sourcesDrawerPreviewType === "pdf" && sourcesDrawerPreviewUrl && (
                       <iframe
-                        src={sourcesDrawerPreviewUrl}
+                        src={`${sourcesDrawerPreviewUrl}#navpanes=0`}
                         width="100%"
                         height="100%"
                         style={{ border: "none" }}

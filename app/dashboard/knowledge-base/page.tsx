@@ -1,6 +1,6 @@
 "use client"
 
-import { Button, Flex, Input, Typography, Card, Row, Col, Segmented, Modal, Spin } from 'antd'
+import { Button, Flex, Input, Typography, Card, Row, Col, Segmented, Modal, Spin, Divider } from 'antd'
 import { useState, useEffect } from 'react'
 import { Globe, FileText, Type, Upload, X } from 'lucide-react'
 import AgentList from "../../components/ui/AgentList";
@@ -640,12 +640,25 @@ export default function KnowledgeBasePage() {
           {previewTab === 'parsed' ? (
             <div className="w-full h-full overflow-hidden">
               {parsedUrl ? (
-                <iframe
-                  src={parsedUrl}
-                  width="100%"
-                  height="100%"
-                  style={{ border: "none" }}
-                />
+                <Flex gap={2} className="h-full" style={{ height: "100%" }}>
+                  <div className="w-full h-full overflow-hidden">
+                    <iframe
+                      src={previewUrl ? `${previewUrl}#navpanes=0` : ""}
+                      width="100%"
+                      height="100%"
+                      style={{ border: "none" }}
+                    />
+                  </div>
+                  <Divider type='vertical' style={{ height: '100%', margin: 0 }}/>
+                  <div className="w-full h-full overflow-hidden">
+                    <iframe
+                      src={parsedUrl}
+                      width="100%"
+                      height="100%"
+                      style={{ border: "none" }}
+                    />
+                  </div>
+                </Flex>
               ) : (
                 <div
                   className="w-full h-full overflow-y-auto p-6 markdown-content custom-scrollbar text-[var(--app-text)]"
@@ -661,7 +674,7 @@ export default function KnowledgeBasePage() {
             <div className="w-full h-full flex flex-col justify-start overflow-hidden">
               {previewUrl ? (
                 <iframe
-                  src={previewUrl}
+                  src={`${previewUrl}#navpanes=0`}
                   width="100%"
                   height="100%"
                   style={{ border: "none" }}
