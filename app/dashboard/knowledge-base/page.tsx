@@ -170,17 +170,55 @@ export default function KnowledgeBasePage() {
   const handleOpenPreview = async (item: any) => {
     setPreviewItem(item);
     setPreviewVisible(true);
-    setPreviewTab(item.s3_path ? 'original' : 'parsed');
     setPreviewUrl("");
     setParsedText("");
     setParsedUrl("");
+
+    const nameStr = (item.name || item.source || "").toLowerCase();
+    const isUrl = nameStr.includes("url") || nameStr.includes("http") || nameStr.includes("www.");
+
+    const kbId = item.id || item.kb_id;
+
+    if (isUrl) {
+      setPreviewLoading(false);
+      setPreviewTab('parsed');
+      
+      const rawSource = item.name || item.source || "";
+      let extractedUrl = "";
+      const urlMatch = rawSource.match(/(https?:\/\/[^\s]+)/i);
+      if (urlMatch) {
+        extractedUrl = urlMatch[1];
+      } else {
+        const domainMatch = rawSource.match(/([a-zA-Z0-9-]+\.[a-zA-Z]{2,}[^\s]*)/);
+        if (domainMatch) {
+          extractedUrl = "https://" + domainMatch[1];
+        } else {
+          extractedUrl = rawSource;
+        }
+      }
+
+      if (extractedUrl) {
+        window.open(extractedUrl, '_blank');
+      }
+
+      setParsedText(`### URL Source\n\nDestination URL opened in a new tab:\n\n**URL:** [${extractedUrl}](${extractedUrl})\n\nNo preview content available. Data is empty.`);
+      return;
+    }
+
+    // Set initial tab based on name and paths
+    const isText = nameStr.includes("text");
+    if (isText || (item.parsed_path && !item.s3_path)) {
+      setPreviewTab('parsed');
+    } else {
+      setPreviewTab(item.s3_path ? 'original' : 'parsed');
+    }
+
     setPreviewLoading(true);
 
     try {
       const token = getCookie("AUTH_TOKEN");
-      const kbId = item.id || item.kb_id;
 
-      // 1. Fetch Original Document as blob via backend proxy
+      // 1. Fetch Original Document as blob via backend proxy if s3_path exists
       if (item.s3_path && kbId) {
         const fetchUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL}/files/${kbId}/preview`;
         const res = await fetch(fetchUrl, {
@@ -197,7 +235,7 @@ export default function KnowledgeBasePage() {
         }
       }
 
-      // 2. Fetch Parsed Content from backend and construct local HTML blob url
+      // 2. Fetch Parsed Content from backend if parsed_path exists
       if (item.parsed_path && kbId) {
         const fetchUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL}/files/${kbId}/content`;
         const res = await fetch(fetchUrl, {
@@ -319,6 +357,50 @@ export default function KnowledgeBasePage() {
     } finally {
       setPreviewLoading(false);
     }
+  };
+
+  const handleDeleteSource = (item: any) => {
+    const kbId = item.id || item.kb_id;
+    if (!kbId) {
+      toast.error("Source ID not found");
+      return;
+    }
+
+    Modal.confirm({
+      title: 'Delete Data Source',
+      content: `Are you sure you want to delete "${item.name || item.source}"? This action cannot be undone.`,
+      okText: 'Delete',
+      okType: 'danger',
+      cancelText: 'Cancel',
+      onOk: async () => {
+        try {
+          const token = getCookie("AUTH_TOKEN");
+          const fetchUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/${kbId}`;
+          const res = await fetch(fetchUrl, {
+            method: 'DELETE',
+            headers: {
+              'Accept': 'application/json',
+              'Authorization': `Bearer ${token}`
+            }
+          });
+
+          if (res.ok) {
+            toast.success("Data source deleted successfully");
+            if (agent?.id) {
+              await agentlist({
+                path: `/agents/${agent.id}?limit=50&offset=0`,
+              });
+            }
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            toast.error(errData.message || "Failed to delete data source");
+          }
+        } catch (err) {
+          console.error("Delete error:", err);
+          toast.error("An error occurred while deleting the data source");
+        }
+      }
+    });
   };
 
   const tabs = [
@@ -867,7 +949,7 @@ export default function KnowledgeBasePage() {
                   </div>
                 </div>
 
-                <div className="shrink-0 ml-3">
+                <div className="shrink-0 ml-3 flex gap-2">
                   <Button
                     type="primary"
                     size="middle"
@@ -875,6 +957,15 @@ export default function KnowledgeBasePage() {
                     style={{ borderRadius: 6, fontSize: 12, background: "#285d91", borderColor: "#285d91" }}
                   >
                     Open
+                  </Button>
+                  <Button
+                    type="primary"
+                    danger
+                    size="middle"
+                    onClick={() => handleDeleteSource(item)}
+                    style={{ borderRadius: 6, fontSize: 12 }}
+                  >
+                    Delete
                   </Button>
                 </div>
               </div>
