@@ -396,7 +396,7 @@ export default function ChatPlaygroundPage() {
   }, []);
 
   useEffect(() => {
-    if (!agent) return;
+    if (!agent?.id) return;
     if (!initialLoadDone) return;
 
     (async () => {
@@ -415,10 +415,9 @@ export default function ChatPlaygroundPage() {
     })();
 
     return () => {
-      ws.current?.close();
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     };
-  }, [agent, initialLoadDone, shouldLoadLatestOnFetch]);
+  }, [agent?.id, initialLoadDone, shouldLoadLatestOnFetch]);
 
   // Fetch agent sources whenever the agent changes
   useEffect(() => {
@@ -573,12 +572,19 @@ export default function ChatPlaygroundPage() {
           setIsTyping(false);
           activeQuerySessionIdRef.current = null;
 
+          const backendSessionId = data.session_id || data.sessionId;
+          if (backendSessionId) {
+            setCurrentSessionId(backendSessionId);
+            currentSessionIdRef.current = backendSessionId;
+          }
+
           if (agent) {
             (async () => {
               const freshSessions = await fetchSessions(agent);
               setSessions(freshSessions);
-              if (currentSessionId && currentSessionId.startsWith("session_") && freshSessions.length > 0) {
+              if (!backendSessionId && currentSessionIdRef.current && currentSessionIdRef.current.startsWith("session_") && freshSessions.length > 0) {
                 setCurrentSessionId(freshSessions[0].id);
+                currentSessionIdRef.current = freshSessions[0].id;
               }
             })();
           }
@@ -659,6 +665,7 @@ export default function ChatPlaygroundPage() {
     };
     setSessions(prev => [newSession, ...prev]);
     setCurrentSessionId(newSessionId);
+    currentSessionIdRef.current = newSessionId;
     setMessages([]);
     setAgent(selectedAgent);
   };
@@ -670,6 +677,7 @@ export default function ChatPlaygroundPage() {
     resetChatStates();
 
     setCurrentSessionId(session.id);
+    currentSessionIdRef.current = session.id;
 
     const mappedMessages = (session.messages || []).map((msg: any) => {
       const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
@@ -697,6 +705,7 @@ export default function ChatPlaygroundPage() {
     setSessions(prev => prev.filter(s => s.id !== id));
     if (currentSessionId === id) {
       setCurrentSessionId(null);
+      currentSessionIdRef.current = null;
       setMessages([]);
       setAgent(null);
     }
@@ -733,7 +742,8 @@ export default function ChatPlaygroundPage() {
     
     ws.current?.send(JSON.stringify({
       query: userMsg.content,
-      file: userMsg.file ? { name: userMsg.file.name, type: userMsg.file.type } : null
+      file: userMsg.file ? { name: userMsg.file.name, type: userMsg.file.type } : null,
+      session_id: currentSessionId && !currentSessionId.startsWith("session_") ? currentSessionId : null
     }));
     
     wsSourcesRef.current = [];
@@ -793,6 +803,7 @@ export default function ChatPlaygroundPage() {
       };
       setSessions(prev => [newSession, ...prev]);
       setCurrentSessionId(targetSessionId);
+      currentSessionIdRef.current = targetSessionId;
     } else {
       setSessions(prev => {
         const exists = prev.some(s => s.id === targetSessionId);
@@ -841,7 +852,8 @@ export default function ChatPlaygroundPage() {
     // Dispatch structural data to active micro-orchestration node
     ws.current?.send(JSON.stringify({
       query: trimmed,
-      file: payloadFile ? { name: payloadFile.name, type: payloadFile.type } : null
+      file: payloadFile ? { name: payloadFile.name, type: payloadFile.type } : null,
+      session_id: targetSessionId && !targetSessionId.startsWith("session_") ? targetSessionId : null
     }));
 
     setInput("");
@@ -882,7 +894,8 @@ export default function ChatPlaygroundPage() {
     // 4. WebSocket-il puthu query-ai anupavum
     ws.current?.send(JSON.stringify({
       query: tempEditText.trim(),
-      file: null
+      file: null,
+      session_id: currentSessionId && !currentSessionId.startsWith("session_") ? currentSessionId : null
     }));
 
     wsSourcesRef.current = [];
@@ -1211,7 +1224,7 @@ export default function ChatPlaygroundPage() {
           placement="left"
           onClose={() => setMobileSidebarOpen(false)}
           open={mobileSidebarOpen}
-          width={260}
+          style={{ width: 260 }}
           closeIcon={null}
           styles={{
             body: { padding: 0, background: 'var(--app-surface-muted)', height: '100%' }
@@ -1523,7 +1536,7 @@ export default function ChatPlaygroundPage() {
                   onKeyDown={handleKeyDown}
                   placeholder="Type a message..."
                   disabled={!agent || wsStatus !== "open"}
-                  bordered={false}
+                  variant="borderless"
                   autoSize={{ minRows: 1, maxRows: 6 }}
                   className="w-full !p-1 !bg-transparent !font-semibold !text-xs md:!text-sm !text-[var(--app-text)] !placeholder:text-[var(--app-text-soft)]/50 focus:outline-none resize-none align-middle"
                 />
@@ -1568,8 +1581,7 @@ export default function ChatPlaygroundPage() {
           setSourcesDrawerPreviewUrl("");
         }}
         open={isSourcesDrawerOpen}
-        width={750}
-        height="100vh"
+        style={{ width: 750, height: "100vh" }}
         styles={{
           body: { padding: 0, background: "var(--app-surface)", display: "flex", height: "100%" },
         }}
