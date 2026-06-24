@@ -1,5 +1,17 @@
+import { ZodString } from "zod";
 import { Agent, AgentItem } from "../components/ui/type";
 import { create } from "zustand";
+
+export type ActiveJob = {
+    id: string;
+    name: string;
+    type: 'url' | 'pdf' | 'text';
+    progress: number;
+    status: string;
+    timeRemaining?: string;
+    current_step?: string;
+    started_at?:string
+};
 
 type StoreType = {
     userId:string;
@@ -8,8 +20,8 @@ type StoreType = {
     setAgentList:(list:AgentItem[])=>void;
     botsCache: Agent[];
     setBotsCache: (list: Agent[]) => void;
-    
-    // setUserId:(id:string)=>void;
+    activeJobs: ActiveJob[];
+    setActiveJobs: (jobs: ActiveJob[] | ((prev: ActiveJob[]) => ActiveJob[])) => void;
 }
 
 export const useStore =create<StoreType>((set,get)=>({
@@ -26,5 +38,13 @@ export const useStore =create<StoreType>((set,get)=>({
     botsCache: [],
     setBotsCache(list) {
         set({ botsCache: list });
+    },
+    activeJobs: [],
+    setActiveJobs(jobs) {
+        if (typeof jobs === 'function') {
+            set((state) => ({ activeJobs: jobs(state.activeJobs) }));
+        } else {
+            set({ activeJobs: jobs });
+        }
     },
 }))

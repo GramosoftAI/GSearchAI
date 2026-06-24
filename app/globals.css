@@ -70,3 +70,74 @@ body {
 .custom-toast-error .ant-notification-notice-close-icon {
   color: #22c55e !important;
 }
+
+/* Document Viewer styling for Extracted PDF HTML/Markdown content */
+.extracted-html-container {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.extracted-html-container h1 {
+  font-size: 1.8em;
+  margin-top: 24px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  border-bottom: 1px solid #eaecef;
+  padding-bottom: 0.3em;
+}
+
+.extracted-html-container h2 {
+  font-size: 1.4em;
+  margin-top: 24px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  border-bottom: 1px solid #eaecef;
+  padding-bottom: 0.3em;
+}
+
+.extracted-html-container h3 {
+  font-size: 1.2em;
+  margin-top: 24px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.extracted-html-container table {
+  border-collapse: collapse;
+  min-width: max-content;
+  width: max-content;
+  table-layout: auto;
+  margin-bottom: 16px;
+}
+
+/* Correctly scale nested tables within parent cells */
+.extracted-html-container table table {
+  min-width: 100%;
+  width: 100%;
+}
+
+.extracted-html-container th,
+.extracted-html-container td {
+  border: 1px solid #dcdcdc;
+  padding: 8px;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.extracted-html-container thead th {
+  position: sticky;
+  top: 0;
+  background: white;
+  z-index: 10;
+  border-bottom: 2px solid #dcdcdc;
+}
+
+.extracted-html-container img {
+  max-width: 100%;
+  height: auto;
+}

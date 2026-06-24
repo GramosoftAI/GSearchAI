@@ -1,7 +1,7 @@
 "use client"
 
-import { Button, Flex, Input, Typography, Card, Row, Col, Segmented, Modal, Spin, Divider } from 'antd'
-import { useState, useEffect } from 'react'
+import { Button, Flex, Input, Typography, Card, Row, Col, Segmented, Modal, Spin, Divider, Progress } from 'antd'
+import { useState, useEffect, useRef } from 'react'
 import { Globe, FileText, Type, Upload, X } from 'lucide-react'
 import AgentList from "../../components/ui/AgentList";
 import useAxios from '../../hooks/useAxios'
@@ -14,6 +14,7 @@ import dayjs from "dayjs";
 import Loader from '@/app/components/provider/Loder';
 import { marked } from "marked";
 import { getCookie } from "../../config/cookies";
+import { toast } from "react-hot-toast";
 
 
 const { Text, Title } = Typography
@@ -38,6 +39,107 @@ export default function KnowledgeBasePage() {
   const [request,,loading] = useAxios<unknown, Record<string, unknown> | FormData>({ endpoint: "KNOWLEDGEBASE",showSuccessMsg: true })
   const [getAgents] = useAxios<AgentListResponse>({ endpoint: "GETAGENTLIST" });
   const[agentlist,agentlistres] = useAxios<any>({endpoint:"GET_LIST"})
+
+  const activeJobs = useStore((state) => state.activeJobs);
+  const setActiveJobs = useStore((state) => state.setActiveJobs);
+  
+  const activeJobsRef = useRef(activeJobs);
+  useEffect(() => {
+    activeJobsRef.current = activeJobs;
+  }, [activeJobs]);
+
+  useEffect(() => {
+    if (activeJobs.length === 0) return;
+
+    const token = getCookie("AUTH_TOKEN");
+    
+    const interval = setInterval(async () => {
+      const currentJobs = activeJobsRef.current;
+      for (const job of currentJobs) {
+        if (job.progress >= 100 || ['completed', 'finished', 'success', 'failed', 'error'].includes(job.status)) {
+          continue;
+        }
+
+        try {
+          const fetchUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL}/jobs/${job.id}`;
+          const res = await fetch(fetchUrl, {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          });
+          
+          if (!res.ok) {
+            console.error(`Error polling job ${job.id}:`, res.status);
+            continue;
+          }
+          
+          const data = await res.json();
+          const jobObj = data?.job || data?.data?.job || data?.result?.job || data?.data || data?.result || data;
+
+          const rawStatus = jobObj?.status || "";
+          const status = rawStatus.toLowerCase();
+          
+          let rawProgress = jobObj?.progress ?? jobObj?.process ?? jobObj?.percentage ?? jobObj?.percent ?? 0;
+          
+          if (rawProgress && typeof rawProgress === 'object') {
+            const obj = rawProgress as any;
+            rawProgress = obj.progress ?? obj.process ?? obj.percentage ?? obj.percent ?? obj.value ?? obj.current ?? 0;
+          }
+
+          if (typeof rawProgress === 'string') {
+            rawProgress = parseFloat(rawProgress.replace(/[^0-9.]/g, '')) || 0;
+          }
+          
+          if (rawProgress > 0 && rawProgress <= 1.0) {
+            rawProgress = rawProgress * 100;
+          }
+          const progress = isNaN(rawProgress) ? 0 : Math.min(100, Math.max(0, Math.round(rawProgress)));
+          const timeRemaining = jobObj?.time_remaining || jobObj?.estimated_time || data?.time_remaining || data?.estimated_time;
+          const currentStep = jobObj?.current_step || data?.current_step || jobObj?.currentStep || data?.currentStep;
+          const startedAt = jobObj?.started_at || data?.started_at || jobObj?.startedAt || data?.startedAt;
+
+          setActiveJobs(prev => prev.map(j => {
+            if (j.id === job.id) {
+              return {
+                ...j,
+                progress: progress,
+                status: status || 'running',
+                timeRemaining: timeRemaining ? String(timeRemaining) : undefined,
+                current_step: currentStep ? String(currentStep) : undefined,
+                started_at: startedAt ? String(startedAt) : undefined
+              };
+            }
+            return j;
+          }));
+
+          if (status === 'finished' || status === 'completed' || status === 'success' || progress >= 100) {
+            toast.success(`Ingestion completed for: ${job.name}`);
+            
+            setTimeout(() => {
+              setActiveJobs(prev => prev.filter(j => j.id !== job.id));
+            }, 3000);
+
+            if (agent?.id) {
+              agentlist({
+                path: `/agents/${agent.id}?limit=50&offset=0`,
+              });
+            }
+          } else if (status === 'failed' || status === 'error') {
+            toast.error(`Ingestion failed for: ${job.name}`);
+            
+            setTimeout(() => {
+              setActiveJobs(prev => prev.filter(j => j.id !== job.id));
+            }, 5000);
+          }
+
+        } catch (err) {
+          console.error(`Failed polling job ${job.id}:`, err);
+        }
+      }
+    }, 13000);
+
+    return () => clearInterval(interval);
+  }, [activeJobs.length, agent?.id]);
 
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewItem, setPreviewItem] = useState<any>(null);
@@ -119,11 +221,72 @@ export default function KnowledgeBasePage() {
                 <head>
                   <meta charset="utf-8">
                   <style>
+                    html, body {
+                      margin: 0;
+                      padding: 0;
+                      width: 100%;
+                      height: 100%;
+                      overflow: auto;
+                    }
                     body {
                       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-                      padding: 24px;
+                      padding: 16px;
                       color: #1f2937;
                       line-height: 1.6;
+                      box-sizing: border-box;
+                    }
+                    h1 {
+                      font-size: 1.8em;
+                      margin-top: 24px;
+                      margin-bottom: 16px;
+                      font-weight: 600;
+                      line-height: 1.25;
+                      border-bottom: 1px solid #eaecef;
+                      padding-bottom: 0.3em;
+                    }
+                    h2 {
+                      font-size: 1.4em;
+                      margin-top: 24px;
+                      margin-bottom: 16px;
+                      font-weight: 600;
+                      line-height: 1.25;
+                      border-bottom: 1px solid #eaecef;
+                      padding-bottom: 0.3em;
+                    }
+                    h3 {
+                      font-size: 1.2em;
+                      margin-top: 24px;
+                      margin-bottom: 16px;
+                      font-weight: 600;
+                      line-height: 1.25;
+                    }
+                    table {
+                      border-collapse: collapse;
+                      min-width: max-content;
+                      width: max-content;
+                      table-layout: auto;
+                      margin-bottom: 16px;
+                    }
+                    table table {
+                      min-width: 100%;
+                      width: 100%;
+                    }
+                    th, td {
+                      border: 1px solid #dcdcdc;
+                      padding: 8px;
+                      white-space: nowrap;
+                      vertical-align: top;
+                    }
+                    thead th {
+                      position: sticky;
+                      top: 0;
+                      background: white;
+                      z-index: 10;
+                      border-bottom: 2px solid #dcdcdc;
+                    }
+                    img {
+                      max-width: 100%;
+                      height: auto;
                     }
                     pre {
                       background: #f3f4f6;
@@ -190,7 +353,17 @@ export default function KnowledgeBasePage() {
     }
 
     if (activeTab === 'url') {
-      await request({ data: { agent_id: agent.id, agent_name: agent.name, url }, path: `/${agent.id}/sources/url` })
+      const res = await request({ data: { agent_id: agent.id, agent_name: agent.name, url }, path: `/${agent.id}/sources/url` }) as any
+      const jobId = res?.jobId || res?.job_id || res?.data?.jobId || res?.data?.job_id || res?.result?.jobId || res?.result?.job_id;
+      if (jobId) {
+        setActiveJobs(prev => [...prev, {
+          id: jobId,
+          name: url,
+          type: 'url',
+          progress: 0,
+          status: 'pending'
+        }]);
+      }
       await agentlist({
         path: `/agents/${agent.id}?limit=50&offset=0`,
       });
@@ -204,18 +377,36 @@ export default function KnowledgeBasePage() {
       formData.append('agent_id', agent.id)
       formData.append('agent_name', agent.name)
       formData.append('file', selectedFile)
-      await request({ data: formData, path: `/${agent.id}/sources/pdf`, isFormData: true, transformRequest: [(data: unknown) => data] })
+      const res = await request({ data: formData, path: `/${agent.id}/sources/pdf`, isFormData: true, transformRequest: [(data: unknown) => data] }) as any
+      const jobId = res?.jobId || res?.job_id || res?.data?.jobId || res?.data?.job_id || res?.result?.jobId || res?.result?.job_id;
+      if (jobId) {
+        setActiveJobs(prev => [...prev, {
+          id: jobId,
+          name: selectedFile.name,
+          type: 'pdf',
+          progress: 0,
+          status: 'pending'
+        }]);
+      }
       await agentlist({
         path: `/agents/${agent.id}?limit=50&offset=0`,
       });
       setSelectedFile(null)
-      
-      
       return
     }
 
     if (activeTab === 'text') {
-      await request({ data: { agent_id: agent.id, agent_name: agent.name, text: textContent }, path: `/${agent.id}/sources` })
+      const res = await request({ data: { agent_id: agent.id, agent_name: agent.name, text: textContent }, path: `/${agent.id}/sources` }) as any
+      const jobId = res?.jobId || res?.job_id || res?.data?.jobId || res?.data?.job_id || res?.result?.jobId || res?.result?.job_id;
+      if (jobId) {
+        setActiveJobs(prev => [...prev, {
+          id: jobId,
+          name: textContent.slice(0, 30) + (textContent.length > 30 ? '...' : ''),
+          type: 'text',
+          progress: 0,
+          status: 'pending'
+        }]);
+      }
       await agentlist({
         path: `/agents/${agent.id}?limit=50&offset=0`,
       });
@@ -521,6 +712,106 @@ export default function KnowledgeBasePage() {
           </Flex>
         </Card>
 
+        {/* Ingestion Progress Panel */}
+        {activeJobs.length > 0 && (
+          <Card
+            bordered
+            style={{
+              background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01))',
+              borderColor: 'var(--app-border)',
+              borderRadius: 12,
+              backdropFilter: 'blur(10px)',
+              boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.1)'
+            }}
+            styles={{ body: { padding: '20px' } }}
+          >
+            <Flex vertical gap={16}>
+              <div className="flex items-center justify-between">
+                <Flex align="center" gap={8}>
+                  <Spin size="small" />
+                  <Text strong style={{ color: 'var(--app-text)', fontSize: 16 }}>
+                    {activeJobs.map((job) => job.current_step || 'Ingesting Data Sources...').join(', ')}
+                  </Text>
+                </Flex>
+                <Text style={{ color: 'var(--app-text-muted)', fontSize: 12 }}>
+                  Start At : {activeJobs.map((job) => job.started_at ? dayjs(job.started_at).format('DD-MM-YYYY HH:mm:ss') : 'Pending').join(', ')}
+                </Text>
+              </div>
+
+              <div className="grid gap-4">
+                {activeJobs.map((job) => (
+                  <div 
+                    key={job.id} 
+                    style={{ 
+                      background: 'rgba(255, 255, 255, 0.02)',
+                      border: '1px solid rgba(255, 255, 255, 0.05)',
+                      borderRadius: 8,
+                      padding: '12px 16px'
+                    }}
+                  >
+                    <Flex vertical gap={8}>
+                      <Flex align="center" justify="space-between" wrap gap={8}>
+                        <Flex align="center" gap={8} className="min-w-0 flex-1">
+                          {job.type === 'url' && <Globe size={16} color="var(--app-primary)" />}
+                          {job.type === 'pdf' && <FileText size={16} color="var(--app-primary)" />}
+                          {job.type === 'text' && <Type size={16} color="var(--app-primary)" />}
+                          <Text strong className="truncate text-sm text-[var(--app-text)] flex-1">
+                            {job.name}
+                          </Text>
+                        </Flex>
+                        <Flex align="center" gap={8} className="shrink-0">
+                          <span 
+                            style={{ 
+                              fontSize: 11, 
+                              fontWeight: 600,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.05em',
+                              padding: '2px 8px',
+                              borderRadius: 12,
+                              background: job.status === 'completed' || job.status === 'success' || job.status === 'finished'
+                                ? 'rgba(34, 197, 94, 0.15)' 
+                                : (job.status === 'failed' || job.status === 'error' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(59, 130, 246, 0.15)'),
+                              color: job.status === 'completed' || job.status === 'success' || job.status === 'finished'
+                                ? '#4ade80' 
+                                : (job.status === 'failed' || job.status === 'error' ? '#f87171' : '#60a5fa')
+                            }}
+                          >
+                            {job.status}
+                          </span>
+                          <Text style={{ color: 'var(--app-text-muted)', fontSize: 13, fontWeight: 600 }}>
+                            {job.progress}%
+                          </Text>
+                        </Flex>
+                      </Flex>
+
+                      <Progress 
+                        percent={job.progress} 
+                        status={
+                          job.status === 'failed' || job.status === 'error' 
+                            ? 'exception' 
+                            : (job.status === 'completed' || job.status === 'success' || job.status === 'finished' ? 'success' : 'active')
+                        }
+                        strokeColor={
+                          job.status === 'failed' || job.status === 'error'
+                            ? '#f87171'
+                            : (job.status === 'completed' || job.status === 'success' || job.status === 'finished' ? '#4ade80' : 'var(--app-primary)')
+                        }
+                        showInfo={false}
+                        size="small"
+                      />
+
+                      {job.timeRemaining && (
+                        <Text style={{ color: 'var(--app-text-soft)', fontSize: 11 }}>
+                          Estimated time remaining: {job.timeRemaining}
+                        </Text>
+                      )}
+                    </Flex>
+                  </div>
+                ))}
+              </div>
+            </Flex>
+          </Card>
+        )}
         {/* Data Sources Overview Table Section */}
         <Card 
           bordered 
@@ -624,8 +915,9 @@ export default function KnowledgeBasePage() {
       }}
       footer={null}
       width={1200}
+      style={{ top: 20 }}
       styles={{
-        body: { padding: 12, height: "70vh", display: "flex", flexDirection: "column", background: "var(--app-surface-muted)" }
+        body: { padding: 12, height: "85vh", display: "flex", flexDirection: "column", background: "var(--app-surface-muted)" }
       }}
     >
       {previewLoading ? (
@@ -660,14 +952,16 @@ export default function KnowledgeBasePage() {
                   </div>
                 </Flex>
               ) : (
-                <div
-                  className="w-full h-full overflow-y-auto p-6 markdown-content custom-scrollbar text-[var(--app-text)]"
-                  dangerouslySetInnerHTML={{
-                    __html: parsedText
-                      ? (typeof marked === 'function' ? (marked as any)(parsedText) : (marked as any).parse(parsedText))
-                      : "<p style='color: var(--app-text-muted)'>No extracted text content available.</p>"
-                  }}
-                />
+                <div className="w-full h-full overflow-auto extracted-html-container">
+                  <div
+                    className="markdown-content text-[var(--app-text)]"
+                    dangerouslySetInnerHTML={{
+                      __html: parsedText
+                        ? (typeof marked === 'function' ? (marked as any)(parsedText) : (marked as any).parse(parsedText))
+                        : "<p style='color: var(--app-text-muted)'>No extracted text content available.</p>"
+                    }}
+                  />
+                </div>
               )}
             </div>
           ) : (
