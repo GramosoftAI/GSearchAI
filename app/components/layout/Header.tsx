@@ -80,7 +80,7 @@ export default function Header() {
   }, []);
 
   return (
-    <header className="sticky top-0 z-[40] w-full h-24 flex flex-col justify-center bg-[var(--app-surface)]/80 backdrop-blur-xl border-b border-[var(--app-border)] px-6 md:px-10 transition-all">
+    <header className="sticky top-0 z-[50] w-full h-24 flex flex-col justify-center bg-[var(--app-surface)]/80 backdrop-blur-xl border-b border-[var(--app-border)] px-6 md:px-10 transition-all">
       <div className="flex items-center justify-between w-full max-w-[1600px] mx-auto gap-4">
         
         {/* LEFT SIDE: Workspace Info */}

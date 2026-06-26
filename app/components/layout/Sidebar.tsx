@@ -58,7 +58,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           </div>
           {!collapsed && (
             <span className="text-[var(--app-text)] text-2xl font-black tracking-tighter leading-none">
-              GRAG
+              Gsearch AI
             </span>
           )}
         </div>

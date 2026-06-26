@@ -192,7 +192,7 @@ export default function WidgetPage() {
 
             <div>
               <div style={{ fontWeight: 600, fontSize: "15px", color: "#171717", display: "flex", alignItems: "center", gap: "6px" }}>
-                GRAG 
+                Gsearch AI
                 <span style={{ fontSize: "10px", color: wsStatus === "open" ? "#22c55e" : "#ef4444" }}>●</span>
               </div>
               <div style={{ fontSize: "12px", color: "#737373" }}>
@@ -232,7 +232,7 @@ export default function WidgetPage() {
                 }}
               >
                 <div style={{ fontSize: "11px", color: "#a3a3a3", marginBottom: "4px" }}>
-                  {isUser ? "You" : "GRAG • AI Agent"}
+                  {isUser ? "You" : "Gsearch • AI Agent"}
                 </div>
 
                 <div
@@ -257,7 +257,7 @@ export default function WidgetPage() {
           {/* Typing Indicator */}
           {isTyping && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-              <div style={{ fontSize: "11px", color: "#a3a3a3", marginBottom: "4px" }}>GRAG is typing...</div>
+              <div style={{ fontSize: "11px", color: "#a3a3a3", marginBottom: "4px" }}>Gsearch is typing...</div>
               <div style={{ padding: "12px 16px", borderRadius: "18px", background: "#ffffff", border: "1px solid #e4e4e7", display: "flex", gap: "4px" }}>
                 <span className="typing-dot"></span>
                 <span className="typing-dot"></span>

@@ -6,9 +6,12 @@ import styles from './AgentList.module.css'
 interface AgentListProps {
   selectedId?: string
   onChange: (id: string, name: string) => void
+  style?: React.CSSProperties
+  size?: "small" | "middle" | "large"
+  className?: string
 }
 
-export default function AgentList({ selectedId, onChange }: AgentListProps) {
+export default function AgentList({ selectedId, onChange, style, size = "middle", className }: AgentListProps) {
   const { agents: agentList } = useAgents();
 
   function handleChange(value: string) {
@@ -16,14 +19,17 @@ export default function AgentList({ selectedId, onChange }: AgentListProps) {
     if (found) onChange(found.id, found.name)
   }
 
+  const defaultStyle = { width: 160, ...style };
+
   return (
-    <div className={styles.dropdownWrapper}>
+    <div className={`${styles.dropdownWrapper} ${className || ""}`} style={defaultStyle}>
       <Select
-        size="middle"
+        size={size}
         value={selectedId ?? undefined}
         onChange={handleChange}
         placeholder="Select agent"
-        style={{ width: 160 }} // ✅ removed backgroundColor here
+        style={{ width: '100%', height: '100%' }}
+        getPopupContainer={(triggerNode) => triggerNode.parentNode}
         classNames={{
           popup: { root: styles.dropdown },
         }}

@@ -147,9 +147,11 @@ export default function EmbedScriptSection() {
                 Add this snippet to your website <code className="bg-[var(--app-surface-muted)] px-1 py-0.5 rounded text-xs">&lt;body&gt;</code> element to initialize the chat instance.
               </Text>
             </div>
-            <div className="scale-90 md:scale-100 origin-right w-full sm:w-auto !h-12 !px-6 ">
+            <div className="w-full sm:w-auto flex items-center">
               <AgentList
                 selectedId={agent?.id}
+                size="large"
+                style={{ width: 220, height: 48 }}
                 onChange={(id: string, name: string) => {
                   const existing = sessions.find((s) => s.agentId === id);
                   if (existing) loadSession(existing);

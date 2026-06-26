@@ -1,9 +1,18 @@
 /* AgentList.module.css */
 
+.dropdownWrapper {
+  display: inline-block;
+  position: relative;
+}
+
 /* Trigger box */
 .dropdownWrapper :global(.ant-select-selector) {
   background-color: var(--app-surface) !important;
   border-color: var(--app-border) !important;
+  border-radius: 12px !important;
+  height: 100% !important;
+  display: flex !important;
+  align-items: center !important;
 }
 
 /* ✅ Direct global override — catches placeholder regardless of state */

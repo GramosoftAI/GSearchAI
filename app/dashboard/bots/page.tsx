@@ -10,10 +10,14 @@ import {
   CheckCircleOutlined, ClockCircleOutlined, InfoCircleOutlined, SearchOutlined
 } from "@ant-design/icons";
 import { useEffect, useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import useAxios from "../../hooks/useAxios";
 import { useAgents } from "../../hooks/useAgents";
 import { useStore } from "../../hooks/useStore";
 import type { Agent } from "../../components/ui/type";
+import { getCookie } from "../../config/cookies";
+import { toast } from "react-hot-toast";
+import { SYSTEM_PROMPT } from "./text";
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -26,15 +30,17 @@ type AgentListResponse = {
   };
 };
 
-function AgentCard({ agent, onManage, onSettings }: { 
+function AgentCard({ agent, onManage, onSettings, onClick }: { 
   agent: any; 
   onManage: (agent: any) => void;
   onSettings: (agent: any) => void;
+  onClick?: () => void;
 }) {
   return (
     <Card 
       hoverable
-      className="group relative overflow-hidden bg-[var(--app-surface)] border border-[var(--app-border)] rounded-[32px] transition-all duration-500 hover:shadow-[0_20px_50px_rgba(40,93,145,0.08)] hover:-translate-y-1"
+      onClick={onClick}
+      className="group relative overflow-hidden bg-[var(--app-surface)] border border-[var(--app-border)] rounded-[32px] transition-all duration-500 hover:shadow-[0_20px_50px_rgba(40,93,145,0.08)] hover:-translate-y-1 cursor-pointer"
       styles={{ body: { padding: 32 } }}
     >
       {/* Visual Accent */}
@@ -135,6 +141,7 @@ function EmptyState({ onDeploy }: { onDeploy: () => void }) {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function BotsPage() {
+  const router = useRouter();
   const { agents, fetchAgents, isLoading: loading } = useAgents();
   const [getAgents] = useAxios<AgentListResponse>({ endpoint: "GETAGENTLIST", hideErrorMsg: true });
   const [createAgent,getcreateAgent , creating] = useAxios({ endpoint: "CREATEAGENT", showSuccessMsg: true });
@@ -162,6 +169,37 @@ export default function BotsPage() {
   
   // NEW: State for handling agent search
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [checkingKb, setCheckingKb] = useState(false);
+  const [noKbModalOpen, setNoKbModalOpen] = useState(false);
+
+  const handleAgentClick = async (agent: any) => {
+    setCheckingKb(true);
+    try {
+      const token = getCookie("AUTH_TOKEN");
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
+      const res = await fetch(`${API_BASE_URL}/knowledge-bases/agents/${agent.id}?limit=50&offset=0`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        const payload = await res.json();
+        const sources = payload?.data?.sources ?? payload?.data?.kbs ?? payload?.sources ?? payload?.kbs ?? payload ?? [];
+        if (Array.isArray(sources) && sources.length > 0) {
+          router.push(`/dashboard/conversation?agentId=${agent.id}`);
+        } else {
+          setNoKbModalOpen(true);
+        }
+      } else {
+        router.push(`/dashboard/conversation?agentId=${agent.id}`);
+      }
+    } catch (err) {
+      console.error("Knowledge base validation failed:", err);
+      router.push(`/dashboard/conversation?agentId=${agent.id}`);
+    } finally {
+      setCheckingKb(false);
+    }
+  };
 
   function mapAgentsToList(agents: Agent[]) {
     return agents.map((agent) => ({
@@ -240,10 +278,14 @@ export default function BotsPage() {
   };
 
   const openManageModal = (agent: any) => {
-    setSelectedAgent(agent);
+    const fullAgent = agentresp?.find(
+      (x: any) => x.id === agent.id
+    ) || agent;
+    setSelectedAgent(fullAgent);
     manageForm.setFieldsValue({
-      personality: agent.personality || "Concise",
-      system_prompt: agent.system_prompt || ""
+      name: fullAgent.name || "",
+      personality: fullAgent.personality || "Concise",
+      system_prompt: fullAgent.system_prompt || ""
     });
     setIsManageModalOpen(true);
   };
@@ -285,14 +327,19 @@ export default function BotsPage() {
         centered
         styles={{ body: { borderRadius: 32, padding: 32, background: 'var(--app-surface)' } }}
       >
-        <Form form={form} layout="vertical" onFinish={handleCreate} className="mt-6" initialValues={{ personality: "Concise" }}>
+        <Form form={form} layout="vertical" onFinish={handleCreate} className="mt-6" initialValues={{ personality: "Concise",system_prompt:SYSTEM_PROMPT}}>
           <Form.Item
             name="name"
             label={<Text className="font-black text-[10px] uppercase tracking-widest text-[var(--app-text-soft)]">Agent Name</Text>}
-            rules={[{ required: true, message: 'Please enter agent name' }]}
+            rules={[
+              { required: true, message: 'Please enter agent name' },
+              { max: 50, message: 'Agent name must be 50 characters or less' }
+            ]}
           >
             <Input 
               placeholder="e.g. Resume Analyzer" 
+              maxLength={50}
+              showCount
               className="h-14 !rounded-2xl !bg-[var(--app-surface-muted)] !border-none font-bold text-[var(--app-text)]" 
             />
           </Form.Item>
@@ -310,12 +357,18 @@ export default function BotsPage() {
           </Form.Item>
           
           <Form.Item
-            name="description"
-            label={<Text className="font-black text-[10px] uppercase tracking-widest text-[var(--app-text-soft)]">Mission Description</Text>}
+            name="system_prompt"
+            label={<Text className="font-black text-[10px] uppercase tracking-widest text-[var(--app-text-soft)]">System Instruction Prompt</Text>}
+            rules={[
+              { max: 1000, message: 'System Instruction Prompt must be 1000 characters or less' }
+            ]}
           >
             <TextArea 
               rows={4} 
               placeholder="Describe the specialized tasks and knowledge areas for this agent..." 
+              defaultValue=""
+              maxLength={6000}
+              showCount
               className="!rounded-2xl !bg-[var(--app-surface-muted)] !border-none font-bold text-[var(--app-text)]" 
             />
           </Form.Item>
@@ -406,6 +459,43 @@ export default function BotsPage() {
         </div>
       </Modal>
 
+      {/* No Knowledge Base Modal */}
+      <Modal
+        title={
+          <Flex align="center" gap={12}>
+            <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center text-xl">
+              <InfoCircleOutlined />
+            </div>
+            <Title level={4} className="!m-0 !text-[var(--app-text)] !font-black tracking-tight">
+              Knowledge Base Required
+            </Title>
+          </Flex>
+        }
+        open={noKbModalOpen}
+        onCancel={() => setNoKbModalOpen(false)}
+        footer={null}
+        centered
+        styles={{ body: { borderRadius: 32, padding: 32, background: 'var(--app-surface)' } }}
+      >
+        <div className="mt-6 space-y-6">
+          <Text className="text-[var(--app-text-soft)] font-bold text-sm block leading-relaxed">
+            This agent does not have any sources in the knowledge base. Please add a source first to enable conversations.
+          </Text>
+          
+          <Button 
+            type="primary" 
+            block 
+            onClick={() => {
+              setNoKbModalOpen(false);
+              router.push("/dashboard/knowledge-base");
+            }}
+            className="h-14 !rounded-2xl !bg-[#285d91] !border-none !font-black !uppercase !tracking-widest"
+          >
+            OK
+          </Button>
+        </div>
+      </Modal>
+
       {/* Manage/Edit Modal */}
       <Modal
         title={
@@ -427,6 +517,22 @@ export default function BotsPage() {
       >
         <Form form={manageForm} layout="vertical" onFinish={handleUpdate} className="mt-6">
           <Form.Item
+            name="name"
+            label={<Text className="font-black text-[10px] uppercase tracking-widest text-[var(--app-text-soft)]">Agent Name</Text>}
+            rules={[
+              { required: true, message: 'Please enter agent name' },
+              { max: 50, message: 'Agent name must be 50 characters or less' }
+            ]}
+          >
+            <Input 
+              placeholder="e.g. Resume Analyzer" 
+              maxLength={50}
+              showCount
+              className="h-14 !rounded-2xl !bg-[var(--app-surface-muted)] !border-none font-bold text-[var(--app-text)]" 
+            />
+          </Form.Item>
+
+          <Form.Item
             name="personality"
             label={<Text className="font-black text-[10px] uppercase tracking-widest text-[var(--app-text-soft)]">Agent Personality</Text>}
           >
@@ -441,10 +547,15 @@ export default function BotsPage() {
           <Form.Item
             name="system_prompt"
             label={<Text className="font-black text-[10px] uppercase tracking-widest text-[var(--app-text-soft)]">System Instruction Prompt</Text>}
+            rules={[
+              { max: 1000, message: 'System Instruction Prompt must be 1000 characters or less' }
+            ]}
           >
             <TextArea 
               rows={6} 
               placeholder="Always be very brief..." 
+              maxLength={5000}
+              showCount
               className="!rounded-2xl !bg-[var(--app-surface-muted)] !border-none font-bold text-[var(--app-text)]" 
             />
           </Form.Item>
@@ -465,7 +576,7 @@ export default function BotsPage() {
                 loading={deleting}
                 className="h-16 flex-1 !rounded-2xl !font-black !text-sm !uppercase !tracking-widest transition-all"
               >
-                Purge Agent
+                Delete Agent
               </Button>
             </Popconfirm>
 
@@ -535,7 +646,8 @@ export default function BotsPage() {
                 <AgentCard 
                   agent={agent} 
                   onManage={openManageModal} 
-                  onSettings={openDetailsModal} 
+                  onSettings={openDetailsModal}
+                  onClick={() => handleAgentClick(agent)}
                 />
               </Col>
             ))}
@@ -559,7 +671,7 @@ export default function BotsPage() {
       )}
 
       {/* Loading Overlay */}
-      {(loading || deleting || updating) && (
+      {(loading || deleting || updating || checkingKb) && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent backdrop-blur-md transition-all duration-500">
            <div className="relative flex flex-col items-center gap-4 animate-in zoom-in-95 duration-500">
               <div className="relative">
@@ -567,7 +679,7 @@ export default function BotsPage() {
                 <RobotOutlined className="text-5xl text-[#285d91] relative z-10 animate-bounce" />
               </div>
               <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[#285d91] text-center opacity-80">
-                {deleting ? "Purging Entity..." : updating ? "Upgrading Neural Link..." : "Syncing Squad"}
+                {deleting ? "Purging Entity..." : updating ? "Upgrading Neural Link..." : checkingKb ? "Checking Knowledge Base..." : "Syncing Squad"}
               </p>
            </div>
         </div>

@@ -2,13 +2,13 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #111827;
+  --foreground: #000000;
   --app-surface: #ffffff;
-  --app-surface-muted: #fffff;
+  --app-surface-muted: #ffffff;
   --app-border: #e2e8f0;
-  --app-text: #111827;
-  --app-text-muted: #64748b;
-  --app-text-soft: #94a3b8;
+  --app-text: #000000;
+  --app-text-muted: #000000;
+  --app-text-soft: #000000;
   --app-primary: #10b981;
   --app-on-primary: #ffffff;
   --app-active-bg: #ecfdf5;
@@ -25,13 +25,13 @@
 
 :root[data-theme="dark"] {
   --background: #03071a;
-  --foreground: #e2e8f0;
+  --foreground: #ffffff;
   --app-surface: #0f172a;
   --app-surface-muted: #020617;
   --app-border: #1e293b;
-  --app-text: #e2e8f0;
-  --app-text-muted: #94a3b8;
-  --app-text-soft: #64748b;
+  --app-text: #ffffff;
+  --app-text-muted: #ffffff;
+  --app-text-soft: #ffffff;
   --app-primary: #34d399;
   --app-on-primary: #052e2b;
   --app-active-bg: #12352f;

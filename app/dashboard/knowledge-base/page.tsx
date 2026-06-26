@@ -2,7 +2,7 @@
 
 import { Button, Flex, Input, Typography, Card, Row, Col, Segmented, Modal, Spin, Divider, Progress } from 'antd'
 import { useState, useEffect, useRef } from 'react'
-import { Globe, FileText, Type, Upload, X } from 'lucide-react'
+import { Globe, FileText, Type, Upload, X, Image as ImageIcon } from 'lucide-react'
 import AgentList from "../../components/ui/AgentList";
 import useAxios from '../../hooks/useAxios'
 import type { Agent } from "../../components/ui/type";
@@ -16,6 +16,17 @@ import { marked } from "marked";
 import { getCookie } from "../../config/cookies";
 import { toast } from "react-hot-toast";
 
+// Allowed file types for knowledge base uploads
+const ALLOWED_EXTENSIONS = ['.pdf', '.csv', '.xls', '.xlsx', '.png', '.jpg', '.jpeg', '.gif', '.webp'];
+
+function getFileExtension(fileName: string): string {
+  const idx = fileName.lastIndexOf('.');
+  return idx >= 0 ? fileName.slice(idx).toLowerCase() : '';
+}
+
+function validateFileType(file: File): boolean {
+  return ALLOWED_EXTENSIONS.includes(getFileExtension(file.name));
+}
 
 const { Text, Title } = Typography
 const { TextArea } = Input
@@ -26,6 +37,159 @@ type AgentListResponse = {
   };
 };
 
+
+function parsePythonDict(str: string): any {
+  let i = 0;
+  const len = str.length;
+
+  function skipWhitespace() {
+    while (i < len && /\s/.test(str[i])) {
+      i++;
+    }
+  }
+
+  function parseValue(): any {
+    skipWhitespace();
+    if (i >= len) return null;
+
+    const char = str[i];
+
+    // Parse String
+    if (char === "'" || char === '"') {
+      const quoteChar = char;
+      i++; // skip quote
+      let val = "";
+      while (i < len) {
+        if (str[i] === "\\") {
+          i++;
+          if (i < len) {
+            const nextChar = str[i];
+            if (nextChar === "n") val += "\n";
+            else if (nextChar === "t") val += "\t";
+            else if (nextChar === "r") val += "\r";
+            else if (nextChar === "b") val += "\b";
+            else if (nextChar === "f") val += "\f";
+            else val += nextChar;
+            i++;
+          }
+        } else if (str[i] === quoteChar) {
+          i++; // skip close quote
+          return val;
+        } else {
+          val += str[i];
+          i++;
+        }
+      }
+      return val;
+    }
+
+    // Parse Object / Dict
+    if (char === "{") {
+      i++; // skip '{'
+      const obj: any = {};
+      while (i < len) {
+        skipWhitespace();
+        if (str[i] === "}") {
+          i++;
+          return obj;
+        }
+        const key = parseValue();
+        skipWhitespace();
+        if (str[i] !== ":") {
+          return obj;
+        }
+        i++; // skip ':'
+        const val = parseValue();
+        obj[key] = val;
+        skipWhitespace();
+        if (str[i] === ",") {
+          i++; // skip ','
+        }
+      }
+      return obj;
+    }
+
+    // Parse List
+    if (char === "[") {
+      i++; // skip '['
+      const arr: any[] = [];
+      while (i < len) {
+        skipWhitespace();
+        if (str[i] === "]") {
+          i++;
+          return arr;
+        }
+        const val = parseValue();
+        arr.push(val);
+        skipWhitespace();
+        if (str[i] === ",") {
+          i++; // skip ','
+        }
+      }
+      return arr;
+    }
+
+    // Parse True, False, None, or numbers
+    let word = "";
+    while (i < len && /[a-zA-Z0-9_\.\+-]/.test(str[i])) {
+      word += str[i];
+      i++;
+    }
+
+    if (word === "True") return true;
+    if (word === "False") return false;
+    if (word === "None") return null;
+
+    const num = Number(word);
+    if (!isNaN(num)) return num;
+
+    return word;
+  }
+
+  try {
+    return parseValue();
+  } catch (e) {
+    console.error("Failed to parse Python dict:", e);
+    return null;
+  }
+}
+
+function cleanExtractedText(raw: string): string {
+  if (!raw) return "";
+  
+  let processed = raw.trim();
+  
+  if (processed.startsWith("{") && processed.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(processed);
+      if (parsed) {
+        processed = parsed.markdown || parsed.text || parsed.content || processed;
+      }
+    } catch (jsonErr) {
+      try {
+        const parsed = parsePythonDict(processed);
+        if (parsed) {
+          processed = parsed.markdown || parsed.text || parsed.content || processed;
+        }
+      } catch (pyErr) {
+        console.error("Failed to parse as Python dict:", pyErr);
+      }
+    }
+  }
+
+  if (typeof processed !== "string") {
+    processed = String(processed);
+  }
+
+  processed = processed
+    .replace(/\\n/g, "\n")
+    .replace(/\\t/g, "\t")
+    .replace(/\\r/g, "\r")
+    .replace(/\\'/g, "'")
+    .replace(/\\"/g, '"');
+
+  return processed;
+}
 
 export default function KnowledgeBasePage() {
   const router = useRouter();
@@ -148,6 +312,10 @@ export default function KnowledgeBasePage() {
   const [parsedText, setParsedText] = useState<string>("");
   const [parsedUrl, setParsedUrl] = useState<string>("");
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewType, setPreviewType] = useState<string>("other");
+  const [excelSheets, setExcelSheets] = useState<{ [sheetName: string]: string[][] }>({});
+  const [excelSheetNames, setExcelSheetNames] = useState<string[]>([]);
+  const [activeExcelSheet, setActiveExcelSheet] = useState<string>("");
 
   const sourcesList = Array.isArray(agentlistres)
     ? agentlistres
@@ -173,6 +341,10 @@ export default function KnowledgeBasePage() {
     setPreviewUrl("");
     setParsedText("");
     setParsedUrl("");
+    setPreviewType("other");
+    setExcelSheets({});
+    setExcelSheetNames([]);
+    setActiveExcelSheet("");
 
     const nameStr = (item.name || item.source || "").toLowerCase();
     const isUrl = nameStr.includes("url") || nameStr.includes("http") || nameStr.includes("www.");
@@ -207,10 +379,11 @@ export default function KnowledgeBasePage() {
 
     // Set initial tab based on name and paths
     const isText = nameStr.includes("text");
-    if (isText || (item.parsed_path && !item.s3_path)) {
+    const isPdf = nameStr.endsWith(".pdf");
+    if (isPdf && (isText || (item.parsed_path && !item.s3_path))) {
       setPreviewTab('parsed');
     } else {
-      setPreviewTab(item.s3_path ? 'original' : 'parsed');
+      setPreviewTab('original');
     }
 
     setPreviewLoading(true);
@@ -230,13 +403,49 @@ export default function KnowledgeBasePage() {
           const blob = await res.blob();
           const bUrl = URL.createObjectURL(blob);
           setPreviewUrl(bUrl);
+
+          const contentType = blob.type.toLowerCase();
+          const isPDF = contentType.includes("pdf") || nameStr.endsWith(".pdf");
+          const isImage = contentType.includes("image/") || nameStr.endsWith(".png") || nameStr.endsWith(".jpg") || nameStr.endsWith(".jpeg") || nameStr.endsWith(".webp") || nameStr.endsWith(".gif");
+          const isCSV = contentType.includes("csv") || nameStr.endsWith(".csv");
+          const isExcel = contentType.includes("excel") || contentType.includes("spreadsheet") ||
+            contentType.includes("vnd.ms-excel") || contentType.includes("vnd.openxmlformats-officedocument.spreadsheetml.sheet") ||
+            nameStr.endsWith(".xls") || nameStr.endsWith(".xlsx");
+
+          if (isPDF) {
+            setPreviewType("pdf");
+          } else if (isImage) {
+            setPreviewType("image");
+          } else if (isCSV || isExcel) {
+            setPreviewType(isCSV ? "csv" : "excel");
+            const arrayBuffer = await blob.arrayBuffer();
+            const XLSX = await import("xlsx");
+            const workbook = XLSX.read(arrayBuffer, { type: "array" });
+
+            const sheetsData: { [sheetName: string]: string[][] } = {};
+            workbook.SheetNames.forEach((sheetName) => {
+              const worksheet = workbook.Sheets[sheetName];
+              const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+              sheetsData[sheetName] = jsonData.map((row: any) =>
+                Array.isArray(row)
+                  ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+                  : []
+              );
+            });
+
+            setExcelSheets(sheetsData);
+            setExcelSheetNames(workbook.SheetNames);
+            if (workbook.SheetNames.length > 0) {
+              setActiveExcelSheet(workbook.SheetNames[0]);
+            }
+          }
         } else {
           console.error("Failed to fetch original file preview, status:", res.status);
         }
       }
 
-      // 2. Fetch Parsed Content from backend if parsed_path exists
-      if (item.parsed_path && kbId) {
+      // 2. Fetch Parsed Content from backend if parsed_path exists and is a PDF
+      if (isPdf && item.parsed_path && kbId) {
         const fetchUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL}/files/${kbId}/content`;
         const res = await fetch(fetchUrl, {
           headers: {
@@ -246,12 +455,13 @@ export default function KnowledgeBasePage() {
         if (res.ok) {
           const data = await res.json();
           const rawText = data.content || data.text || (typeof data === "string" ? data : "");
+          const cleanedText = cleanExtractedText(rawText);
           
-          if (rawText) {
-            const isHtml = /<[a-z][\s\S]*>/i.test(rawText);
+          if (cleanedText) {
+            const isHtml = /<[a-z][\s\S]*>/i.test(cleanedText);
             const htmlContent = isHtml 
-              ? rawText 
-              : (typeof marked === 'function' ? (marked as any)(rawText) : (marked as any).parse(rawText));
+              ? cleanedText 
+              : (typeof marked === 'function' ? (marked as any)(cleanedText) : (marked as any).parse(cleanedText));
             
             const styledHtml = `
               <!DOCTYPE html>
@@ -346,7 +556,7 @@ export default function KnowledgeBasePage() {
             const parsedBlob = new Blob([styledHtml], { type: "text/html" });
             const parsedBlobUrl = URL.createObjectURL(parsedBlob);
             setParsedUrl(parsedBlobUrl);
-            setParsedText(rawText);
+            setParsedText(cleanedText);
           }
         } else {
           console.error("Failed to fetch parsed content, status:", res.status);
@@ -500,7 +710,9 @@ export default function KnowledgeBasePage() {
   if (previewItem?.s3_path) {
     modalTabs.push({ value: 'original', label: 'Original Document' });
   }
-  if (previewItem?.parsed_path) {
+  const previewItemName = (previewItem?.name || previewItem?.source || "").toLowerCase();
+  const isPdfFile = previewItemName.endsWith(".pdf");
+  if (previewItem?.parsed_path && isPdfFile) {
     modalTabs.push({ value: 'parsed', label: 'Extracted Text' });
   }
 
@@ -709,11 +921,26 @@ export default function KnowledgeBasePage() {
                         transition: 'border-color 0.2s ease'
                       }}
                       onClick={() => document.getElementById('pdf-input')?.click()}
+                      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const file = e.dataTransfer.files?.[0];
+                        if (!file) return;
+                        if (!validateFileType(file)) {
+                          toast.error(`Unsupported file type "${getFileExtension(file.name)}". Only PDF, Excel, CSV, and Images are allowed.`);
+                          return;
+                        }
+                        setSelectedFile(file);
+                      }}
                       className="hover:border-[var(--app-primary)]"
                     >
                       <Upload size={32} color="var(--app-primary)" />
                       <Text style={{ color: 'var(--app-text-muted)', fontSize: 15, textAlign: 'center' }}>
-                        Click or drag to upload PDF,Excel, CSV
+                        Click or drag to upload PDF, Excel, CSV, or Image
+                      </Text>
+                      <Text style={{ color: 'var(--app-text-soft)', fontSize: 11, textAlign: 'center' }}>
+                        Supported: .pdf · .xls · .xlsx · .csv · .png · .jpg · .jpeg · .gif · .webp
                       </Text>
                     </div>
                   )}
@@ -721,9 +948,18 @@ export default function KnowledgeBasePage() {
                   <input
                     id="pdf-input"
                     type="file"
-                    accept=".pdf,.txt,.md,.csv,.json"
+                    accept=".pdf,.csv,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp"
                     style={{ display: 'none' }}
-                    onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (!validateFileType(file)) {
+                        toast.error(`Unsupported file type "${getFileExtension(file.name)}". Only PDF, Excel, CSV, and Images are allowed.`);
+                        e.target.value = '';
+                        return;
+                      }
+                      setSelectedFile(file);
+                    }}
                   />
 
                   <Button
@@ -979,19 +1215,11 @@ export default function KnowledgeBasePage() {
 
     <Modal
       title={
-        <Flex align="center" justify="space-between" style={{ width: '90%' }}>
-          <span className="font-extrabold text-sm text-[var(--app-text)] truncate" style={{ maxWidth: '300px' }}>
+        <div className="py-1">
+          <span className="font-extrabold text-base text-[var(--app-text)] truncate block" style={{ maxWidth: '85%' }}>
             {previewItem?.name || previewItem?.source || "Document Preview"}
           </span>
-          {modalTabs.length > 1 && (
-            <Segmented
-              options={modalTabs}
-              value={previewTab}
-              onChange={(val) => setPreviewTab(val as 'original' | 'parsed')}
-              size="small"
-            />
-          )}
-        </Flex>
+        </div>
       }
       open={previewVisible}
       onCancel={() => {
@@ -1008,9 +1236,20 @@ export default function KnowledgeBasePage() {
       width={1200}
       style={{ top: 20 }}
       styles={{
-        body: { padding: 12, height: "85vh", display: "flex", flexDirection: "column", background: "var(--app-surface-muted)" }
+        body: { padding: "20px 12px 12px 12px", height: "85vh", display: "flex", flexDirection: "column", background: "var(--app-surface-muted)", gap: 12 }
       }}
     >
+      {modalTabs.length > 1 && !previewLoading && (
+        <div className="mt-3 flex bg-[var(--app-surface)] p-1.5 rounded-xl border border-[var(--app-border)]/40 self-start shrink-0 select-none">
+          <Segmented
+            options={modalTabs}
+            value={previewTab}
+            onChange={(val) => setPreviewTab(val as 'original' | 'parsed')}
+            size="small"
+          />
+        </div>
+      )}
+
       {previewLoading ? (
         <Flex vertical align="center" justify="center" gap={12} className="h-full my-auto">
           <Spin size="large" />
@@ -1057,7 +1296,73 @@ export default function KnowledgeBasePage() {
             </div>
           ) : (
             <div className="w-full h-full flex flex-col justify-start overflow-hidden">
-              {previewUrl ? (
+              {previewType === "image" && previewUrl ? (
+                <div className="w-full h-full flex items-center justify-center p-4 bg-neutral-900/5 overflow-auto">
+                  <img
+                    src={previewUrl}
+                    alt={previewItem?.name || "Preview"}
+                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: "8px" }}
+                  />
+                </div>
+              ) : (previewType === "excel" || previewType === "csv") && excelSheetNames.length > 0 ? (
+                <div className="w-full h-full flex flex-col overflow-hidden bg-[var(--app-surface)]">
+                  {/* Excel Multi-sheet Switcher */}
+                  {previewType === "excel" && excelSheetNames.length > 1 && (
+                    <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
+                      {excelSheetNames.map(sheetName => {
+                        const isActive = activeExcelSheet === sheetName;
+                        return (
+                          <button
+                            key={sheetName}
+                            onClick={() => setActiveExcelSheet(sheetName)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
+                                ? "bg-[#285d91] text-white shadow-sm"
+                                : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
+                              }`}
+                          >
+                            {sheetName}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Spreadsheet Grid */}
+                  <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
+                    {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
+                      <div className="border border-[var(--app-border)]/40 rounded-xl overflow-hidden shadow-sm">
+                        <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
+                          <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
+                            <tr>
+                              {excelSheets[activeExcelSheet][0].map((cell, idx) => (
+                                <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
+                                  {cell || `Column ${idx + 1}`}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
+                            {excelSheets[activeExcelSheet].slice(1).map((row, rowIdx) => (
+                              <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
+                                {excelSheets[activeExcelSheet][0].map((_, colIdx) => (
+                                  <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
+                                    {row[colIdx] || ""}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <Flex vertical align="center" justify="center" className="py-20 text-[var(--app-text-soft)] h-full">
+                        <FileText size={32} className="mb-2 opacity-55" />
+                        <span className="text-xs">No data in this sheet</span>
+                      </Flex>
+                    )}
+                  </div>
+                </div>
+              ) : previewUrl ? (
                 <iframe
                   src={`${previewUrl}#navpanes=0`}
                   width="100%"

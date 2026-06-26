@@ -54,9 +54,9 @@ const LandingPage = () => {
         <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-6">
           <div className="flex items-center gap-3 cursor-pointer group" onClick={() => router.push("/")}>
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#2879f3] shadow-lg shadow-blue-500/20 transition-transform group-hover:scale-110">
-              <span className="text-sm font-black text-white">GM</span>
+              <span className="text-sm font-black text-white">GS</span>
             </div>
-            <span className="text-2xl font-black tracking-tighter text-[#0f172a]">GRAG</span>
+            <span className="text-2xl font-black tracking-tighter text-[#0f172a]">Gsearch AI</span>
           </div>
 
           {/* <div className="hidden md:flex items-center gap-10">
@@ -115,7 +115,7 @@ const LandingPage = () => {
         </Title>
 
         <Text className="mx-auto mb-12 max-w-2xl block text-slate-500 font-medium" style={{ fontSize: '1.25rem', lineHeight: '1.6' }}>
-          GRAG transforms complex relationships into actionable intelligence. 
+          Gsearch transforms complex relationships into actionable intelligence. 
           Deploy context-aware agents that reason like humans.
         </Text>
 
@@ -146,7 +146,7 @@ const LandingPage = () => {
                     <div className="h-3 w-3 rounded-full bg-slate-200"></div>
                     <div className="h-3 w-3 rounded-full bg-slate-200"></div>
                   </div>
-                  <span className="ml-4 text-xs text-slate-400 font-bold uppercase tracking-widest">GRAG Workspace</span>
+                  <span className="ml-4 text-xs text-slate-400 font-bold uppercase tracking-widest">Gsearch Workspace</span>
                 </div>
                 <div className="h-6 w-32 rounded-full bg-slate-200/50"></div>
               </div>
@@ -258,7 +258,7 @@ const LandingPage = () => {
           <Title level={2} className="!text-white !mb-6" style={{ fontSize: '3rem', fontWeight: 900, letterSpacing: '-0.02em' }}>
             Ready to unleash your graph?
           </Title>
-          <Text className="text-white/80 block mb-10 text-lg font-semibold">Join 500+ enterprises building the future of AI on GRAG.</Text>
+          <Text className="text-white/80 block mb-10 text-lg font-semibold">Join 500+ enterprises building the future of AI on Gsearch.</Text>
           <Button 
             size="large" 
             onClick={() => router.push(routes.register)}
@@ -273,11 +273,11 @@ const LandingPage = () => {
       <footer className="border-t border-slate-200 py-20 bg-white">
         <div className="mx-auto max-w-7xl px-6 text-center">
           <div className="flex items-center justify-center gap-2 mb-8">
-            <div className="h-6 w-6 rounded bg-[#2879f3] flex items-center justify-center text-[8px] font-black text-white">GM</div>
-            <span className="text-lg font-black tracking-tight">GRAG</span>
+            <div className="h-6 w-6 rounded bg-[#2879f3] flex items-center justify-center text-[8px] font-black text-white">GS</div>
+            <span className="text-lg font-black tracking-tight">Gsearch AI</span>
           </div>
           <Text style={{ color: '#94a3b8', fontSize: '15px', fontWeight: 600 }}>
-            © 2026 GRAG AI Systems. All rights reserved. Built for the era of Knowledge Graphs.
+            © 2026 Gsearch AI Systems. All rights reserved. Built for the era of Knowledge Graphs.
           </Text>
         </div>
       </footer>

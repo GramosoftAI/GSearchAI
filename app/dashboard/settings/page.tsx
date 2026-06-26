@@ -98,7 +98,7 @@ export default function SettingsPage() {
                 <Input 
                   variant="filled"
                   placeholder="Acme Corp" 
-                  defaultValue="GRAG AI"
+                  defaultValue="Gsearch AI"
                   className="h-10 !rounded-lg !bg-[var(--app-surface)] !text-[var(--app-text)] !text-sm border border-[var(--app-border)] hover:border-[#285d91]/50 focus:border-[#285d91]" 
                   prefix={<TeamOutlined className="text-[var(--app-text-soft)] mr-1" />}
                 />

@@ -10,9 +10,9 @@ export default function NavBar() {
       <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-6">
         <div className="flex items-center gap-3 cursor-pointer group" onClick={() => router.push("/")}>
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#2879f3] shadow-lg shadow-blue-500/20 transition-transform group-hover:scale-110">
-            <span className="text-sm font-black text-white">GM</span>
+            <span className="text-sm font-black text-white">GS</span>
           </div>
-          <span className="text-2xl font-black tracking-tighter text-[#0f172a]">Grag</span>
+          <span className="text-2xl font-black tracking-tighter text-[#0f172a]">Gsearch AI</span>
         </div>
 
         <nav className="hidden md:flex items-center gap-10">
