@@ -3,6 +3,7 @@
 import { useState,useEffect } from "react";
 import Sidebar from "../components/layout/Sidebar";
 import Header from "../components/layout/Header";
+import { Drawer } from "antd";
 
 export default function DashboardLayout({
   children,
@@ -10,8 +11,9 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   // Desktop: collapsed/expanded sidebar
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const [width, setWidth] = useState(0);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const handleResize = () => {
@@ -23,18 +25,19 @@ export default function DashboardLayout({
   }, []);
 
   useEffect(() => {
-  const handleResize = () => {
-    setCollapsed(width < 769);
-  };
-  handleResize(); // initial check
-  window.addEventListener("resize", handleResize);
-  return () => {
-    window.removeEventListener("resize", handleResize);
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-},[]);
+    const handleResize = () => {
+      if (window.innerWidth < 769) {
+        setCollapsed(true);
+      }
+    };
+    handleResize(); // initial check
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
 
-return (
+  return (
     <div className="h-screen flex w-full relative bg-[var(--app-surface-muted)] overflow-hidden transition-colors duration-500">
       {/* Premium Background Decorative Elements */}
       <div className="fixed top-0 left-0 w-full h-full pointer-events-none overflow-hidden z-0">
@@ -42,19 +45,31 @@ return (
         <div className="absolute bottom-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-50/20 rounded-full blur-[100px]" />
       </div>
 
-      {/* Sidebar - Fixed Height flex-shrink-0 */}
-      <div className="flex-shrink-0 relative z-10 transition-all duration-500 border-r border-[var(--app-border)]">
-        <Sidebar collapsed={collapsed} 
+      {/* Desktop Inline Sidebar - Hidden on mobile screens */}
+      <div className="hidden sm:block flex-shrink-0 relative z-10 transition-all duration-500 border-r border-[var(--app-border)]">
+        <Sidebar collapsed={collapsed}
           onToggle={() => setCollapsed((prev) => !prev)}
         />
       </div>
 
+      {/* Mobile Drawer Sidebar - Shown on menu click, takes full screen width */}
+      <Drawer
+        placement="left"
+        onClose={() => setMobileMenuOpen(false)}
+        open={mobileMenuOpen}
+        styles={{ 
+          body: { padding: 0, background: 'var(--app-surface)' },
+          content: { background: 'var(--app-surface)' }
+        }}
+        width="100%"
+        closeIcon={null}
+      >
+        <Sidebar collapsed={false} onToggle={() => setMobileMenuOpen(false)} onItemClick={() => setMobileMenuOpen(false)} />
+      </Drawer>
+
       {/* Main column - Independently Scrollable */}
       <div className="flex-1 flex flex-col relative z-10 h-full overflow-hidden">
-        <Header
-          // collapsed={collapsed}
-          // onToggle={() => setCollapsed((prev) => !prev)}
-        />
+        <Header onMenuClick={() => setMobileMenuOpen(true)} />
 
         {/* Page content - Scrollable area */}
         <main className="flex-1 w-full p-0 md:p-0 xl:p-0 overflow-y-auto custom-dashboard-scroll animate-in fade-in slide-in-from-bottom-4 duration-1000">

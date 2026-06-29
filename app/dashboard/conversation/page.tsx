@@ -2,7 +2,7 @@
 
 import { Flex, Typography, Button, Input, Tooltip, Avatar, Drawer, Grid, Upload, message, Spin, Table, Dropdown, Modal, Radio } from "antd";
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { LuBot, LuHistory, LuSearch, LuPlus, LuPaperclip, LuFileText, LuDownload, LuBookOpen, LuBell, LuSettings } from "react-icons/lu";
+import { LuBot, LuHistory, LuSearch, LuPlus, LuPaperclip, LuFileText, LuDownload, LuBookOpen, LuBell, LuSettings, LuSparkles, LuGlobe, LuArrowRight } from "react-icons/lu";
 import { FaBrain } from "react-icons/fa";
 import {
   FiUser,
@@ -284,9 +284,9 @@ function parsePythonDict(str: string): any {
 
 function cleanExtractedText(raw: string): string {
   if (!raw) return "";
-  
+
   let processed = raw.trim();
-  
+
   if (processed.startsWith("{") && processed.endsWith("}")) {
     try {
       const parsed = JSON.parse(processed);
@@ -391,12 +391,23 @@ function extractCitedFilenames(text: string): string[] {
   return Array.from(filenames);
 }
 
+function stripThinking(content: string): string {
+  if (!content) return "";
+  let cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, "");
+  const openThinkIndex = cleaned.indexOf("<think>");
+  if (openThinkIndex !== -1) {
+    cleaned = cleaned.substring(0, openThinkIndex);
+  }
+  return cleaned;
+}
+
 function cleanAndExtractSources(content: string, existingSources?: SourceMetadata[]): { cleanedContent: string, sources: SourceMetadata[] } {
-  if (!content) return { cleanedContent: "", sources: [] };
+  const stripped = stripThinking(content);
+  if (!stripped) return { cleanedContent: "", sources: [] };
 
-  const citedFilenames = extractCitedFilenames(content);
+  const citedFilenames = extractCitedFilenames(stripped);
 
-  const cleanedContent = content
+  const cleanedContent = stripped
     .replace(/(?:\[Source:\s*.+?\]|\(Source:\s*.+?\))/g, "")
     .trim();
 
@@ -421,7 +432,7 @@ type AgentListResponse = {
 
 const GSearchLogoAvatar = ({ size = 32 }: { size?: number }) => {
   return (
-    <div 
+    <div
       className="rounded-xl flex items-center justify-center bg-[#285d91] text-white shrink-0 border border-[#285d91]/20 shadow-none font-bold"
       style={{ width: `${size}px`, height: `${size}px` }}
     >
@@ -441,8 +452,8 @@ const renderBoldText = (text: string, key: any, isUser: boolean) => {
         if (subpart.startsWith("**") && subpart.endsWith("**")) {
           const content = subpart.slice(2, -2);
           return (
-            <strong 
-              key={subIndex} 
+            <strong
+              key={subIndex}
               className={`font-extrabold ${isUser ? "text-white" : "text-[var(--app-text)] font-black"}`}
             >
               {content}
@@ -467,11 +478,10 @@ const renderTextWithLinks = (text: string, isUser: boolean) => {
           href={part}
           target="_blank"
           rel="noopener noreferrer"
-          className={`underline break-all transition-all font-bold ${
-            isUser 
-              ? "text-sky-200 hover:text-white" 
-              : "text-[#285d91] hover:text-sky-500 dark:text-sky-400 dark:hover:text-sky-300"
-          }`}
+          className={`underline break-all transition-all font-bold ${isUser
+            ? "text-sky-200 hover:text-white"
+            : "text-[#285d91] hover:text-sky-500 dark:text-sky-400 dark:hover:text-sky-300"
+            }`}
         >
           {part}
         </a>
@@ -482,8 +492,9 @@ const renderTextWithLinks = (text: string, isUser: boolean) => {
 };
 
 const renderFormattedContent = (content: string, isUser: boolean) => {
-  if (!content) return null;
-  const lines = content.split('\n');
+  const stripped = stripThinking(content).trim();
+  if (!stripped) return null;
+  const lines = stripped.split('\n');
   return lines.map((line, index) => {
     const headingWithColonRegex = /^\*\*(.*?)\*\*:\s*(.*)$/;
     const headingOnlyRegex = /^\*\*(.*?)\*\*\s*$/;
@@ -558,6 +569,13 @@ export default function ChatPlaygroundPage() {
   const [messages, setMessages] = useState<any>([]);
   const [showSources, setShowSources] = useState(true);
 
+  // Selector states
+  const botsCache = useStore((state) => state.botsCache);
+  const [activeMode, setActiveMode] = useState<'search' | 'agent'>('agent');
+  const [selectedModel, setSelectedModel] = useState<'Flash' | 'Pro' | 'Ultra'>('Flash');
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const searchRef = useRef<HTMLInputElement>(null);
+
   // Feedback states
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [feedbackMessageId, setFeedbackMessageId] = useState<string | null>(null);
@@ -574,6 +592,22 @@ export default function ChatPlaygroundPage() {
       setUserName(sessionData.user.name);
     }
   }, [sessionData]);
+
+  useEffect(() => {
+    const handleShortcut = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        const nextMode = activeMode === 'search' ? 'agent' : 'search';
+        setActiveMode(nextMode);
+        if (nextMode === 'search') {
+          setTimeout(() => searchRef.current?.focus(), 50);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [activeMode]);
+
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const screen = Grid.useBreakpoint();
@@ -707,6 +741,11 @@ export default function ChatPlaygroundPage() {
             return;
           }
         }
+
+        // Default path: if no agentId is specified in URL, start empty (as requested)
+        setAgent(null);
+        setSessions([]);
+        setMessages([]);
       }
       setInitialLoadDone(true);
     });
@@ -816,9 +855,9 @@ export default function ChatPlaygroundPage() {
       try {
         const data = JSON.parse(rawData);
 
-        const parsedId = data.message_id || data.messageId || data.id || 
-                         (data.message && (data.message.id || data.message.message_id || data.message.messageId)) ||
-                         (data.data && (data.data.id || data.data.message_id || data.data.messageId));
+        const parsedId = data.message_id || data.messageId || data.id ||
+          (data.message && (data.message.id || data.message.message_id || data.message.messageId)) ||
+          (data.data && (data.data.id || data.data.message_id || data.data.messageId));
         if (parsedId && typeof parsedId === "string") {
           streamingMessageIdRef.current = parsedId;
         }
@@ -863,7 +902,7 @@ export default function ChatPlaygroundPage() {
               const inCitations = citedFilenames.some(cf => srcName.includes(cf) || cf.includes(srcName));
               return inText || inCitations;
             });
-            
+
             // If we found specific matches, use them. Else, fallback to all backend sources.
             if (matchedSources.length > 0) {
               finalSources = matchedSources;
@@ -910,7 +949,7 @@ export default function ChatPlaygroundPage() {
             (async () => {
               const freshSessions = await fetchSessions(agent);
               setSessions(freshSessions);
-              
+
               let finalSessionId = backendSessionId || currentSessionIdRef.current;
               if (!backendSessionId && currentSessionIdRef.current && currentSessionIdRef.current.startsWith("session_") && freshSessions.length > 0) {
                 finalSessionId = freshSessions[0].id;
@@ -1001,7 +1040,7 @@ export default function ChatPlaygroundPage() {
 
   const startNewChat = (selectedAgent: { id: string; name: string }, currentSessionsList?: ChatSession[]) => {
     const listToSearch = currentSessionsList || sessions;
-    const existingEmptySession = listToSearch.find(s => 
+    const existingEmptySession = listToSearch.find(s =>
       (s.agentId === selectedAgent.id || s.agent_id === selectedAgent.id) &&
       s.id.startsWith("session_") &&
       (!s.messages || s.messages.length === 0)
@@ -1065,19 +1104,23 @@ export default function ChatPlaygroundPage() {
     });
 
     setMessages(mappedMessages);
-    setAgent({
-      id: agentId,
-      name: session.title || session.agentName
-    });
+    if (agentId) {
+      const matched = botsCache?.find(b => b.id === agentId);
+      if (matched) {
+        setAgent({ id: matched.id, name: matched.name });
+      } else {
+        setAgent({ id: agentId, name: session.agentName || "Select Agent" });
+      }
+    }
     setMobileSidebarOpen(false);
   };
 
   const deleteSession = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    
+
     // Optimistically update local session list
     setSessions(prev => prev.filter(s => s.id !== id));
-    
+
     if (currentSessionId === id) {
       setCurrentSessionId(null);
       currentSessionIdRef.current = null;
@@ -1094,7 +1137,7 @@ export default function ChatPlaygroundPage() {
           Authorization: `Bearer ${token}`
         }
       });
-      
+
       if (res.ok) {
         message.success("Session deleted successfully.");
       } else {
@@ -1138,22 +1181,22 @@ export default function ChatPlaygroundPage() {
         break;
       }
     }
-    
+
     if (userMessageIndex === -1 || !agent?.id) return;
-    
+
     activeQuerySessionIdRef.current = currentSessionId;
-    
+
     const userMsg = messages[userMessageIndex];
-    
+
     const updatedMessages = messages.slice(0, userMessageIndex + 1);
     setMessages(updatedMessages);
-    
+
     ws.current?.send(JSON.stringify({
       query: userMsg.content,
       file: userMsg.file ? { name: userMsg.file.name, type: userMsg.file.type } : null,
       session_id: currentSessionId && !currentSessionId.startsWith("session_") ? currentSessionId : null
     }));
-    
+
     wsSourcesRef.current = [];
     streamingMessageIdRef.current = null;
     setStreamingText("");
@@ -1165,9 +1208,9 @@ export default function ChatPlaygroundPage() {
       message.warning("No active session to share.");
       return;
     }
-    
+
     const shareUrl = `${window.location.origin}${window.location.pathname}?agentId=${agent.id}&sessionId=${currentSessionId}`;
-    
+
     navigator.clipboard.writeText(shareUrl)
       .then(() => {
         message.success("Share link copied to clipboard!");
@@ -1229,7 +1272,7 @@ export default function ChatPlaygroundPage() {
         }
         return prev.map(s => {
           if (s.id === targetSessionId) {
-            const hasNoTitle = !s.title || s.title === "Untitled Session";
+            const hasNoTitle = !s.title || s.title.toLowerCase().includes("untitled");
             return {
               ...s,
               title: hasNoTitle ? displayTitle : s.title,
@@ -1762,7 +1805,7 @@ export default function ChatPlaygroundPage() {
     if (!sourcesToEnhance || sourcesToEnhance.length === 0) return [];
     return sourcesToEnhance.map(src => {
       if (src.kb_id) {
-        const matched = currentAgentSources.find(as => 
+        const matched = currentAgentSources.find(as =>
           (as.id === src.kb_id || as.kb_id === src.kb_id) ||
           cleanCompare(as.name || as.source || "", src.source)
         );
@@ -1777,8 +1820,8 @@ export default function ChatPlaygroundPage() {
         }
         return src;
       }
-      
-      const matched = currentAgentSources.find(as => 
+
+      const matched = currentAgentSources.find(as =>
         cleanCompare(as.name || as.source || "", src.source)
       );
 
@@ -1925,6 +1968,15 @@ export default function ChatPlaygroundPage() {
     }
   }, [parsedTextContent]);
 
+  // Search query filters the messages within the active conversation instead of sidebar sessions
+  const displayedMessages = React.useMemo(() => {
+    if (!searchQuery) return messages;
+    const query = searchQuery.toLowerCase();
+    return messages.filter((msg: any) =>
+      msg.content && msg.content.toLowerCase().includes(query)
+    );
+  }, [messages, searchQuery]);
+
   const renderSidebar = () => {
     return (
       <div className="w-full h-full flex flex-col bg-[var(--app-surface-muted)]/80 backdrop-blur-md overflow-hidden">
@@ -1936,28 +1988,6 @@ export default function ChatPlaygroundPage() {
               {wsStatus === "open" ? "LINK STABILIZED" : "SYNCING LINK CORE..."}
             </span>
           </Flex>
-          {/* <Switch
-            size="small"
-            checked={isEnabled}
-            onChange={(checked) => {
-              setIsEnabled(checked);
-              console.log(checked);
-            }}
-            className="shrink-0"
-          /> */}
-        </div>
-
-        {/* Sidebar Top: Operational Node / AgentList */}
-        <div className="p-4 border-b border-[var(--app-border)]/40 bg-[var(--app-surface-muted)]/50">
-          <span className="text-[10px] font-extrabold uppercase tracking-widest text-[var(--app-text-soft)] block mb-2 opacity-80">
-            Select Agent
-          </span>
-          <div className="w-full">
-            <AgentList
-              selectedId={agent?.id}
-              onChange={handleAgentChange}
-            />
-          </div>
         </div>
 
         {/* New Chat Button */}
@@ -1981,10 +2011,10 @@ export default function ChatPlaygroundPage() {
         {/* Chats History Section */}
         <div className="flex-1 flex flex-col min-h-0 px-2">
           <div className="px-3 py-2 flex items-center justify-between">
-            <span className="text-[10px] font-extrabold uppercase tracking-widest text-[var(--app-text-soft)] opacity-80">
+            <span className="text-[10px] font-extrabold uppercase tracking-widest text-[var(--app-text-muted)] ">
               Chats
             </span>
-            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[var(--app-border)]/30 text-[var(--app-text-soft)]">
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[var(--app-border)]/30 text-[var(--app-text-muted)]">
               {sessions.length} sessions
             </span>
           </div>
@@ -2000,16 +2030,15 @@ export default function ChatPlaygroundPage() {
                       loadSession(s);
                       setMobileSidebarOpen(false);
                     }}
-                    className={`group relative p-2.5 rounded-xl cursor-pointer transition-all border flex items-center justify-between ${
-                      isActiveSession
-                        ? "bg-[#285d91]/20 text-[var(--app-text)] border-transparent font-extrabold"
-                        : "bg-transparent hover:bg-[var(--app-hover)] text-[var(--app-text-soft)] border-transparent"
-                    }`}
+                    className={`group relative p-2.5 rounded-xl cursor-pointer transition-all border flex items-center justify-between ${isActiveSession
+                      ? "bg-[#285d91]/20 text-[var(--app-text)] border-transparent font-extrabold"
+                      : "bg-transparent hover:bg-[var(--app-hover)] text-[var(--app-text-soft)] border-transparent"
+                      }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
                       <span className="text-sm shrink-0">💬</span>
                       <span className="text-xs truncate block pr-2">
-                        {s.title || "Untitled Session"}
+                        {(!s.title || s.title.toLowerCase().includes("untitled")) ? "New Chat" : s.title}
                       </span>
                     </div>
 
@@ -2058,7 +2087,7 @@ export default function ChatPlaygroundPage() {
     <div className="h-[calc(100vh-96px)] w-full flex bg-[var(--app-surface)] antialiased selection:bg-[#285d91]/20 overflow-hidden relative">
       {/* Desktop Left Sidebar */}
       {screen.md && (
-        <div 
+        <div
           className="h-full border-r border-[var(--app-border)]/40 flex flex-col bg-[var(--app-surface-muted)] shrink-0 transition-all duration-300 overflow-hidden"
           style={{ width: desktopSidebarOpen ? "260px" : "0px", borderRightWidth: desktopSidebarOpen ? "1px" : "0px" }}
         >
@@ -2088,12 +2117,12 @@ export default function ChatPlaygroundPage() {
         {/* Top Header */}
         <div className="w-full px-4 md:px-8 py-3 border-b border-[var(--app-border)]/40 backdrop-blur-md bg-[var(--app-surface)]/50 sticky top-0 z-40 transition-all shrink-0">
           <Flex justify="space-between" align="center" className="gap-2 w-full">
-            
+
             {/* Left side: Hamburger and Logo */}
             <Flex align="center" gap={4} className="min-w-0">
-              <Button 
-                type="text" 
-                icon={<FiMenu className="text-lg text-[var(--app-text-soft)]" />} 
+              <Button
+                type="text"
+                icon={<FiMenu className="text-lg text-[var(--app-text-soft)]" />}
                 onClick={() => {
                   if (screen.md) {
                     setDesktopSidebarOpen(!desktopSidebarOpen);
@@ -2103,7 +2132,7 @@ export default function ChatPlaygroundPage() {
                 }}
                 className="hover:bg-[var(--app-hover)] !rounded-xl w-9 h-9 flex items-center justify-center transition-colors"
               />
-              
+
               <Flex align="center" gap={8} className="select-none ml-1 shrink-0">
                 <span className="font-extrabold text-sm tracking-tight text-[var(--app-text)] hidden xs:inline shrink-0">
                   AI Assist
@@ -2135,14 +2164,20 @@ export default function ChatPlaygroundPage() {
         {/* Conversation Stream */}
         <div className="flex-1 overflow-y-auto px-4 md:px-12 py-6 md:py-10 space-y-6 custom-scrollbar bg-dots-pattern">
           {messages.length === 0 && !isTyping && (
-            <Flex vertical align="center" justify="center" className="h-full select-none my-auto">
+            <Flex vertical align="center" justify="center" className="h-full select-none my-auto space-y-4">
               <h1 className="m-0 text-[var(--app-text)] font-extrabold text-xl sm:text-2xl md:text-4xl tracking-tight text-center max-w-xl px-4 animate-in fade-in duration-500">
                 Hello {userName}! What can I do for you?
               </h1>
+              {/* {agent && (
+                <p className="text-xs font-semibold text-[var(--app-text-soft)]/50 uppercase tracking-widest text-center animate-in fade-in duration-700">
+                  Active Agent: <span className="text-[#285d91] font-bold">{agent.name}</span>
+                  • Model: <span className="text-[#285d91] font-bold">{selectedModel}</span>
+                </p>
+              )} */}
             </Flex>
           )}
 
-          {messages.map((msg: any, i: any) => {
+          {displayedMessages.map((msg: any, i: any) => {
             const isUser = msg.role === "user";
             const hasImage = msg.file?.type?.startsWith("image/");
             const hasDoc = msg.file && !hasImage;
@@ -2174,8 +2209,8 @@ export default function ChatPlaygroundPage() {
 
                     <div
                       className={`group relative p-4 md:p-5 rounded-2xl transition-all duration-200 shadow-sm border mb-6 ${isUser
-                          ? "bg-[#285d91] text-white rounded-tr-none border-[#285d91]/20 font-medium"
-                          : "bg-[var(--app-surface-muted)] text-[var(--app-text)] rounded-tl-none border-[var(--app-border)]/40 font-normal"
+                        ? "bg-[#285d91] text-white rounded-tr-none border-[#285d91]/20 font-medium"
+                        : "bg-[var(--app-surface-muted)] text-[var(--app-text)] rounded-tl-none border-[var(--app-border)]/40 font-normal"
                         }`}
                     >
                       {/* Dynamic File Rendering UI Framework */}
@@ -2217,7 +2252,7 @@ export default function ChatPlaygroundPage() {
                               </button>
                             </Tooltip>
                             <Tooltip title="Regenerate" placement="bottom">
-                              <button 
+                              <button
                                 onClick={() => handleRegenerate(i)}
                                 className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80"
                               >
@@ -2227,8 +2262,8 @@ export default function ChatPlaygroundPage() {
                             {showSources && msg.sources && msg.sources.length > 0 && (
                               <div className="ml-auto flex items-center">
                                 {msg.sources.length === 1 ? (
-                                  <button 
-                                    onClick={() => handleOpenSource(msg.sources![0])} 
+                                  <button
+                                    onClick={() => handleOpenSource(msg.sources![0])}
                                     className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#285d91] flex items-center gap-1 text-xs shrink-0"
                                   >
                                     <LuBookOpen size={16} strokeWidth={2} />
@@ -2299,13 +2334,13 @@ export default function ChatPlaygroundPage() {
                               <div className="flex gap-2 justify-end">
                                 <Button
                                   className="!bg-transparent rounded-full !border-none hover:!bg-white/10 px-4 h-9 font-medium transition-all"
-                                  style={{ WebkitTextFillColor: "rgba(255,255,255,0.8)", fontWeight: "normal" ,boxShadow: "none",borderRadius: "9999px"}}
+                                  style={{ WebkitTextFillColor: "rgba(255,255,255,0.8)", fontWeight: "normal", boxShadow: "none", borderRadius: "9999px" }}
                                   onClick={() => setEditingMessageIndex(null)}
                                 >
                                   Cancel
                                 </Button>
-                                <Button 
-                                  type="primary" 
+                                <Button
+                                  type="primary"
                                   className="!rounded-full !bg-[var(--neutral)] hover:opacity-90 !border-none px-5 h-9 font-semibold shadow-sm transition-all"
                                   style={{ WebkitTextFillColor: "black", fontWeight: "bold", boxShadow: "none", borderRadius: "9999px" }}
                                   onClick={() => handleSaveEdit(i)}
@@ -2371,8 +2406,61 @@ export default function ChatPlaygroundPage() {
 
         {/* Floating Input Dock Footer */}
         <div className="px-4 md:px-12 pb-4 pt-2 bg-gradient-to-t from-[var(--app-surface)] via-[var(--app-surface)] to-transparent border-t-0 z-30 shrink-0">
-          <div className="bg-[var(--app-surface-muted)] border border-[var(--app-border)]/80 rounded-2xl p-3 shadow-lg transition-all focus-within:border-[#285d91]/50 focus-within:ring-4 focus-within:ring-[#285d91]/5 flex flex-col gap-2">
-            
+
+          {/* Mode switch and search above input card */}
+          <div className="flex justify-between items-center px-1 mb-2 w-full select-none gap-3">
+            {/* Search & Agent Switcher unified container */}
+            <div className="flex items-center gap-1 bg-[#eef6f8] dark:bg-[#131e31] p-1 rounded-full border border-[var(--app-border)]/40 shadow-sm">
+              {/* Slot 1: Search Pill or Search Input */}
+              {activeMode === 'search' ? (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-[#0f172a] shadow-sm w-52 sm:w-64 transition-all duration-200">
+                  <LuSearch size={12} className="shrink-0 text-[#285d91] dark:text-[#34d399]" />
+                  <input
+                    ref={searchRef}
+                    type="text"
+                    placeholder="Search sessions..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full bg-transparent border-none outline-none text-[11px] font-black tracking-tight text-[var(--app-text)] placeholder-[var(--app-text-soft)]/50"
+                  />
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    setActiveMode('search');
+                    setTimeout(() => searchRef.current?.focus(), 50);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-black tracking-tight transition-all duration-200 cursor-pointer border-none bg-transparent outline-none text-[var(--app-text-soft)]/70 hover:text-[var(--app-text)] font-extrabold"
+                >
+                  <LuSearch size={12} className="shrink-0" />
+                  <span>Search</span>
+                </button>
+              )}
+
+              {/* Slot 2: Agent Pill (stays as pill button, selector is rendered below inside the input card) */}
+              <button
+                onClick={() => setActiveMode('agent')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-black tracking-tight transition-all duration-200 cursor-pointer border-none bg-transparent outline-none ${activeMode === 'agent'
+                    ? "bg-white dark:bg-[#0f172a] text-[#285d91] dark:text-[#34d399] shadow-sm font-black"
+                    : "bg-transparent text-[var(--app-text-soft)]/70 hover:text-[var(--app-text)] font-extrabold"
+                  }`}
+              >
+                <LuBot size={12} className="shrink-0" />
+                <span>Agent</span>
+              </button>
+            </div>
+
+            {/* Mode Shift Shortcut - hidden on mobile view */}
+            <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-[var(--app-text-soft)]/60 font-bold ml-auto">
+              <span>Mode shift:</span>
+              <kbd className="px-1.5 py-0.5 rounded bg-[var(--app-border)]/50 border border-[var(--app-border)] text-[9px] font-black">Ctrl</kbd>
+              <kbd className="px-1.5 py-0.5 rounded bg-[var(--app-border)]/50 border border-[var(--app-border)] text-[9px] font-black">K</kbd>
+            </div>
+          </div>
+
+          {/* Large Unified Input Card with dynamic purple borders */}
+          <div className="bg-white dark:bg-[#0b0f19] border-2 border-purple-500/30 dark:border-purple-500/25 rounded-3xl p-3 shadow-lg transition-all focus-within:border-purple-500/70 focus-within:ring-4 focus-within:ring-purple-500/5 flex flex-col gap-2">
+
             {/* Real-time Dynamic Upload Preview Attachment Frame */}
             {attachedFile && (
               <div className="px-3 pt-2 pb-1 animate-in fade-in duration-200">
@@ -2390,8 +2478,8 @@ export default function ChatPlaygroundPage() {
                     <Text className="text-xs font-bold truncate text-[var(--app-text)]">{attachedFile.name}</Text>
                     <Text className="text-[9px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider">Ready to upload</Text>
                   </Flex>
-                  <button 
-                    onClick={() => setAttachedFile(null)} 
+                  <button
+                    onClick={() => setAttachedFile(null)}
                     className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-sm cursor-pointer"
                   >
                     <FiX size={11} />
@@ -2400,52 +2488,86 @@ export default function ChatPlaygroundPage() {
               </div>
             )}
 
-            {/* Input Row (Single line layout) */}
-            <Flex align="center" gap={8} className="w-full">
-              {/* Media Upload Node Trigger */}
-              <Upload
-                beforeUpload={handleBeforeUpload}
-                showUploadList={false}
-                accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
+            {/* Input Text Area */}
+            <div className="w-full">
+              <Input.TextArea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask anything"
                 disabled={!agent || wsStatus !== "open"}
-              >
-                <Tooltip title="Share media logs" placement="topLeft">
-                  <Button
-                    type="text"
-                    disabled={!agent || wsStatus !== "open"}
-                    icon={<LuPaperclip className="text-base text-[var(--app-text-soft)]" />}
-                    className="hover:bg-[var(--app-hover)] !rounded-xl w-9 h-9 flex items-center justify-center transition-colors"
-                  />
-                </Tooltip>
-              </Upload>
+                variant="borderless"
+                autoSize={{ minRows: 2, maxRows: 6 }}
+                className="w-full !p-1 !bg-transparent !font-semibold !text-xs md:!text-sm !text-[var(--app-text)] !placeholder:text-[var(--app-text-soft)]/50 focus:outline-none resize-none align-middle"
+              />
+            </div>
 
-              {/* Input Text Area */}
-              <div className="flex-1 min-w-0">
-                <Input.TextArea
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Type a message..."
+            {/* Input Row Actions Bottom Bar */}
+            <Flex align="center" justify="space-between" className="w-full pt-1.5 border-t border-[var(--app-border)]/10">
+              {/* Left actions */}
+              <Flex align="center" gap={8} className="min-w-0">
+                <Upload
+                  beforeUpload={handleBeforeUpload}
+                  showUploadList={false}
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
                   disabled={!agent || wsStatus !== "open"}
-                  variant="borderless"
-                  autoSize={{ minRows: 1, maxRows: 6 }}
-                  className="w-full !p-1 !bg-transparent !font-semibold !text-xs md:!text-sm !text-[var(--app-text)] !placeholder:text-[var(--app-text-soft)]/50 focus:outline-none resize-none align-middle"
-                />
-              </div>
-
-              {/* Send Button */}
-              <Tooltip title="Press Enter to send" placement="topRight">
-                <button
-                  onClick={handleSend}
-                  disabled={!agent || (!input.trim() && !attachedFile) || wsStatus !== "open"}
-                  className="w-8 h-8 bg-[#285d91] text-white rounded-lg flex items-center justify-center hover:bg-[#1e4873] active:scale-95 disabled:opacity-20 disabled:hover:scale-100 disabled:bg-[var(--app-text-soft)]/20 transition-all shrink-0 shadow-md shadow-blue-900/10 cursor-pointer"
                 >
-                  <FiSend size={13} />
-                </button>
-              </Tooltip>
+                  <Tooltip title="Share files" placement="topLeft">
+                    <Button
+                      type="text"
+                      disabled={!agent || wsStatus !== "open"}
+                      icon={<LuPaperclip className="text-base text-[var(--app-text-soft)]" />}
+                      className="hover:bg-[var(--app-hover)] !rounded-xl w-8 h-8 flex items-center justify-center transition-colors border-none bg-transparent cursor-pointer"
+                    />
+                  </Tooltip>
+                </Upload>
+
+                {/* Conditionally show Styled Robot Capsule Dropdown trigger for Selecting Custom Agent inside input card when mode is agent */}
+                {activeMode === 'agent' && (
+                  <Dropdown
+                    menu={{
+                      items: botsCache?.map((bot) => ({
+                        key: bot.id,
+                        label: <span className="font-semibold text-xs">{bot.name}</span>
+                      })),
+                      onClick: (e) => {
+                        const selected = botsCache?.find(b => b.id === e.key);
+                        if (selected) {
+                          handleAgentChange(selected.id, selected.name);
+                        }
+                      }
+                    }}
+                    trigger={["click"]}
+                  >
+                    <button className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#ffffff] hover:bg-gray-100 dark:bg-[#12352f]/30 dark:hover:bg-[#12352f]/50 border border-[#285d91]/30 dark:border-[#34d399]/40 rounded-full text-xs font-black text-[#285d91] dark:text-[#34d399] cursor-pointer select-none transition-all outline-none focus:outline-none ml-1 animate-in fade-in duration-200 shadow-sm">
+                      <div className="w-5 h-5 rounded-full bg-[#e6f0fa] dark:bg-[#12352f] flex items-center justify-center text-[#285d91] dark:text-[#34d399] shrink-0">
+                        <LuBot size={11} className="text-[#285d91] dark:text-[#34d399]" />
+                      </div>
+                      <span className="truncate max-w-[120px] text-[#285d91] dark:text-[#34d399] font-black">
+                        {agent ? agent.name : "Select Agent"}
+                      </span>
+                      <span className="text-[9px] opacity-100 ml-0.5 text-[#285d91] dark:text-[#34d399] font-black">▼</span>
+                    </button>
+                  </Dropdown>
+                )}
+              </Flex>
+
+              {/* Right actions */}
+              <Flex align="center" gap={12} className="shrink-0">
+                {/* Circular Send Arrow button */}
+                <Tooltip title="Press Enter to send" placement="topRight">
+                  <button
+                    onClick={handleSend}
+                    disabled={!agent || (!input.trim() && !attachedFile) || wsStatus !== "open"}
+                    className="w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer border-none outline-none bg-gray-200 dark:bg-gray-800 text-[var(--app-text-soft)] hover:bg-[#285d91] hover:text-white disabled:opacity-40 disabled:hover:bg-gray-200 disabled:hover:text-[var(--app-text-soft)]"
+                  >
+                    <LuArrowRight size={16} strokeWidth={2.5} />
+                  </button>
+                </Tooltip>
+              </Flex>
             </Flex>
           </div>
-          
+
           {/* Powered by Leena AI */}
           {/* <div className="text-center mt-2.5">
             <Text className="text-[10px] text-[var(--app-text-soft)]/75 font-semibold select-none">
@@ -2490,8 +2612,8 @@ export default function ChatPlaygroundPage() {
                 key={(src.id || src.chunk_id) || index}
                 onClick={() => handleSelectSourceForPreview(src)}
                 className={`p-3 rounded-xl cursor-pointer border transition-all ${isSelected
-                    ? "bg-[#285d91] text-white border-transparent shadow-sm"
-                    : "bg-[var(--app-surface-muted)] hover:bg-[var(--app-hover)] text-[var(--app-text)] border-[var(--app-border)]/40"
+                  ? "bg-[#285d91] text-white border-transparent shadow-sm"
+                  : "bg-[var(--app-surface-muted)] hover:bg-[var(--app-hover)] text-[var(--app-text)] border-[var(--app-border)]/40"
                   }`}
               >
                 <div className="flex align-center gap-2 mb-1 min-w-0">
@@ -2548,8 +2670,8 @@ export default function ChatPlaygroundPage() {
                       <button
                         onClick={() => setSourcesDrawerPreviewTab("original")}
                         className={`px-4 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${sourcesDrawerPreviewTab === "original"
-                            ? "bg-[#285d91] text-white shadow-sm"
-                            : "text-[var(--app-text-soft)] hover:text-[var(--app-text)]"
+                          ? "bg-[#285d91] text-white shadow-sm"
+                          : "text-[var(--app-text-soft)] hover:text-[var(--app-text)]"
                           }`}
                       >
                         Original Document
@@ -2623,8 +2745,8 @@ export default function ChatPlaygroundPage() {
                                   key={sheetName}
                                   onClick={() => setActiveExcelSheet(sheetName)}
                                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
-                                      ? "bg-[#285d91] text-white shadow-sm"
-                                      : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
+                                    ? "bg-[#285d91] text-white shadow-sm"
+                                    : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
                                     }`}
                                 >
                                   {sheetName}

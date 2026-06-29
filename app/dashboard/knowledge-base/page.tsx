@@ -1,6 +1,6 @@
 "use client"
 
-import { Button, Flex, Input, Typography, Card, Row, Col, Segmented, Modal, Spin, Divider, Progress } from 'antd'
+import { Button, Flex, Input, Typography, Card, Row, Col, Segmented, Modal, Spin, Divider, Progress, message } from 'antd'
 import { useState, useEffect, useRef } from 'react'
 import { Globe, FileText, Type, Upload, X, Image as ImageIcon } from 'lucide-react'
 import AgentList from "../../components/ui/AgentList";
@@ -640,7 +640,7 @@ export default function KnowledgeBasePage() {
 
   async function handleSubmit() {
     if (!agent?.id) {
-      alert("No agent selected")
+      message.warning("No agent selected")
       return
     }
 
@@ -867,7 +867,7 @@ export default function KnowledgeBasePage() {
                         border: 'none'
                       }}
                     >
-                      Crawl
+                      <span className="inline sm:hidden md:hidden lg:inline">Crawl</span>
                     </Button>
                   </Col>
                 </Row>

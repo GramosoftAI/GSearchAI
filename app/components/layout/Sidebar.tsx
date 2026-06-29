@@ -32,9 +32,10 @@ export const menuItems: MenuItem[] = [
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void; // Added onToggle here to handle collapse locally
+  onItemClick?: () => void;
 }
 
-export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
+export default function Sidebar({ collapsed, onToggle, onItemClick }: SidebarProps) {
   const pathname = usePathname();
   const { isDark, setMode } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -47,7 +48,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   return (
     <div
       className={`relative h-screen sticky top-0 flex flex-col transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] ${
-        collapsed ? "w-24" : "w-80"
+        collapsed ? "lg:w-24 w-24" : "w-full lg:w-80"
       } bg-[var(--app-surface)] text-[var(--app-text)] z-50 border-r border-[var(--app-border)] shadow-xl overflow-hidden`}
     >
       {/* 1. Header Section with Integrated Menu Toggle Button */}
@@ -94,6 +95,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
             <Link
               key={item.path}
               href={item.path}
+              onClick={onItemClick}
               className={`group relative flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all duration-300 overflow-hidden ${
                 isActive 
                   ? "bg-[#285d91] text-white shadow-lg shadow-blue-900/20" 

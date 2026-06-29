@@ -33,6 +33,11 @@ export default function ThemeProvider({ children }: { children: ReactNode }) {
     if (typeof document === "undefined") return;
     document.documentElement.setAttribute("data-theme", mode);
     document.documentElement.style.colorScheme = mode;
+    if (mode === "dark") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
     window.localStorage.setItem(THEME_STORAGE_KEY, mode);
   }, [mode]);
 

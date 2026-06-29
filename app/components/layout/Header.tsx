@@ -1,25 +1,29 @@
 "use client";
 
 import { menuItems } from "./Sidebar";
-import {Avatar} from "antd";
+import { Avatar, Button } from "antd";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { deleteCookie } from "../../config/cookies";
 import { Dropdown } from "antd";
 import type { MenuProps } from "antd";
+import { MenuOutlined } from "@ant-design/icons";
 
-export default function Header() {
+interface HeaderProps {
+  onMenuClick?: () => void;
+}
+
+export default function Header({ onMenuClick }: HeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [userName, setUserName] = useState("User");
 
   useEffect(() => {
     const storedName = localStorage.getItem("userName");
-    if (storedName) 
-      {
-        setUserName(storedName);
-      }
-    }, []);
+    if (storedName) {
+      setUserName(storedName);
+    }
+  }, []);
 
   const handleLogout = () => {
     localStorage.clear();
@@ -30,10 +34,10 @@ export default function Header() {
   const getInitials = (name: string) => {
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
-  
+
   const currentPage = menuItems.find(item => item.path === pathname)?.label || "Dashboard";
 
-  
+
 
   const profileDropdownItems: MenuProps['items'] = [
     {
@@ -82,9 +86,19 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-[50] w-full h-24 flex flex-col justify-center bg-[var(--app-surface)]/80 backdrop-blur-xl border-b border-[var(--app-border)] px-6 md:px-10 transition-all">
       <div className="flex items-center justify-between w-full max-w-[1600px] mx-auto gap-4">
-        
-        {/* LEFT SIDE: Workspace Info */}
+
+        {/* LEFT SIDE: Workspace Info & Mobile Hamburger */}
         <div className="flex items-center gap-4 shrink-0">
+          {/* Hamburger icon for mobile view only (width < 640) */}
+          {width > 0 && width < 640 && (
+            <Button 
+              type="text"
+              icon={<MenuOutlined className="text-xl text-[var(--app-text)]" />}
+              onClick={onMenuClick}
+              className="flex items-center justify-center w-10 h-10 rounded-xl bg-[var(--app-hover)] relative z-50 shrink-0"
+            />
+          )}
+
           <div className="flex flex-col">
             {(width > 568) && <div className="flex items-center gap-2 text-[var(--app-text-muted)] font-black text-[10px] uppercase tracking-[0.2em]">
               Workspace / {currentPage}
@@ -97,26 +111,26 @@ export default function Header() {
 
         {/* RIGHT SIDE: Profile Card with Integrated Logout Button */}
         <div className="flex items-center shrink-0 select-none">
-          <Dropdown 
-            menu={{ items: profileDropdownItems }} 
-            trigger={['click']} 
+          <Dropdown
+            menu={{ items: profileDropdownItems }}
+            trigger={['click']}
             placement="bottomRight"
             classNames="premium-avatar-dropdown"
           >
             <div className="relative cursor-pointer group p-[2px]">
               <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-[#285d91] via-sky-400 to-indigo-500 opacity-0 group-hover:opacity-100 group-hover:rotate-180 transition-all duration-700 ease-out p-[1.5px]" />
-                  <div className="p-1 bg-[var(--app-surface)] rounded-full relative z-10 transition-transform duration-300 active:scale-95">
-                    <Avatar 
-                      className="bg-gradient-to-br from-[#285d91] to-[#163a5f] text-white font-extrabold tracking-wider border border-white/20 dark:border-zinc-800 shadow-md group-hover:shadow-lg transition-all"
-                      size={46}
-                    >
-                      {getInitials(userName)}
-                    </Avatar>
-                  </div>
-                    <span className="absolute bottom-1 right-1 flex h-3.5 w-3.5 z-20">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 border-2 border-[var(--app-surface)] shadow-md"></span>
-                    </span>
+              <div className="p-1 bg-[var(--app-surface)] rounded-full relative z-10 transition-transform duration-300 active:scale-95">
+                <Avatar
+                  className="bg-gradient-to-br from-[#285d91] to-[#163a5f] text-white font-extrabold tracking-wider border border-white/20 dark:border-zinc-800 shadow-md group-hover:shadow-lg transition-all"
+                  size={46}
+                >
+                  {getInitials(userName)}
+                </Avatar>
+              </div>
+              <span className="absolute bottom-1 right-1 flex h-3.5 w-3.5 z-20">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 border-2 border-[var(--app-surface)] shadow-md"></span>
+              </span>
             </div>
           </Dropdown>
         </div>

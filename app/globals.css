@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #000000;
@@ -140,4 +142,37 @@ body {
 .extracted-html-container img {
   max-width: 100%;
   height: auto;
+}
+
+/* Premium Agent Select override style for input bar */
+.agent-select-premium {
+  height: 32px !important;
+}
+
+.agent-select-premium .ant-select-selector {
+  background: rgba(168, 85, 247, 0.06) !important; /* purple tint */
+  border: 1.5px solid rgba(168, 85, 247, 0.3) !important;
+  border-radius: 9999px !important; /* full capsule shape */
+  padding-left: 14px !important;
+  padding-right: 14px !important;
+  font-size: 11px !important;
+  font-weight: 750 !important;
+  height: 32px !important;
+  display: flex !important;
+  align-items: center !important;
+  transition: all 0.2s ease-in-out !important;
+}
+
+.agent-select-premium:hover .ant-select-selector {
+  border-color: rgba(168, 85, 247, 0.75) !important;
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.2) !important;
+}
+
+.agent-select-premium .ant-select-selection-item {
+  color: var(--app-text) !important;
+  font-weight: 750 !important;
+}
+
+.agent-select-premium .ant-select-arrow {
+  color: rgba(168, 85, 247, 0.8) !important;
 }
