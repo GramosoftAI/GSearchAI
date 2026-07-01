@@ -344,13 +344,25 @@ async function getCleanTextContent(kb_id: string): Promise<string> {
 
 function getFileName(sourceUrlOrName: string): string {
   try {
+    let name = sourceUrlOrName;
     if (sourceUrlOrName.startsWith("http://") || sourceUrlOrName.startsWith("https://")) {
       const url = new URL(sourceUrlOrName);
       const pathname = url.pathname;
-      return pathname.substring(pathname.lastIndexOf('/') + 1) || sourceUrlOrName;
+      name = pathname.substring(pathname.lastIndexOf('/') + 1) || sourceUrlOrName;
+    } else {
+      const cleanPath = sourceUrlOrName.replace(/\\/g, '/');
+      name = cleanPath.substring(cleanPath.lastIndexOf('/') + 1) || sourceUrlOrName;
     }
-    const cleanPath = sourceUrlOrName.replace(/\\/g, '/');
-    return cleanPath.substring(cleanPath.lastIndexOf('/') + 1) || sourceUrlOrName;
+
+    const positionIndex = name.toLowerCase().indexOf("position");
+    if (positionIndex !== -1) {
+      let cutIndex = positionIndex;
+      while (cutIndex > 0 && (name[cutIndex - 1] === ' ' || name[cutIndex - 1] === '-' || name[cutIndex - 1] === ':')) {
+        cutIndex--;
+      }
+      name = name.slice(0, cutIndex);
+    }
+    return name.trim();
   } catch {
     return sourceUrlOrName;
   }
@@ -433,7 +445,7 @@ type AgentListResponse = {
 const GSearchLogoAvatar = ({ size = 32 }: { size?: number }) => {
   return (
     <div
-      className="rounded-xl flex items-center justify-center bg-[#285d91] text-white shrink-0 border border-[#285d91]/20 shadow-none font-bold"
+      className="rounded-xl flex items-center justify-center bg-[#0fb5a1] text-white shrink-0 border border-[#0fb5a1]/20 shadow-none font-bold"
       style={{ width: `${size}px`, height: `${size}px` }}
     >
       <FaBrain size={size * 0.55} />
@@ -480,7 +492,7 @@ const renderTextWithLinks = (text: string, isUser: boolean) => {
           rel="noopener noreferrer"
           className={`underline break-all transition-all font-bold ${isUser
             ? "text-sky-200 hover:text-white"
-            : "text-[#285d91] hover:text-sky-500 dark:text-sky-400 dark:hover:text-sky-300"
+            : "text-[#0fb5a1] hover:text-sky-500 dark:text-sky-400 dark:hover:text-sky-300"
             }`}
         >
           {part}
@@ -507,7 +519,7 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
       const restText = match[2];
       return (
         <div key={index} className="mb-3 mt-2">
-          <div className={`font-extrabold text-sm md:text-base tracking-tight ${isUser ? "text-white" : "text-[#285d91] dark:text-sky-400"}`}>
+          <div className={`font-extrabold text-sm md:text-base tracking-tight ${isUser ? "text-white" : "text-[#0fb5a1] dark:text-sky-400"}`}>
             {headingText}
           </div>
           {restText && (
@@ -523,7 +535,7 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
     if (match) {
       const headingText = match[1];
       return (
-        <div key={index} className={`font-extrabold text-sm md:text-base tracking-tight mb-2 mt-2 ${isUser ? "text-white" : "text-[#285d91] dark:text-sky-400"}`}>
+        <div key={index} className={`font-extrabold text-sm md:text-base tracking-tight mb-2 mt-2 ${isUser ? "text-white" : "text-[#0fb5a1] dark:text-sky-400"}`}>
           {headingText}
         </div>
       );
@@ -1039,15 +1051,7 @@ export default function ChatPlaygroundPage() {
   // ─── Actions ───────────────────────────────────────────────────────────────
 
   const startNewChat = (selectedAgent: { id: string; name: string }, currentSessionsList?: ChatSession[]) => {
-    const listToSearch = currentSessionsList || sessions;
-    const existingEmptySession = listToSearch.find(s =>
-      (s.agentId === selectedAgent.id || s.agent_id === selectedAgent.id) &&
-      s.id.startsWith("session_") &&
-      (!s.messages || s.messages.length === 0)
-    );
-
-    if (existingEmptySession) {
-      loadSession(existingEmptySession);
+    if (currentSessionId && currentSessionId.startsWith("session_") && messages.length === 0 && agent?.id === selectedAgent.id) {
       return;
     }
 
@@ -1468,9 +1472,9 @@ export default function ChatPlaygroundPage() {
                     color: #111827;
                   }
                   .tab-btn.active {
-                    background: #285d91;
+                    background: #0fb5a1;
                     color: #ffffff;
-                    border-color: #285d91;
+                    border-color: #0fb5a1;
                   }
                   .table-wrapper {
                     flex-grow: 1;
@@ -1510,7 +1514,7 @@ export default function ChatPlaygroundPage() {
               <body>
                 <header>
                   <h1>${filename}</h1>
-                  <button id="download-btn" style="background: #285d91; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                  <button id="download-btn" style="background: #0fb5a1; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px;">
                     <svg stroke="currentColor" fill="none" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                     Download File
                   </button>
@@ -1655,7 +1659,7 @@ export default function ChatPlaygroundPage() {
         const heading = newWindow.document.createElement('h2');
         heading.innerText = `Citation: ${filename}`;
         heading.style.marginTop = '0';
-        heading.style.borderBottom = '2px solid #285d91';
+        heading.style.borderBottom = '2px solid #0fb5a1';
         heading.style.paddingBottom = '12px';
         heading.style.color = '#1f2937';
         container.appendChild(heading);
@@ -1978,6 +1982,14 @@ export default function ChatPlaygroundPage() {
   }, [messages, searchQuery]);
 
   const renderSidebar = () => {
+    const filteredSessions = sessions.filter(s => {
+      if (s.id.startsWith("session_")) {
+        const hasMessages = (s.messages && s.messages.length > 0) || (currentSessionId === s.id && messages.length > 0);
+        return hasMessages;
+      }
+      return true;
+    });
+
     return (
       <div className="w-full h-full flex flex-col bg-[var(--app-surface-muted)]/80 backdrop-blur-md overflow-hidden">
         {/* Syncing Status Switch on the top-left of the sidebar */}
@@ -2015,13 +2027,13 @@ export default function ChatPlaygroundPage() {
               Chats
             </span>
             <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[var(--app-border)]/30 text-[var(--app-text-muted)]">
-              {sessions.length} sessions
+              {filteredSessions.length} sessions
             </span>
           </div>
 
           <div className="flex-1 overflow-y-auto space-y-1 custom-scrollbar pr-1">
-            {sessions.length > 0 ? (
-              sessions.map((s) => {
+            {filteredSessions.length > 0 ? (
+              filteredSessions.map((s) => {
                 const isActiveSession = currentSessionId === s.id;
                 return (
                   <div
@@ -2031,7 +2043,7 @@ export default function ChatPlaygroundPage() {
                       setMobileSidebarOpen(false);
                     }}
                     className={`group relative p-2.5 rounded-xl cursor-pointer transition-all border flex items-center justify-between ${isActiveSession
-                      ? "bg-[#285d91]/20 text-[var(--app-text)] border-transparent font-extrabold"
+                      ? "bg-[#0fb5a1]/20 text-[var(--app-text)] border-transparent font-extrabold"
                       : "bg-transparent hover:bg-[var(--app-hover)] text-[var(--app-text-soft)] border-transparent"
                       }`}
                   >
@@ -2084,10 +2096,10 @@ export default function ChatPlaygroundPage() {
   };
 
   return (
-    <div className="h-[calc(100vh-96px)] w-full flex bg-[var(--app-surface)] antialiased selection:bg-[#285d91]/20 overflow-hidden relative">
+    <div className="h-[calc(100vh-96px)] w-full flex bg-[var(--app-surface)] antialiased selection:bg-[#0fb5a1]/20 overflow-hidden relative">
       {/* Desktop Left Sidebar */}
       {screen.md && (
-        <div
+        <div 
           className="h-full border-r border-[var(--app-border)]/40 flex flex-col bg-[var(--app-surface-muted)] shrink-0 transition-all duration-300 overflow-hidden"
           style={{ width: desktopSidebarOpen ? "260px" : "0px", borderRightWidth: desktopSidebarOpen ? "1px" : "0px" }}
         >
@@ -2120,9 +2132,9 @@ export default function ChatPlaygroundPage() {
 
             {/* Left side: Hamburger and Logo */}
             <Flex align="center" gap={4} className="min-w-0">
-              <Button
-                type="text"
-                icon={<FiMenu className="text-lg text-[var(--app-text-soft)]" />}
+              <Button 
+                type="text" 
+                icon={<FiMenu className="text-lg text-[var(--app-text-soft)]" />} 
                 onClick={() => {
                   if (screen.md) {
                     setDesktopSidebarOpen(!desktopSidebarOpen);
@@ -2138,7 +2150,7 @@ export default function ChatPlaygroundPage() {
                   AI Assist
                 </span>
                 {agent && (
-                  <span className="text-[10px] bg-[#285d91]/10 text-[#285d91] font-bold px-2 py-0.5 rounded-lg border border-[#285d91]/10 ml-2 hidden sm:inline-block max-w-[120px] truncate">
+                  <span className="text-[10px] bg-[#0fb5a1]/10 text-[#0fb5a1] font-bold px-2 py-0.5 rounded-lg border border-[#0fb5a1]/10 ml-2 hidden sm:inline-block max-w-[120px] truncate">
                     {agent.name}
                   </span>
                 )}
@@ -2170,8 +2182,8 @@ export default function ChatPlaygroundPage() {
               </h1>
               {/* {agent && (
                 <p className="text-xs font-semibold text-[var(--app-text-soft)]/50 uppercase tracking-widest text-center animate-in fade-in duration-700">
-                  Active Agent: <span className="text-[#285d91] font-bold">{agent.name}</span>
-                  • Model: <span className="text-[#285d91] font-bold">{selectedModel}</span>
+                  Active Agent: <span className="text-[#0fb5a1] font-bold">{agent.name}</span>
+                  • Model: <span className="text-[#0fb5a1] font-bold">{selectedModel}</span>
                 </p>
               )} */}
             </Flex>
@@ -2189,7 +2201,7 @@ export default function ChatPlaygroundPage() {
                     <div className="relative shrink-0">
                       <Avatar
                         size={32}
-                        className="bg-gradient-to-br from-[#285d91] to-[#163a5f] text-white shadow-md font-extrabold flex items-center justify-center border border-white/10"
+                        className="bg-gradient-to-br from-[#0fb5a1] to-[#0a8576] text-white shadow-md font-extrabold flex items-center justify-center border border-white/10"
                       >
                         <span style={{ fontSize: "14px", fontWeight: 800, letterSpacing: "0.1em" }}>
                           {userName
@@ -2209,7 +2221,7 @@ export default function ChatPlaygroundPage() {
 
                     <div
                       className={`group relative p-4 md:p-5 rounded-2xl transition-all duration-200 shadow-sm border mb-6 ${isUser
-                        ? "bg-[#285d91] text-white rounded-tr-none border-[#285d91]/20 font-medium"
+                        ? "bg-[#0fb5a1] text-white rounded-tr-none border-[#0fb5a1]/20 font-medium"
                         : "bg-[var(--app-surface-muted)] text-[var(--app-text)] rounded-tl-none border-[var(--app-border)]/40 font-normal"
                         }`}
                     >
@@ -2264,7 +2276,7 @@ export default function ChatPlaygroundPage() {
                                 {msg.sources.length === 1 ? (
                                   <button
                                     onClick={() => handleOpenSource(msg.sources![0])}
-                                    className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#285d91] flex items-center gap-1 text-xs shrink-0"
+                                    className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0"
                                   >
                                     <LuBookOpen size={16} strokeWidth={2} />
                                     <span>Source</span>
@@ -2281,7 +2293,7 @@ export default function ChatPlaygroundPage() {
                                     placement="bottomLeft"
                                     trigger={['click']}
                                   >
-                                    <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#285d91] flex items-center gap-1 text-xs shrink-0">
+                                    <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0">
                                       <LuBookOpen size={16} strokeWidth={2} />
                                       <span>Sources</span>
                                     </button>
@@ -2301,7 +2313,7 @@ export default function ChatPlaygroundPage() {
 
                       {hasDoc && (
                         <Flex align="center" gap={10} className={`mb-3 p-3 rounded-xl border ${isUser ? "bg-black/10 border-white/10" : "bg-[var(--app-surface)] border-[var(--app-border)]/60"} max-w-[280px]`}>
-                          <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${isUser ? "bg-white/10 text-white" : "bg-[#285d91]/10 text-[#285d91]"}`}>
+                          <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${isUser ? "bg-white/10 text-white" : "bg-[#0fb5a1]/10 text-[#0fb5a1]"}`}>
                             <LuFileText size={18} />
                           </div>
                           <Flex vertical className="min-w-0 flex-1">
@@ -2394,7 +2406,7 @@ export default function ChatPlaygroundPage() {
                       <span className="text-xs text-[var(--app-text-soft)] font-medium">
                         {streamingText || "Assembling pipeline graphs..."}
                       </span>
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#285d91] animate-ping" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#0fb5a1] animate-ping" />
                     </div>
                   </div>
                 </div>
@@ -2414,7 +2426,7 @@ export default function ChatPlaygroundPage() {
               {/* Slot 1: Search Pill or Search Input */}
               {activeMode === 'search' ? (
                 <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-[#0f172a] shadow-sm w-52 sm:w-64 transition-all duration-200">
-                  <LuSearch size={12} className="shrink-0 text-[#285d91] dark:text-[#34d399]" />
+                  <LuSearch size={12} className="shrink-0 text-[#0fb5a1] dark:text-[#34d399]" />
                   <input
                     ref={searchRef}
                     type="text"
@@ -2441,7 +2453,7 @@ export default function ChatPlaygroundPage() {
               <button
                 onClick={() => setActiveMode('agent')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-black tracking-tight transition-all duration-200 cursor-pointer border-none bg-transparent outline-none ${activeMode === 'agent'
-                    ? "bg-white dark:bg-[#0f172a] text-[#285d91] dark:text-[#34d399] shadow-sm font-black"
+                    ? "bg-white dark:bg-[#0f172a] text-[#0fb5a1] dark:text-[#34d399] shadow-sm font-black"
                     : "bg-transparent text-[var(--app-text-soft)]/70 hover:text-[var(--app-text)] font-extrabold"
                   }`}
               >
@@ -2470,7 +2482,7 @@ export default function ChatPlaygroundPage() {
                       <img src={attachedFile.url} alt="preview" className="w-full h-full object-cover" />
                     </div>
                   ) : (
-                    <div className="w-10 h-10 rounded-lg bg-[#285d91]/10 text-[#285d91] flex items-center justify-center shrink-0">
+                    <div className="w-10 h-10 rounded-lg bg-[#0fb5a1]/10 text-[#0fb5a1] flex items-center justify-center shrink-0">
                       <LuFileText size={20} />
                     </div>
                   )}
@@ -2539,14 +2551,14 @@ export default function ChatPlaygroundPage() {
                     }}
                     trigger={["click"]}
                   >
-                    <button className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#ffffff] hover:bg-gray-100 dark:bg-[#12352f]/30 dark:hover:bg-[#12352f]/50 border border-[#285d91]/30 dark:border-[#34d399]/40 rounded-full text-xs font-black text-[#285d91] dark:text-[#34d399] cursor-pointer select-none transition-all outline-none focus:outline-none ml-1 animate-in fade-in duration-200 shadow-sm">
-                      <div className="w-5 h-5 rounded-full bg-[#e6f0fa] dark:bg-[#12352f] flex items-center justify-center text-[#285d91] dark:text-[#34d399] shrink-0">
-                        <LuBot size={11} className="text-[#285d91] dark:text-[#34d399]" />
+                    <button className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#ffffff] hover:bg-gray-100 dark:bg-[#12352f]/30 dark:hover:bg-[#12352f]/50 border border-[#0fb5a1]/30 dark:border-[#34d399]/40 rounded-full text-xs font-black text-[#0fb5a1] dark:text-[#34d399] cursor-pointer select-none transition-all outline-none focus:outline-none ml-1 animate-in fade-in duration-200 shadow-sm">
+                      <div className="w-5 h-5 rounded-full bg-[#e3f7f3] dark:bg-[#12352f] flex items-center justify-center text-[#0fb5a1] dark:text-[#34d399] shrink-0">
+                        <LuBot size={11} className="text-[#0fb5a1] dark:text-[#34d399]" />
                       </div>
-                      <span className="truncate max-w-[120px] text-[#285d91] dark:text-[#34d399] font-black">
+                      <span className="truncate max-w-[120px] text-[#0fb5a1] dark:text-[#34d399] font-black">
                         {agent ? agent.name : "Select Agent"}
                       </span>
-                      <span className="text-[9px] opacity-100 ml-0.5 text-[#285d91] dark:text-[#34d399] font-black">▼</span>
+                      <span className="text-[9px] opacity-100 ml-0.5 text-[#0fb5a1] dark:text-[#34d399] font-black">▼</span>
                     </button>
                   </Dropdown>
                 )}
@@ -2559,7 +2571,7 @@ export default function ChatPlaygroundPage() {
                   <button
                     onClick={handleSend}
                     disabled={!agent || (!input.trim() && !attachedFile) || wsStatus !== "open"}
-                    className="w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer border-none outline-none bg-gray-200 dark:bg-gray-800 text-[var(--app-text-soft)] hover:bg-[#285d91] hover:text-white disabled:opacity-40 disabled:hover:bg-gray-200 disabled:hover:text-[var(--app-text-soft)]"
+                    className="w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer border-none outline-none bg-gray-200 dark:bg-gray-800 text-[var(--app-text-soft)] hover:bg-[#0fb5a1] hover:text-white disabled:opacity-40 disabled:hover:bg-gray-200 disabled:hover:text-[var(--app-text-soft)]"
                   >
                     <LuArrowRight size={16} strokeWidth={2.5} />
                   </button>
@@ -2580,7 +2592,7 @@ export default function ChatPlaygroundPage() {
       <Drawer
         title={
           <Flex align="center" gap={8}>
-            <LuBookOpen className="text-[#285d91]" size={18} />
+            <LuBookOpen className="text-[#0fb5a1]" size={18} />
             <span className="font-extrabold text-sm text-[var(--app-text)]">Source Documents</span>
           </Flex>
         }
@@ -2612,7 +2624,7 @@ export default function ChatPlaygroundPage() {
                 key={(src.id || src.chunk_id) || index}
                 onClick={() => handleSelectSourceForPreview(src)}
                 className={`p-3 rounded-xl cursor-pointer border transition-all ${isSelected
-                  ? "bg-[#285d91] text-white border-transparent shadow-sm"
+                  ? "bg-[#0fb5a1] text-white border-transparent shadow-sm"
                   : "bg-[var(--app-surface-muted)] hover:bg-[var(--app-hover)] text-[var(--app-text)] border-[var(--app-border)]/40"
                   }`}
               >
@@ -2670,7 +2682,7 @@ export default function ChatPlaygroundPage() {
                       <button
                         onClick={() => setSourcesDrawerPreviewTab("original")}
                         className={`px-4 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${sourcesDrawerPreviewTab === "original"
-                          ? "bg-[#285d91] text-white shadow-sm"
+                          ? "bg-[#0fb5a1] text-white shadow-sm"
                           : "text-[var(--app-text-soft)] hover:text-[var(--app-text)]"
                           }`}
                       >
@@ -2679,7 +2691,7 @@ export default function ChatPlaygroundPage() {
                       {/* <button
                         onClick={() => setSourcesDrawerPreviewTab("parsed")}
                         className={`px-4 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${sourcesDrawerPreviewTab === "parsed"
-                            ? "bg-[#285d91] text-white shadow-sm"
+                            ? "bg-[#0fb5a1] text-white shadow-sm"
                             : "text-[var(--app-text-soft)] hover:text-[var(--app-text)]"
                           }`}
                       >
@@ -2745,7 +2757,7 @@ export default function ChatPlaygroundPage() {
                                   key={sheetName}
                                   onClick={() => setActiveExcelSheet(sheetName)}
                                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
-                                    ? "bg-[#285d91] text-white shadow-sm"
+                                    ? "bg-[#0fb5a1] text-white shadow-sm"
                                     : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
                                     }`}
                                 >
@@ -2759,7 +2771,7 @@ export default function ChatPlaygroundPage() {
                         {/* Spreadsheet Grid */}
                         <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
                           {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
-                            <div className="border border-[var(--app-border)]/40 rounded-xl overflow-hidden shadow-sm">
+                            <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
                               <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
                                 <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
                                   <tr>
@@ -2795,7 +2807,7 @@ export default function ChatPlaygroundPage() {
 
                     {sourcesDrawerPreviewType === "other" && (
                       <Flex vertical align="center" justify="center" gap={20} className="py-20 w-full h-full">
-                        <div className="w-16 h-16 rounded-2xl bg-[#285d91]/10 text-[#285d91] flex items-center justify-center">
+                        <div className="w-16 h-16 rounded-2xl bg-[#0fb5a1]/10 text-[#0fb5a1] flex items-center justify-center">
                           <LuFileText size={32} />
                         </div>
                         <Flex vertical align="center" gap={4} className="text-center max-w-sm px-4">
@@ -2811,7 +2823,7 @@ export default function ChatPlaygroundPage() {
                           icon={<LuDownload />}
                           href={sourcesDrawerPreviewUrl}
                           download={getFileName(selectedSourceForPreview.source)}
-                          className="rounded-xl !bg-[#285d91] hover:!bg-[#1e4873] !h-10 px-5 font-bold shadow-md shadow-blue-900/10 flex items-center gap-2"
+                          className="rounded-xl !bg-[#0fb5a1] hover:!bg-[#1e4873] !h-10 px-5 font-bold shadow-md shadow-teal-900/10 flex items-center gap-2"
                         >
                           Download File
                         </Button>
@@ -2823,7 +2835,7 @@ export default function ChatPlaygroundPage() {
             </div>
           ) : (
             <Flex vertical align="center" justify="center" className="h-full opacity-40">
-              <LuBookOpen size={48} className="text-[#285d91] mb-3" />
+              <LuBookOpen size={48} className="text-[#0fb5a1] mb-3" />
               <Text className="font-bold text-xs uppercase tracking-widest text-[var(--app-text-muted)]">
                 Select a document to preview
               </Text>
@@ -2844,7 +2856,7 @@ export default function ChatPlaygroundPage() {
           <Button key="cancel" onClick={() => setFeedbackModalOpen(false)} className="hover:!border-[var(--app-border)] hover:!text-[var(--app-text)]">
             Cancel
           </Button>,
-          <Button key="submit" type="primary" onClick={submitThumbsDownFeedback} className="bg-[#285d91] hover:bg-[#285d91]/80 border-none font-bold">
+          <Button key="submit" type="primary" onClick={submitThumbsDownFeedback} className="bg-[#0fb5a1] hover:bg-[#0fb5a1]/80 border-none font-bold">
             Submit
           </Button>,
         ]}
@@ -2879,7 +2891,7 @@ export default function ChatPlaygroundPage() {
               value={customReason}
               onChange={(e) => setCustomReason(e.target.value)}
               rows={3}
-              className="mt-2 text-[var(--app-text)] border-[var(--app-border)]/40 focus:border-[#285d91]/60"
+              className="mt-2 text-[var(--app-text)] border-[var(--app-border)]/40 focus:border-[#0fb5a1]/60"
             />
           )}
         </div>
@@ -2980,7 +2992,7 @@ export default function ChatPlaygroundPage() {
           color: #e5e9f0;
         }
         .markdown-content blockquote {
-          border-left: 4px solid #285d91;
+          border-left: 4px solid #0fb5a1;
           background: rgba(40, 93, 145, 0.05);
           margin: 0 0 1.2em 0;
           padding: 12px 20px;

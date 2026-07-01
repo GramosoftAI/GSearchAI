@@ -968,8 +968,8 @@ export default function KnowledgeBasePage() {
                     onClick={handleSubmit}
                     disabled={!selectedFile}
                     style={{ 
-                      background: selectedFile ? 'var(--app-primary)' : 'var(--app-border)', 
-                      color: selectedFile ? 'var(--app-on-primary)' : 'var(--app-text-soft)', 
+                      background: 'var(--app-primary)'  , 
+                      color: 'var(--app-on-primary)' , 
                       fontWeight: 600, 
                       borderRadius: 8, 
                       height: 42,
@@ -1190,7 +1190,7 @@ export default function KnowledgeBasePage() {
                     type="primary"
                     size="middle"
                     onClick={() => handleOpenPreview(item)}
-                    style={{ borderRadius: 6, fontSize: 12, background: "#285d91", borderColor: "#285d91" }}
+                    style={{ borderRadius: 6, fontSize: 12, background: "#0fb5a1", borderColor: "#0fb5a1" }}
                   >
                     Open
                   </Button>
@@ -1316,7 +1316,7 @@ export default function KnowledgeBasePage() {
                             key={sheetName}
                             onClick={() => setActiveExcelSheet(sheetName)}
                             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
-                                ? "bg-[#285d91] text-white shadow-sm"
+                                ? "bg-[#0fb5a1] text-white shadow-sm"
                                 : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
                               }`}
                           >
@@ -1330,7 +1330,7 @@ export default function KnowledgeBasePage() {
                   {/* Spreadsheet Grid */}
                   <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
                     {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
-                      <div className="border border-[var(--app-border)]/40 rounded-xl overflow-hidden shadow-sm">
+                      <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
                         <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
                           <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
                             <tr>

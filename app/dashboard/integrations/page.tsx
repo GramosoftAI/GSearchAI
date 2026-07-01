@@ -15,7 +15,7 @@ function IntegrationsContent() {
         <ChannelsSection />
 
         {/* Ecosystem Banner */}
-        <div className="p-8 md:p-12 bg-gradient-to-br from-[#285d91] via-[#204e7c] to-[#153a5e] rounded-3xl text-white shadow-lg overflow-hidden relative">
+        <div className="p-8 md:p-12 bg-gradient-to-br from-[#0fb5a1] via-[#0a8576] to-[#065047] rounded-3xl text-white shadow-lg overflow-hidden relative">
           <div className="absolute -top-24 -right-24 w-72 h-72 bg-blue-400/10 rounded-full blur-3xl pointer-events-none" />
           <div className="absolute -bottom-24 -left-24 w-72 h-72 bg-emerald-400/5 rounded-full blur-3xl pointer-events-none" />
           
@@ -29,7 +29,7 @@ function IntegrationsContent() {
               </span>
             </div>
             <button 
-              className="w-full md:w-auto h-12 px-8 rounded-xl bg-white text-[#285d91] border-none font-semibold transition-transform active:scale-95 flex items-center justify-center flex-row-reverse gap-2 cursor-pointer"
+              className="w-full md:w-auto h-12 px-8 rounded-xl bg-white text-[#0fb5a1] border-none font-semibold transition-transform active:scale-95 flex items-center justify-center flex-row-reverse gap-2 cursor-pointer"
             >
               Contact Support
             </button>

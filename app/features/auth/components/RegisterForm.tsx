@@ -252,7 +252,7 @@ export default function RegisterForm() {
                       <button
                         type="button"
                         onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#2879f3] transition-colors focus:outline-none"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#0fb5a1] transition-colors focus:outline-none"
                       >
                         {showPassword ? <Eye size={16} /> : <EyeOff size={16} />}
                       </button>
@@ -276,7 +276,7 @@ export default function RegisterForm() {
                       <button
                         type="button"
                         onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#2879f3] transition-colors focus:outline-none"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#0fb5a1] transition-colors focus:outline-none"
                       >
                         {showConfirmPassword ? <Eye size={16} /> : <EyeOff size={16} />}
                       </button>
@@ -302,7 +302,7 @@ export default function RegisterForm() {
               <button 
                 type="button" 
                 onClick={() => setShowOtpScreen(false)} 
-                className="flex items-center gap-1 text-xs font-bold text-[#2879f3] mb-4 hover:underline focus:outline-none self-start"
+                className="flex items-center gap-1 text-xs font-bold text-[#0fb5a1] mb-4 hover:underline focus:outline-none self-start"
               >
                 <ArrowLeft size={14} /> Back to Details
               </button>
@@ -364,27 +364,27 @@ export default function RegisterForm() {
       <style jsx>{`
         .card-container { width: 100%; max-width: 540px; position: relative; transition: all 0.3s ease; }
         .container { display: flex; height: 100%; width: 100%; align-items: center; justify-content: center; }
-        .circle1 { height: 120px; width: 120px; border-radius: 50%; background-color: #2879f3; position: absolute; top: -20px; left: -20px; z-index: 0; opacity: 0.9; }
+        .circle1 { height: 120px; width: 120px; border-radius: 50%; background-color: #0fb5a1; position: absolute; top: -20px; left: -20px; z-index: 0; opacity: 0.9; }
         .circle2 { height: 120px; width: 120px; border-radius: 50%; background-color: #f37e10; position: absolute; right: -20px; bottom: -20px; z-index: 0; opacity: 0.9; }
         .log-card { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif; position: relative; z-index: 10; width: 100%; background: rgba(255, 255, 255, 0.95); border-radius: 28px; display: flex; flex-direction: column; box-shadow: 0 15px 45px rgba(0, 0, 0, 0.08); backdrop-filter: blur(10px); padding: 40px 44px; }
         .heading { font-size: 38px; font-weight: 900; margin-bottom: 2px; color: #0f172a; text-align: center; letter-spacing: -0.02em; }
         .para { font-size: 14px; font-weight: 600; color: #64748b; text-align: center; margin-bottom: 8px; }
         .text { margin-top: 12px; margin-bottom: 4px; font-size: 11px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.08em; margin-left: 2px; }
         .input-group { margin-top: 5px; margin-bottom: 8px; }
-        .input { box-sizing: border-box; margin-bottom: 2px; width: 100%; border: 2px solid #f1f5f9; padding: 12px 16px; background-color: #f8fafc; border-radius: 12px; font-weight: 700; color: #2879f3; outline: none; font-size: 15px; transition: all 0.2s; }
-        .input:hover, .input:focus { border-color: #2879f3; background-color: white; box-shadow: 0 2px 10px rgba(40, 121, 243, 0.06); }
+        .input { box-sizing: border-box; margin-bottom: 2px; width: 100%; border: 2px solid #f1f5f9; padding: 12px 16px; background-color: #f8fafc; border-radius: 12px; font-weight: 700; color: #0fb5a1; outline: none; font-size: 15px; transition: all 0.2s; }
+        .input:hover, .input:focus { border-color: #0fb5a1; background-color: white; box-shadow: 0 2px 10px rgba(15, 181, 161, 0.06); }
         
         .otp-container { display: flex; justify-content: space-between; gap: 8px; margin: 20px 0 10px 0; }
-        .otp-box { width: 52px; height: 55px; border: 2px solid #b8b8b8; background-color: #f8fafc; border-radius: 12px; font-size: 22px; font-weight: 800; color: #2879f3; text-align: center; outline: none; transition: all 0.2s; }
-        .otp-box:hover, .otp-box:focus { border-color: #2879f3; background-color: white; box-shadow: 0 2px 10px rgba(40, 121, 243, 0.06); }
+        .otp-box { width: 52px; height: 55px; border: 2px solid #b8b8b8; background-color: #f8fafc; border-radius: 12px; font-size: 22px; font-weight: 800; color: #0fb5a1; text-align: center; outline: none; transition: all 0.2s; }
+        .otp-box:hover, .otp-box:focus { border-color: #0fb5a1; background-color: white; box-shadow: 0 2px 10px rgba(15, 181, 161, 0.06); }
         .otp-box:disabled { background-color: #e2e8f0; border-color: #cbd5e1; color: #94a3b8; cursor: not-allowed; }
         
         .timer-text { font-size: 13px; font-weight: 700; color: #64748b; }
-        .btn { width: 100%; margin-top: 16px; margin-bottom: 12px; padding: 14px; border: none; background-color: #2879f3; color: white; font-size: 17px; font-weight: 900; border-radius: 14px; cursor: pointer; transition: all 0.2s; }
+        .btn { width: 100%; margin-top: 16px; margin-bottom: 12px; padding: 14px; border: none; background-color: #0fb5a1; color: white; font-size: 17px; font-weight: 900; border-radius: 14px; cursor: pointer; transition: all 0.2s; }
         .btn:hover { background-color: #1d64d1; transform: translateY(-1px); }
         .btn:disabled { background-color: #94a3b8; cursor: not-allowed; transform: none; }
         .no-account { font-size: 14px; font-weight: 600; color: #64748b; text-align: center; }
-        .link { font-weight: 900; color: #2879f3; text-decoration: underline; }
+        .link { font-weight: 900; color: #0fb5a1; text-decoration: underline; }
         .link:hover { color: #f37e10; }
       `}</style>
     </div>

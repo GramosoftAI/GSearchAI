@@ -50,7 +50,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
           <span className="text-sm font-black text-[var(--app-text)] tracking-tight mt-1 truncate max-w-[150px]">
             {userName}
           </span>
-          {/* <span className="text-[9px] font-bold text-[#285d91] dark:text-blue-400 mt-0.5">
+          {/* <span className="text-[9px] font-bold text-[#0fb5a1] dark:text-blue-400 mt-0.5">
             Workspace Admin
           </span> */}
         </div>
@@ -118,10 +118,10 @@ export default function Header({ onMenuClick }: HeaderProps) {
             classNames="premium-avatar-dropdown"
           >
             <div className="relative cursor-pointer group p-[2px]">
-              <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-[#285d91] via-sky-400 to-indigo-500 opacity-0 group-hover:opacity-100 group-hover:rotate-180 transition-all duration-700 ease-out p-[1.5px]" />
+              <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-[#0fb5a1] via-sky-400 to-indigo-500 opacity-0 group-hover:opacity-100 group-hover:rotate-180 transition-all duration-700 ease-out p-[1.5px]" />
               <div className="p-1 bg-[var(--app-surface)] rounded-full relative z-10 transition-transform duration-300 active:scale-95">
                 <Avatar
-                  className="bg-gradient-to-br from-[#285d91] to-[#163a5f] text-white font-extrabold tracking-wider border border-white/20 dark:border-zinc-800 shadow-md group-hover:shadow-lg transition-all"
+                  className="bg-gradient-to-br from-[#0fb5a1] to-[#0a8576] text-white font-extrabold tracking-wider border border-white/20 dark:border-zinc-800 shadow-md group-hover:shadow-lg transition-all"
                   size={46}
                 >
                   {getInitials(userName)}

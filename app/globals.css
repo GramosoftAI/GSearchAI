@@ -1,50 +1,51 @@
 @import "tailwindcss";
 
+
 @variant dark (&:where(.dark, .dark *));
 
 :root {
   --background: #ffffff;
-  --foreground: #000000;
+  --foreground: #14161f;
   --app-surface: #ffffff;
-  --app-surface-muted: #ffffff;
-  --app-border: #e2e8f0;
-  --app-text: #000000;
-  --app-text-muted: #000000;
-  --app-text-soft: #000000;
-  --app-primary: #10b981;
+  --app-surface-muted: #f5f7fa;
+  --app-border: #e5e9ef;
+  --app-text: #14161f;
+  --app-text-muted: #414856;
+  --app-text-soft: #6b7280;
+  --app-primary: #0fb5a1;
   --app-on-primary: #ffffff;
-  --app-active-bg: #ecfdf5;
-  --app-hover: #f1f5f9;
+  --app-active-bg: #e3f7f3;
+  --app-hover: #eef2f6;
   --neutral: #ebdfdf;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-plus-jakarta-sans);
   --font-mono: var(--font-geist-mono);
 }
 
 :root[data-theme="dark"] {
-  --background: #03071a;
+  --background: #0d0f17;
   --foreground: #ffffff;
-  --app-surface: #0f172a;
-  --app-surface-muted: #020617;
-  --app-border: #1e293b;
+  --app-surface: #14161f;
+  --app-surface-muted: #0d0f17;
+  --app-border: #2e3347;
   --app-text: #ffffff;
-  --app-text-muted: #ffffff;
-  --app-text-soft: #ffffff;
-  --app-primary: #34d399;
+  --app-text-muted: #cbd5e1;
+  --app-text-soft: #94a3b8;
+  --app-primary: #0fb5a1;
   --app-on-primary: #052e2b;
   --app-active-bg: #12352f;
-  --app-hover: #1e293b;
+  --app-hover: #1e212f;
   --neutral: #ebdfdf;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  font-family: var(--font-plus-jakarta-sans), Arial, Helvetica, sans-serif;
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
@@ -176,3 +177,5 @@ body {
 .agent-select-premium .ant-select-arrow {
   color: rgba(168, 85, 247, 0.8) !important;
 }
+
+

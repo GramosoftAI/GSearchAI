@@ -8,6 +8,7 @@ import AgentList from "../../components/ui/AgentList";
 import type { Agent } from "../../components/ui/type";
 import useAxios from "../../hooks/useAxios";
 import { useStore } from "../../hooks/useStore";
+import { useTheme } from "../../components/provider/ThemeProvider";
 
 const { Title, Text } = Typography;
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), { ssr: false });
@@ -199,6 +200,7 @@ function getEndpointId(endpoint: string | GraphNode) {
 }
 
 export default function GraphViewPage() {
+  const { isDark } = useTheme();
   const requestedAgentsRef = useRef(false);
   const loadedGraphForRef = useRef("");
   const graphRef = useRef<any>(null);
@@ -390,9 +392,11 @@ export default function GraphViewPage() {
           display: "grid",
           gridTemplateColumns: isTablet ? "1fr" : "minmax(0, 1fr) 360px",
           borderRadius: 16,
-          border: "1px solid #f0f0f0",
-          background: "#ffffff",
-          boxShadow: "0 10px 30px -10px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.02)",
+          border: "1px solid var(--app-border)",
+          background: "var(--app-surface)",
+          boxShadow: isDark
+            ? "0 10px 30px -10px rgba(0,0,0,0.5), 0 1px 3px rgba(0,0,0,0.3)"
+            : "0 10px 30px -10px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.02)",
           overflow: "hidden"
         }}
       >
@@ -406,8 +410,8 @@ export default function GraphViewPage() {
               justifyContent: "space-between",
               gap: 16,
               padding: "16px 20px",
-              borderBottom: "1px solid #f0f0f0",
-              backgroundColor: "#fafafa"
+              borderBottom: "1px solid var(--app-border)",
+              backgroundColor: "var(--app-surface-muted)"
             }}
           >
             <Space size={16} wrap>
@@ -431,13 +435,13 @@ export default function GraphViewPage() {
             />
           </div>
 
-          <div ref={containerRef} style={{ position: "relative", height: dimensions.height, background: "#ffffff", overflow: "hidden" }}>
+          <div ref={containerRef} style={{ position: "relative", height: dimensions.height, background: "var(--app-surface)", overflow: "hidden" }}>
             <div
               style={{
                 position: "absolute",
                 inset: 0,
                 pointerEvents: "none",
-                backgroundImage: "radial-gradient(#e8e8e8 1.2px, transparent 1.2px)",
+                backgroundImage: `radial-gradient(${isDark ? "#2e3347" : "#e8e8e8"} 1.2px, transparent 1.2px)`,
                 backgroundSize: "24px 24px",
                 opacity: 0.6,
               }}
@@ -451,7 +455,7 @@ export default function GraphViewPage() {
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  background: "rgba(255,255,255,0.75)",
+                  background: isDark ? "rgba(13, 15, 23, 0.75)" : "rgba(255, 255, 255, 0.75)",
                   backdropFilter: "blur(2px)",
                   zIndex: 10,
                 }}
@@ -491,8 +495,8 @@ export default function GraphViewPage() {
                 linkColor={(link: any) =>
                   selectedNode &&
                   (getEndpointId(link.source) === selectedNode.id || getEndpointId(link.target) === selectedNode.id)
-                    ? "rgba(15, 23, 42, 0.9)"
-                    : "rgba(226, 232, 240, 0.8)"
+                    ? (isDark ? "rgba(248, 250, 252, 0.9)" : "rgba(15, 23, 42, 0.9)")
+                    : (isDark ? "rgba(71, 85, 105, 0.8)" : "rgba(226, 232, 240, 0.8)")
                 }
                 linkWidth={(link: any) =>
                   selectedNode &&
@@ -541,7 +545,7 @@ export default function GraphViewPage() {
                   const padding = fontSize * 0.4;
                   const bckgDimensions = [textWidth + padding, fontSize + padding];
 
-                  ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+                  ctx.fillStyle = isDark ? "rgba(20, 22, 31, 0.95)" : "rgba(255, 255, 255, 0.95)";
                   ctx.beginPath();
                   const rx = bckgDimensions[0] / 2, ry = bckgDimensions[1] / 2;
                   ctx.roundRect(-rx, -ry, bckgDimensions[0], bckgDimensions[1], 2);
@@ -549,7 +553,7 @@ export default function GraphViewPage() {
 
                   ctx.textAlign = "center";
                   ctx.textBaseline = "middle";
-                  ctx.fillStyle = "#475569";
+                  ctx.fillStyle = isDark ? "#cbd5e1" : "#475569";
                   ctx.fillText(label, 0, 0);
                   ctx.restore();
                 }}
@@ -584,13 +588,15 @@ export default function GraphViewPage() {
                   ctx.fill();
 
                   ctx.lineWidth = isSelected ? 2.5 : 1.2;
-                  ctx.strokeStyle = isSelected ? "#0f172a" : (node.color + (dimmed ? "15" : "af"));
+                  ctx.strokeStyle = isSelected ? (isDark ? "#ffffff" : "#0f172a") : (node.color + (dimmed ? "15" : "af"));
                   ctx.stroke();
 
                   ctx.font = `${isSelected ? "600" : "500"} ${fontSize}px Inter, -apple-system, sans-serif`;
                   ctx.textAlign = "center";
                   ctx.textBaseline = "middle";
-                  ctx.fillStyle = dimmed ? "rgba(100,116,139,0.35)" : "#1e293b";
+                  ctx.fillStyle = dimmed 
+                    ? (isDark ? "rgba(148,163,184,0.35)" : "rgba(100,116,139,0.35)") 
+                    : (isDark ? "#f8fafc" : "#1e293b");
                   
                   if (label.length > 9) {
                     const mid = Math.floor(label.length / 2);
@@ -609,9 +615,9 @@ export default function GraphViewPage() {
         {/* Right Inspection Drawer / Sidebar */}
         <aside 
           style={{ 
-            borderLeft: isTablet ? "none" : "1px solid #f0f0f0", 
-            borderTop: isTablet ? "1px solid #f0f0f0" : "none",
-            background: "#fafafa", 
+            borderLeft: isTablet ? "none" : "1px solid var(--app-border)", 
+            borderTop: isTablet ? "1px solid var(--app-border)" : "none",
+            background: "var(--app-surface-muted)", 
             padding: 24, 
             display: "flex",
             flexDirection: "column",
@@ -622,7 +628,7 @@ export default function GraphViewPage() {
         >
           {/* Legend Config */}
           <div>
-            <Text strong style={{ fontSize: 11, color: "#8c8c8c", letterSpacing: "0.05em", display: "block", marginBottom: 12 }}>
+            <Text strong style={{ fontSize: 11, color: "var(--app-text-soft)", letterSpacing: "0.05em", display: "block", marginBottom: 12 }}>
               NODE TYPES
             </Text>
             <div style={{ display: "flex", gap: "8px 10px", flexWrap: "wrap" }}>
@@ -634,7 +640,7 @@ export default function GraphViewPage() {
                     alignItems: "center",
                     gap: 6,
                     color: NODE_COLORS[type],
-                    background: "#ffffff",
+                    background: "var(--app-surface)",
                     border: `1px solid ${NODE_COLORS[type]}30`,
                     borderRadius: 6,
                     padding: "4px 10px",
@@ -650,7 +656,7 @@ export default function GraphViewPage() {
             </div>
           </div>
 
-          <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 4 }} />
+          <div style={{ borderTop: "1px solid var(--app-border)", paddingTop: 4 }} />
 
           {selectedNode ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -667,7 +673,7 @@ export default function GraphViewPage() {
                 }}>
                   {selectedNode.type}
                 </span>
-                <Title level={4} style={{ margin: "8px 0 0", color: "#1e293b", fontWeight: 600, lineHeight: 1.3 }}>
+                <Title level={4} style={{ margin: "8px 0 0", color: "var(--app-text)", fontWeight: 600, lineHeight: 1.3 }}>
                   {selectedNode.label}
                 </Title>
               </div>
@@ -675,11 +681,11 @@ export default function GraphViewPage() {
               {/* Attributes Card Stack */}
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {Object.entries(selectedNode.properties).map(([key, value]) => (
-                  <div key={key} style={{ background: "#ffffff", padding: "10px 14px", borderRadius: 8, border: "1px solid #f0f0f0" }}>
-                    <div style={{ color: "#94a3b8", fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>
+                  <div key={key} style={{ background: "var(--app-surface)", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--app-border)" }}>
+                    <div style={{ color: "var(--app-text-soft)", fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>
                       {key}
                     </div>
-                    <div style={{ color: "#334155", fontSize: 13, lineHeight: 1.5, overflowWrap: "anywhere" }}>
+                    <div style={{ color: "var(--app-text)", fontSize: 13, lineHeight: 1.5, overflowWrap: "anywhere" }}>
                       {String(value)}
                     </div>
                   </div>
@@ -689,7 +695,7 @@ export default function GraphViewPage() {
               {/* Edge/Link Data */}
               {selectedLinks.length > 0 && (
                 <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 10 }}>
-                  <Text strong style={{ fontSize: 11, color: "#8c8c8c", letterSpacing: "0.05em" }}>
+                  <Text strong style={{ fontSize: 11, color: "var(--app-text-soft)", letterSpacing: "0.05em" }}>
                     CONNECTED GRAPH LINKS
                   </Text>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -701,9 +707,9 @@ export default function GraphViewPage() {
                           style={{ 
                             fontSize: 13, 
                             padding: "10px 12px", 
-                            background: "#ffffff", 
+                            background: "var(--app-surface)", 
                             borderRadius: 8, 
-                            border: "1px solid #f0f0f0",
+                            border: "1px solid var(--app-border)",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "space-between",
@@ -712,8 +718,8 @@ export default function GraphViewPage() {
                         >
                           <span style={{ color: "#4f46e5", fontWeight: 600, fontSize: 12 }}>{link.label}</span>
                           <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                            <span style={{ color: "#cbd5e1" }}>→</span>
-                            <span style={{ color: "#334155", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <span style={{ color: "var(--app-text-soft)" }}>→</span>
+                            <span style={{ color: "var(--app-text)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {otherNode?.label ?? "Unknown Reference"}
                             </span>
                           </div>

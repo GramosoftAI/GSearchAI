@@ -41,7 +41,7 @@ function MetricCard({ change, icon: Icon, isPositive, value, label }: {
       
       <Flex vertical gap={16}>
         <Flex justify="space-between" align="start">
-          <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-[#285d91]/5 text-[#285d91]">
+          <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-[#0fb5a1]/5 text-[#0fb5a1]">
             <Icon size={22} strokeWidth={1.75} />
           </div>
           <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${
@@ -78,7 +78,7 @@ function QueryVolumeChart({ data }: { data: { day: string; value: number }[] }) 
               Daily query distribution and network interactions over time
             </Text>
           </div>
-          <div className="px-3 py-1.5 text-xs font-bold text-[#285d91] bg-[#285d91]/5 rounded-lg border border-[#285d91]/10 whitespace-nowrap">
+          <div className="px-3 py-1.5 text-xs font-bold text-[#0fb5a1] bg-[#0fb5a1]/5 rounded-lg border border-[#0fb5a1]/10 whitespace-nowrap">
             Last 30 Days
           </div>
         </Flex>
@@ -89,8 +89,8 @@ function QueryVolumeChart({ data }: { data: { day: string; value: number }[] }) 
               <AreaChart data={data} margin={{ top: 10, right: 5, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#285d91" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#285d91" stopOpacity={0.00} />
+                    <stop offset="5%" stopColor="#0fb5a1" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="#0fb5a1" stopOpacity={0.00} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--app-border)" opacity={0.6} />
@@ -108,7 +108,7 @@ function QueryVolumeChart({ data }: { data: { day: string; value: number }[] }) 
                   dx={-5}
                 />
                 <RechartsTooltip
-                  cursor={{ stroke: '#285d91', strokeWidth: 1, strokeDasharray: '4 4' }}
+                  cursor={{ stroke: '#0fb5a1', strokeWidth: 1, strokeDasharray: '4 4' }}
                   contentStyle={{ 
                     backgroundColor: "var(--app-surface)", 
                     border: "1px solid var(--app-border)", 
@@ -122,7 +122,7 @@ function QueryVolumeChart({ data }: { data: { day: string; value: number }[] }) 
                 <Area 
                   type="monotone" 
                   dataKey="value" 
-                  stroke="#285d91" 
+                  stroke="#0fb5a1" 
                   strokeWidth={2.5} 
                   fillOpacity={1} 
                   fill="url(#chartGradient)" 
@@ -147,7 +147,7 @@ function UnansweredQuestions({ questions }: { questions: string[] }) {
     <Card bordered className="bg-[var(--app-surface)] border-[var(--app-border)] shadow-sm">
       <Flex vertical gap={24}>
         <Flex align="center" gap={16}>
-          <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-[#285d91]/5 text-[#285d91]">
+          <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-[#0fb5a1]/5 text-[#0fb5a1]">
             <HelpCircle size={22} strokeWidth={1.75} />
           </div>
           <div>
@@ -167,12 +167,12 @@ function UnansweredQuestions({ questions }: { questions: string[] }) {
             renderItem={(q, i) => (
               <div
                 key={i}
-                className="group flex items-center justify-between p-4 mb-2.5 last:mb-0 rounded-xl bg-[var(--app-surface-muted)] hover:bg-[#285d91] border border-[var(--app-border)] hover:border-[#285d91] transition-all duration-200 cursor-pointer"
+                className="group flex items-center justify-between p-4 mb-2.5 last:mb-0 rounded-xl bg-[var(--app-surface-muted)] hover:bg-[#0fb5a1] border border-[var(--app-border)] hover:border-[#0fb5a1] transition-all duration-200 cursor-pointer"
               >
                 <Text className="text-sm font-medium text-[var(--app-text)] group-hover:text-white transition-colors duration-200 pr-4 truncate">
                   {q}
                 </Text>
-                <Flex align="center" gap={6} className="text-xs font-semibold text-[#285d91] group-hover:text-white shrink-0 opacity-80 group-hover:opacity-100 transition-all duration-200">
+                <Flex align="center" gap={6} className="text-xs font-semibold text-[#0fb5a1] group-hover:text-white shrink-0 opacity-80 group-hover:opacity-100 transition-all duration-200">
                   <span className="hidden sm:inline">Sync Knowledge</span>
                   <PlusCircle size={16} />
                 </Flex>
@@ -276,8 +276,8 @@ export default function AnalyticsPage() {
       {loading && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--app-surface)]/60 backdrop-blur-md transition-all duration-300">
           <Flex vertical align="center" gap={16} className="p-8 rounded-2xl bg-[var(--app-surface)] border border-[var(--app-border)] shadow-xl max-w-xs text-center">
-            <Spin size="large" className="text-[#285d91]" />
-            <Text className="text-xs font-bold uppercase tracking-widest text-[#285d91]">
+            <Spin size="large" className="text-[#0fb5a1]" />
+            <Text className="text-xs font-bold uppercase tracking-widest text-[#0fb5a1]">
               Syncing Telemetry System...
             </Text>
           </Flex>

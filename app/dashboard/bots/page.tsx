@@ -44,11 +44,11 @@ function AgentCard({ agent, onManage, onSettings, onClick }: {
       styles={{ body: { padding: 32 } }}
     >
       {/* Visual Accent */}
-      <div className="absolute top-0 right-0 w-32 h-32 bg-[#285d91]/5 rounded-bl-[100px] -mr-10 -mt-10 transition-all duration-500 group-hover:scale-150 group-hover:bg-[#285d91]/10" />
+      <div className="absolute top-0 right-0 w-32 h-32 bg-[#0fb5a1]/5 rounded-bl-[100px] -mr-10 -mt-10 transition-all duration-500 group-hover:scale-150 group-hover:bg-[#0fb5a1]/10" />
 
       <Flex vertical gap={24}>
         <Row justify="space-between" align="middle">
-          <div className="w-16 h-16 rounded-2xl bg-[#285d91]/5 text-[#285d91] flex items-center justify-center text-3xl shadow-inner group-hover:bg-[#285d91] group-hover:text-white transition-all duration-500">
+          <div className="w-16 h-16 rounded-2xl bg-[#0fb5a1]/5 text-[#0fb5a1] flex items-center justify-center text-3xl shadow-inner group-hover:bg-[#0fb5a1] group-hover:text-white transition-all duration-500">
             <RobotOutlined />
           </div>
           <Space>
@@ -73,7 +73,7 @@ function AgentCard({ agent, onManage, onSettings, onClick }: {
             {agent.description || "Empower your workflows with this specialized intelligent agent designed for high-performance automation."}
           </Text>
           <div className="mt-3 flex items-center gap-2">
-            <Badge color="#285d91" text={<Text className="text-[10px] font-black uppercase tracking-widest opacity-50">{agent.personality || "Professional"}</Text>} />
+            <Badge color="#0fb5a1" text={<Text className="text-[10px] font-black uppercase tracking-widest opacity-50">{agent.personality || "Professional"}</Text>} />
           </div>
         </div>
 
@@ -93,7 +93,7 @@ function AgentCard({ agent, onManage, onSettings, onClick }: {
           <Button
             type="link"
             onClick={(e) => { e.stopPropagation(); onManage(agent); }}
-            className="!text-[#285d91] !font-black !text-xs !uppercase !tracking-widest hover:!scale-105 transition-transform"
+            className="!text-[#0fb5a1] !font-black !text-xs !uppercase !tracking-widest hover:!scale-105 transition-transform"
           >
             Manage +
           </Button>
@@ -108,9 +108,9 @@ function EmptyState({ onDeploy }: { onDeploy: () => void }) {
   return (
     <Flex vertical align="center" justify="center" className="min-h-[60vh] py-20 animate-in fade-in duration-1000">
       <div className="relative mb-12">
-        <div className="absolute inset-0 bg-[#285d91] rounded-full blur-[80px] opacity-10 animate-pulse" />
+        <div className="absolute inset-0 bg-[#0fb5a1] rounded-full blur-[80px] opacity-10 animate-pulse" />
         <div className="w-32 h-32 rounded-[40px] bg-[var(--app-surface)] shadow-2xl flex items-center justify-center relative z-10 border border-[var(--app-border)]">
-          <RobotOutlined className="text-6xl text-[#285d91]" />
+          <RobotOutlined className="text-6xl text-[#0fb5a1]" />
         </div>
         {/* <div className="absolute -bottom-2 -right-2 w-10 h-10 bg-emerald-500 rounded-2xl flex items-center justify-center text-white shadow-lg border-4 border-[var(--app-surface)] animate-bounce">
           <PlusOutlined />
@@ -131,7 +131,7 @@ function EmptyState({ onDeploy }: { onDeploy: () => void }) {
         size="large"
         icon={<PlusOutlined />}
         onClick={onDeploy}
-        className="mt-12 !h-16 !px-10 !rounded-2xl !bg-[#285d91] !border-none !font-black !text-lg !uppercase !tracking-widest !shadow-2xl !shadow-blue-900/30 hover:!scale-[1.02] transition-all"
+        className="mt-12 !h-16 !px-10 !rounded-2xl !bg-[#0fb5a1] !border-none !font-black !text-lg !uppercase !tracking-widest !shadow-2xl !shadow-teal-900/30 hover:!scale-[1.02] transition-all"
       >
         Deploy New Bot
       </Button>
@@ -377,7 +377,7 @@ export default function BotsPage() {
             type="primary"
             htmlType="submit"
             loading={creating}
-            className="w-full h-16 !rounded-2xl !bg-[#285d91] !border-none !font-black !text-lg !uppercase !tracking-widest !shadow-xl !shadow-blue-900/20 mt-4 hover:!scale-[1.02] transition-all"
+            className="w-full h-16 !rounded-2xl !bg-[#0fb5a1] !border-none !font-black !text-lg !uppercase !tracking-widest !shadow-xl !shadow-teal-900/20 mt-4 hover:!scale-[1.02] transition-all"
           >
             Initiate Deployment
           </Button>
@@ -388,7 +388,7 @@ export default function BotsPage() {
       <Modal
         title={
           <Flex align="center" gap={12}>
-            <div className="w-10 h-10 rounded-xl bg-[#285d91]/10 text-[#285d91] flex items-center justify-center text-xl">
+            <div className="w-10 h-10 rounded-xl bg-[#0fb5a1]/10 text-[#0fb5a1] flex items-center justify-center text-xl">
               <RobotOutlined />
             </div>
             <Title level={4} className="!m-0 !text-[var(--app-text)] !font-black tracking-tight">
@@ -416,7 +416,7 @@ export default function BotsPage() {
           <div className="grid grid-cols-2 gap-6">
             <div className="p-6 bg-[var(--app-surface-muted)] rounded-2xl border border-[var(--app-border)]">
               <Flex vertical gap={8}>
-                <Flex align="center" gap={8} className="text-[#285d91]">
+                <Flex align="center" gap={8} className="text-[#0fb5a1]">
                   <CalendarOutlined />
                   <Text className="font-black uppercase tracking-widest text-[10px] text-[var(--app-text-soft)]">Genesis Date</Text>
                 </Flex>
@@ -425,7 +425,7 @@ export default function BotsPage() {
             </div>
             <div className="p-6 bg-[var(--app-surface-muted)] rounded-2xl border border-[var(--app-border)]">
               <Flex vertical gap={8}>
-                <Flex align="center" gap={8} className="text-[#285d91]">
+                <Flex align="center" gap={8} className="text-[#0fb5a1]">
                   <ClockCircleOutlined />
                   <Text className="font-black uppercase tracking-widest text-[10px] text-[var(--app-text-soft)]">Last Synced</Text>
                 </Flex>
@@ -452,7 +452,7 @@ export default function BotsPage() {
             type="primary"
             block
             onClick={() => setIsDetailsModalOpen(false)}
-            className="h-14 !rounded-2xl !bg-[#285d91] !border-none !font-black !uppercase !tracking-widest"
+            className="h-14 !rounded-2xl !bg-[#0fb5a1] !border-none !font-black !uppercase !tracking-widest"
           >
             Acknowledged
           </Button>
@@ -489,7 +489,7 @@ export default function BotsPage() {
               setNoKbModalOpen(false);
               router.push("/dashboard/knowledge-base");
             }}
-            className="h-14 !rounded-2xl !bg-[#285d91] !border-none !font-black !uppercase !tracking-widest"
+            className="h-14 !rounded-2xl !bg-[#0fb5a1] !border-none !font-black !uppercase !tracking-widest"
           >
             OK
           </Button>
@@ -500,7 +500,7 @@ export default function BotsPage() {
       <Modal
         title={
           <Flex align="center" gap={12}>
-            <div className="w-10 h-10 rounded-xl bg-[#285d91]/10 text-[#285d91] flex items-center justify-center">
+            <div className="w-10 h-10 rounded-xl bg-[#0fb5a1]/10 text-[#0fb5a1] flex items-center justify-center">
               <SettingOutlined />
             </div>
             <Title level={4} className="!m-0 !text-[var(--app-text)] !font-black tracking-tight">
@@ -585,7 +585,7 @@ export default function BotsPage() {
               htmlType="submit"
               loading={updating}
               icon={<EditOutlined />}
-              className="h-16 flex-[2] !rounded-2xl !bg-[#285d91] !border-none !font-black !text-sm !uppercase !tracking-widest !shadow-xl !shadow-blue-900/20 hover:!scale-[1.02] transition-all"
+              className="h-16 flex-[2] !rounded-2xl !bg-[#0fb5a1] !border-none !font-black !text-sm !uppercase !tracking-widest !shadow-xl !shadow-teal-900/20 hover:!scale-[1.02] transition-all"
             >
               Update Intelligence
             </Button>
@@ -619,7 +619,7 @@ export default function BotsPage() {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     allowClear
-                    className="h-14 w-full !rounded-2xl !bg-[var(--app-surface)] !border-[var(--app-border)] font-bold text-[var(--app-text)] shadow-sm hover:!border-[#285d91]/50 focus:!border-[#285d91]"
+                    className="h-14 w-full !rounded-2xl !bg-[var(--app-surface)] !border-[var(--app-border)] font-bold text-[var(--app-text)] shadow-sm hover:!border-[#0fb5a1]/50 focus:!border-[#0fb5a1]"
                   />
                 </div>
                 {/* Deploy Button Column */}
@@ -629,7 +629,7 @@ export default function BotsPage() {
                     size="large" 
                     icon={<PlusOutlined />}
                     onClick={() => setIsModalOpen(true)}
-                    className="!h-14 w-full !px-5 !rounded-2xl !bg-[#285d91] !border-none !font-black !uppercase !tracking-widest shadow-xl shadow-blue-900/10 hover:!scale-105 transition-all flex items-center justify-center gap-1.5"
+                    className="!h-14 w-full !px-5 !rounded-2xl !bg-[#0fb5a1] !border-none !font-black !uppercase !tracking-widest shadow-xl shadow-teal-900/10 hover:!scale-105 transition-all flex items-center justify-center gap-1.5"
                   >
                     Deploy
                   </Button>
@@ -656,12 +656,12 @@ export default function BotsPage() {
             <Col xs={24} sm={24} md={24} lg={12} xl={8}>
               <div
                 onClick={() => setIsModalOpen(true)}
-                className="group h-full min-h-[300px] border-2 border-dashed border-[var(--app-border)] rounded-[32px] flex flex-col items-center justify-center gap-4 cursor-pointer hover:border-[#285d91]/30 hover:bg-[#285d91]/5 transition-all duration-500"
+                className="group h-full min-h-[300px] border-2 border-dashed border-[var(--app-border)] rounded-[32px] flex flex-col items-center justify-center gap-4 cursor-pointer hover:border-[#0fb5a1]/30 hover:bg-[#0fb5a1]/5 transition-all duration-500"
               >
-                <div className="w-16 h-16 rounded-full bg-[var(--app-surface-muted)] flex items-center justify-center text-[var(--app-text-soft)] group-hover:bg-[var(--app-surface)] group-hover:text-[#285d91] group-hover:scale-110 shadow-sm transition-all">
+                <div className="w-16 h-16 rounded-full bg-[var(--app-surface-muted)] flex items-center justify-center text-[var(--app-text-soft)] group-hover:bg-[var(--app-surface)] group-hover:text-[#0fb5a1] group-hover:scale-110 shadow-sm transition-all">
                   <PlusOutlined className="text-2xl" />
                 </div>
-                <Text className="text-[var(--app-text-soft)] font-black uppercase tracking-[0.2em] group-hover:text-[#285d91]">New Agent</Text>
+                <Text className="text-[var(--app-text-soft)] font-black uppercase tracking-[0.2em] group-hover:text-[#0fb5a1]">New Agent</Text>
               </div>
             </Col>
           </Row>
@@ -675,10 +675,10 @@ export default function BotsPage() {
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent backdrop-blur-md transition-all duration-500">
           <div className="relative flex flex-col items-center gap-4 animate-in zoom-in-95 duration-500">
             <div className="relative">
-              <div className="absolute inset-0 bg-[#285d91] rounded-full blur-[40px] opacity-20 animate-pulse" />
-              <RobotOutlined className="text-5xl text-[#285d91] relative z-10 animate-bounce" />
+              <div className="absolute inset-0 bg-[#0fb5a1] rounded-full blur-[40px] opacity-20 animate-pulse" />
+              <RobotOutlined className="text-5xl text-[#0fb5a1] relative z-10 animate-bounce" />
             </div>
-            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[#285d91] text-center opacity-80">
+            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[#0fb5a1] text-center opacity-80">
               {deleting ? "Purging Entity..." : updating ? "Upgrading Neural Link..." : checkingKb ? "Checking Knowledge Base..." : "Syncing Squad"}
             </p>
           </div>
@@ -704,7 +704,7 @@ export default function BotsPage() {
           border: 1px solid var(--app-border) !important;
         }
         .ant-select-item-option-selected {
-          background: #285d91 !important;
+          background: #0fb5a1 !important;
           color: white !important;
           border-radius: 10px !important;
         }

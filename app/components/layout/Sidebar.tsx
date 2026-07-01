@@ -54,8 +54,11 @@ export default function Sidebar({ collapsed, onToggle, onItemClick }: SidebarPro
       {/* 1. Header Section with Integrated Menu Toggle Button */}
       <div className={`pt-7 px-6 pb-10 flex items-center ${collapsed ? "justify-center" : "justify-between"}`}>
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-[18px] bg-[#285d91] text-white flex items-center justify-center flex-shrink-0 shadow-lg shadow-blue-900/20">
-            <FaBrain size={24} />
+          <div 
+            className="w-12 h-12 rounded-[18px] text-white flex items-center justify-center flex-shrink-0 shadow-lg shadow-[var(--app-primary)]/20"
+            style={{ backgroundColor: "var(--app-primary)" }}
+          >
+            <FaBrain size={24} style={{ color: "#ffffff" }} />
           </div>
           {!collapsed && (
             <span className="text-[var(--app-text)] text-2xl font-black tracking-tighter leading-none">
@@ -98,18 +101,41 @@ export default function Sidebar({ collapsed, onToggle, onItemClick }: SidebarPro
               onClick={onItemClick}
               className={`group relative flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all duration-300 overflow-hidden ${
                 isActive 
-                  ? "bg-[#285d91] text-white shadow-lg shadow-blue-900/20" 
-                  : "text-slate-400 hover:bg-slate-50 hover:text-[#285d91]"
+                  ? "" 
+                  : "text-[var(--app-text-soft)] hover:bg-[var(--app-hover)] hover:text-[var(--app-primary)]"
               } ${collapsed ? "justify-center" : "justify-start"}`}
+              style={
+                isActive
+                  ? {
+                      backgroundColor: "var(--app-primary)",
+                      color: "#ffffff",
+                      boxShadow: "0 10px 15px -3px rgba(15, 181, 161, 0.25), 0 4px 6px -2px rgba(15, 181, 161, 0.25)",
+                    }
+                  : undefined
+              }
             >
               {isActive && !collapsed && (
                 <div className="absolute left-0 top-1/4 bottom-1/4 w-1 bg-white rounded-r-full" />
               )}
               
-              <item.icon className={`flex-shrink-0 text-xl transition-transform duration-300 ${isActive ? "scale-110" : "group-hover:scale-110"}`} />
+              <item.icon 
+                className={`flex-shrink-0 text-xl transition-transform duration-300 ${
+                  isActive 
+                    ? "scale-110" 
+                    : "text-[var(--app-text-soft)] group-hover:scale-110 group-hover:text-[var(--app-primary)]"
+                }`}
+                style={isActive ? { color: "#ffffff" } : undefined}
+              />
               
               {!collapsed && (
-                <span className={`text-[17px] font-bold tracking-tight transition-all duration-300 ${isActive ? "ml-1" : ""}`}>
+                <span 
+                  className={`text-[17px] font-bold tracking-tight transition-all duration-300 ${
+                    isActive 
+                      ? "ml-1" 
+                      : "text-[var(--app-text-soft)] group-hover:text-[var(--app-primary)]"
+                  }`}
+                  style={isActive ? { color: "#ffffff" } : undefined}
+                >
                   {item.label}
                 </span>
               )}

@@ -18,12 +18,13 @@ function ThemedConfigProvider({ children }: { children: ReactNode }) {
       theme={{
         algorithm: isDark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         token: {
-          colorPrimary: isDark ? "#34d399" : "#10b981",
-          colorTextBase: isDark ? "#e2e8f0" : "#111827",
-          colorTextSecondary: isDark ? "#94a3b8" : "#64748b",
-          colorBgBase: isDark ? "#020617" : "#ffffff",
-          colorBgContainer: isDark ? "#0f172a" : "#ffffff",
-          colorBorder: isDark ? "#1e293b" : "#e2e8f0",
+          colorPrimary: "#0fb5a1",
+          colorTextBase: isDark ? "#ffffff" : "#14161f",
+          colorTextSecondary: isDark ? "#cbd5e1" : "#414856",
+          colorBgBase: isDark ? "#0d0f17" : "#ffffff",
+          colorBgContainer: isDark ? "#14161f" : "#ffffff",
+          colorBorder: isDark ? "#2e3347" : "#e5e9ef",
+          fontFamily: "var(--font-plus-jakarta-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         },
       }}
     >

@@ -1,7 +1,7 @@
-import { useStore } from "../hooks/useStore";
+// import { useStore } from "../hooks/useStore";
 
 
-const getUserId = () => useStore.getState().userId;
+// const getUserId = () => useStore.getState().userId;
 export enum methods {
   get = "get",
   post = "post",

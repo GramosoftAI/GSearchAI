@@ -33,9 +33,6 @@ export default function AgentList({ selectedId, onChange, style, size = "middle"
         classNames={{
           popup: { root: styles.dropdown },
         }}
-        labelRender={(props) => (
-          <span style={{ color: 'var(--app-text-muted)' }}>{props.label}</span>
-        )}
         options={agentList?.map((agent) => ({
           value: agent.id,
           label: agent.name,

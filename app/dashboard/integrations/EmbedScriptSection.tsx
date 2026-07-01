@@ -165,7 +165,7 @@ export default function EmbedScriptSection() {
                 size="large"
                 icon={copied ? <CheckCircleOutlined /> : <CopyOutlined />}
                 onClick={handleCopy}
-                className="w-full sm:w-auto !h-12 !px-6 !rounded-xl !bg-[#285d91] !border-none !font-semibold transition-transform active:scale-95 flex items-center justify-center gap-2"
+                className="w-full sm:w-auto !h-12 !px-6 !rounded-xl !bg-[#0fb5a1] !border-none !font-semibold transition-transform active:scale-95 flex items-center justify-center gap-2"
               >
                 {copied ? "Copied" : "Copy Code"}
               </Button>
@@ -185,7 +185,7 @@ export default function EmbedScriptSection() {
 
             <pre className="p-5 md:p-6 overflow-x-auto custom-scrollbar m-0">
               <code className="text-[var(--app-text)] font-mono text-xs md:text-sm leading-relaxed block whitespace-pre">
-                <span className="text-[#285d91] opacity-80">{"<script "}</span>
+                <span className="text-[#0fb5a1] opacity-80">{"<script "}</span>
                 <span className="text-[#3b82f6]">src =</span>
                 <span className="text-emerald-500">{`'${process.env.NEXT_PUBLIC_API_BASES_URL}/chat.js'`}</span>
                 {"\n  "}
@@ -194,8 +194,8 @@ export default function EmbedScriptSection() {
                 {"\n  "}
                 <span className="text-[#3b82f6]">data-tenant-id =</span>
                 <span className="text-emerald-500">{`${agentresp?.[0]?.tenant_id || "YOUR_TENANT_ID"}`}</span>
-                <span className="text-[#285d91] opacity-80">{">"}</span>
-                <span className="text-[#285d91] opacity-80">{"</script>"}</span>
+                <span className="text-[#0fb5a1] opacity-80">{">"}</span>
+                <span className="text-[#0fb5a1] opacity-80">{"</script>"}</span>
               </code>
             </pre>
           </div>

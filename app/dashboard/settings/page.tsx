@@ -30,7 +30,7 @@ function SettingsSection({ title, description, children, icon: Icon }: SettingsS
         <Col xs={24} md={8}>
           <Flex vertical gap={8} className="md:sticky md:top-6">
             <Flex align="center" gap={12}>
-              <div className="w-9 h-9 rounded-lg bg-[#285d91]/10 text-[#285d91] flex items-center justify-center text-base shrink-0">
+              <div className="w-9 h-9 rounded-lg bg-[#0fb5a1]/10 text-[#0fb5a1] flex items-center justify-center text-base shrink-0">
                 <Icon />
               </div>
               <Title level={4} className="!m-0 !text-[var(--app-text)] !text-base !font-bold tracking-tight">
@@ -99,7 +99,7 @@ export default function SettingsPage() {
                   variant="filled"
                   placeholder="Acme Corp" 
                   defaultValue="Gsearch AI"
-                  className="h-10 !rounded-lg !bg-[var(--app-surface)] !text-[var(--app-text)] !text-sm border border-[var(--app-border)] hover:border-[#285d91]/50 focus:border-[#285d91]" 
+                  className="h-10 !rounded-lg !bg-[var(--app-surface)] !text-[var(--app-text)] !text-sm border border-[var(--app-border)] hover:border-[#0fb5a1]/50 focus:border-[#0fb5a1]" 
                   prefix={<TeamOutlined className="text-[var(--app-text-soft)] mr-1" />}
                 />
               </Flex>
@@ -109,7 +109,7 @@ export default function SettingsPage() {
                 <Input.Password 
                   variant="filled"
                   defaultValue="gm_sk_4928f37454b04c9dba4e9eb10285786e"
-                  className="h-10 !rounded-lg !bg-[var(--app-surface)] !text-[var(--app-text)] !text-sm border border-[var(--app-border)] hover:border-[#285d91]/50 focus:border-[#285d91]" 
+                  className="h-10 !rounded-lg !bg-[var(--app-surface)] !text-[var(--app-text)] !text-sm border border-[var(--app-border)] hover:border-[#0fb5a1]/50 focus:border-[#0fb5a1]" 
                   prefix={<KeyOutlined className="text-[var(--app-text-soft)] mr-1" />}
                 />
               </Flex>
@@ -136,7 +136,7 @@ export default function SettingsPage() {
                   </Flex>
                 </Flex>
                 <div className="flex justify-end shrink-0 sm:ml-4">
-                  <Switch defaultChecked className="bg-neutral-300 custom-switch" style={{ '--antd-wave-shadow-color': '#285d91' } as React.CSSProperties} />
+                  <Switch defaultChecked className="bg-neutral-300 custom-switch" style={{ '--antd-wave-shadow-color': '#0fb5a1' } as React.CSSProperties} />
                 </div>
               </div>
 
@@ -182,7 +182,7 @@ export default function SettingsPage() {
               loading={loading}
               icon={<SaveOutlined />}
               onClick={handleSave}
-              className="h-11 w-full sm:w-auto px-6 rounded-lg !bg-[#285d91] border-none font-bold text-sm tracking-wide shadow-sm hover:opacity-90 active:scale-[0.98] transition-all"
+              className="h-11 w-full sm:w-auto px-6 rounded-lg !bg-[#0fb5a1] border-none font-bold text-sm tracking-wide shadow-sm hover:opacity-90 active:scale-[0.98] transition-all"
             >
               Save Configuration
             </Button>
@@ -220,7 +220,7 @@ export default function SettingsPage() {
 //     >
 //       <Flex vertical gap={24}>
 //         <Flex align="center" gap={12}>
-//           <div className="w-10 h-10 rounded-xl bg-[#285d91]/5 text-[#285d91] flex items-center justify-center text-lg shadow-inner">
+//           <div className="w-10 h-10 rounded-xl bg-[#0fb5a1]/5 text-[#0fb5a1] flex items-center justify-center text-lg shadow-inner">
 //             <Icon />
 //           </div>
 //           <Title level={4} className="!m-0 !text-[var(--app-text)] !font-black tracking-tight">
@@ -276,7 +276,7 @@ export default function SettingsPage() {
 //                   <Input 
 //                     placeholder="Acme Corp" 
 //                     defaultValue="Grag AI"
-//                     className="h-12 !rounded-xl !bg-[var(--app-surface-muted)] !border-none !font-bold !text-[var(--app-text)] !text-sm focus:!ring-2 focus:!ring-[#285d91]/10" 
+//                     className="h-12 !rounded-xl !bg-[var(--app-surface-muted)] !border-none !font-bold !text-[var(--app-text)] !text-sm focus:!ring-2 focus:!ring-[#0fb5a1]/10" 
 //                     prefix={<TeamOutlined className="text-[var(--app-text-soft)] mr-2" />}
 //                   />
 //                 </Flex>
@@ -286,7 +286,7 @@ export default function SettingsPage() {
 //                   <Text className="font-black text-[9px] uppercase tracking-widest text-[var(--app-text-soft)]">Master API Key</Text>
 //                   <Input.Password 
 //                     defaultValue="gm_sk_4928f37454b04c9dba4e9eb10285786e"
-//                     className="h-12 !rounded-xl !bg-[var(--app-surface-muted)] !border-none !font-bold !text-[var(--app-text)] !text-sm focus:!ring-2 focus:!ring-[#285d91]/10" 
+//                     className="h-12 !rounded-xl !bg-[var(--app-surface-muted)] !border-none !font-bold !text-[var(--app-text)] !text-sm focus:!ring-2 focus:!ring-[#0fb5a1]/10" 
 //                     prefix={<KeyOutlined className="text-[var(--app-text-soft)] mr-2" />}
 //                   />
 //                 </Flex>
@@ -302,7 +302,7 @@ export default function SettingsPage() {
 //                   <Title level={5} className="!m-0 !text-[var(--app-text)] !font-black !text-sm">Email Notifications</Title>
 //                   <Text className="text-[var(--app-text-soft)] font-bold text-[10px]">Get notified about unanswered questions and critical gaps.</Text>
 //                 </Flex>
-//                 <Switch defaultChecked size="small" className="bg-[#285d91]" />
+//                 <Switch defaultChecked size="small" className="bg-[#0fb5a1]" />
 //               </Flex>
 
 //               <Flex align="center" justify="space-between" className="p-4 bg-[var(--app-surface-muted)] rounded-[20px] border border-[var(--app-border)]/30">
@@ -310,7 +310,7 @@ export default function SettingsPage() {
 //                   <Title level={5} className="!m-0 !text-[var(--app-text)] !font-black !text-sm">Analytics Reports</Title>
 //                   <Text className="text-[var(--app-text-soft)] font-bold text-[10px]">Receive weekly performance summaries and cognitive insights.</Text>
 //                 </Flex>
-//                 <Switch defaultChecked size="small" className="bg-[#285d91]" />
+//                 <Switch defaultChecked size="small" className="bg-[#0fb5a1]" />
 //               </Flex>
 
 //               <Flex align="center" justify="space-between" className="p-4 bg-[var(--app-surface-muted)] rounded-[20px] border border-[var(--app-border)]/30">
@@ -318,7 +318,7 @@ export default function SettingsPage() {
 //                   <Title level={5} className="!m-0 !text-[var(--app-text)] !font-black !text-sm">Neural Feedback Loop</Title>
 //                   <Text className="text-[var(--app-text-soft)] font-bold text-[10px]">Allow the system to learn from user corrections automatically.</Text>
 //                 </Flex>
-//                 <Switch size="small" className="bg-[#285d91]" />
+//                 <Switch size="small" className="bg-[#0fb5a1]" />
 //               </Flex>
 //             </div>
 //           </SettingsSection>
@@ -331,7 +331,7 @@ export default function SettingsPage() {
 //               loading={loading}
 //               icon={<SaveOutlined />}
 //               onClick={handleSave}
-//               className="!h-14 !px-10 !rounded-2xl !bg-[#285d91] !border-none !font-black !text-sm !uppercase !tracking-widest shadow-xl shadow-blue-900/10 hover:!scale-[1.02] transition-all"
+//               className="!h-14 !px-10 !rounded-2xl !bg-[#0fb5a1] !border-none !font-black !text-sm !uppercase !tracking-widest shadow-xl shadow-teal-900/10 hover:!scale-[1.02] transition-all"
 //             >
 //               Save Configuration
 //             </Button>

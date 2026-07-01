@@ -41,8 +41,8 @@ export default function DashboardLayout({
     <div className="h-screen flex w-full relative bg-[var(--app-surface-muted)] overflow-hidden transition-colors duration-500">
       {/* Premium Background Decorative Elements */}
       <div className="fixed top-0 left-0 w-full h-full pointer-events-none overflow-hidden z-0">
-        <div className="absolute top-[-10%] right-[-10%] w-[50%] h-[50%] bg-[#285d91]/5 rounded-full blur-[120px]" />
-        <div className="absolute bottom-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-50/20 rounded-full blur-[100px]" />
+        <div className="absolute top-[-10%] right-[-10%] w-[50%] h-[50%] bg-[#0fb5a1]/5 rounded-full blur-[120px]" />
+        <div className="absolute bottom-[-10%] left-[-10%] w-[40%] h-[40%] bg-teal-50/20 rounded-full blur-[100px]" />
       </div>
 
       {/* Desktop Inline Sidebar - Hidden on mobile screens */}
@@ -81,41 +81,41 @@ export default function DashboardLayout({
 
       <style jsx global>{`
         :root {
-          /* New Professional White & Blue Palette */
-          --color-blue: #285d91;
+          /* New Professional White & Teal Palette matching landing page */
+          --color-teal: #0fb5a1;
           --color-white: #ffffff;
           
-          --app-primary: var(--color-blue);
+          --app-primary: var(--color-teal);
           --app-secondary: var(--color-white);
           
           --app-surface: #ffffff;
-          --app-surface-muted: #f9fbff;
-          --app-border: #e2e8f0;
-          --app-text: #0f172a;
-          --app-text-muted: #64748b;
-          --app-text-soft: #94a3b8;
-          --app-active-bg: #eff6ff;
-          --app-hover: #f1f5f9;
+          --app-surface-muted: #f5f7fa;
+          --app-border: #e5e9ef;
+          --app-text: #14161f;
+          --app-text-muted: #414856;
+          --app-text-soft: #6b7280;
+          --app-active-bg: #e3f7f3;
+          --app-hover: #eef2f6;
         }
 
         [data-theme='dark'] {
-          --app-surface: #0a0f1d;
-          --app-surface-muted: #050810;
-          --app-border: #1e293b;
+          --app-surface: #14161f;
+          --app-surface-muted: #0d0f17;
+          --app-border: #2e3347;
           --app-text: #f8fafc;
-          --app-text-muted: #94a3b8;
-          --app-text-soft: #475569;
-          --app-active-bg: #1e293b;
-          --app-hover: #1e293b;
+          --app-text-muted: #cbd5e1;
+          --app-text-soft: #94a3b8;
+          --app-active-bg: #12352f;
+          --app-hover: #1e212f;
           
           /* Force White elements to Dark in Dark Mode */
-          --color-white: #0a0f1d;
+          --color-white: #14161f;
         }
 
         body {
           background-color: var(--app-surface-muted);
           color: var(--app-text);
-          font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          font-family: var(--font-plus-jakarta-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           transition: background-color 0.3s ease, color 0.3s ease;
         }
 
@@ -156,12 +156,12 @@ export default function DashboardLayout({
           border-color: var(--app-border) !important;
         }
         .ant-btn-primary {
-          background-color: #285d91 !important;
-          border-color: #285d91 !important;
+          background-color: #0fb5a1 !important;
+          border-color: #0fb5a1 !important;
         }
         .ant-btn-primary:hover {
-          background-color: #1d4d7c !important;
-          border-color: #1d4d7c !important;
+          background-color: #0a8576 !important;
+          border-color: #0a8576 !important;
         }
         .ant-modal-content {
           background: var(--app-surface) !important;
