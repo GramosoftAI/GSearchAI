@@ -1002,7 +1002,15 @@ class KnowledgeBaseService:
 
                 triplet_stats = {"triplets_extracted": persist_result.get("triplets_created", 0), "triplet_entities": persist_result.get("entities_created", 0), "triplet_relationships": persist_result.get("relationships_created", 0)}
 
-
+            # 8.5 GRAPH CLEANUP (NEW)
+            cleanup_stats = {"total_merges": 0, "relationships_deduplicated": 0}
+            try:
+                from ...core.graph_cleanup import GraphCleanupService
+                cleanup_service = GraphCleanupService(tenant_id=str(self.tenant_id))
+                cleanup_stats = await cleanup_service.cleanup_graph()
+                logger.info(f"Graph cleanup completed: {cleanup_stats}")
+            except Exception as cleanup_err:
+                logger.error(f"Graph cleanup failed: {cleanup_err}", exc_info=True)
 
             # 9. FINAL UPDATE
 
@@ -1013,10 +1021,10 @@ class KnowledgeBaseService:
             # Total entities extracted vs unique entities sent = created vs merged approximation
             triplet_entities_processed = triplet_stats.get("triplet_entities", 0)
             nodes_created = int(triplet_entities_processed * 0.2) + len(chunks) + len(all_entities_set)
-            nodes_merged = int(triplet_entities_processed * 0.8)  # Estimate 80% reuse of graph entities
+            nodes_merged = int(triplet_entities_processed * 0.8) + cleanup_stats.get("total_merges", 0)  # Estimate 80% reuse + cleanup merges
             
             relationships_created = triplet_stats.get("triplet_relationships", 0) + len(chunks) + len(similar_pairs) + len(mentions_data)
-            relationships_merged = 0 # Relationships usually aren't merged the same way, assume 0 for now
+            relationships_merged = cleanup_stats.get("relationships_deduplicated", 0) # Track relationships deduplicated during cleanup
             
             total_duration_ms = int((datetime.utcnow() - audit_run.started_at.replace(tzinfo=None)).total_seconds() * 1000)
             
@@ -1231,6 +1239,58 @@ class KnowledgeBaseService:
         res = await self.db.execute(query)
         connections = {row.kb_id: row.db_type for row in res.all()}
         
+        from .models import DocumentIngestionRun
+        from datetime import timezone
+        
+        run_query = select(
+            DocumentIngestionRun.document_id,
+            DocumentIngestionRun.started_at,
+            DocumentIngestionRun.completed_at,
+            DocumentIngestionRun.total_duration_ms,
+            DocumentIngestionRun.status
+        ).where(
+            DocumentIngestionRun.document_id.in_(kb_ids)
+        ).order_by(DocumentIngestionRun.started_at.desc())
+        
+        run_res = await self.db.execute(run_query)
+        kb_runs = {}
+        for r in run_res.all():
+            if r.document_id not in kb_runs:
+                kb_runs[r.document_id] = r
+
+        def format_duration(started_at, completed_at, total_duration_ms, status) -> Optional[str]:
+            if started_at and completed_at:
+                delta = completed_at - started_at
+                total_seconds = int(delta.total_seconds())
+                if total_seconds < 60:
+                    return f"{total_seconds}Sec"
+                mins = total_seconds // 60
+                secs = total_seconds % 60
+                if secs == 0:
+                    return f"{mins}Mins"
+                return f"{mins}Mins {secs}Sec"
+            elif total_duration_ms:
+                total_seconds = int(total_duration_ms / 1000)
+                if total_seconds < 60:
+                    return f"{total_seconds}Sec"
+                mins = total_seconds // 60
+                secs = total_seconds % 60
+                if secs == 0:
+                    return f"{mins}Mins"
+                return f"{mins}Mins {secs}Sec"
+            elif started_at and status in ["IN_PROGRESS", "processing", "started"]:
+                now = datetime.now(timezone.utc) if started_at.tzinfo else datetime.utcnow()
+                delta = now - started_at
+                total_seconds = int(delta.total_seconds())
+                if total_seconds < 60:
+                    return f"{total_seconds}Sec"
+                mins = total_seconds // 60
+                secs = total_seconds % 60
+                if secs == 0:
+                    return f"{mins}Mins"
+                return f"{mins}Mins {secs}Sec"
+            return None
+        
         responses = []
         for kb in kbs:
             kb_dict = schemas.KBResponse.model_validate(kb, from_attributes=True).model_dump(mode="json")
@@ -1246,6 +1306,18 @@ class KnowledgeBaseService:
                     kb_dict["connected_integration"] = 'outlook'
                 elif kb.source == 'web_scraper':
                     kb_dict["connected_integration"] = 'web_scraper'
+            
+            run_info = kb_runs.get(kb.id)
+            if run_info:
+                kb_dict["time_taken"] = format_duration(
+                    run_info.started_at,
+                    run_info.completed_at,
+                    run_info.total_duration_ms,
+                    run_info.status
+                )
+            else:
+                kb_dict["time_taken"] = None
+                
             responses.append(kb_dict)
         return responses
 

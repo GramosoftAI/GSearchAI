@@ -102,6 +102,7 @@ class KBResponse(BaseModel):
 
 
     connected_integration: Optional[str] = Field(None, description="The type of external integration connected to this KB (e.g., google_drive, sharepoint)")
+    time_taken: Optional[str] = Field(None, description="The time taken for ingestion of this KB")
 
     class Config:
         from_attributes = True  # SQLAlchemy ORM mode

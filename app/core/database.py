@@ -758,7 +758,28 @@ async def init_db():
 
                     tables = [row[0] for row in result.fetchall()]
 
-
+                    if "knowledge_bases" in tables and settings.reset_s3_on_start:
+                        try:
+                            kb_result = await conn.execute(
+                                text("SELECT s3_path, parsed_path FROM knowledge_bases")
+                            )
+                            s3_urls = []
+                            for r in kb_result.fetchall():
+                                if r[0]:
+                                    s3_urls.append(r[0])
+                                if r[1]:
+                                    s3_urls.append(r[1])
+                            if s3_urls:
+                                logger.info(f"[STARTUP] Found {len(s3_urls)} S3 files to delete on reset")
+                                from .s3 import S3StorageService
+                                s3_service = S3StorageService()
+                                for url in s3_urls:
+                                    try:
+                                        await s3_service.delete_file_by_url(url)
+                                    except Exception as s3_err:
+                                        logger.warning(f"Failed to delete S3 file {url}: {s3_err}")
+                        except Exception as s3_fetch_err:
+                            logger.warning(f"Could not fetch or delete S3 files: {s3_fetch_err}")
 
                     if tables:
 

@@ -157,3 +157,37 @@ scratch_ingest_res.json
 # migrations/**
 # docker-compose.yml
 # tests/**
+
+# ==========================================================
+# Graph Cleanup Debugging / Temporary Files
+# ==========================================================
+check_graph_cleanup.py
+check_today_entity_extractor_errors.py
+filter_kb_cleanup_summary_logs.py
+find_actual_kb_cleanup_logs.py
+find_cleanup_errors.py
+find_cleanup_logs.py
+find_exceptions_clean.py
+find_kb_cleanup_errors.py
+find_recent_tracebacks.py
+find_today_cleanup_logs.py
+find_traceback.py
+graph_cleanup_summary.txt
+inspect_neo4j_graph.py
+inspect_non_normalized_entities.py
+inspect_schema.py
+kb_cleanup_filtered.txt
+kb_cleanup_logs.txt
+kb_cleanup_summary_logs.txt
+print_last_lines.py
+quick_search.py
+run_live_cleanup.py
+search_kb_logs.py
+test_err.txt
+test_execute_read_type.py
+test_out.txt
+test_relationship_properties.py
+test_tuple_structure.py
+test_tuple_structure_clean.py
+test_tx_syntax.py
+

@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, Request
 from typing import List
-from ...core.database import get_tenant_and_user
+from ..knowledge_bases.routes import get_tenant_and_user
 from ...utils.formatters import format_success, format_error
 from . import schemas, service
 

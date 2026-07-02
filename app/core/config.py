@@ -289,6 +289,8 @@ class Settings(BaseSettings):
 
     reset_graph_db_on_start: bool = False  # DANGEROUS: Wipes Neo4j on startup
 
+    reset_s3_on_start: bool = False  # DANGEROUS: Deletes S3 files on startup when resetting database
+
 
 
     # ============= PHASE 4A: KNOWLEDGE INTELLIGENCE =============
