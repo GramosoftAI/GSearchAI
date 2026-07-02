@@ -243,7 +243,7 @@ class PDFExtractor:
         """
         Extract PDF content using Gdocz OCR server via gdocz_sdk.
         """
-        def _sync_gdocz_convert(pdf_data: bytes, fname: str) -> str:
+        def _sync_gdocz_convert(pdf_data: bytes, fname: str, api_key: str) -> str:
             import os
             import time
             import tempfile
@@ -256,7 +256,7 @@ class PDFExtractor:
                 f.write(pdf_data)
                 
             try:
-                client = GdoczaiClient(api_key=settings.gdocz_api_key)
+                client = GdoczaiClient(api_key=api_key)
                 options = ConvertOptions(mode="chandra")
                 
                 max_retries = 3
@@ -274,7 +274,9 @@ class PDFExtractor:
                         if attempt < max_retries - 1:
                             time.sleep(2 ** attempt)
                 else:
-                    raise last_err
+                    if last_err is not None:
+                        raise last_err
+                    raise RuntimeError("Failed to extract PDF using Gdocz SDK (retries exceeded)")
                     
                 # Handle either dict or object response from SDK
                 if isinstance(result, dict):
@@ -310,7 +312,7 @@ class PDFExtractor:
 
         loop = asyncio.get_event_loop()
         raw_markdown = await loop.run_in_executor(
-            None, _sync_gdocz_convert, pdf_bytes, filename
+            None, _sync_gdocz_convert, pdf_bytes, filename, settings.gdocz_api_key
         )
 
         return raw_markdown

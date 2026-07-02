@@ -317,18 +317,16 @@ class ExcelIngestionService:
         mapping: Dict,
         source: Optional[str] = None
     ) -> Dict[str, int]:
-        """Ingests rows of a dataframe, generates embeddings, stages pgvector & populates Neo4j using Adaptive Chunking."""
+        """Ingests rows of a dataframe, generates embeddings, stages pgvector & populates Neo4j using Row-Centric Strategy."""
         primary_col = mapping["primary_entity"]["column"]
         primary_type = mapping["primary_entity"]["type"]
         attributes_map = mapping.get("attributes", {})
         relationships_config = mapping.get("relationships", [])
 
-        # Resilience: make sure primary_col exists
         if primary_col not in df.columns:
             logger.warning(f"Primary column '{primary_col}' not found. Selecting first column as key.")
             primary_col = df.columns[0] if len(df.columns) > 0 else None
 
-        # Resilience: Ensure NO columns are lost even if the LLM hallucinated or skipped them
         mapped_cols = {primary_col}
         mapped_cols.update(attributes_map.keys())
         mapped_cols.update([rc.get("column") for rc in relationships_config if rc.get("column")])
@@ -338,29 +336,70 @@ class ExcelIngestionService:
                 logger.info(f"Adding unmapped column '{col}' as an attribute to prevent data loss.")
                 attributes_map[col] = str(col).lower().replace(" ", "_")
 
-        # 1. Chunk the sheet using AdaptiveChunker
-        from app.core.adaptive_chunker import AdaptiveChunker
-        adaptive_chunks = await AdaptiveChunker.chunk(df, "excel", metadata={"sheet_name": sheet_name})
-        
-        if not adaptive_chunks:
-            logger.info(f"Sheet '{sheet_name}' produced no chunks.")
+        total_rows = len(df)
+        if total_rows == 0:
             return {"chunks_created": 0, "entities_created": 0, "relationships_created": 0}
 
-        chunks_created = len(adaptive_chunks)
-        entities_created = set()
-        relationships_created = 0
+        # 1. Generate Row Chunks and Table Summary Chunk
+        chunk_texts = []
+        chunk_metadatas = []
 
-        # Generate chunk IDs
-        chunk_ids = [str(uuid.uuid4()) for _ in range(chunks_created)]
-        chunk_texts = [c["chunk_text"] for c in adaptive_chunks]
+        # Table Summary Chunk (Level 2)
+        summary_text = f"Dataset Sheet: {sheet_name}.\nColumns: {', '.join(df.columns)}.\nTotal Rows: {total_rows}."
+        chunk_texts.append(summary_text)
+        chunk_metadatas.append({
+            "chunk_type": "table_summary",
+            "sheet_name": sheet_name,
+            "row_count": total_rows,
+            "entity_type": primary_type
+        })
+
+        # Process each row (Level 1)
+        row_dicts = df.to_dict(orient="records")
+        for i, row in enumerate(row_dicts):
+            primary_val = str(row[primary_col]) if primary_col and pd.notnull(row.get(primary_col)) else f"row_{i}"
+            
+            # Build Semantic Text for Vector Search
+            semantic_parts = [f"{primary_type}: {primary_val}"]
+            
+            # Attributes
+            for col, prop_name in attributes_map.items():
+                val = row.get(col)
+                if pd.notnull(val) and str(val).strip():
+                    semantic_parts.append(f"{col}: {val}")
+                    
+            # Relationships
+            for rc in relationships_config:
+                col = rc["column"]
+                if pd.notnull(row.get(col)) and str(row[col]).strip():
+                    semantic_parts.append(f"{col} ({rc['target_type']}): {row[col]}")
+            
+            semantic_text = " | ".join(semantic_parts)
+            
+            # Clean row dict to store in metadata
+            clean_row = {k: v for k, v in row.items() if pd.notnull(v)}
+            
+            chunk_texts.append(semantic_text)
+            chunk_metadatas.append({
+                "chunk_type": "row",
+                "row_id": f"{sheet_name}_row_{i}",
+                "sheet_name": sheet_name,
+                "row_number": i,
+                "entity_type": primary_type,
+                "raw_data": clean_row
+            })
+
+        chunks_created = len(chunk_texts)
 
         # 2. Embed all chunk texts in a single batch
-        logger.info(f"Generating embeddings for {len(chunk_texts)} spreadsheet chunks...")
+        logger.info(f"Generating embeddings for {chunks_created} row/summary chunks...")
         embeddings = await EmbeddingGenerator.generate_embeddings_batch(chunk_texts)
-        if len(embeddings) != len(chunk_texts):
+        if len(embeddings) != chunks_created:
             raise RuntimeError("Embeddings batch generation failed or size mismatched.")
 
-        # 3. Create PG Chunks
+        # 3. Create PG Chunks with metadata_json
+        chunk_ids = [str(uuid.uuid4()) for _ in range(chunks_created)]
+        
         for idx in range(chunks_created):
             pg_chunk = DocumentChunk(
                 id=uuid.UUID(chunk_ids[idx]),
@@ -368,87 +407,39 @@ class ExcelIngestionService:
                 kb_id=uuid.UUID(kb_id),
                 text=chunk_texts[idx],
                 chunk_index=idx,
-                embedding=embeddings[idx]
+                embedding=embeddings[idx],
+                metadata_json=chunk_metadatas[idx]
             )
             self.db.add(pg_chunk)
-
-
-        # 4. Stage Chunk nodes in Neo4j
-        chunk_nodes_data = [{
-            "chunk_id": chunk_ids[i],
-            "tenant_id": self.tenant_id,
-            "kb_id": kb_id,
-            "text": chunk_texts[i][:1500],  # Cap chunk text size in Neo4j
-            "position": i,
-            "embedding": embeddings[i],
-            "created_at": datetime.utcnow().isoformat(),
-            "source": source,
-            "chunk_type": adaptive_chunks[i]["chunk_type"],
-            "section": adaptive_chunks[i]["section"],
-            "sheet": adaptive_chunks[i]["sheet"],
-            "source_type": adaptive_chunks[i]["source_type"]
-        } for i in range(chunks_created)]
-
-        batch_create_query = """
-        WITH $chunks AS chunk_list
-        UNWIND chunk_list AS data
-        CREATE (c:Chunk {
-            id: data.chunk_id, tenant_id: $tenant_id, kb_id: data.kb_id,
-            text: data.text, position: data.position,
-            embedding: data.embedding, created_at: data.created_at,
-            source: data.source, chunk_type: data.chunk_type,
-            section: data.section, sheet: data.sheet, source_type: data.source_type
-        })
-        WITH c, data
-        MATCH (kb:KnowledgeBase {id: data.kb_id, tenant_id: $tenant_id})
-        CREATE (kb)-[:HAS_CHUNK]->(c)
-        """
-        await retry_neo4j_operation(lambda: self.neo4j_repo.execute_write(batch_create_query, {"chunks": chunk_nodes_data}))
-        logger.info(f" Staged spreadsheet chunks in PostgreSQL and Neo4j")
-
-        # 5. Populate Ontology Graph for each chunk
-        for chunk_idx, chunk in enumerate(adaptive_chunks):
-            chunk_id = chunk_ids[chunk_idx]
-            rows_in_chunk = chunk["metadata"].get("rows", [])
             
-            for idx, row in enumerate(rows_in_chunk):
-                primary_val = str(row[primary_col]) if primary_col and row.get(primary_col) else f"row_{chunk_idx}_{idx}"
-                
-                # Identify name property
-                name_val = primary_val
-                for col, prop in attributes_map.items():
-                    if prop == "name" and row.get(col):
-                        name_val = str(row[col])
+        logger.info(f" Staged {chunks_created} semantic row chunks in PostgreSQL")
 
-                # Properties representation
+        # 4. Populate Graph Database if within safe limits
+        entities_created = set()
+        relationships_created = 0
+        
+        if total_rows > 100000:
+            logger.warning(f" Skipping Neo4j graph generation for {sheet_name} ({total_rows} rows > 100k limit).")
+        else:
+            logger.info(f" Generating Neo4j Graph Entities for {total_rows} rows...")
+            clean_primary_label = re.sub(r"[^a-zA-Z0-9_]", "", primary_type.upper())
+            
+            for i, row in enumerate(row_dicts):
+                primary_val = str(row[primary_col]) if primary_col and pd.notnull(row.get(primary_col)) else f"row_{i}"
+                chunk_id = chunk_ids[i + 1] # Offset by 1 because index 0 is summary chunk
+                
                 row_attrs = {}
                 for col, prop in attributes_map.items():
-                    if row.get(col):
+                    if pd.notnull(row.get(col)):
                         row_attrs[prop] = str(row[col])
-                row_attrs["name"] = name_val
+                row_attrs["name"] = primary_val
+                row_attrs["row_id"] = f"{sheet_name}_row_{i}"
 
-                # Relationships representation
-                row_rels = []
-                for rc in relationships_config:
-                    col = rc["column"]
-                    pred = rc["relation"]
-                    tgt_type = rc["target_type"]
-                    
-                    if row.get(col):
-                        row_rels.append({
-                            "target_val": str(row[col]),
-                            "target_type": tgt_type,
-                            "predicate": pred
-                        })
-
-                # Build primary entity labels securely
-                clean_primary_label = re.sub(r"[^a-zA-Z0-9_]", "", primary_type.upper())
-                
-                # Merge primary entity in Neo4j
+                # Merge primary entity as the Row Entity
                 primary_merge_query = f"""
                 MERGE (e:Entity {clean_primary_label.join([':', ''])} {{tenant_id: $tenant_id, text: $id_val, type: $type}})
                 ON CREATE SET e.id = randomUUID(), e.created_at = timestamp()
-                SET e.properties = $properties
+                SET e.properties = $properties, e.chunk_id = $chunk_id
                 RETURN e.id as id
                 """
                 await retry_neo4j_operation(lambda: self.neo4j_repo.execute_write(
@@ -457,98 +448,54 @@ class ExcelIngestionService:
                         "tenant_id": self.tenant_id,
                         "id_val": primary_val,
                         "type": primary_type,
-                        "properties": row_attrs
+                        "properties": row_attrs,
+                        "chunk_id": chunk_id
                     }
                 ))
                 entities_created.add(f"{primary_val}|{primary_type}")
 
-                # Link Chunk node to Primary Entity via MENTIONS
-                chunk_link_query = """
-                MATCH (c:Chunk {id: $chunk_id, tenant_id: $tenant_id})
-                MATCH (e:Entity {tenant_id: $tenant_id, text: $id_val, type: $type})
-                MERGE (c)-[:MENTIONS {confidence: 1.0}]->(e)
-                """
-                await retry_neo4j_operation(lambda: self.neo4j_repo.execute_write(
-                    chunk_link_query,
-                    {
-                        "chunk_id": chunk_id,
-                        "tenant_id": self.tenant_id,
-                        "id_val": primary_val,
-                        "type": primary_type
-                    }
-                ))
-
                 # Merge target entities and create relationship links
-                for rel in row_rels:
-                    tgt_val = rel["target_val"]
-                    tgt_type = rel["target_type"]
-                    pred = rel["predicate"]
+                for rc in relationships_config:
+                    col = rc["column"]
+                    if pd.notnull(row.get(col)) and str(row[col]).strip():
+                        tgt_val = str(row[col])
+                        tgt_type = rc["target_type"]
+                        pred = rc["relation"]
 
-                    clean_tgt_label = re.sub(r"[^a-zA-Z0-9_]", "", tgt_type.upper())
-                    clean_rel_type = re.sub(r"[^a-zA-Z0-9_]", "", pred.upper())
+                        clean_tgt_label = re.sub(r"[^a-zA-Z0-9_]", "", tgt_type.upper())
+                        clean_rel_type = re.sub(r"[^a-zA-Z0-9_]", "", pred.upper())
 
-                    # Merge target entity
-                    target_merge_query = f"""
-                    MERGE (tgt:Entity {clean_tgt_label.join([':', ''])} {{tenant_id: $tenant_id, text: $tgt_val, type: $type}})
-                    ON CREATE SET tgt.id = randomUUID(), tgt.created_at = timestamp()
-                    RETURN tgt.id as id
-                    """
-                    await retry_neo4j_operation(lambda: self.neo4j_repo.execute_write(
-                        target_merge_query,
-                        {
-                            "tenant_id": self.tenant_id,
-                            "tgt_val": tgt_val,
-                            "type": tgt_type
-                        }
-                    ))
-                    entities_created.add(f"{tgt_val}|{tgt_type}")
+                        target_merge_query = f"""
+                        MERGE (tgt:Entity {clean_tgt_label.join([':', ''])} {{tenant_id: $tenant_id, text: $tgt_val, type: $type}})
+                        ON CREATE SET tgt.id = randomUUID(), tgt.created_at = timestamp()
+                        RETURN tgt.id as id
+                        """
+                        await retry_neo4j_operation(lambda: self.neo4j_repo.execute_write(
+                            target_merge_query,
+                            {
+                                "tenant_id": self.tenant_id,
+                                "tgt_val": tgt_val,
+                                "type": tgt_type
+                            }
+                        ))
+                        entities_created.add(f"{tgt_val}|{tgt_type}")
 
-                    # Link Chunk node to Target Entity
-                    target_link_query = """
-                    MATCH (c:Chunk {id: $chunk_id, tenant_id: $tenant_id})
-                    MATCH (tgt:Entity {tenant_id: $tenant_id, text: $tgt_val, type: $type})
-                    MERGE (c)-[:MENTIONS {confidence: 1.0}]->(tgt)
-                    """
-                    await retry_neo4j_operation(lambda: self.neo4j_repo.execute_write(
-                        target_link_query,
-                        {
-                            "chunk_id": chunk_id,
-                            "tenant_id": self.tenant_id,
-                            "tgt_val": tgt_val,
-                            "type": tgt_type
-                        }
-                    ))
-
-                    # Create the fine-grained ontology typed relationship edge
-                    edge_create_query = f"""
-                    MATCH (src:Entity {{tenant_id: $tenant_id, text: $src_val, type: $src_type}})
-                    MATCH (tgt:Entity {{tenant_id: $tenant_id, text: $tgt_val, type: $tgt_type}})
-                    MERGE (src)-[r:{clean_rel_type} {{tenant_id: $tenant_id}}]->(tgt)
-                    SET r.chunk_id = $chunk_id
-                    """
-                    await retry_neo4j_operation(lambda: self.neo4j_repo.execute_write(
-                        edge_create_query,
-                        {
-                            "tenant_id": self.tenant_id,
-                            "src_val": primary_val,
-                            "src_type": primary_type,
-                            "tgt_val": tgt_val,
-                            "tgt_type": tgt_type,
-                            "chunk_id": chunk_id
-                        }
-                    ))
-                    relationships_created += 1
-
-        # 6. Link adjacent chunks with NEXT to preserve ordering
-        next_pairs = [{"id1": chunk_ids[i], "id2": chunk_ids[i+1]} for i in range(len(chunk_ids)-1)]
-        if next_pairs:
-            next_link_query = """
-            UNWIND $rels AS r
-            MATCH (c1:Chunk {id: r.id1, tenant_id: $tenant_id})
-            MATCH (c2:Chunk {id: r.id2, tenant_id: $tenant_id})
-            CREATE (c1)-[:NEXT]->(c2)
-            """
-            await retry_neo4j_operation(lambda: self.neo4j_repo.execute_write(next_link_query, {"rels": next_pairs}))
+                        edge_create_query = f"""
+                        MATCH (src:Entity {{tenant_id: $tenant_id, text: $src_val, type: $src_type}})
+                        MATCH (tgt:Entity {{tenant_id: $tenant_id, text: $tgt_val, type: $tgt_type}})
+                        MERGE (src)-[r:{clean_rel_type} {{tenant_id: $tenant_id}}]->(tgt)
+                        """
+                        await retry_neo4j_operation(lambda: self.neo4j_repo.execute_write(
+                            edge_create_query,
+                            {
+                                "tenant_id": self.tenant_id,
+                                "src_val": primary_val,
+                                "src_type": primary_type,
+                                "tgt_val": tgt_val,
+                                "tgt_type": tgt_type
+                            }
+                        ))
+                        relationships_created += 1
 
         logger.info(f" Ingested sheet '{sheet_name}': {chunks_created} chunks, {len(entities_created)} entities, {relationships_created} relationships")
 
@@ -557,3 +504,4 @@ class ExcelIngestionService:
             "entities_created": len(entities_created),
             "relationships_created": relationships_created
         }
+

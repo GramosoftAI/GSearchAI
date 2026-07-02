@@ -1413,6 +1413,7 @@ class RAGPipeline:
                         DocumentChunk.text,
                         DocumentChunk.chunk_index,
                         DocumentChunk.kb_id,
+                        DocumentChunk.metadata_json,
                         (1.0 - DocumentChunk.embedding.cosine_distance(query_embedding)).label("similarity")
                     )
                     .where(
@@ -1437,18 +1438,22 @@ class RAGPipeline:
                         chunk_id = str(row.id)
                         retrieved_ids.add(chunk_id)
                         
+                        chunk_text = row.text or ""
+                        if row.metadata_json:
+                            row_id_attr = f' row_id="{row.metadata_json.get("row_id")}"' if row.metadata_json.get("row_id") else ""
+                            chunk_text += f"\n<ROW_DATA{row_id_attr}>\n{json.dumps(row.metadata_json, indent=2)}\n</ROW_DATA>"
+                        
                         # Apply keyword boost if term matches
                         weight = 1.0
                         boosted_similarity = similarity
                         if exact_terms:
-                            chunk_text = row.text or ""
                             if any(term in chunk_text for term in exact_terms):
                                 boosted_similarity = max(similarity, 0.85)
                                 weight = 1.5
 
                         pg_chunks.append({
                             "chunk_id": chunk_id,
-                            "text": row.text,
+                            "text": chunk_text,
                             "position": row.chunk_index,
                             "kb_id": str(row.kb_id),
                             "embedding": None,
@@ -1470,6 +1475,7 @@ class RAGPipeline:
                                 DocumentChunk.text,
                                 DocumentChunk.chunk_index,
                                 DocumentChunk.kb_id,
+                                DocumentChunk.metadata_json,
                                 (1.0 - DocumentChunk.embedding.cosine_distance(query_embedding)).label("similarity")
                             )
                             .where(
@@ -1489,17 +1495,19 @@ class RAGPipeline:
                         for row in rows_kw:
                             chunk_id = str(row.id)
                             if chunk_id not in retrieved_ids:
-                                similarity = float(row.similarity)
-                                boosted_similarity = max(similarity, 0.85)
-                                
+                                retrieved_ids.add(chunk_id)
+                                chunk_text = row.text or ""
+                                if row.metadata_json:
+                                    row_id_attr = f' row_id="{row.metadata_json.get("row_id")}"' if row.metadata_json.get("row_id") else ""
+                                    chunk_text += f"\n<ROW_DATA{row_id_attr}>\n{json.dumps(row.metadata_json, indent=2)}\n</ROW_DATA>"
                                 pg_chunks.append({
                                     "chunk_id": chunk_id,
-                                    "text": row.text,
+                                    "text": chunk_text,
                                     "position": row.chunk_index,
                                     "kb_id": str(row.kb_id),
                                     "embedding": None,
-                                    "similarity": boosted_similarity,
-                                    "weight": 1.5,
+                                    "similarity": max(float(row.similarity) if row.similarity else 0.5, 0.7),
+                                    "weight": 1.2,
                                     "source": None
                                 })
                                 retrieved_ids.add(chunk_id)

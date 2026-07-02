@@ -236,6 +236,8 @@ class DocumentChunk(Base):
     from pgvector.sqlalchemy import Vector
     embedding = Column(Vector(1024), nullable=True)
 
+    from sqlalchemy.dialects.postgresql import JSONB
+    metadata_json = Column(JSONB, nullable=True)
 
 
     created_at = Column(

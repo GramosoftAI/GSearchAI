@@ -79,13 +79,18 @@ async def rag_websocket(
     - Server sends (done): {"type": "done"}
 
     """
+    
+    # 0. PREVENT INVALID TOKENS FROM OPENING CONNECTION
+    if not token or token == "null" or token == "undefined":
+        logger.warning(f"Frontend sent invalid token '{token}', rejecting connection.")
+        # We must accept and then close with policy violation, or just close. 
+        # FastAPI requires accept before sending close codes in some versions, but close() works.
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
 
     # 1. ACCEPT CONNECTION IMMEDIATELY (Prevent handshake timeouts)
-
     await websocket.accept()
-
     
-
     # 2. AUTHENTICATION
 
     payload = await verify_access_token(token)
@@ -395,9 +400,14 @@ async def rag_websocket(
 
 
                     # Forward stream chunk to client
-
-                    await websocket.send_text(chunk)
-
+                    # We skip logging every chunk to avoid log spam, but we track errors
+                    try:
+                        await websocket.send_text(chunk)
+                    except Exception as ws_err:
+                        logger.error(f"Failed to send chunk to websocket: {ws_err}")
+                        has_error = True
+                        break
+                        
                     full_response_text += chunk
 
 

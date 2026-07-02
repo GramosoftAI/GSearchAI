@@ -550,8 +550,12 @@ CRITICAL INSTRUCTION: If the user's query is a general greeting or conversationa
             await self.db.commit()
 
         except Exception as ae:
-
             logger.warning(f" Failed to log analytics for stream: {ae}")
+            # CRITICAL: Prevent PendingRollbackError from crashing the subsequent db.commit() in websocket routes!
+            try:
+                await self.db.rollback()
+            except Exception as rollback_err:
+                logger.error(f" Failed to rollback analytics transaction: {rollback_err}")
 
 
 
