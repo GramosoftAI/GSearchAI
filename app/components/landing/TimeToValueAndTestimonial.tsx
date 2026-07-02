@@ -4,9 +4,9 @@ import { Row, Col, Card, Typography, Statistic } from "antd";
 const { Title, Paragraph, Text } = Typography;
 
 const ttvItems = [
-  { n: "3 days", title: "Average first connector live", body: "Most teams connect their first tools and see answers within the first week." },
-  { n: "0", title: "Migration projects required", body: "Gsearch reads from your tools in place — nothing to move, nothing to copy." },
-  { n: "100%", title: "Permissions carried over", body: "Existing access rules apply automatically, from day one." },
+  { n: "Days", title: "From setup to answers", body: "Connect your sources and your team gets useful answers in days — not a six-month project." },
+  { n: "Zero", title: "IT lift required", body: "Permissions carry over automatically. No data to move, no new system to maintain." },
+  { n: "Day 1", title: "Insight from the start", body: "See what your team searches for, what they find, and where knowledge gaps are costing time." },
 ];
 
 const stats = [
@@ -23,8 +23,8 @@ export default function TimeToValueAndTestimonial() {
       <div className="wrap">
         <div className="gs-sec-center">
           <div className="gs-eyebrow">Fast time to value</div>
-          <Title level={2} className="gs-sec-h">Up and running in days, not months.</Title>
-          <Paragraph className="gs-sec-lede">
+          <Title level={2} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>Up and running in days, not months.</Title>
+          <Paragraph className="gs-sec-lede" style={{fontSize:"18px",paddingBottom:10,color:"var(--muted)"}}>
             Gsearch works with the tools and permissions you already have. No new
             infrastructure, no long rollout, no engineering backlog.
           </Paragraph>
@@ -36,7 +36,7 @@ export default function TimeToValueAndTestimonial() {
                 <div style={{ fontSize: 38, fontWeight: 800, color: "var(--teal-deep)", letterSpacing: "-0.02em" }}>
                   {item.n}
                 </div>
-                <Title level={3} style={{ fontSize: 17, margin: "10px 0 8px" }}>{item.title}</Title>
+                <Title level={3} style={{ fontSize: 18, margin: "10px 0 8px",color:"var(--ink)",fontWeight:700 }}>{item.title}</Title>
                 <Paragraph style={{ fontSize: 14.5, color: "var(--muted)", margin: 0 }}>{item.body}</Paragraph>
               </div>
             </Col>
@@ -46,9 +46,7 @@ export default function TimeToValueAndTestimonial() {
         <div className="gs-testi" style={{ marginTop: 40 }}>
           <div>
             <Paragraph style={{ fontSize: 24, fontWeight: 700, color: "var(--ink)", lineHeight: 1.32, letterSpacing: "-0.02em" }}>
-              Gsearch gave our support team a{" "}
-              <Text style={{ color: "var(--teal-deep)", fontWeight: 700 }}>single source of truth</Text>{" "}
-              across every tool we use — tickets resolve faster and reps trust the answer.
+              &quot;Before Gsearch, our knowledge lived in too many places and people spent too much time searching. Now it&apos;s like the whole company <Text style={{ color: "var(--teal-deep)", fontWeight: 700,fontSize:24 }}>shares one memory.</Text>&quot;
             </Paragraph>
             <div className="who" style={{ marginTop: 22, display: "flex", alignItems: "center", gap: 12 }}>
               <span className="av" style={{ width: 46, height: 46, borderRadius: "50%", background: "linear-gradient(135deg,var(--teal),var(--gold))", display: "block" }} />
@@ -67,7 +65,7 @@ export default function TimeToValueAndTestimonial() {
                 styles={{ body: { padding: 22 } }}
               >
                 <div style={{ fontSize: 34, fontWeight: 800, color: "var(--teal-deep)", letterSpacing: "-0.02em" }}>{s.big}</div>
-                <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 6, fontWeight: 500 }}>{s.lbl}</div>
+                <div style={{ fontSize: 14, color: "var(--muted)", marginTop: 6, fontWeight: 500 }}>{s.lbl}</div>
               </Card>
             ))}
           </div>

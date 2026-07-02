@@ -55,7 +55,7 @@ export default function Footer() {
               Gsearch
             </a>
             <Paragraph style={{ fontSize: 14, color: "var(--muted)", maxWidth: 240, marginTop: 14 }}>
-              AI enterprise search that connects every tool your team uses. A Gramosoft product.
+              Your company&apos;s second brain — AI search connected across every tool your team uses. A Gramosoft product.
             </Paragraph>
           </div>
         </Col>

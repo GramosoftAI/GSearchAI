@@ -30,24 +30,25 @@ export interface HeroRotationItem {
 }
 
 export const heroRotationItems: HeroRotationItem[] = [
+
   {
-    q: "Why are billing customers churning this quarter?",
-    s: "across Billing · Support · Product",
-    a: "Customers who hit a <b>billing setup error</b> in onboarding are leaving <b>40% faster</b> within the first week — a pattern that spans three tools, so no single report showed it.",
-    tags: ["Salesforce", "Zendesk", "Product logs"],
+    q:"What's our refund policy for annual plans?",
+    s:"across Policy docs · Help center · Slack",
+    a:"Annual plans get a <b>full refund within 30 days</b> of purchase; after that, refunds are pro-rated to the unused months — from the billing policy updated in January.",
+    tags:["Billing policy","Help center","Slack thread"]
   },
   {
-    q: "Which directive applies to engine part 7841?",
-    s: "across Manuals · Service records",
-    a: "<b>AD-2024-19</b> applies to part 7841 and is due at the next inspection — traced from the part to its aircraft to the directive, with the manual attached.",
-    tags: ["Maintenance manual", "Service history", "Airworthiness directive"],
+    q:"Has any customer reported this login issue before?",
+    s:"across Support tickets · Product logs",
+    a:"Yes — <b>3 similar tickets</b> in the last month, all resolved by resetting the session token. The past fix and the steps are attached.",
+    tags:["Support tickets","Past resolution","Product logs"]
   },
   {
-    q: "What's the renewal risk on the Sundaram account?",
-    s: "across CRM · Email · Contracts",
-    a: "<b>Medium risk.</b> Two open support issues and a pricing question from last week sit against a renewal due in 30 days — connected from the contact to their contract and tickets.",
-    tags: ["CRM", "Support tickets", "Contract"],
-  },
+    q:"How many leave days do new employees get?",
+    s:"across HR policy · Employee handbook",
+    a:"New employees get <b>18 paid leave days</b> per year plus public holidays, starting from day one — from the HR policy, effective January 2026.",
+    tags:["HR policy","Employee handbook"]
+  }
 ];
 
 export interface MockRow {
@@ -70,8 +71,8 @@ export const capabilityTabs: CapabilityTab[] = [
     heading: "Make better decisions with confident answers",
     body: "Gsearch turns your docs, chats, and meeting notes into direct answers — so your team spends less time searching and more time acting. Every answer cites its source.",
     mockRows: [
-      { color: "var(--teal)", text: "Which warranty covers part 7841?" },
-      { color: "var(--gold)", text: "<b>Answer:</b> 24-month coverage, expires Mar 2027" },
+      { color: "var(--teal)", text: "Is this repair covered under warranty?" },
+      { color: "var(--gold)", text: "<b>Answer:</b> Yes — covered until Mar 2027" },
       { color: "var(--violet)", text: "Source: Service contract · cited" },
     ],
   },
@@ -81,9 +82,9 @@ export const capabilityTabs: CapabilityTab[] = [
     heading: "Find exactly what you need, the moment you need it",
     body: "Stop digging through ten apps. Gsearch surfaces the right document, person, or thread from across your whole stack in one search.",
     mockRows: [
-      { color: "var(--teal)", text: "Q3 pricing deck — <b>Google Drive</b>" },
-      { color: "var(--violet)", text: "Owner: Priya · updated 2 days ago" },
-      { color: "var(--gold)", text: "Related thread in Slack #pricing" },
+      { color: "var(--teal)", text: "Latest pricing deck — <b>found in Drive</b>" },
+      { color: "var(--violet)", text: "Owner: Marketing team · updated 2 days ago" },
+      { color: "var(--gold)", text: "Related discussion found in chat" },
     ],
   },
   {
@@ -103,9 +104,9 @@ export const capabilityTabs: CapabilityTab[] = [
     heading: "Turn scattered data into clear insight",
     body: "Ask a question that spans systems and Gsearch connects the data to answer it — surfacing the pattern no single dashboard could show.",
     mockRows: [
-      { color: "var(--teal)", text: "Churn vs. onboarding errors" },
-      { color: "var(--gold)", text: "Strong link found · +40% in 7 days" },
-      { color: "var(--violet)", text: "Across 3 connected sources" },
+      { color: "var(--teal)", text: "Why are customers cancelling?" },
+      { color: "var(--gold)", text: "Pattern found: setup issues in week 1" },
+      { color: "var(--violet)", text: "Connected across 3 sources" },
     ],
   },
   {
@@ -185,6 +186,11 @@ export interface FaqItem {
 }
 
 export const faqItems: FaqItem[] = [
+  {
+    question: "Why do you call Gsearch a \"second brain\"?",
+    answer:
+      "Because it works like one. Gsearch doesn't just store your company's knowledge — it connects it, remembers how things relate, and recalls the right answer the moment anyone asks. Unlike personal note-taking apps, this is a second brain for your whole company, built on the tools you already use.",
+  },
   {
     question: "Do we have to move our data into Gsearch?",
     answer:

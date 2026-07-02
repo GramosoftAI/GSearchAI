@@ -45,7 +45,7 @@ body {
 h1,
 h2,
 h3,
-h4 {
+h4{
   color: var(--ink);
   font-weight: 700;
   line-height: 1.12;
@@ -178,7 +178,7 @@ a {
 /* ---------- Hero ---------- */
 .gs-hero {
   text-align: center;
-  padding: 72px 0 50px;
+  padding: 62px 0 50px;
 }
 .gs-hero h1 {
   font-size: clamp(34px, 5vw, 56px);
@@ -276,6 +276,47 @@ a {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 16px 18px;
+  min-height: 132px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.gs-searching {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14.5px;
+  color: var(--muted);
+  font-weight: 600;
+  margin-top: 8px;
+}
+.gs-searching .sd {
+  display: inline-flex;
+  gap: 4px;
+}
+.gs-searching .sd i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--teal);
+  opacity: 0.35;
+  animation: sdp 1s ease-in-out infinite;
+}
+.gs-searching .sd i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.gs-searching .sd i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes sdp {
+  0%, 100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
 }
 .gs-answer-card .ac-top {
   display: flex;
@@ -347,7 +388,7 @@ a {
 
 /* ---------- Sections ---------- */
 .gs-block {
-  padding: 90px 0;
+  padding: 80px 0;
 }
 .gs-block.alt {
   background: var(--alt);
@@ -963,4 +1004,139 @@ a {
     padding: 22px;
   }
 }
+
+/* Ant Design Tabs Override for Capability and Team switcher */
+.gs-capability-tabs .ant-tabs-nav {
+  margin: 44px 0 36px !important;
+}
+.gs-capability-tabs .ant-tabs-nav-wrap {
+  justify-content: center !important;
+}
+.gs-capability-tabs .ant-tabs-nav-list {
+  gap: 10px !important;
+}
+.gs-capability-tabs .ant-tabs-ink-bar {
+  display: none !important;
+}
+.gs-capability-tabs .ant-tabs-tab {
+  margin: 0 !important;
+  padding: 11px 22px !important;
+  background: #fff !important;
+  border: 1.5px solid var(--line-2) !important;
+  border-radius: 100px !important;
+  color: var(--body) !important;
+  font-weight: 700 !important;
+  font-size: 15px !important;
+  transition: all 0.15s !important;
+}
+.gs-capability-tabs .ant-tabs-tab:hover {
+  border-color: var(--teal) !important;
+  color: var(--teal-deep) !important;
+}
+.gs-capability-tabs .ant-tabs-tab-active {
+  background: var(--teal) !important;
+  border-color: var(--teal) !important;
+}
+.gs-capability-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #fff !important;
+}
+
+.gs-team-tabs .ant-tabs-nav {
+  margin: 42px 0 34px !important;
+}
+.gs-team-tabs .ant-tabs-nav-wrap {
+  justify-content: center !important;
+}
+.gs-team-tabs .ant-tabs-nav-list {
+  gap: 8px !important;
+}
+.gs-team-tabs .ant-tabs-ink-bar {
+  display: none !important;
+}
+.gs-team-tabs .ant-tabs-tab {
+  margin: 0 !important;
+  padding: 10px 20px !important;
+  background: #fff !important;
+  border: 1.5px solid var(--line-2) !important;
+  border-radius: 100px !important;
+  color: var(--body) !important;
+  font-weight: 700 !important;
+  font-size: 14.5px !important;
+  transition: all 0.15s !important;
+}
+.gs-team-tabs .ant-tabs-tab:hover {
+  border-color: var(--teal) !important;
+  color: var(--teal-deep) !important;
+}
+.gs-team-tabs .ant-tabs-tab-active {
+  background: var(--ink) !important;
+  border-color: var(--ink) !important;
+}
+.gs-team-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #fff !important;
+}
+
+/* Ant Design Collapse Override for FAQ */
+.gs-faq-collapse {
+  background: transparent !important;
+  border: none !important;
+}
+.gs-faq-collapse .ant-collapse-item {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--rs) !important;
+  background: #fff !important;
+  margin-bottom: 12px !important;
+  overflow: hidden !important;
+}
+.gs-faq-collapse .ant-collapse-item:last-child {
+  border-bottom: 1px solid var(--line) !important;
+}
+.gs-faq-collapse .ant-collapse-header {
+  padding: 20px 22px !important;
+  font-weight: 700 !important;
+  color: var(--ink) !important;
+  font-size: 16px !important;
+  align-items: center !important;
+  cursor: pointer !important;
+}
+.gs-faq-collapse .ant-collapse-header-text {
+  color: var(--ink) !important;
+}
+.gs-faq-collapse .ant-collapse-content {
+  background: #fff !important;
+  border: none !important;
+}
+.gs-faq-collapse .ant-collapse-content-box {
+  padding: 0 22px 22px !important;
+  font-size: 15px !important;
+  color: var(--muted) !important;
+}
+.gs-faq-collapse .ant-collapse-expand-icon {
+  order: 1 !important;
+  margin-inline-start: auto !important;
+  margin-inline-end: 0 !important;
+  transition: transform 0.2s !important;
+}
+.gs-faq-collapse .ant-collapse-item-active .ant-collapse-expand-icon {
+  transform: rotate(45deg) !important;
+}
+
+@media (max-width: 860px) {
+  .gs-capability-tabs .ant-tabs-nav-list,
+  .gs-team-tabs .ant-tabs-nav-list {
+    flex-direction: column !important;
+    width: 100% !important;
+    gap: 8px !important;
+  }
+  .gs-capability-tabs .ant-tabs-tab,
+  .gs-team-tabs .ant-tabs-tab {
+    width: 100% !important;
+    text-align: center !important;
+  }
+}
+
+.ant-tabs-nav::before {
+  border-bottom: none !important;
+}
+
 

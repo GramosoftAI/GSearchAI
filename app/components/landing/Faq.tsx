@@ -21,10 +21,21 @@ export default function Faq() {
     <div className="wrap">
       <div className="gs-sec-center">
         <div className="gs-eyebrow">Good to know</div>
-        <Title level={2} className="gs-sec-h">Questions teams ask before they start.</Title>
+        <Title level={2} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>Questions teams ask before they start.</Title>
       </div>
       <div style={{ maxWidth: 780, margin: "46px auto 0" }}>
-        <Collapse items={items} defaultActiveKey={["0"]} bordered={false} />
+        <Collapse
+          items={items}
+          defaultActiveKey={["0"]}
+          bordered={false}
+          className="gs-faq-collapse"
+          expandIconPosition="end"
+          expandIcon={() => (
+            <span className="plus" style={{ color: "var(--teal)", fontSize: 22, fontWeight: 600 }}>
+              +
+            </span>
+          )}
+        />
       </div>
     </div>
   </section>

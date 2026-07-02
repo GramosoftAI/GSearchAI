@@ -23,8 +23,8 @@ export default function Security() {
     <div className="wrap">
       <div className="gs-sec-center">
         <div className="gs-eyebrow">Security, compliance, governance</div>
-        <Title level={2} className="gs-sec-h">Built for teams where trust isn&apos;t optional.</Title>
-        <Paragraph className="gs-sec-lede">
+        <Title level={2} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>Built for teams where trust isn&apos;t optional.</Title>
+        <Paragraph className="gs-sec-lede" style={{fontSize:"18px",paddingBottom:10,color:"var(--muted)"}}>
           Gsearch protects your company&apos;s knowledge by enforcing your policies, securing
           your data, and keeping every answer accountable.
         </Paragraph>
@@ -59,7 +59,7 @@ export default function Security() {
               style={{ height: "100%", background: "var(--alt)", border: "1px solid var(--line)", borderRadius: 12 }}
               styles={{ body: { padding: 20 } }}
             >
-              <Title level={4} style={{ fontSize: 14.5, marginBottom: 6 }}>{r.title}</Title>
+              <Title level={4} style={{ fontSize: 14.5, marginBottom: 6,color:"var(--ink"}}>{r.title}</Title>
               <Paragraph style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>{r.body}</Paragraph>
             </Card>
           </Col>

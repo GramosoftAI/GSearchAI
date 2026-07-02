@@ -47,8 +47,8 @@ export default function Connectors() {
     <div className="wrap">
       <div className="gs-sec-center">
         <div className="gs-eyebrow">100+ integrations</div>
-        <Title level={2} className="gs-sec-h">Gsearch connects to every tool your team uses.</Title>
-        <Paragraph className="gs-sec-lede">
+        <Title level={1} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>Gsearch connects to every tool your team uses.</Title>
+        <Paragraph className="gs-sec-lede" style={{fontSize:"18px"}}>
           Set up in minutes, always current, with permissions that carry over automatically.
         </Paragraph>
       </div>

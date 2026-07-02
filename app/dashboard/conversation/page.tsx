@@ -3,6 +3,7 @@
 import { Flex, Typography, Button, Input, Tooltip, Avatar, Drawer, Grid, Upload, message, Spin, Table, Dropdown, Modal, Radio } from "antd";
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { LuBot, LuHistory, LuSearch, LuPlus, LuPaperclip, LuFileText, LuDownload, LuBookOpen, LuBell, LuSettings, LuSparkles, LuGlobe, LuArrowRight } from "react-icons/lu";
+import { SiCrowdsource } from "react-icons/si";
 import { FaBrain } from "react-icons/fa";
 import {
   FiUser,
@@ -1023,6 +1024,36 @@ export default function ChatPlaygroundPage() {
       if (ws.current !== socket) return;
       setWsStatus("closed");
       console.log("conlose");
+
+      if (streamingTextRef.current) {
+        const accumulated = streamingTextRef.current;
+        const textContent = accumulated
+          .replace(/<think>[\s\S]*?<\/think>/g, "")
+          .replace(/(?:\[Source:\s*.+?\]|\(Source:\s*.+?\))/g, "")
+          .trim();
+
+        if (accumulated) {
+          setMessages((prev: any) => [
+            ...prev,
+            {
+              id: streamingMessageIdRef.current || `msg_${Date.now()}`,
+              role: "assistant",
+              content: textContent + "\n\n*(Note: Session interrupted mid-response)*",
+              sources: wsSourcesRef.current.length > 0 ? [...wsSourcesRef.current] : undefined,
+              timestamp: new Date().toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            },
+          ]);
+        }
+        streamingTextRef.current = "";
+        wsSourcesRef.current = [];
+        setStreamingText("");
+      }
+      setIsTyping(false);
+      activeQuerySessionIdRef.current = null;
+
       reconnectTimeoutRef.current = setTimeout(() => {
         if (agent?.id) {
           connectSocket();
@@ -1033,6 +1064,7 @@ export default function ChatPlaygroundPage() {
     socket.onerror = () => {
       if (ws.current !== socket) return;
       setWsStatus("error");
+      setIsTyping(false);
     };
   }, [agent?.id]);
 
@@ -2099,7 +2131,7 @@ export default function ChatPlaygroundPage() {
     <div className="h-[calc(100vh-96px)] w-full flex bg-[var(--app-surface)] antialiased selection:bg-[#0fb5a1]/20 overflow-hidden relative">
       {/* Desktop Left Sidebar */}
       {screen.md && (
-        <div 
+        <div
           className="h-full border-r border-[var(--app-border)]/40 flex flex-col bg-[var(--app-surface-muted)] shrink-0 transition-all duration-300 overflow-hidden"
           style={{ width: desktopSidebarOpen ? "260px" : "0px", borderRightWidth: desktopSidebarOpen ? "1px" : "0px" }}
         >
@@ -2132,9 +2164,9 @@ export default function ChatPlaygroundPage() {
 
             {/* Left side: Hamburger and Logo */}
             <Flex align="center" gap={4} className="min-w-0">
-              <Button 
-                type="text" 
-                icon={<FiMenu className="text-lg text-[var(--app-text-soft)]" />} 
+              <Button
+                type="text"
+                icon={<FiMenu className="text-lg text-[var(--app-text-soft)]" />}
                 onClick={() => {
                   if (screen.md) {
                     setDesktopSidebarOpen(!desktopSidebarOpen);
@@ -2278,7 +2310,8 @@ export default function ChatPlaygroundPage() {
                                     onClick={() => handleOpenSource(msg.sources![0])}
                                     className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0"
                                   >
-                                    <LuBookOpen size={16} strokeWidth={2} />
+                                    {/* <LuBookOpen size={16} strokeWidth={2} /> */}
+                                    <SiCrowdsource/>
                                     <span>Source</span>
                                   </button>
                                 ) : (
@@ -2294,7 +2327,8 @@ export default function ChatPlaygroundPage() {
                                     trigger={['click']}
                                   >
                                     <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0">
-                                      <LuBookOpen size={16} strokeWidth={2} />
+                                      {/* <LuBookOpen size={16} strokeWidth={2} /> */}
+                                      <SiCrowdsource />
                                       <span>Sources</span>
                                     </button>
                                   </Dropdown>
@@ -2453,8 +2487,8 @@ export default function ChatPlaygroundPage() {
               <button
                 onClick={() => setActiveMode('agent')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-black tracking-tight transition-all duration-200 cursor-pointer border-none bg-transparent outline-none ${activeMode === 'agent'
-                    ? "bg-white dark:bg-[#0f172a] text-[#0fb5a1] dark:text-[#34d399] shadow-sm font-black"
-                    : "bg-transparent text-[var(--app-text-soft)]/70 hover:text-[var(--app-text)] font-extrabold"
+                  ? "bg-white dark:bg-[#0f172a] text-[#0fb5a1] dark:text-[#34d399] shadow-sm font-black"
+                  : "bg-transparent text-[var(--app-text-soft)]/70 hover:text-[var(--app-text)] font-extrabold"
                   }`}
               >
                 <LuBot size={12} className="shrink-0" />
@@ -2592,7 +2626,8 @@ export default function ChatPlaygroundPage() {
       <Drawer
         title={
           <Flex align="center" gap={8}>
-            <LuBookOpen className="text-[#0fb5a1]" size={18} />
+            {/* <LuBookOpen className="text-[#0fb5a1]" size={18} /> */}
+            <SiCrowdsource />
             <span className="font-extrabold text-sm text-[var(--app-text)]">Source Documents</span>
           </Flex>
         }
@@ -2835,7 +2870,8 @@ export default function ChatPlaygroundPage() {
             </div>
           ) : (
             <Flex vertical align="center" justify="center" className="h-full opacity-40">
-              <LuBookOpen size={48} className="text-[#0fb5a1] mb-3" />
+              {/* <LuBookOpen size={48} className="text-[#0fb5a1] mb-3" /> */}
+              <SiCrowdsource  />
               <Text className="font-bold text-xs uppercase tracking-widest text-[var(--app-text-muted)]">
                 Select a document to preview
               </Text>

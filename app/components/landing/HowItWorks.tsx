@@ -12,7 +12,7 @@ const stages = [
   {
     step: "2",
     title: "Structure",
-    body: "Gsearch maps how everything relates — people, projects, products — so it understands your business, not just your words.",
+    body: "Gsearch maps how everything relates — people, projects, products — the way a brain connects memories, not the way a filing cabinet stores paper.",
   },
   {
     step: "3",
@@ -27,8 +27,8 @@ export default function HowItWorks() {
     <div className="wrap">
       <div className="gs-sec-center">
         <div className="gs-eyebrow">Simple by design</div>
-        <Title level={2} className="gs-sec-h">Crawl. Structure. Search.</Title>
-        <Paragraph className="gs-sec-lede">
+        <Title level={2} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>Crawl. Structure. Search.</Title>
+        <Paragraph className="gs-sec-lede" style={{fontSize:"18px"}}>
           One simple pipeline turns scattered content into answers your team can trust — no data
           project required.
         </Paragraph>
@@ -37,8 +37,8 @@ export default function HowItWorks() {
         {stages.map((s, i) => (
           <div className="gs-stage" key={s.step}>
             <span className="step">{s.step}</span>
-            <Title level={3} style={{ fontSize: 20, marginBottom: 10 }}>{s.title}</Title>
-            <Paragraph style={{ fontSize: 14.5, color: "var(--muted)", margin: 0 }}>{s.body}</Paragraph>
+            <Title level={3} style={{ fontSize: 20, marginBottom: 10,color:"var(--ink)", fontWeight:700 }}>{s.title}</Title>
+            <Paragraph style={{ fontSize:15, color: "var(--muted)", margin: 0 }}>{s.body}</Paragraph>
             {i < stages.length - 1 && <span className="arr">→</span>}
           </div>
         ))}

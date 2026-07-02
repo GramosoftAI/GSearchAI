@@ -28,7 +28,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
   const handleLogout = () => {
     localStorage.clear();
     deleteCookie("AUTH_TOKEN");
-    router.push("/login");
+    router.push("/");
   };
 
   const getInitials = (name: string) => {

@@ -3,17 +3,13 @@
 import React, { useState,Suspense } from 'react';
 import { useRouter, useSearchParams } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
-import { App} from "antd";
 import useAxios from "../../../hooks/useAxios";
 import { routes } from "../../../services/routes";
-import { getCookie } from "../../../config/cookies";
-import { AUTH_COOKIE_KEY } from "../../../config/config";
 
 function ResetPasswordContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
-  const { notification } = App.useApp();
 
   const [request, , isSubmitting] = useAxios({ 
     endpoint: "RESET_PASSWORD",
@@ -39,27 +35,11 @@ function ResetPasswordContent() {
       setError("Passwords do not match.");
       return;
     }
-
-    // const sessionToken = getCookie(AUTH_COOKIE_KEY);
-    
-    // if (!sessionToken) {
-    //   notification.error({
-    //     title: "Session Token Missing",
-    //     description: "An active session is required to perform this action. Please log in.",
-    //     className: "custom-toast-error"
-    //   });
-    //   return;
-    // }
-
     await request({ 
       data: { 
         token: token,
         new_password: password 
       },
-      // withCredentials: true,
-      // headers: {
-      //   "Authorization": `Bearer ${sessionToken}`
-      // }
     }, () => {
       router.push(routes.login);
     });
@@ -144,7 +124,7 @@ function ResetPasswordContent() {
         .input { box-sizing: border-box; margin-bottom: 4px; width: 100%; border: 2px solid #f1f5f9; padding: 14px 18px; background-color: #f8fafc; border-radius: 12px; font-weight: 700; color: #0fb5a1; outline: none; font-size: 16px; transition: all 0.2s; }
         .input:hover, .input:focus { border-color: #0fb5a1; background-color: white; box-shadow: 0 2px 12px rgba(15, 181, 161, 0.08); }
         .btn { width: 100%; height: 56px; margin-top: 32px; margin-bottom: 16px; border: none; background-color: #0fb5a1; color: white; font-size: 18px; font-weight: 900; border-radius: 14px; cursor: pointer; transition: all 0.2s; }
-        .btn:hover { background-color: #1d64d1; transform: translateY(-1px); }
+        .btn:hover { background-color: #75cfc5ff; transform: translateY(-1px); }
         .btn:disabled { background-color: #94a3b8; cursor: not-allowed; }
       `}</style>
     </div>

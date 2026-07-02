@@ -2,7 +2,7 @@
 
 import { Button, Flex, Input, Typography, Card, Row, Col, Segmented, Modal, Spin, Divider, Progress, message } from 'antd'
 import { useState, useEffect, useRef } from 'react'
-import { Globe, FileText, Type, Upload, X, Image as ImageIcon } from 'lucide-react'
+import { Globe, FileText, Type, Upload, X, Image as ImageIcon, Clock } from 'lucide-react'
 import AgentList from "../../components/ui/AgentList";
 import useAxios from '../../hooks/useAxios'
 import type { Agent } from "../../components/ui/type";
@@ -1177,11 +1177,33 @@ export default function KnowledgeBasePage() {
                       {item.name || item.source}
                     </Text>
 
-                    <Text type="secondary" style={{ fontSize: '11px', display: 'block', marginTop: 4 }}>
-                      {dayjs(item.created_at).format(
-                        "DD MMM YYYY hh:mm A"
+                    <div className="flex items-center gap-3 mt-1 flex-wrap">
+                      <Text type="secondary" style={{ fontSize: '11px', display: 'inline-block' }}>
+                        {dayjs(item.created_at).format(
+                          "DD MMM YYYY hh:mm A"
+                        )}
+                      </Text>
+                      {item.time_taken && (
+                        <span 
+                          style={{ 
+                            fontSize: '10px', 
+                            fontWeight: 700,
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            background: 'rgba(15, 181, 161, 0.12)', 
+                            color: '#0fb5a1',
+                            border: '1px solid rgba(15, 181, 161, 0.2)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            whiteSpace: 'nowrap'
+                          }}
+                        >
+                          <Clock size={10} strokeWidth={3} />
+                          {item.time_taken}
+                        </span>
                       )}
-                    </Text>
+                    </div>
                   </div>
                 </div>
 

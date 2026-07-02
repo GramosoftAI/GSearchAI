@@ -1,15 +1,27 @@
-import React from "react";
-import { Card, Row, Col, Typography } from "antd";
+import { motion } from "framer-motion";
+import { Row, Col, Typography } from "antd";
 import { Tabs } from "antd";
 import type { TabsProps } from "antd";
 import { capabilityTabs } from "../lib/content";
+import { useState } from "react";
+
 
 const { Title, Paragraph, Link } = Typography;
 
-const items: TabsProps["items"] = capabilityTabs.map((tab) => ({
+
+export default function CapabilityTabs() {
+  const [activeKey, setActiveKey] = useState("answers");
+
+  const items: TabsProps["items"] = capabilityTabs.map((tab) => ({
   key: tab.key,
   label: tab.label,
   children: (
+    <motion.div
+      key={activeKey}
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5 }}
+    >
     <Row gutter={[50, 32]} align="middle" style={{ marginTop: 10 }}>
       <Col xs={24} md={12}>
         <Title level={3} style={{ fontSize: 26, marginBottom: 14 }}>{tab.heading}</Title>
@@ -29,19 +41,22 @@ const items: TabsProps["items"] = capabilityTabs.map((tab) => ({
         </div>
       </Col>
     </Row>
+
+   </motion.div>
   ),
 }));
 
-export default function CapabilityTabs() {
   return (
   <section className="gs-block">
     <div className="wrap">
       <div className="gs-sec-center">
         <div className="gs-eyebrow">One platform, every job</div>
-        <Title level={2} className="gs-sec-h">From a question to a finished task.</Title>
+        <Title level={2} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>From a question to a finished task.</Title>
       </div>
       <Tabs
-        defaultActiveKey="answers"
+        // defaultActiveKey="answers"
+        activeKey={activeKey}
+        onChange={setActiveKey}
         centered
         items={items}
         className="gs-capability-tabs"

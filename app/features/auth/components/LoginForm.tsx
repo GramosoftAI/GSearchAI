@@ -114,7 +114,7 @@ export default function LoginForm() {
         .forget-password { font-size: 14px; font-weight: 700; color: #0fb5a1; text-decoration: none; }
         .forget-password:hover { color: #f37e10; }
         .btn { width: 100%; height: 56px; margin-top: 32px; margin-bottom: 16px; border: none; background-color: #0fb5a1; color: white; font-size: 18px; font-weight: 900; border-radius: 14px; cursor: pointer; transition: all 0.2s; }
-        .btn:hover { background-color: #1d64d1; transform: translateY(-1px); }
+        .btn:hover { background-color: #75cfc5ff; transform: translateY(-1px); }
         .btn:disabled { background-color: #94a3b8; cursor: not-allowed; }
         .no-account { font-size: 15px; font-weight: 600; color: #64748b; text-align: center; }
         .link { font-weight: 900; color: #0fb5a1; text-decoration: underline; text-underline-offset: 4px; }

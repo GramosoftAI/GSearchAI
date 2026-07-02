@@ -2,18 +2,12 @@
 
 import React, { useState } from 'react';
 import { useRouter } from "next/navigation";
-import { 
-
-  App,
-} from "antd";
 import useAxios from "../../../hooks/useAxios";
 import { routes } from "../../../services/routes";
-import { getCookie } from "../../../config/cookies";
-import { AUTH_COOKIE_KEY } from "../../../config/config";
+
 
 export default function ForgotPasswordForm() {
   const router = useRouter();
-  const { notification } = App.useApp();
   const [request, , isSubmitting] = useAxios({ 
     endpoint: "FORGOT_PASSWORD",
     showSuccessMsg: true,
@@ -23,23 +17,9 @@ export default function ForgotPasswordForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // const token = getCookie(AUTH_COOKIE_KEY);
-    
-    // if (!token) {
-    //   notification.error({
-    //     title: "Session Token Missing",
-    //     description: "Your backend requires an Authorization header. Please ensure you are logged in or have a valid session token in your cookies.",
-    //     className: "custom-toast-error"
-    //   });
-    //   return;
-    // }
 
     await request({ 
       data: { email: email.trim() },
-      // withCredentials: true,
-      // headers: {
-      //   "Authorization": `Bearer ${token}`
-      // }
     });
   };
 
@@ -95,7 +75,7 @@ export default function ForgotPasswordForm() {
         .input { box-sizing: border-box; margin-bottom: 4px; width: 100%; border: 2px solid #f1f5f9; padding: 14px 18px; background-color: #f8fafc; border-radius: 12px; font-weight: 700; color: #0fb5a1; outline: none; font-size: 16px; transition: all 0.2s; }
         .input:hover, .input:focus { border-color: #0fb5a1; background-color: white; box-shadow: 0 2px 12px rgba(15, 181, 161, 0.08); }
         .btn { width: 100%; height: 56px; margin-top: 32px; margin-bottom: 16px; border: none; background-color: #0fb5a1; color: white; font-size: 18px; font-weight: 900; border-radius: 14px; cursor: pointer; transition: all 0.2s; }
-        .btn:hover { background-color: #1d64d1; transform: translateY(-1px); }
+        .btn:hover { background-color: #75cfc5ff; transform: translateY(-1px); }
         .btn:disabled { background-color: #94a3b8; cursor: not-allowed; }
         .no-account { font-size: 15px; font-weight: 600; color: #64748b; text-align: center; }
         .link { font-weight: 900; color: #0fb5a1; text-decoration: underline; text-underline-offset: 4px; }

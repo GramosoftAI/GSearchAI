@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState,useEffect } from 'react';
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, ArrowLeft, RotateCcw } from "lucide-react";
 import { useRegister } from "../hooks/useRegister";
 import { routes } from "../../../services/routes";
 import toast from 'react-hot-toast';
+import { message } from 'antd';
 
 
 export default function RegisterForm() {
@@ -36,15 +37,9 @@ export default function RegisterForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [passwordError, setPasswordError] = useState("");
-  
-  
-  
-
-  // 5 Minutes Timer State (5 * 60 = 300 seconds)
   const [timeLeft, setTimeLeft] = useState<number>(300);
   const [timerActive, setTimerActive] = useState<boolean>(false);
 
-  // Countdown timer logic block
   useEffect(() => {
     let interval: any = null;
     if (showOtpScreen && timerActive && timeLeft > 0) {
@@ -58,7 +53,7 @@ export default function RegisterForm() {
     return () => clearInterval(interval);
   }, [showOtpScreen, timerActive, timeLeft]);
 
-  // Whenever OTP Screen is opened, reset and start countdown timer
+  
   useEffect(() => {
     if (showOtpScreen) {
       setTimeLeft(300);
@@ -67,12 +62,12 @@ export default function RegisterForm() {
     }
   }, [showOtpScreen]);
 
-  // Error message vantha check panni OTP boxes-ah empty panra watcher
+  
     useEffect(() => {
       if (error) {
-        // Unga state empty aagum
+      
         setOtp(new Array(6).fill(""));
-        // First box automatic-ah focus aagum
+        
         setTimeout(() => {
           inputRefs.current[0]?.focus();
         }, 50);
@@ -93,29 +88,28 @@ export default function RegisterForm() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  // Clicked "Get OTP"
+  
   const handleGetOtpSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (formData.password !== formData.confirm_password) {
-      alert("Passwords do not match");
+      message.error("Passwords do not match");
       return;
     }
     if (passwordError) return;
-    setOtp(new Array(6).fill("")); // Clean state inside submit start
-    // Trigger explicit endpoint handler
+    setOtp(new Array(6).fill(""));
     sendOtp(formData.email,formData.first_name,formData.tenant_name,formData.password)
   };
 
-  // Re-trigger action for "Resend OTP"
+
   const handleResendOtp = async () => {
     try {
       await sendOtp(formData.email ,formData.first_name,formData.tenant_name,formData.password);
-      // Reset state configurations safely on trigger success
+      
       setOtp(new Array(6).fill(""));
       setTimeLeft(300);
       setTimerActive(true);
     } catch (err : any) {
-      // console.error("Failed to resend OTP code", err);
+      
       throw new Error(err);
     }
   };
@@ -140,7 +134,7 @@ export default function RegisterForm() {
 
   const handleOtpPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
     e.preventDefault();
-    // Clipboard contents filter out non-digits and extract exact lengths
+    
     const pastedText = e.clipboardData.getData("text").replace(/[^0-9]/g, "").substring(0, 6);
     
     if (pastedText.length > 0) {
@@ -151,8 +145,6 @@ export default function RegisterForm() {
         }
       }
       setOtp(newOtp);
-      
-      // Automatic index target shifter matching the paste stream offset lengths
       const focusIndex = pastedText.length === 6 ? 5 : pastedText.length;
       inputRefs.current[focusIndex]?.focus();
     }
@@ -180,7 +172,7 @@ export default function RegisterForm() {
       setError("Please enter the full 6-digit OTP code");
       return;
     }
-    // register({ ...formData, otp: finalOtpCode });
+   
     try {
       await register({ ...formData, otp: finalOtpCode });
     } catch (err :any) {
@@ -191,7 +183,7 @@ export default function RegisterForm() {
     }
   };
 
-  // Convert seconds into display string formatting MM:SS
+  
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -206,7 +198,7 @@ export default function RegisterForm() {
         <div className="container">
           
           {!showOtpScreen ? (
-            /* --- STEP 1: FORM DETAILS --- */
+            
             <form className="log-card" onSubmit={handleGetOtpSubmit}>
               <p className="heading">Create Account</p>
               <p className="para">Join the future of knowledge graphs</p>
@@ -297,7 +289,7 @@ export default function RegisterForm() {
               </p>
             </form>
           ) : (
-            /* --- STEP 2: OTP CODES DISPATCH BOX SCREEN --- */
+            
             <form className="log-card" onSubmit={handleFinalSubmit}>
               <button 
                 type="button" 
@@ -322,7 +314,7 @@ export default function RegisterForm() {
                     maxLength={1}
                     className="otp-box"
                     value={data}
-                    disabled={timeLeft === 0} // Timer mudinja boxes lock aagidum
+                    disabled={timeLeft === 0}
                     ref={(el) => { if(el) inputRefs.current[index] = el; }}
                     onChange={(e) => handleOtpChange(e.target, index)}
                     onKeyDown={(e) => handleOtpKeyDown(e, index)}
@@ -331,7 +323,6 @@ export default function RegisterForm() {
                 ))}
               </div>
 
-              {/* Countdown Dynamic text visualization interface */}
               <div className="flex flex-col items-center justify-center my-2">
                 {timeLeft > 0 ? (
                   <p className="timer-text">
@@ -381,7 +372,7 @@ export default function RegisterForm() {
         
         .timer-text { font-size: 13px; font-weight: 700; color: #64748b; }
         .btn { width: 100%; margin-top: 16px; margin-bottom: 12px; padding: 14px; border: none; background-color: #0fb5a1; color: white; font-size: 17px; font-weight: 900; border-radius: 14px; cursor: pointer; transition: all 0.2s; }
-        .btn:hover { background-color: #1d64d1; transform: translateY(-1px); }
+        .btn:hover { background-color: #75cfc5ff; transform: translateY(-1px); }
         .btn:disabled { background-color: #94a3b8; cursor: not-allowed; transform: none; }
         .no-account { font-size: 14px; font-weight: 600; color: #64748b; text-align: center; }
         .link { font-weight: 900; color: #0fb5a1; text-decoration: underline; }

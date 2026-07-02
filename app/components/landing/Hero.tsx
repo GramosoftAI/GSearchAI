@@ -15,7 +15,7 @@ export default function Hero() {
   const [answerHtml, setAnswerHtml] = useState(heroRotationItems[0].a);
   const [source, setSource] = useState(heroRotationItems[0].s);
   const [tags, setTags] = useState<string[]>(heroRotationItems[0].tags);
-  const [visible, setVisible] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
 
   const indexRef = useRef(0);
   const timeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -47,17 +47,17 @@ export default function Hero() {
 
     const cycle = () => {
       const item = heroRotationItems[indexRef.current];
-      setVisible(false);
+      setIsSearching(true);
       typeIn(item.q, () => {
         const t = setTimeout(() => {
           setAnswerHtml(item.a);
           setSource(item.s);
           setTags(item.tags);
-          setVisible(true);
+          setIsSearching(false);
           indexRef.current = (indexRef.current + 1) % heroRotationItems.length;
           const next = setTimeout(cycle, CYCLE_PAUSE_MS);
           timeoutsRef.current.push(next);
-        }, ANSWER_DELAY_MS);
+        }, 500); // Pause for 500ms after typing completes (searching state)
         timeoutsRef.current.push(t);
       });
     };
@@ -80,10 +80,11 @@ export default function Hero() {
             margin: "0 auto",
             letterSpacing: "-0.03em",
             textAlign: "center",
+            color:"var(--ink)"
           }}
         >
-          Every answer your team needs,{" "}
-          <span style={{ color: "var(--teal-deep)" }}>connected</span> across every tool you use.
+          Meet your company's{" "}
+          <span style={{ color: "var(--teal-deep)" }}>second brain.</span>
         </Title>
 
         <Paragraph
@@ -95,8 +96,7 @@ export default function Hero() {
             textAlign: "center",
           }}
         >
-          Gsearch finds the answer across all your apps, connects the dots between them, and helps
-          your team act on it — instantly.
+          Gsearch connects every tool your team uses, remembers how everything relates, and answers any question instantly — so your team stops searching and starts knowing.
         </Paragraph>
 
         <Space size={14} wrap style={{ justifyContent: "center", display: "flex" }}>
@@ -110,6 +110,7 @@ export default function Hero() {
               fontWeight: 700,
               borderRadius: 11,
               boxShadow: "0 6px 18px -6px rgba(15,181,161,0.5)",
+              padding:25
             }}
           >
             Book a demo
@@ -122,6 +123,7 @@ export default function Hero() {
               color: "var(--ink)",
               fontWeight: 700,
               borderRadius: 11,
+              padding:25
             }}
           >
             Start for free
@@ -150,38 +152,32 @@ export default function Hero() {
                 <span className="cur">|</span>
               </span>
             </div>
-            <div
-              className="gs-answer-card"
-              style={{ opacity: visible ? 1 : 0, transition: "opacity .25s" }}
-            >
+            <div className="gs-answer-card">
               <div className="ac-top">
-                <Tag
-                  color="var(--teal)"
-                  style={{ fontWeight: 700, fontSize: 11.5, borderRadius: 7 }}
-                >
-                  AI answer
-                </Tag>
-                <Text style={{ fontSize: 12, color: "var(--faint)", fontWeight: 600 }}>
-                  {source}
-                </Text>
+                <span className="pill-ai">AI answer</span>
+                <span style={{ fontSize: 12, color: "var(--faint)", fontWeight: 600 }}>
+                  {isSearching ? "" : source}
+                </span>
               </div>
-              <p dangerouslySetInnerHTML={{ __html: answerHtml }} />
-              <div className="gs-answer-tags">
-                {tags.map((tag) => (
-                  <Tag
-                    key={tag}
-                    style={{
-                      color: "var(--teal-deep)",
-                      background: "var(--teal-soft)",
-                      borderColor: "transparent",
-                      fontWeight: 600,
-                      borderRadius: 8,
-                    }}
-                  >
-                    {tag}
-                  </Tag>
-                ))}
-              </div>
+              {isSearching ? (
+                <div className="gs-searching">
+                  Searching
+                  <span className="sd">
+                    <i></i>
+                    <i></i>
+                    <i></i>
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <p dangerouslySetInnerHTML={{ __html: answerHtml }} />
+                  <div className="gs-answer-tags">
+                    {tags.map((tag) => (
+                      <span key={tag}>{tag}</span>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

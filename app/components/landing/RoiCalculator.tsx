@@ -25,8 +25,8 @@ export default function RoiCalculator() {
       <div className="wrap">
         <div className="gs-sec-center">
           <div className="gs-eyebrow">What it&apos;s worth to you</div>
-          <Title level={2} className="gs-sec-h">See the time your team gets back.</Title>
-          <Paragraph className="gs-sec-lede">
+          <Title level={1} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>See the time your team gets back.</Title>
+          <Paragraph className="gs-sec-lede" style={{fontSize:"18px",paddingBottom:10,color:"var(--muted)"}}>
             Knowledge workers lose hours every week just looking for information. Move the
             slider to see what Gsearch could give back.
           </Paragraph>
@@ -63,7 +63,7 @@ export default function RoiCalculator() {
               styles={{ track: { background: "var(--teal)" }, handle: { borderColor: "var(--teal)" } }}
             />
 
-            <Paragraph style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
+            <Paragraph style={{ fontSize: 15, color: "var(--muted)", marginTop: 4 }}>
               Gsearch typically gives back around a third of that time by returning a direct,
               connected answer instead of a hunt across tools.
             </Paragraph>

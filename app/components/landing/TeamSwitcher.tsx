@@ -3,13 +3,26 @@ import { Row, Col, Tag, Typography } from "antd";
 import { Tabs } from "antd";
 import type { TabsProps } from "antd";
 import { teamTabs } from "../lib/content";
+import { motion } from "framer-motion";
+import { useState } from "react";
 
 const { Title, Paragraph, Link } = Typography;
 
-const items: TabsProps["items"] = teamTabs.map((team) => ({
+
+
+export default function TeamSwitcher() {
+   const [activeKey, setActiveKey] = useState("support");
+   const items: TabsProps["items"] = teamTabs.map((team) => ({
   key: team.key,
   label: team.label,
   children: (
+    <motion.div
+      key={activeKey}
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5 }}
+    >
+
     <Row gutter={[50, 32]} align="middle" style={{ marginTop: 10 }} className="gs-team-panel">
       <Col xs={24} md={12}>
         <Title level={3} style={{ fontSize: 25, marginBottom: 12 }}>{team.heading}</Title>
@@ -34,18 +47,23 @@ const items: TabsProps["items"] = teamTabs.map((team) => ({
         </div>
       </Col>
     </Row>
+
+    </motion.div>
   ),
 }));
-
-export default function TeamSwitcher() {
   return (
   <section className="gs-block" id="teams">
     <div className="wrap">
       <div className="gs-sec-center">
         <div className="gs-eyebrow">For every team</div>
-        <Title level={2} className="gs-sec-h">Real value for every team, every day.</Title>
+        <Title level={2} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>Real value for every team, every day.</Title>
       </div>
-      <Tabs defaultActiveKey="support" centered items={items} size="large" />
+      <Tabs  activeKey={activeKey}
+        onChange={setActiveKey} 
+        // defaultActiveKey="support" 
+        centered items={items} 
+        size="large" 
+        className="gs-team-tabs" />
     </div>
   </section>
   );

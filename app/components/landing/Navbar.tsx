@@ -40,20 +40,21 @@ export default function Navbar() {
             type="text"
             className="signin"
             onClick={() => router.push("/login")}
-            style={{ fontWeight: 600, color: "var(--body)" }}
+            style={{ fontWeight: 600, color: "var(--body)",padding: 0 }}
           >
             Log in
           </Button>
           <Button
+            type="text"
             href="/register"
-            style={{ borderColor: "var(--line-2)", color: "var(--ink)", fontWeight: 700, borderRadius: 11 }}
+            style={{ borderColor: "var(--line-2)", color: "var(--ink)", fontWeight: 700, borderRadius: 11,padding:20}}
           >
             Start free
           </Button>
           <Button
             type="primary"
             href="#cta"
-            style={{ background: "var(--teal)", borderColor: "var(--teal)", fontWeight: 700, borderRadius: 11 }}
+            style={{ background: "var(--teal)", borderColor: "var(--teal)", fontWeight: 700, borderRadius: 11,padding:20 }}
           >
             Book a demo
           </Button>
