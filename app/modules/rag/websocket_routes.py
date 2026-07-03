@@ -275,47 +275,29 @@ async def rag_websocket(
 
                 # 7. LOAD RECENT MEMORY (CONVERSATION HISTORY)
 
-                augmented_query = enhanced_query
-
                 memory_used = False
-
                 conversation_turns = 0
-
-
+                history_formatted = ""
 
                 if session.message_count > 1:
-
                     try:
-
                         memory_messages = await chat_service.chat_repo.get_recent_messages(
-
                             session_id=active_session_id,
-
                             count=10
-
                         )
-
                         history_messages = [m for m in memory_messages if str(m.id) != str(user_msg.id)]
-
+                        
                         if history_messages:
-
-                            augmented_query = chat_service._format_memory_context(
-
+                            # We format the history, but DO NOT append it to the current query
+                            # to prevent cache contamination in the query router and vector search!
+                            history_formatted = chat_service._format_memory_context(
                                 history=history_messages,
-
-                                current_query=enhanced_query
-
-                            )
-
+                                current_query=""
+                            ).replace("Current Query: ", "").strip()
                             memory_used = True
-
                             conversation_turns = sum(1 for m in history_messages if m.role == "user")
-
                     except Exception as me:
-
                         logger.warning(f" WebSocket Memory injection failed: {me}")
-
-
 
                 logger.info(f" Raw Query: {query}")
 
@@ -324,10 +306,7 @@ async def rag_websocket(
                     logger.info(f" Enhanced RAG Query: {enhanced_query}")
 
                 if memory_used:
-
-                    logger.info(f" Augmented Query: \n{augmented_query}")
-
-
+                    logger.info(f" Chat History Context injected: {conversation_turns} turns")
 
                 # 8. STREAM RESPONSE & COLLECT CHUNKS FOR PERSISTENCE
 
@@ -340,15 +319,11 @@ async def rag_websocket(
 
 
                 async for chunk in rag_service.stream_rag_answer(
-
-                    query=augmented_query,
-
+                    query=enhanced_query,
                     agent_id=agent_id,
-
                     kb_id=kb_ids,
-
-                    user_id=user_id
-
+                    user_id=user_id,
+                    chat_history=history_formatted
                 ):
 
                     try:

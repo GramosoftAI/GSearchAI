@@ -203,21 +203,14 @@ class RAGService:
 
 
     async def stream_rag_answer(
-
         self,
-
         query: str,
-
         agent_id: str,
-
         kb_id: str | list[str],
-
         user_id: Optional[str] = None,
-
         top_k: int = 10,
-
         max_depth: int = 2,
-
+        chat_history: str = ""
     ):
 
         """
@@ -493,7 +486,9 @@ CRITICAL INSTRUCTION: If the user's query is a general greeting or conversationa
 
         formatted_context = self._format_context(context)
 
-        
+        if chat_history:
+            formatted_context = f"{chat_history}\n\n=== KNOWLEDGE BASE CONTEXT ===\n{formatted_context}"
+
 
         # Track start time for latency
 
