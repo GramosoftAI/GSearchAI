@@ -57,7 +57,9 @@ class Settings(BaseSettings):
 
 
     # ============= EXTERNAL ALERTS =============
+
     slack_webhook_url: Optional[str] = None
+    admin_alert_email: Optional[str] = None
     
     # ============= REDIS (ARQ) =============
     redis_url: str = "redis://localhost:6379"

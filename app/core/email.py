@@ -9,8 +9,13 @@ from email.mime.multipart import MIMEMultipart
 
 from .config import get_settings
 
+from datetime import datetime
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+last_alert_sent = {}
+
 
 class EmailService:
     """
@@ -167,3 +172,54 @@ class EmailService:
         """
         
         return await EmailService.send_email(to_email=email, subject=subject, body=body, html_body=html_body)
+
+    @staticmethod
+    async def send_admin_alert_email(error_type: str, details: dict) -> bool:
+        """
+        Send a production-grade alert to the admin email with rate limiting.
+        """
+        global last_alert_sent
+        admin_email = getattr(settings, "admin_alert_email", None)
+        if not admin_email:
+            logger.warning(f"Admin alert suppressed: no admin_alert_email configured. Error: {error_type}")
+            return False
+
+        now = datetime.now().timestamp()
+        if now - last_alert_sent.get(error_type, 0) < 300:
+            logger.info(f"Admin alert throttled for {error_type}. Sent within last 5 minutes.")
+            return False
+
+        last_alert_sent[error_type] = now
+        
+        subject = f"[GraphMind Alert] AI Service Disruption: {error_type}"
+        
+        # Build HTML Body
+        html_details = "".join(f"<tr><td style='padding:8px; border-bottom: 1px solid #e2e8f0; font-weight:bold; color:#4a5568;'>{k}</td><td style='padding:8px; border-bottom: 1px solid #e2e8f0; color:#2d3748;'>{v}</td></tr>" for k, v in details.items())
+        
+        html_body = f"""
+        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 700px; margin: 0 auto; background-color: #fff5f5; border: 1px solid #feb2b2; border-radius: 8px; overflow: hidden;">
+            <div style="background-color: #e53e3e; padding: 20px; text-align: center; color: white;">
+                <h1 style="margin: 0; font-size: 22px;">⚠️ Critical System Alert</h1>
+            </div>
+            <div style="padding: 30px;">
+                <p style="color: #c53030; font-size: 16px; font-weight: bold;">An AI Service Disruption was detected.</p>
+                
+                <table style="width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; background-color: white; border: 1px solid #e2e8f0; border-radius: 6px;">
+                    {html_details}
+                </table>
+                
+                <div style="margin-top: 30px; padding: 15px; background-color: #ebf8ff; border-left: 4px solid #3182ce; color: #2b6cb0; font-size: 13px;">
+                    This alert is rate-limited and will not be triggered again for this specific error type for the next 5 minutes.
+                </div>
+            </div>
+            <div style="text-align: center; padding: 15px; background-color: #f7fafc; color: #a0aec0; font-size: 12px; border-top: 1px solid #e2e8f0;">
+                <p style="margin: 0;">Automated Alert • GraphMind Production System</p>
+            </div>
+        </div>
+        """
+        
+        # Fallback text
+        body = f"AI Service Disruption: {error_type}\n\nDetails:\n" + "\n".join(f"{k}: {v}" for k, v in details.items())
+        
+        logger.info(f"Sending admin alert to {admin_email} for {error_type}")
+        return await EmailService.send_email(to_email=admin_email, subject=subject, body=body, html_body=html_body)

@@ -508,19 +508,13 @@ class DeepInfraLLMClient:
 
 
     async def stream_answer(
-
         self,
-
         query: str,
-
         context: str,
-
         tenant_id: Optional[str] = None,
-
         agent_id: Optional[str] = None,
-
         agent_persona: Optional[dict] = None,
-
+        session_id: Optional[str] = None,
     ):
 
         """
@@ -636,14 +630,45 @@ class DeepInfraLLMClient:
             
             async with client.stream("POST", self.base_url, headers=headers, json=payload, timeout=stream_timeout) as response:
                 if response.status_code != 200:
-                    logger.error(f"LLM API Error: {response.status_code}")
-                    yield f"Error: LLM API returned {response.status_code}"
+                    response_text = await response.aread()
+                    status_code = response.status_code
+                    logger.error(
+                        f"LLM Provider Failure",
+                        extra={
+                            "provider": "DeepInfra",
+                            "status_code": status_code,
+                            "response": response_text.decode('utf-8', errors='ignore')
+                        }
+                    )
+                    
+                    # Fire background alert
+                    error_type = f"HTTP {status_code}"
+                    details = {
+                        "Provider": "DeepInfra",
+                        "Model": self.model,
+                        "Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Tenant ID": tenant_id or "Unknown",
+                        "Session ID": session_id or "Unknown",
+                        "HTTP Status": str(status_code),
+                        "Response Body": response_text.decode('utf-8', errors='ignore')[:500]
+                    }
+                    from app.core.email import EmailService
+                    import asyncio
+                    asyncio.create_task(EmailService.send_admin_alert_email(error_type, details))
+                    
+                    # User friendly messages
+                    ERROR_MESSAGES = {
+                        401: "We're experiencing a temporary authentication issue with our AI service. Please try again later.",
+                        402: "We are currently unable to generate a response due to a temporary AI service disruption. Please try again shortly. If the issue persists, contact your administrator.",
+                        429: "The system is currently experiencing high demand. Please retry shortly.",
+                        500: "A temporary processing issue occurred while generating the response."
+                    }
+                    friendly_msg = ERROR_MESSAGES.get(status_code, "We encountered a temporary issue while generating the answer. Your document and conversation are safe. Please try again in a few minutes.")
+                    yield friendly_msg
                     return
                     
                 async for line in response.aiter_lines():
-
                         if not line or line.strip() == "":
-
                             continue
 
                             
@@ -717,12 +742,39 @@ class DeepInfraLLMClient:
                                 
             logger.info(f"LLM Stream Completed in {time.time() - start_time:.2f}s")
             
-        except httpx.ReadTimeout:
-            logger.error(f"LLM Stream Failed: ReadTimeout after {time.time() - start_time:.2f}s")
-            yield "Error: LLM generation timed out."
+
+        except httpx.TimeoutException as te:
+            logger.exception("LLM Provider Timeout", exc_info=True)
+            error_type = "Timeout"
+            details = {
+                "Provider": "DeepInfra",
+                "Model": self.model,
+                "Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "Tenant ID": tenant_id or "Unknown",
+                "Session ID": session_id or "Unknown",
+                "Error": str(te)
+            }
+            from app.core.email import EmailService
+            import asyncio
+            asyncio.create_task(EmailService.send_admin_alert_email(error_type, details))
+            
+            yield "The request took longer than expected to process. Please try again in a few moments."
         except Exception as e:
-            logger.error(f"LLM Stream Failed: {e}", exc_info=True)
-            yield f"Error: LLM streaming failed."
+            logger.exception("LLM Provider Exception", exc_info=True)
+            error_type = "Internal Exception"
+            details = {
+                "Provider": "DeepInfra",
+                "Model": self.model,
+                "Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "Tenant ID": tenant_id or "Unknown",
+                "Session ID": session_id or "Unknown",
+                "Error": str(e)
+            }
+            from app.core.email import EmailService
+            import asyncio
+            asyncio.create_task(EmailService.send_admin_alert_email(error_type, details))
+            
+            yield "We encountered an unexpected issue while generating your response. Please try again later."
 
 
 

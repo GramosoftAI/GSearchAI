@@ -210,7 +210,8 @@ class RAGService:
         user_id: Optional[str] = None,
         top_k: int = 10,
         max_depth: int = 2,
-        chat_history: str = ""
+        chat_history: str = "",
+        session_id: Optional[str] = None
     ):
 
         """
@@ -499,13 +500,11 @@ CRITICAL INSTRUCTION: If the user's query is a general greeting or conversationa
         
 
         async for chunk in self.llm_client.stream_answer(
-
             query, 
-
             formatted_context, 
-
-            agent_persona=agent_persona
-
+            agent_persona=agent_persona,
+            tenant_id=self.tenant_id,
+            session_id=session_id
         ):
 
             full_answer.append(chunk)

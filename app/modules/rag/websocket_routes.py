@@ -323,7 +323,8 @@ async def rag_websocket(
                     agent_id=agent_id,
                     kb_id=kb_ids,
                     user_id=user_id,
-                    chat_history=history_formatted
+                    chat_history=history_formatted,
+                    session_id=active_session_id
                 ):
 
                     try:
