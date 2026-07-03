@@ -4,22 +4,24 @@ export interface ConnectorApp {
 }
 
 export const connectorApps: ConnectorApp[] = [
+  // First Row
   { name: "Slack", color: "#611f69" },
   { name: "Drive", color: "#1fa463" },
+  { name: "Google Docs", color: "#1a73e8" },
   { name: "Jira", color: "#2684ff" },
   { name: "Notion", color: "#111111" },
   { name: "Gmail", color: "#ea4335" },
   { name: "Salesforce", color: "#00a1e0" },
-  { name: "Confluence", color: "#172b4d" },
-  { name: "Zendesk", color: "#03363d" },
-  { name: "GitHub", color: "#24292e" },
-  { name: "Asana", color: "#f06a6a" },
   { name: "HubSpot", color: "#ff7a59" },
+  // Second Row
+  { name: "ClickUp", color: "#7f52ff" },
+  { name: "GitHub", color: "#24292e" },
   { name: "Teams", color: "#4b53bc" },
   { name: "Box", color: "#0061d5" },
-  { name: "ServiceNow", color: "#62d84e" },
-  { name: "Zoom", color: "#2d8cff" },
   { name: "Airtable", color: "#fcb400" },
+  { name: "AssemblyAI", color: "#7c3aed" },
+  { name: "Microsoft Fabric", color: "#0078d4" },
+  { name: "Azure Blob Storage", color: "#0089d6" },
 ];
 
 export interface HeroRotationItem {

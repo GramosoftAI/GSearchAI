@@ -457,13 +457,16 @@ const GSearchLogoAvatar = ({ size = 32 }: { size?: number }) => {
 // Helper functions for parsing and rendering messages with custom styles for bold headings and clickable links
 const renderBoldText = (text: string, key: any, isUser: boolean) => {
   if (!text) return null;
-  const boldRegex = /(\*\*.*?\*\*)/g;
+  const boldRegex = /(\*\*[^*]+(?:\*\*|\*)|\*[^*]+(?:\*\*|\*))/g;
   const subparts = text.split(boldRegex);
   return (
     <span key={key}>
       {subparts.map((subpart, subIndex) => {
-        if (subpart.startsWith("**") && subpart.endsWith("**")) {
-          const content = subpart.slice(2, -2);
+        const isBold = (subpart.startsWith("**") || subpart.startsWith("*")) &&
+                       (subpart.endsWith("**") || subpart.endsWith("*")) &&
+                       subpart !== "*" && subpart !== "**";
+        if (isBold) {
+          const content = subpart.replace(/^(\*\*|\*)/, "").replace(/(\*\*|\*)$/, "");
           return (
             <strong
               key={subIndex}
@@ -509,8 +512,8 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
   if (!stripped) return null;
   const lines = stripped.split('\n');
   return lines.map((line, index) => {
-    const headingWithColonRegex = /^\*\*(.*?)\*\*:\s*(.*)$/;
-    const headingOnlyRegex = /^\*\*(.*?)\*\*\s*$/;
+    const headingWithColonRegex = /^(?:\*\*|\*)(.*?)(?:\*\*|\*):\s*(.*)$/;
+    const headingOnlyRegex = /^(?:\*\*|\*)(.*?)(?:\*\*|\*)\s*$/;
     const bulletRegex = /^(\s*[-*•]\s+)(.*)$/;
     const numberListRegex = /^(\s*\d+\.\s+)(.*)$/;
 
@@ -2128,7 +2131,7 @@ export default function ChatPlaygroundPage() {
   };
 
   return (
-    <div className="h-[calc(100vh-96px)] w-full flex bg-[var(--app-surface)] antialiased selection:bg-[#0fb5a1]/20 overflow-hidden relative">
+    <div className="h-[calc(100vh-96px)] w-full flex bg-[var(--app-surface)] antialiased selection:bg-[#0fb5a1] selection:text-white overflow-hidden relative">
       {/* Desktop Left Sidebar */}
       {screen.md && (
         <div
@@ -2435,13 +2438,22 @@ export default function ChatPlaygroundPage() {
                 <GSearchLogoAvatar size={32} />
                 <div className="flex flex-col space-y-1">
                   <span className="text-[9px] font-bold text-[var(--app-text-soft)] italic px-1">Processing...</span>
-                  <div className="p-4 bg-[var(--app-surface-muted)]/60 border border-[var(--app-border)]/40 text-[var(--app-text)] rounded-2xl rounded-tl-none shadow-sm">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-[var(--app-text-soft)] font-medium">
-                        {streamingText || "Assembling pipeline graphs..."}
-                      </span>
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#0fb5a1] animate-ping" />
-                    </div>
+                  <div className="p-4 bg-[var(--app-surface-muted)]/60 border border-[var(--app-border)]/40 text-[var(--app-text)] rounded-2xl rounded-tl-none shadow-sm min-w-[120px]">
+                    {stripThinking(streamingText).trim() ? (
+                      <div className="mr-2 leading-7 flex flex-col gap-1.5">
+                        {renderFormattedContent(streamingText, false)}
+                        <div className="flex items-center gap-1.5 mt-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#0fb5a1] animate-ping" />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-[var(--app-text-soft)] font-medium">
+                          Thinking...
+                        </span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#0fb5a1] animate-ping" />
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2605,7 +2617,11 @@ export default function ChatPlaygroundPage() {
                   <button
                     onClick={handleSend}
                     disabled={!agent || (!input.trim() && !attachedFile) || wsStatus !== "open"}
-                    className="w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer border-none outline-none bg-gray-200 dark:bg-gray-800 text-[var(--app-text-soft)] hover:bg-[#0fb5a1] hover:text-white disabled:opacity-40 disabled:hover:bg-gray-200 disabled:hover:text-[var(--app-text-soft)]"
+                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer border-none outline-none ${
+                      (!agent || (!input.trim() && !attachedFile) || wsStatus !== "open")
+                        ? "bg-gray-200 dark:bg-gray-800 text-[var(--app-text-soft)] opacity-40 cursor-not-allowed"
+                        : "bg-[#0fb5a1] text-white hover:bg-[#0da18f] hover:opacity-90 active:scale-95"
+                    }`}
                   >
                     <LuArrowRight size={16} strokeWidth={2.5} />
                   </button>

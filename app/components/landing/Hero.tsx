@@ -18,7 +18,7 @@ export default function Hero() {
   const [isSearching, setIsSearching] = useState(false);
 
   const indexRef = useRef(0);
-  const timeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const timeoutsRef = useRef<any[]>([]);
 
   useEffect(() => {
     const prefersReducedMotion =
@@ -29,7 +29,10 @@ export default function Hero() {
     if (prefersReducedMotion) return;
 
     const clearAll = () => {
-      timeoutsRef.current.forEach((t) => clearTimeout(t));
+      timeoutsRef.current.forEach((t) => {
+        clearTimeout(t);
+        clearInterval(t);
+      });
       timeoutsRef.current = [];
     };
 
@@ -43,21 +46,60 @@ export default function Hero() {
           onDone();
         }
       }, TYPE_SPEED_MS);
+      timeoutsRef.current.push(iv);
+    };
+
+    const typeInAnswer = (text: string, onDone: () => void) => {
+      let currentText = "";
+      let index = 0;
+      const iv = setInterval(() => {
+        if (index >= text.length) {
+          clearInterval(iv);
+          onDone();
+          return;
+        }
+
+        // HTML-safe tag insertion: append the full tag instantly to prevent rendering broken tags
+        if (text[index] === "<") {
+          const closingIndex = text.indexOf(">", index);
+          if (closingIndex !== -1) {
+            currentText += text.slice(index, closingIndex + 1);
+            index = closingIndex + 1;
+          } else {
+            currentText += text[index];
+            index++;
+          }
+        } else {
+          currentText += text[index];
+          index++;
+        }
+
+        setAnswerHtml(currentText);
+      }, 15); // Slightly faster typing rate for answer text
+      timeoutsRef.current.push(iv);
     };
 
     const cycle = () => {
       const item = heroRotationItems[indexRef.current];
       setIsSearching(true);
+      setAnswerHtml("");
+      setSource("");
+      setTags([]);
+
       typeIn(item.q, () => {
         const t = setTimeout(() => {
-          setAnswerHtml(item.a);
-          setSource(item.s);
-          setTags(item.tags);
           setIsSearching(false);
-          indexRef.current = (indexRef.current + 1) % heroRotationItems.length;
-          const next = setTimeout(cycle, CYCLE_PAUSE_MS);
-          timeoutsRef.current.push(next);
-        }, 500); // Pause for 500ms after typing completes (searching state)
+          
+          typeInAnswer(item.a, () => {
+            // Display source citations and tags only after the answer typing has finished
+            setSource(item.s);
+            setTags(item.tags);
+            
+            indexRef.current = (indexRef.current + 1) % heroRotationItems.length;
+            const next = setTimeout(cycle, CYCLE_PAUSE_MS);
+            timeoutsRef.current.push(next);
+          });
+        }, 800); // Wait in searching state before writing the answer
         timeoutsRef.current.push(t);
       });
     };
@@ -116,8 +158,9 @@ export default function Hero() {
             Book a demo
           </Button>
           <Button
+            type="text"
             size="large"
-            href="#"
+            href="register"
             style={{
               borderColor: "var(--line-2)",
               color: "var(--ink)",

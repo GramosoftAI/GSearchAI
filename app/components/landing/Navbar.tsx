@@ -1,9 +1,10 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button, Drawer, Space } from "antd";
-import { MenuOutlined } from "@ant-design/icons";
+import { MenuOutlined, GithubOutlined } from "@ant-design/icons";
 import BrandGlyph from "./BrandGlyph";
 import { useRouter } from "next/navigation";
+import { useGithubStars } from "../provider/GithubStarsProvider";
 
 const navLinks = [
   { href: "#product", label: "Product" },
@@ -16,6 +17,7 @@ const navLinks = [
 export default function Navbar() {
   const [open, setOpen] = useState(false);
   const router = useRouter();
+  const stars = useGithubStars();
 
   return (
     <nav className="gs-nav">
@@ -36,28 +38,41 @@ export default function Navbar() {
 
         {/* Desktop CTA buttons — hidden via CSS on mobile */}
         <div className="gs-nav-cta">
+
+          <a
+            href="https://github.com/GramosoftAI/GRAGAI"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="gs-github-star"
+          >
+            <GithubOutlined style={{ fontSize: "16px" }} />
+            <span>Star</span>
+            <span className="gs-github-star-divider"></span>
+            <span className="gs-github-star-count">{stars}</span>
+          </a>
           <Button
-            type="text"
+            // type="text"
             className="signin"
             onClick={() => router.push("/login")}
-            style={{ fontWeight: 600, color: "var(--body)",padding: 0 }}
+            style={{ fontWeight: 600, color: "var(--body)", padding: 10 }}
           >
             Log in
           </Button>
-          <Button
+
+          {/* <Button
             type="text"
             href="/register"
-            style={{ borderColor: "var(--line-2)", color: "var(--ink)", fontWeight: 700, borderRadius: 11,padding:20}}
+            style={{ borderColor: "var(--line-2)", color: "var(--ink)", fontWeight: 700, borderRadius: 11, padding: 20 }}
           >
             Start free
-          </Button>
-          <Button
+          </Button> */}
+          {/* <Button
             type="primary"
             href="#cta"
             style={{ background: "var(--teal)", borderColor: "var(--teal)", fontWeight: 700, borderRadius: 11,padding:20 }}
           >
             Book a demo
-          </Button>
+          </Button> */}
         </div>
 
         {/* Mobile menu button — only visible on small screens via CSS */}
@@ -77,7 +92,7 @@ export default function Navbar() {
         title={
           <span className="gs-brand">
             <BrandGlyph />
-            Gsearch
+            GsearchAI
           </span>
         }
         placement="right"
@@ -96,6 +111,20 @@ export default function Navbar() {
             </a>
           ))}
           <hr style={{ border: "none", borderTop: "1px solid var(--line)", margin: "8px 0" }} />
+          <div className="gs-drawer-github-wrapper">
+            <a
+              href="https://github.com/GramosoftAI/GRAGAI"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="gs-github-star"
+              onClick={() => setOpen(false)}
+            >
+              <GithubOutlined style={{ fontSize: "16px" }} />
+              <span>Star on GitHub</span>
+              <span className="gs-github-star-divider"></span>
+              <span className="gs-github-star-count">{stars}</span>
+            </a>
+          </div>
           <Button
             type="text"
             href="/login"

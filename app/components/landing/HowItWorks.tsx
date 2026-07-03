@@ -28,7 +28,7 @@ export default function HowItWorks() {
       <div className="gs-sec-center">
         <div className="gs-eyebrow">Simple by design</div>
         <Title level={2} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>Crawl. Structure. Search.</Title>
-        <Paragraph className="gs-sec-lede" style={{fontSize:"18px"}}>
+        <Paragraph className="gs-sec-lede" style={{fontSize:"18px",color:"var(--muted)"}}>
           One simple pipeline turns scattered content into answers your team can trust — no data
           project required.
         </Paragraph>

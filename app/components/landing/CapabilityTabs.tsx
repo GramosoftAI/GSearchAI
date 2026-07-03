@@ -24,7 +24,7 @@ export default function CapabilityTabs() {
     >
     <Row gutter={[50, 32]} align="middle" style={{ marginTop: 10 }}>
       <Col xs={24} md={12}>
-        <Title level={3} style={{ fontSize: 26, marginBottom: 14 }}>{tab.heading}</Title>
+        <Title level={3} style={{ fontSize: 28, marginBottom: 14 ,color:"var(--ink)"}}>{tab.heading}</Title>
         <Paragraph style={{ fontSize: 16.5, color: "var(--muted)", marginBottom: 18 }}>{tab.body}</Paragraph>
         <Link href="#how" style={{ color: "var(--teal-deep)", fontWeight: 700, fontSize: 14.5 }}>
           See how it works →

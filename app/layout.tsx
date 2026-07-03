@@ -29,8 +29,36 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${plusJakartaSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
       <body className="min-h-full ">
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  const stored = localStorage.getItem('app-theme-mode');
+                  const isDashboard = window.location.pathname.startsWith('/dashboard') || window.location.pathname.startsWith('/widget');
+                  let theme = 'light';
+                  if (isDashboard) {
+                    if (stored === 'light' || stored === 'dark') {
+                      theme = stored;
+                    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                      theme = 'dark';
+                    }
+                  }
+                  document.documentElement.setAttribute('data-theme', theme);
+                  document.documentElement.style.colorScheme = theme;
+                  if (theme === 'dark') {
+                    document.documentElement.classList.add('dark');
+                  } else {
+                    document.documentElement.classList.remove('dark');
+                  }
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
         <AntdRegistry>
           <GlobalProvider>
             {children}

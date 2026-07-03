@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Row, Col, Card, Typography, Statistic } from "antd";
 
 const { Title, Paragraph, Text } = Typography;
@@ -15,6 +15,64 @@ const stats = [
   { big: "80%", lbl: "daily adoption in first 3 months" },
   { big: "500+", lbl: "enterprises building on Gsearch" },
 ];
+
+const AnimatedCounter = ({ value }: { value: string }) => {
+  const [displayValue, setDisplayValue] = useState(0);
+  const [hasAnimated, setHasAnimated] = useState(false);
+  const elementRef = useRef<HTMLSpanElement>(null);
+
+  const numericMatch = value.match(/\d+/);
+  const target = numericMatch ? parseInt(numericMatch[0], 10) : 0;
+  const suffix = value.replace(/\d+/g, "");
+
+  useEffect(() => {
+    const el = elementRef.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries;
+        if (entry.isIntersecting && !hasAnimated) {
+          setHasAnimated(true);
+          let start = 0;
+          const end = target;
+          const duration = 1200; // 1.2 seconds animation
+          const startTime = performance.now();
+
+          const animate = (currentTime: number) => {
+            const elapsed = currentTime - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            
+            // Ease out quad
+            const easeProgress = progress * (2 - progress);
+            
+            const currentCount = Math.floor(easeProgress * (end - start) + start);
+            setDisplayValue(currentCount);
+
+            if (progress < 1) {
+              requestAnimationFrame(animate);
+            } else {
+              setDisplayValue(end);
+            }
+          };
+
+          requestAnimationFrame(animate);
+          observer.unobserve(el);
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [target, hasAnimated]);
+
+  return (
+    <span ref={elementRef}>
+      {hasAnimated ? `${displayValue}${suffix}` : `0${suffix}`}
+    </span>
+  );
+};
 
 export default function TimeToValueAndTestimonial() {
   return (
@@ -64,7 +122,9 @@ export default function TimeToValueAndTestimonial() {
                 style={{ background: "var(--alt)", border: "1px solid var(--line)", borderRadius: 14 }}
                 styles={{ body: { padding: 22 } }}
               >
-                <div style={{ fontSize: 34, fontWeight: 800, color: "var(--teal-deep)", letterSpacing: "-0.02em" }}>{s.big}</div>
+                <div style={{ fontSize: 34, fontWeight: 800, color: "var(--teal-deep)", letterSpacing: "-0.02em" }}>
+                  <AnimatedCounter value={s.big} />
+                </div>
                 <div style={{ fontSize: 14, color: "var(--muted)", marginTop: 6, fontWeight: 500 }}>{s.lbl}</div>
               </Card>
             ))}

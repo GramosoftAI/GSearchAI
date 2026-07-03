@@ -24,7 +24,7 @@ export default function FinalCta() {
         </Button>
         <Button
           size="large"
-          href="#"
+          href="register"
           style={{ borderColor: "var(--line-2)", color: "var(--ink)", fontWeight: 700, borderRadius: 11,padding:25 }}
         >
           Start for free

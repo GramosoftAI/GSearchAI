@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 
 type ThemeMode = "light" | "dark";
 
@@ -23,22 +24,27 @@ function resolveInitialTheme(): ThemeMode {
 }
 
 export default function ThemeProvider({ children }: { children: ReactNode }) {
-  const [mode, setModeState] = useState<ThemeMode>("light");
+  const [mode, setModeState] = useState<ThemeMode>(() => resolveInitialTheme());
+  const pathname = usePathname();
 
-  useEffect(() => {
-    setModeState(resolveInitialTheme());
-  }, []);
+  const isDashboardRoute = pathname?.startsWith("/dashboard") || pathname?.startsWith("/widget");
+  const activeMode = isDashboardRoute ? mode : "light";
 
   useEffect(() => {
     if (typeof document === "undefined") return;
-    document.documentElement.setAttribute("data-theme", mode);
-    document.documentElement.style.colorScheme = mode;
-    if (mode === "dark") {
+    document.documentElement.setAttribute("data-theme", activeMode);
+    document.documentElement.style.colorScheme = activeMode;
+    if (activeMode === "dark") {
       document.documentElement.classList.add("dark");
     } else {
       document.documentElement.classList.remove("dark");
     }
-    window.localStorage.setItem(THEME_STORAGE_KEY, mode);
+  }, [activeMode]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(THEME_STORAGE_KEY, mode);
+    }
   }, [mode]);
 
   const setMode = useCallback((nextMode: ThemeMode) => {
@@ -52,11 +58,11 @@ export default function ThemeProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       mode,
-      isDark: mode === "dark",
+      isDark: activeMode === "dark",
       toggleTheme,
       setMode,
     }),
-    [mode, setMode, toggleTheme],
+    [mode, activeMode, toggleTheme, setMode],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

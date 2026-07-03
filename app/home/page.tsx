@@ -27,23 +27,51 @@ export default function HomePage() {
     window.scrollTo(0, 0);
   }, []);
 
+  useEffect(() => {
+    const revealElements = document.querySelectorAll(".reveal");
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("active");
+            // Stop observing once visible (first-time scroll reveal only)
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      {
+        threshold: 0.1,
+        rootMargin: "0px 0px -50px 0px",
+      }
+    );
+
+    revealElements.forEach((el) => {
+      observer.observe(el);
+    });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
   return (
     <>
       <Navbar />
-      <Hero />
-      <LogoStrip />
-      <FeatureTrio />
-      <HowItWorks />
-      <Connectors />
-      <CapabilityTabs />
-      <Industries />
-      <UseCases />
-      <TimeToValueAndTestimonial />
-      <RoiCalculator />
-      <Security />
-      <TeamSwitcher />
-      <Faq />
-      <FinalCta />
+      <div className="reveal"><Hero /></div>
+      <div className="reveal"><LogoStrip /></div>
+      <div className="reveal"><FeatureTrio /></div>
+      <div className="reveal"><HowItWorks /></div>
+      <div className="reveal"><Connectors /></div>
+      <div className="reveal"><CapabilityTabs /></div>
+      <div className="reveal"><Industries /></div>
+      <div className="reveal"><UseCases /></div>
+      <div className="reveal"><TimeToValueAndTestimonial /></div>
+      <div className="reveal"><RoiCalculator /></div>
+      <div className="reveal"><Security /></div>
+      <div className="reveal"><TeamSwitcher /></div>
+      <div className="reveal"><Faq /></div>
+      <div className="reveal"><FinalCta /></div>
       <Footer />
     </>
   );

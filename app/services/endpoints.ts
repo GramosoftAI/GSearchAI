@@ -80,6 +80,10 @@ export const endpoints = {
   DISCONNECT: {
     url: "/knowledge-bases/agent/",
     method: methods.delete
+  },
+  GET_AGENT_BY_ID: {
+    url: "/personalities",
+    method: methods.get
   }
 
 

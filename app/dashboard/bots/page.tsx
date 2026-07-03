@@ -16,7 +16,6 @@ import { useAgents } from "../../hooks/useAgents";
 import { useStore } from "../../hooks/useStore";
 import type { Agent } from "../../components/ui/type";
 import { getCookie } from "../../config/cookies";
-import { toast } from "react-hot-toast";
 import { SYSTEM_PROMPT } from "./text";
 
 const { Title, Text } = Typography;
@@ -147,6 +146,7 @@ export default function BotsPage() {
   const [createAgent, getcreateAgent, creating] = useAxios({ endpoint: "CREATEAGENT", showSuccessMsg: true });
   const [updateAgent, , updating] = useAxios({ endpoint: "UPDATEAGENT", showSuccessMsg: true });
   const [deleteAgent, deleteRes, deleting] = useAxios({ endpoint: "DELETEAGENT", showSuccessMsg: true });
+  const [agentgetidlist,res2] = useAxios({ endpoint: "GET_AGENT_BY_ID", hideErrorMsg: true });
 
   const setAgentList = useStore((state) => state.setAgentList);
   const setBotsCache = useStore((state) => state.setBotsCache);
@@ -171,6 +171,14 @@ export default function BotsPage() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [checkingKb, setCheckingKb] = useState(false);
   const [noKbModalOpen, setNoKbModalOpen] = useState(false);
+
+  useEffect(() => {
+  if (res2?.data?.personalities) {
+    form.setFieldsValue({
+      personality_id: "65d0d180-7aaa-4174-b70d-1d9b7a3c9b3e"
+    });
+  }
+}, [res2]);
 
   const handleAgentClick = async (agent: any) => {
     setCheckingKb(true);
@@ -215,6 +223,7 @@ export default function BotsPage() {
 
   useEffect(() => {
     refreshAgents();
+    agentgetidlist()
     getAgents(undefined, (payload) => {
       const agentsList = payload?.data?.agents ?? [];
       setAgentresponse(agentsList)
@@ -234,7 +243,9 @@ export default function BotsPage() {
   }, [agents, searchQuery]);
 
   const handleCreate = async (values: any) => {
-    await createAgent({ data: values });
+    await createAgent({ data: {
+      personality: res2?.data?.personalities?.find((x: any) => x.id === values.personality_id)?.name,
+      ...values }});
     await getAgents(undefined, (payload) => {
       const agentsList = payload?.data?.agents ?? [];
       setAgentresponse(agentsList)
@@ -284,7 +295,7 @@ export default function BotsPage() {
     setSelectedAgent(fullAgent);
     manageForm.setFieldsValue({
       name: fullAgent.name || "",
-      personality: fullAgent.personality || "Concise",
+      personality_id: fullAgent.personality_id || "Concise",
       system_prompt: fullAgent.system_prompt || ""
     });
     setIsManageModalOpen(true);
@@ -345,15 +356,15 @@ export default function BotsPage() {
           </Form.Item>
 
           <Form.Item
-            name="personality"
+            name="personality_id"
             label={<Text className="font-black text-[10px] uppercase tracking-widest text-[var(--app-text-soft)]">Personality Type</Text>}
           >
-            <Select className="h-14 custom-select" placeholder="Select personality">
-              <Option value="Concise">Concise & Professional</Option>
-              <Option value="Creative">Creative & Explanatory</Option>
-              <Option value="Friendly">Friendly & Approachable</Option>
-              <Option value="Strict">Strict & Deterministic</Option>
-            </Select>
+            <Select
+            
+             className="h-14 custom-select" placeholder="Select personality"
+              options={res2?.data?.personalities}
+              fieldNames={{ label: "name", value: "id" }}
+            />
           </Form.Item>
 
           <Form.Item
@@ -533,15 +544,15 @@ export default function BotsPage() {
           </Form.Item>
 
           <Form.Item
-            name="personality"
+            name="personality_id"
             label={<Text className="font-black text-[10px] uppercase tracking-widest text-[var(--app-text-soft)]">Agent Personality</Text>}
           >
-            <Select className="h-14 custom-select">
-             <Option value="Concise">Concise & Professional</Option>
-              <Option value="Creative">Creative & Explanatory</Option>
-              <Option value="Friendly">Friendly & Approachable</Option>
-              <Option value="Strict">Strict & Deterministic</Option>
-            </Select>
+            <Select
+             
+            className="h-14 custom-select" placeholder="Select personality"
+              options={res2?.data?.personalities}
+              fieldNames={{ label: "name", value: "id" }}
+            />
           </Form.Item>
 
           <Form.Item

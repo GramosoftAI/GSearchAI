@@ -46,7 +46,7 @@ export default function Industries() {
             <Col xs={24} sm={12} lg={6} key={ind.title}>
               <Card
                 className="gs-icard"
-                style={{ height: "100%", border: "1px solid var(--line)", borderRadius: 16 }}
+                style={{ height: "100%", border: "1px solid var(--line)", borderRadius: 16, }}
                 styles={{ body: { padding: 26 } }}
               >
                 <div style={{ color: "var(--teal-deep)", marginBottom: 14 }}>
