@@ -508,8 +508,15 @@ class KnowledgeBaseService:
         """
 
         from .models import DocumentIngestionRun
+        from app.models.document import DocumentChunk
         import time
         import json
+        import hashlib
+        import math
+        from rapidfuzz import fuzz
+        import random
+        
+        pipeline_start_time = time.time()
         
         audit_run = DocumentIngestionRun(
             tenant_id=self.tenant_id,
@@ -587,7 +594,13 @@ class KnowledgeBaseService:
 
 
 
+            # 1.5 BASE METRICS & FINGERPRINTING
+            audit_run.original_chars = len(document_text)
+            audit_run.original_words = len(document_text.split())
+            audit_run.source_fingerprint = hashlib.sha256(document_text.encode("utf-8")).hexdigest()
+
             # 2. CHUNK THE TEXT
+            chunking_start_time = time.time()
             source_type = "pdf"
             path_to_check = s3_path or source or ""
             if path_to_check:
@@ -624,9 +637,19 @@ class KnowledgeBaseService:
 
             logger.info(f" Chunked document into {len(chunks)} chunks using Adaptive/Structured Chunking ({source_type})")
 
-
+            # 2.5 SIMILARITY SIGNAL & CHUNKING TELEMETRY
+            audit_run.chunk_reconstruction_chars = sum(len(c) for c in chunks)
+            reconstructed_text = "\n".join(chunks)
+            audit_run.reconstruction_similarity = fuzz.ratio(document_text, reconstructed_text) / 100.0
+            
+            audit_run.chunking_strategy = "structured" if structured_records else "adaptive"
+            audit_run.parser_name = "mineru" if source_type == "pdf" else "standard"
+            audit_run.document_type_detected = source_type
+            
+            audit_run.chunking_time_ms = int((time.time() - chunking_start_time) * 1000)
 
             # 3. GENERATE EMBEDDINGS (Optimized Batching)
+            embedding_start_time = time.time()
 
             embeddings = await EmbeddingGenerator.generate_embeddings_batch(chunks)
 
@@ -636,9 +659,11 @@ class KnowledgeBaseService:
 
             logger.info(f" Generated {len(embeddings)} embeddings")
 
-
+            audit_run.embedding_time_ms = int((time.time() - embedding_start_time) * 1000)
+            audit_run.embedding_model = "bge-large"
 
             # 4. UNIFIED EXTRACTION (Entities, Triplets, Structured)
+            extraction_start_time = time.time()
             from ...core.unified_extractor import UnifiedExtractor
             
             use_triplets = settings.use_triplet_extraction
@@ -818,6 +843,10 @@ class KnowledgeBaseService:
             if structured_sections_to_save:
                 self.db.add_all(structured_sections_to_save)
 
+            audit_run.graph_extraction_time_ms = int((time.time() - extraction_start_time) * 1000)
+            audit_run.graph_entities_extracted = total_entities + len(structured_entities_to_save)
+            audit_run.graph_relationships_extracted = total_triplets
+
             neo4j_start_time = time.time()
 
 
@@ -868,7 +897,8 @@ class KnowledgeBaseService:
 
             logger.info(f" Staged {len(chunks)} chunks in PostgreSQL")
 
-
+            audit_run.vector_insert_time_ms = int((time.time() - neo4j_start_time) * 1000)
+            neo4j_start_time = time.time()
 
             batch_create_query = """
 
@@ -1035,6 +1065,10 @@ class KnowledgeBaseService:
             audit_run.relationships_created = relationships_created
             audit_run.relationships_merged = relationships_merged
             
+            audit_run.graph_insert_time_ms = write_duration_ms
+            audit_run.graph_entities_saved = len(all_entities_set) + len(structured_entities_to_save)
+            audit_run.graph_relationships_saved = relationships_created + relationships_merged
+            
             if failed_chunk_count > 0:
                 audit_run.status = "PARTIAL_SUCCESS"
             else:
@@ -1070,7 +1104,102 @@ class KnowledgeBaseService:
 
             await self.db.commit()
 
+            # =========================================================================
+            # ENTERPRISE INGESTION AUDIT: RETRIEVAL VALIDATION & INTEGRITY SCORING
+            # =========================================================================
+            validation_start_time = time.time()
             
+            audit_run.stored_chunk_count = len(chunks)
+            audit_run.vector_count = len(embeddings)
+            
+            # Retrieval Validation (Dynamic Sampling)
+            sample_size = min(10, max(1, math.ceil(len(chunks) * 0.05)))
+            audit_run.retrieval_samples_tested = sample_size
+            successful_retrievals = 0
+            
+            try:
+                sampled_indices = random.sample(range(len(chunks)), min(sample_size, len(chunks)))
+                from sqlalchemy import select
+                
+                for idx in sampled_indices:
+                    query_emb = embeddings[idx]
+                    target_chunk_id = str(chunk_ids[idx])
+                    
+                    stmt = select(DocumentChunk.id).where(
+                        DocumentChunk.kb_id == uuid.UUID(kb_id)
+                    ).order_by(
+                        DocumentChunk.embedding.cosine_distance(query_emb)
+                    ).limit(5)
+                    
+                    res = await self.db.execute(stmt)
+                    top_k_ids = [str(row[0]) for row in res.fetchall()]
+                    
+                    if target_chunk_id in top_k_ids:
+                        successful_retrievals += 1
+                        
+                audit_run.retrieval_samples_successful = successful_retrievals
+                if sample_size > 0:
+                    audit_run.retrieval_validation_score = successful_retrievals / sample_size
+                    audit_run.retrieval_validation_passed = audit_run.retrieval_validation_score >= 0.8
+                else:
+                    audit_run.retrieval_validation_score = 1.0
+                    audit_run.retrieval_validation_passed = True
+            except Exception as e:
+                logger.warning(f"Retrieval validation failed to execute: {e}")
+                audit_run.retrieval_validation_score = 0.0
+                audit_run.retrieval_validation_passed = False
+                
+            # Aggregate Integrity Score Calculation
+            base_score = 100
+            
+            # Penalties
+            sim = audit_run.reconstruction_similarity or 0.0
+            if sim < 0.85:
+                base_score -= 25
+            elif sim < 0.95:
+                base_score -= 10
+                
+            if (audit_run.retrieval_validation_score or 0.0) < 0.80:
+                base_score -= 20
+                
+            # Proportional Graph Loss Penalty
+            extracted_total = audit_run.graph_entities_extracted + audit_run.graph_relationships_extracted
+            saved_total = audit_run.graph_entities_saved + audit_run.graph_relationships_saved
+            if extracted_total > 0:
+                loss_ratio = 1.0 - (saved_total / extracted_total)
+                if loss_ratio > 0:
+                    graph_penalty = min(30, int(30 * loss_ratio))
+                    base_score -= graph_penalty
+                    
+            audit_run.integrity_score = base_score
+            
+            # Catastrophic Failures
+            if audit_run.original_chars == 0:
+                audit_run.integrity_score = 0
+                audit_run.validation_failure_reason = "SOURCE_EXTRACTION_FAILED"
+            elif audit_run.chunk_count == 0:
+                audit_run.integrity_score = 0
+                audit_run.validation_failure_reason = "ZERO_CHUNKS_GENERATED"
+            elif audit_run.stored_chunk_count == 0 or audit_run.stored_chunk_count != audit_run.chunk_count:
+                audit_run.integrity_score = 0
+                audit_run.validation_failure_reason = "VECTOR_PERSISTENCE_FAILED"
+                
+            # Status Mapping
+            if audit_run.integrity_score == 0:
+                audit_run.validation_status = "FAILED"
+            elif audit_run.integrity_score >= 95:
+                audit_run.validation_status = "PASS"
+            elif audit_run.integrity_score >= 80:
+                audit_run.validation_status = "PASS_WITH_WARNINGS"
+            elif audit_run.integrity_score >= 60:
+                audit_run.validation_status = "HIGH_RISK"
+            else:
+                audit_run.validation_status = "FAILED"
+                
+            audit_run.validation_time_ms = int((time.time() - validation_start_time) * 1000)
+            audit_run.total_processing_time_ms = int((time.time() - pipeline_start_time) * 1000)
+            
+            await self.db.commit() # Save the audit run updates
 
             return format_success({
 

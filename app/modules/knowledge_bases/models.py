@@ -478,6 +478,49 @@ class DocumentIngestionRun(Base):
     llm_input_tokens = Column(Integer, nullable=False, default=0)
     llm_output_tokens = Column(Integer, nullable=False, default=0)
     
+    # ============= ENTERPRISE AUDIT & OBSERVABILITY =============
+    # Metadata Lineage
+    source_fingerprint = Column(String(64), nullable=True)
+    document_type_detected = Column(String(50), nullable=True)
+    parser_name = Column(String(50), nullable=True)
+    chunking_strategy = Column(String(50), nullable=True)
+    embedding_model = Column(String(50), nullable=True)
+    graph_extractor_model = Column(String(50), nullable=True)
+    validation_version = Column(String(20), nullable=False, default="v1.3")
+    
+    # Document Metrics
+    original_pages = Column(Integer, nullable=True)
+    original_chars = Column(Integer, nullable=False, default=0)
+    original_words = Column(Integer, nullable=False, default=0)
+    chunk_reconstruction_chars = Column(Integer, nullable=False, default=0)
+    
+    # Persistence Deltas
+    stored_chunk_count = Column(Integer, nullable=False, default=0)
+    vector_count = Column(Integer, nullable=False, default=0)
+    graph_entities_extracted = Column(Integer, nullable=False, default=0)
+    graph_entities_saved = Column(Integer, nullable=False, default=0)
+    graph_relationships_extracted = Column(Integer, nullable=False, default=0)
+    graph_relationships_saved = Column(Integer, nullable=False, default=0)
+    
+    # Validation & Integrity
+    reconstruction_similarity = Column(Float, nullable=True)
+    retrieval_samples_tested = Column(Integer, nullable=False, default=0)
+    retrieval_samples_successful = Column(Integer, nullable=False, default=0)
+    retrieval_validation_score = Column(Float, nullable=True)
+    retrieval_validation_passed = Column(Boolean, nullable=True)
+    
+    validation_status = Column(String(50), nullable=True)
+    validation_failure_reason = Column(Text, nullable=True)
+    integrity_score = Column(Integer, nullable=True)
+    
+    # Timing Telemetry
+    chunking_time_ms = Column(Integer, nullable=False, default=0)
+    embedding_time_ms = Column(Integer, nullable=False, default=0)
+    graph_extraction_time_ms = Column(Integer, nullable=False, default=0)
+    vector_insert_time_ms = Column(Integer, nullable=False, default=0)
+    graph_insert_time_ms = Column(Integer, nullable=False, default=0)
+    validation_time_ms = Column(Integer, nullable=False, default=0)
+    total_processing_time_ms = Column(Integer, nullable=False, default=0)
     # Advanced Telemetry
     extraction_duration_ms = Column(Integer, nullable=False, default=0)
     graph_write_duration_ms = Column(Integer, nullable=False, default=0)
