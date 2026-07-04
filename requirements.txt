@@ -236,3 +236,5 @@ zipp==3.23.1
 arq==0.25.0
 redis==5.0.1
 beautifulsoup4==4.12.3
+
+rapidfuzz
