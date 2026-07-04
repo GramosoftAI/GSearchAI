@@ -13,6 +13,7 @@ import json
 import logging
 import uuid
 from typing import List, Dict, Any, Tuple, Optional
+from collections import deque
 
 from app.core.neo4j import get_neo4j_driver
 from app.core.embeddings import EmbeddingGenerator
@@ -1207,8 +1208,13 @@ Return ONLY a pure JSON response in the following format (do not include any com
                     adj[u] = []
                 adj[u].append((v, rid))
                 
-            # For each edge, check if target is reachable from source without this direct edge
+            
+            edge_count = 0
             for edge in edges:
+                edge_count += 1
+                if edge_count % 100 == 0:
+                    await asyncio.sleep(0) # Yield event loop
+                
                 u = edge["source_id"]
                 v = edge["target_id"]
                 rid = edge["rel_id"]
@@ -1218,22 +1224,23 @@ Return ONLY a pure JSON response in the following format (do not include any com
                     original_list = adj[u]
                     adj[u] = [item for item in original_list if item[1] != rid]
                 
-                # Run BFS to check reachability
+                # Run BFS to check reachability (limited depth)
                 visited = {u}
-                queue = [u]
+                queue = deque([(u, 0)]) # (node, depth)
                 reachable = False
                 
                 while queue:
-                    curr = queue.pop(0)
+                    curr, depth = queue.popleft()
                     if curr == v and curr != u:
                         # Found alternative path!
                         reachable = True
                         break
-                    
-                    for neighbor, _ in adj.get(curr, []):
-                        if neighbor not in visited:
-                            visited.add(neighbor)
-                            queue.append(neighbor)
+                        
+                    if depth < 3:  # Limit transitive search to 3 hops
+                        for neighbor, _ in adj.get(curr, []):
+                            if neighbor not in visited:
+                                visited.add(neighbor)
+                                queue.append((neighbor, depth + 1))
                             
                 # Restore edge
                 if u in adj:
