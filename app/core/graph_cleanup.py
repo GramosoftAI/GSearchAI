@@ -36,12 +36,14 @@ class GraphCleanupService:
     def __init__(
         self,
         tenant_id: str,
+        kb_id: Optional[str] = None,
         auto_merge_threshold: float = 95.0,
         llm_review_threshold: float = 85.0
     ):
         if not tenant_id:
             raise ValueError("tenant_id is required for GraphCleanupService")
         self.tenant_id = tenant_id
+        self.kb_id = kb_id
         self.auto_merge_threshold = auto_merge_threshold
         self.llm_review_threshold = llm_review_threshold
         self.embedding_override_threshold = 0.85
@@ -222,15 +224,33 @@ class GraphCleanupService:
         logger.info(f"Finding duplicate candidates for tenant {self.tenant_id}...")
 
         # Fetch nodes with their labels, properties, and relationship context
-        query = """
-        MATCH (n)
-        WHERE (n:Entity OR n:TripletEntity) AND n.tenant_id = $tenant_id
-        
-        RETURN n, labels(n) AS labels, elementId(n) as internal_id,
-               [(n)-[r]->(target) WHERE target.tenant_id = $tenant_id | {type: type(r), target_id: target.id, target_label: labels(target)[0], target_name: coalesce(target.name, target.display_name, target["title"])}] AS outgoing,
-               [(source)-[r_in]->(n) WHERE source.tenant_id = $tenant_id | {type: type(r_in), source_id: source.id, source_label: labels(source)[0], source_name: coalesce(source.name, source.display_name, source["title"])}] AS incoming
-        """
-        results = await self.neo4j_repo.execute_read(query)
+        if self.kb_id:
+            # Document-scoped cleanup
+            query = """
+            MATCH (c:Chunk {kb_id: $kb_id, tenant_id: $tenant_id})
+            OPTIONAL MATCH (c)-[:MENTIONS]->(e:Entity)
+            OPTIONAL MATCH (c)-[:HAS_TRIPLET]->(:Triplet)-[:SUBJECT|OBJECT]->(t:TripletEntity)
+            WITH collect(e) + collect(t) AS all_e
+            UNWIND all_e AS n
+            WITH DISTINCT n
+            WHERE n IS NOT NULL AND (n:Entity OR n:TripletEntity) AND n.tenant_id = $tenant_id
+            
+            RETURN n, labels(n) AS labels, elementId(n) as internal_id,
+                   [(n)-[r]->(target) WHERE target.tenant_id = $tenant_id | {type: type(r), target_id: target.id, target_label: labels(target)[0], target_name: coalesce(target.name, target.display_name, target["title"])}] AS outgoing,
+                   [(source)-[r_in]->(n) WHERE source.tenant_id = $tenant_id | {type: type(r_in), source_id: source.id, source_label: labels(source)[0], source_name: coalesce(source.name, source.display_name, source["title"])}] AS incoming
+            """
+            results = await self.neo4j_repo.execute_read(query, {"tenant_id": self.tenant_id, "kb_id": self.kb_id})
+        else:
+            # Full tenant cleanup (for background jobs)
+            query = """
+            MATCH (n)
+            WHERE (n:Entity OR n:TripletEntity) AND n.tenant_id = $tenant_id
+            
+            RETURN n, labels(n) AS labels, elementId(n) as internal_id,
+                   [(n)-[r]->(target) WHERE target.tenant_id = $tenant_id | {type: type(r), target_id: target.id, target_label: labels(target)[0], target_name: coalesce(target.name, target.display_name, target["title"])}] AS outgoing,
+                   [(source)-[r_in]->(n) WHERE source.tenant_id = $tenant_id | {type: type(r_in), source_id: source.id, source_label: labels(source)[0], source_name: coalesce(source.name, source.display_name, source["title"])}] AS incoming
+            """
+            results = await self.neo4j_repo.execute_read(query, {"tenant_id": self.tenant_id})
 
         nodes = []
         for record in results:

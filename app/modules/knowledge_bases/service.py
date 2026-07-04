@@ -1068,7 +1068,7 @@ class KnowledgeBaseService:
             cleanup_stats = {"total_merges": 0, "relationships_deduplicated": 0}
             try:
                 from ...core.graph_cleanup import GraphCleanupService
-                cleanup_service = GraphCleanupService(tenant_id=str(self.tenant_id))
+                cleanup_service = GraphCleanupService(tenant_id=str(self.tenant_id), kb_id=kb_id)
                 cleanup_stats = await cleanup_service.cleanup_graph()
                 logger.info(f"Graph cleanup completed: {cleanup_stats}")
             except Exception as cleanup_err:
