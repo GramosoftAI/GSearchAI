@@ -156,8 +156,19 @@ async def run_pdf_ingestion_job(
                 logger.error(f"Job {job_id}: Failed to store parsed content in S3: {e}")
 
             # Step 3: Ingest Document (Chunking + Embeddings + Neo4j)
-            await job_service.update_job_progress(job_id, status="processing", progress=60, current_step="Chunking and Generating Embeddings")
+            await job_service.update_job_progress(job_id, status="processing", progress=60, current_step="Chunking Document")
             
+            async def progress_callback(step_name: str, progress: int, metadata: dict = None):
+                step_display = step_name
+                if metadata and "processed_chunks" in metadata and "total_chunks" in metadata:
+                    step_display = f"{step_name} ({metadata['processed_chunks']}/{metadata['total_chunks']} chunks)"
+                await job_service.update_job_progress(
+                    job_id,
+                    status="processing",
+                    progress=progress,
+                    current_step=step_display
+                )
+
             logger.info(f"Job {job_id}: Starting embedding and graph ingestion for {kb_id}")
             ingest_result = await kb_service.ingest_document(
                 kb_id, 
@@ -165,7 +176,8 @@ async def run_pdf_ingestion_job(
                 source=s3_url, 
                 s3_path=s3_url,
                 parsed_path=parsed_url,
-                structured_records=structured_records
+                structured_records=structured_records,
+                progress_callback=progress_callback
             )
 
 

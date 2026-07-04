@@ -499,6 +499,7 @@ class KnowledgeBaseService:
         parsed_path: Optional[str] = None,
         document_category: str = "general_document",
         structured_records: Optional[list] = None,
+        progress_callback: Optional[callable] = None,
     ) -> dict:
 
         """
@@ -599,6 +600,9 @@ class KnowledgeBaseService:
             audit_run.original_words = len(document_text.split())
             audit_run.source_fingerprint = hashlib.sha256(document_text.encode("utf-8")).hexdigest()
 
+            if progress_callback:
+                await progress_callback("Chunking Document", 60)
+
             # 2. CHUNK THE TEXT
             chunking_start_time = time.time()
             source_type = "pdf"
@@ -648,6 +652,9 @@ class KnowledgeBaseService:
             
             audit_run.chunking_time_ms = int((time.time() - chunking_start_time) * 1000)
 
+            if progress_callback:
+                await progress_callback("Generating Vector Embeddings", 65)
+
             # 3. GENERATE EMBEDDINGS (Optimized Batching)
             embedding_start_time = time.time()
 
@@ -678,8 +685,27 @@ class KnowledgeBaseService:
 
             logger.info(f" Processing Unified Extractions for {len(chunks)} chunks (Concurrency: {settings.ingestion_llm_concurrency})...")
             
-            unified_tasks = [safe_extract_unified(f"idx_{i}", chunks[i], i) for i in range(len(chunks))]
-            unified_results = await asyncio.gather(*unified_tasks)
+            if progress_callback:
+                await progress_callback("Extracting Graph Entities", 70, {"processed_chunks": 0, "total_chunks": len(chunks)})
+
+            unified_results = [None] * len(chunks)
+            
+            async def wrapped_extract(i, chunk_text):
+                res = await safe_extract_unified(f"idx_{i}", chunk_text, i)
+                return i, res
+
+            pending = [wrapped_extract(i, chunks[i]) for i in range(len(chunks))]
+            completed_count = 0
+            
+            for task in asyncio.as_completed(pending):
+                i, res = await task
+                unified_results[i] = res
+                completed_count += 1
+                
+                # Update progress smoothly between 70% and 79%
+                if progress_callback and (completed_count % max(1, len(chunks)//15) == 0 or completed_count == len(chunks)):
+                    prog = 70 + int((completed_count / len(chunks)) * 9)
+                    await progress_callback("Extracting Graph Entities", prog, {"processed_chunks": completed_count, "total_chunks": len(chunks)})
             
             # --- Unpack unified results to maintain backward compatibility ---
             entity_results = [res.get("entities", []) for res in unified_results]
@@ -1018,6 +1044,9 @@ class KnowledgeBaseService:
 
 
 
+            if progress_callback:
+                await progress_callback("Persisting Graph to Neo4j", 80)
+
             # 8. TRIPLET PERSISTENCE
 
             triplet_stats = {"triplets_extracted": 0, "triplet_entities": 0, "triplet_relationships": 0}
@@ -1032,6 +1061,9 @@ class KnowledgeBaseService:
 
                 triplet_stats = {"triplets_extracted": persist_result.get("triplets_created", 0), "triplet_entities": persist_result.get("entities_created", 0), "triplet_relationships": persist_result.get("relationships_created", 0)}
 
+            if progress_callback:
+                await progress_callback("Graph Cleanup Running", 85)
+
             # 8.5 GRAPH CLEANUP (NEW)
             cleanup_stats = {"total_merges": 0, "relationships_deduplicated": 0}
             try:
@@ -1041,6 +1073,9 @@ class KnowledgeBaseService:
                 logger.info(f"Graph cleanup completed: {cleanup_stats}")
             except Exception as cleanup_err:
                 logger.error(f"Graph cleanup failed: {cleanup_err}", exc_info=True)
+
+            if progress_callback:
+                await progress_callback("Integrity Validation", 95)
 
             # 9. FINAL UPDATE
 

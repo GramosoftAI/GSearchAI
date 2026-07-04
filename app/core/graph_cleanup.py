@@ -37,7 +37,7 @@ class GraphCleanupService:
         self,
         tenant_id: str,
         auto_merge_threshold: float = 95.0,
-        llm_review_threshold: float = 65.0
+        llm_review_threshold: float = 85.0
     ):
         if not tenant_id:
             raise ValueError("tenant_id is required for GraphCleanupService")
@@ -1015,8 +1015,7 @@ Return ONLY a pure JSON response in the following format (do not include any com
                 emb_sim = self._calculate_embedding_similarity(n1, n2)
                 if (
                     score >= self.llm_review_threshold 
-                    or (name_sim >= 0.85 and score >= 45.0)
-                    or (emb_sim >= self.embedding_override_threshold and score > 0.0)
+                    or (emb_sim >= self.embedding_override_threshold and score >= 60.0)
                 ):
                     llm_verifications_to_run.append((n1, n2, score))
 
