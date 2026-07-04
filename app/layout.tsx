@@ -4,6 +4,8 @@ import "./globals.css";
 import GlobalProvider from "./components/provider/GlobalProvider";
 import { Toaster } from "react-hot-toast";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
+import Script from "next/script";
+import { schema } from "./lib/schema";
 
 const plusJakartaSans = Plus_Jakarta_Sans({
   variable: "--font-plus-jakarta-sans",
@@ -15,9 +17,69 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// export const metadata: Metadata = {
+//   title: "Gsearch — Your company's second brain. AI search across every tool your team uses.",
+//   description: "Gsearch connects every tool your team uses, remembers how everything relates, and answers any question instantly — so your team stops searching and starts knowing.",
+// };
 export const metadata: Metadata = {
-  title: "Gsearch — Your company's second brain. AI search across every tool your team uses.",
-  description: "Gsearch connects every tool your team uses, remembers how everything relates, and answers any question instantly — so your team stops searching and starts knowing.",
+  title:
+    "Gsearch — AI Enterprise Search & Chat for Your Company Data | Ask Anything, Get Instant Answers",
+
+  description:
+    "Gsearch is an AI-powered enterprise search and chat platform that connects your tools, documents, and databases. Ask questions in natural language and get instant, accurate answers from your company knowledge — like chatting with your organization's brain.",
+
+  keywords: [
+  "AI enterprise search",
+  "company AI search tool",
+  "internal knowledge search",
+  "AI chatbot for company data",
+  "RAG search system",
+  "enterprise AI assistant",
+  "ask your data AI",
+  "document search AI",
+  "Slack AI search",
+  "Notion AI alternative",
+  "Gsearch",
+  "AI knowledge base search"
+],
+
+  authors: [
+    {
+      name: "Gramosoft Private Limited",
+    },
+  ],
+
+  robots: {
+    index: true,
+    follow: true,
+  },
+
+  alternates: {
+    canonical: "https://gramosoft.tech/gsearch",
+  },
+
+  openGraph: {
+    title: "Gsearch — Your Company's AI Brain for Instant Answers",
+    description:
+      "Search across all your company tools, documents, chats, and apps using natural language AI. Get instant, accurate answers instead of searching manually.",
+    url: "https://gramosoft.tech/gsearch",
+    siteName: "Gsearch by Gramosoft",
+    images: [
+      {
+        url: "https://gramosoft.tech/images/gsearch-og.png",
+      },
+    ],
+    locale: "en_IN",
+    type: "website",
+  },
+
+  twitter: {
+    card: "summary_large_image",
+    title: "Gsearch — AI Search for Your Company Knowledge",
+    description:
+      "Ask questions across your company data and get instant AI-powered answers.",
+    images: ["https://gramosoft.tech/images/gsearch-og.png"],
+  },
 };
 
 export default function RootLayout({
@@ -32,6 +94,13 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full ">
+         <Script
+          id="schema"
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{
+              __html: JSON.stringify(schema),
+            }}
+          />
         <script
           dangerouslySetInnerHTML={{
             __html: `
