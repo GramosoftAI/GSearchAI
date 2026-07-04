@@ -157,7 +157,12 @@ class S3StorageService:
         bucket_parts = bucket_val.split('/', 1)
         base_prefix = bucket_parts[1] + '/' if len(bucket_parts) > 1 else ''
         
-        ext = "html" if content_type == "text/html" else "txt"
+        if content_type == "text/html":
+            ext = "html"
+        elif "markdown" in content_type:
+            ext = "md"
+        else:
+            ext = "txt"
         s3_key = f"{base_prefix}parsed/{tenant_id}/{kb_id}/content.{ext}"
         
         try:

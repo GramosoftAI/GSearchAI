@@ -13,7 +13,7 @@ class RAGQueryRequest(BaseModel):
     query: str = Field(..., min_length=5, max_length=2000, description="User query")
     Reasoning: Optional[str] = Field("True", description="Whether to return detailed graph reasoning path")
     Memory: Optional[str] = Field("True", description="Whether to use conversational memory context")
-    top_k: Optional[int] = Field(10, ge=5, le=50, description="Initial seed chunks")
+    top_k: Optional[int] = Field(15, ge=5, le=50, description="Initial seed chunks")
     max_depth: Optional[int] = Field(2, ge=1, le=3, description="Graph expansion depth")
 
     class Config:

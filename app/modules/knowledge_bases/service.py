@@ -651,10 +651,15 @@ class KnowledgeBaseService:
                     logger.warning(f"Unified extraction failed for chunk {idx}: {e}")
                     return {"entities": [], "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"failed_completely": True, "chunk_idx": idx}}
 
-            logger.info(f" Processing Unified Extractions for {len(chunks)} chunks (Concurrency: {settings.ingestion_llm_concurrency})...")
+            logger.info(f" Processing Unified Extractions for {len(chunks)} chunks in sequential batches of 10...")
             
-            unified_tasks = [safe_extract_unified(f"idx_{i}", chunks[i], i) for i in range(len(chunks))]
-            unified_results = await asyncio.gather(*unified_tasks)
+            unified_results = []
+            batch_size = 10
+            for i in range(0, len(chunks), batch_size):
+                batch_chunks = chunks[i:i+batch_size]
+                batch_tasks = [safe_extract_unified(f"idx_{i+j}", batch_chunks[j], i+j) for j in range(len(batch_chunks))]
+                batch_res = await asyncio.gather(*batch_tasks)
+                unified_results.extend(batch_res)
             
             # --- Unpack unified results to maintain backward compatibility ---
             entity_results = [res.get("entities", []) for res in unified_results]
@@ -1002,15 +1007,20 @@ class KnowledgeBaseService:
 
                 triplet_stats = {"triplets_extracted": persist_result.get("triplets_created", 0), "triplet_entities": persist_result.get("entities_created", 0), "triplet_relationships": persist_result.get("relationships_created", 0)}
 
-            # 8.5 GRAPH CLEANUP (NEW)
+            # 8.5 GRAPH CLEANUP (NEW) - Run Asynchronously
+            async def run_cleanup_async(tenant_id_str: str):
+                try:
+                    logger.info(f"Background graph cleanup started for tenant {tenant_id_str}...")
+                    from ...core.graph_cleanup import GraphCleanupService
+                    cleanup_service = GraphCleanupService(tenant_id=tenant_id_str)
+                    stats = await cleanup_service.cleanup_graph()
+                    logger.info(f"Background graph cleanup completed for tenant {tenant_id_str}: {stats}")
+                except Exception as cleanup_err:
+                    logger.error(f"Background graph cleanup failed for tenant {tenant_id_str}: {cleanup_err}", exc_info=True)
+
             cleanup_stats = {"total_merges": 0, "relationships_deduplicated": 0}
-            try:
-                from ...core.graph_cleanup import GraphCleanupService
-                cleanup_service = GraphCleanupService(tenant_id=str(self.tenant_id))
-                cleanup_stats = await cleanup_service.cleanup_graph()
-                logger.info(f"Graph cleanup completed: {cleanup_stats}")
-            except Exception as cleanup_err:
-                logger.error(f"Graph cleanup failed: {cleanup_err}", exc_info=True)
+            # Start cleanup task in background, avoiding blocking the main ingestion pipeline completion
+            asyncio.create_task(run_cleanup_async(str(self.tenant_id)))
 
             # 9. FINAL UPDATE
 
@@ -1617,7 +1627,12 @@ class KnowledgeBaseService:
             clean_filename = clean_filename[13:]
 
         # Determine content type based on path extension
-        content_type = "text/html" if kb.parsed_path and kb.parsed_path.endswith(".html") else "text/plain"
+        if kb.parsed_path and kb.parsed_path.endswith(".html"):
+            content_type = "text/html"
+        elif kb.parsed_path and kb.parsed_path.endswith(".md"):
+            content_type = "text/markdown"
+        else:
+            content_type = "text/plain"
 
         return {
             "success": True,

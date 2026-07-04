@@ -96,7 +96,7 @@ async def rag_query(
             "query": "What is the main topic?",
             "agent_id": "550e8400-...",
             "kb_id": "550e8400-...",
-            "top_k": 10,
+            "top_k": 15,
             "max_depth": 2
         }
 
@@ -144,7 +144,7 @@ async def rag_query(
             query=query_request.query,
             agent_id=query_request.agent_id,
             kb_id=query_request.kb_id,
-            top_k=query_request.top_k or 10,
+            top_k=query_request.top_k or 15,
             max_depth=query_request.max_depth or 2,
         )
 

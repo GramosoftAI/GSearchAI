@@ -667,7 +667,7 @@ class TripletRetriever:
         self,
         query_embedding: List[float],
         kb_ids: List[str],
-        top_k: int = 10,
+        top_k: int = 20,
     ) -> List[Dict]:
         """
         Search triplets by embedding similarity.

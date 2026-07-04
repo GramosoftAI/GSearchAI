@@ -43,10 +43,12 @@ settings = get_settings()
 
 
 class ExtractedText(str):
-    def __new__(cls, clean_text: str, raw_html: str, is_html: bool = False):
+    def __new__(cls, clean_text: str, raw_content: str, is_html: bool = False, is_markdown: bool = False):
         obj = super().__new__(cls, clean_text)
-        obj.raw_html = raw_html
+        obj.raw_content = raw_content
+        obj.raw_html = raw_content  # backward compatibility
         obj.is_html = is_html
+        obj.is_markdown = is_markdown
         return obj
 
 
@@ -154,7 +156,7 @@ class PDFExtractor:
             agent_id: For billing/tracking
 
         Returns:
-            ExtractedText: Subclass of str containing cleaned text, with .raw_html and .is_html properties.
+            ExtractedText: Subclass of str containing cleaned text, with .raw_html, .raw_content, .is_html and .is_markdown properties.
 
         Raises:
             ValueError: If no text could be extracted from the PDF
@@ -166,30 +168,30 @@ class PDFExtractor:
         # ============= PRIMARY: GDOCZ SDK =============
         if settings.gdocz_api_key:
             try:
-                raw_html = await PDFExtractor._extract_gdocz(
+                raw_markdown = await PDFExtractor._extract_gdocz(
                     pdf_bytes, filename
                 )
-                if raw_html and raw_html.strip():
+                if raw_markdown and raw_markdown.strip():
                     logger.info(
                         f" Gdocz extraction success: {filename} "
-                        f"({len(raw_html)} chars raw HTML/markdown)"
+                        f"({len(raw_markdown)} chars raw markdown)"
                     )
-                    # Clean page markers if present in HTML
-                    raw_html_clean = re.sub(r"<---- Page \d+ ---->\r?\n?", "", raw_html)
+                    # Clean page markers if present
+                    raw_markdown_clean = re.sub(r"<---- Page \d+ ---->\r?\n?", "", raw_markdown)
                     
-                    # LLM-based HTML repair
+                    # LLM-based Markdown repair
                     try:
-                        raw_html_clean = await PDFExtractor._repair_html_with_llm(raw_html_clean)
+                        raw_markdown_clean = await PDFExtractor._repair_markdown_with_llm(raw_markdown_clean)
                     except Exception as llm_err:
-                        logger.warning(f"LLM HTML repair failed, using raw HTML: {llm_err}")
+                        logger.warning(f"LLM Markdown repair failed, using raw Markdown: {llm_err}")
                         
-                    # Clean markdown / HTML for RAG
-                    cleaned = PDFExtractor._clean_markdown_for_rag(raw_html_clean)
+                    # Clean markdown for RAG
+                    cleaned = PDFExtractor._clean_markdown_for_rag(raw_markdown_clean)
                     logger.info(
                         f" Cleaned for RAG: {len(cleaned)} chars "
-                        f"(from {len(raw_html_clean)} raw)"
+                        f"(from {len(raw_markdown_clean)} raw)"
                     )
-                    return ExtractedText(cleaned, raw_html_clean, is_html=True)
+                    return ExtractedText(cleaned, raw_markdown_clean, is_markdown=True)
                 else:
                     logger.warning(
                         f" Gdocz returned empty result for {filename}. "
@@ -215,16 +217,16 @@ class PDFExtractor:
                     f" pdfplumber extraction success: {filename} "
                     f"({len(extracted_text)} chars)"
                 )
-                # LLM-based reconstruction of raw text to clean semantic HTML
+                # LLM-based reconstruction of raw text to clean semantic Markdown
                 try:
-                    reconstructed_html = await PDFExtractor._reconstruct_text_to_html_with_llm(extracted_text)
-                    cleaned = PDFExtractor._clean_markdown_for_rag(reconstructed_html)
-                    logger.info("Successfully reconstructed pdfplumber plain text to HTML via LLM")
-                    return ExtractedText(cleaned, reconstructed_html, is_html=True)
+                    reconstructed_markdown = await PDFExtractor._reconstruct_text_to_markdown_with_llm(extracted_text)
+                    cleaned = PDFExtractor._clean_markdown_for_rag(reconstructed_markdown)
+                    logger.info("Successfully reconstructed pdfplumber plain text to Markdown via LLM")
+                    return ExtractedText(cleaned, reconstructed_markdown, is_markdown=True)
                 except Exception as llm_err:
-                    logger.warning(f"LLM text reconstruction to HTML failed: {llm_err}. Returning raw plain text.")
+                    logger.warning(f"LLM text reconstruction to Markdown failed: {llm_err}. Returning raw plain text.")
                 
-                return ExtractedText(extracted_text, extracted_text, is_html=False)
+                return ExtractedText(extracted_text, extracted_text, is_markdown=False)
         except Exception as e:
             logger.error(f" pdfplumber also failed for {filename}: {e}")
 
@@ -593,6 +595,201 @@ class PDFExtractor:
             except:
                 pass
             return {"identifiers": [], "sections": []}
+
+    @staticmethod
+    def _split_into_segments(text: str, max_segment_chars: int = 8000) -> list[str]:
+        if not text:
+            return []
+        segments = []
+        current_segment = []
+        current_length = 0
+        for line in text.split("\n"):
+            current_segment.append(line)
+            current_length += len(line) + 1
+            if current_length >= max_segment_chars:
+                segments.append("\n".join(current_segment))
+                current_segment = []
+                current_length = 0
+        if current_segment:
+            segments.append("\n".join(current_segment))
+        return segments
+
+    @staticmethod
+    async def _repair_segment(segment: str, idx: int, total: int, system_prompt: str) -> str:
+        if not segment.strip():
+            return segment
+        from .llm.deepinfra_llm import DeepInfraLLMClient
+        llm_client = DeepInfraLLMClient()
+        user_prompt = (
+            f"Here is segment {idx + 1} of {total} of the raw Markdown content to repair:\n\n"
+            f"{segment}"
+        )
+        try:
+            max_tokens = min(4096, len(segment) * 3 + 1000)
+            res = await llm_client.generate(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                temperature=0.0,
+                max_tokens=max_tokens
+            )
+            res = res.strip()
+            if res.startswith("```"):
+                res = re.sub(r"^```(?:markdown)?\r?\n", "", res)
+                res = re.sub(r"\r?\n```$", "", res)
+                res = res.strip()
+            return res if res else segment
+        except Exception as e:
+            logger.error(f"Failed to repair Markdown segment {idx+1}/{total}: {e}")
+            return segment
+
+    @staticmethod
+    async def _reconstruct_segment(segment: str, idx: int, total: int, system_prompt: str) -> str:
+        if not segment.strip():
+            return segment
+        from .llm.deepinfra_llm import DeepInfraLLMClient
+        llm_client = DeepInfraLLMClient()
+        user_prompt = (
+            f"Here is segment {idx + 1} of {total} of the raw text to reconstruct into structured Markdown:\n\n"
+            f"{segment}"
+        )
+        try:
+            max_tokens = min(4096, len(segment) * 4 + 1000)
+            res = await llm_client.generate(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                temperature=0.0,
+                max_tokens=max_tokens
+            )
+            res = res.strip()
+            if res.startswith("```"):
+                res = re.sub(r"^```(?:markdown)?\r?\n", "", res)
+                res = re.sub(r"\r?\n```$", "", res)
+                res = res.strip()
+            return res if res else segment
+        except Exception as e:
+            logger.error(f"Failed to reconstruct text segment {idx+1}/{total}: {e}")
+            return segment
+
+    @staticmethod
+    async def _repair_markdown_with_llm(markdown_content: str) -> str:
+        """
+        Use the LLM (Qwen/GPT) to post-process and repair the Gdocz raw Markdown:
+        - Fix broken tables, headers, lists
+        - Restore decimal quantities (e.g., preserving dots in quantities/prices)
+        - Merge split words (e.g., "Maintenanc e" -> "Maintenance")
+        - Keep all values/text unchanged (do not summarize or omit data)
+        - Return valid Markdown only
+        """
+        if not markdown_content or not markdown_content.strip():
+            return markdown_content
+
+        # Placeholder strategy for base64 images to save tokens and prevent corruption
+        image_placeholders = {}
+        placeholder_md = markdown_content
+        
+        # Match base64 data URIs
+        data_uri_pattern = re.compile(r'(data:image/[^\s"\'>\)]+)')
+        matches = data_uri_pattern.findall(markdown_content)
+        
+        for idx, base64_str in enumerate(matches):
+            placeholder = f"__IMG_BASE64_PLACEHOLDER_{idx}__"
+            image_placeholders[placeholder] = base64_str
+            placeholder_md = placeholder_md.replace(base64_str, placeholder)
+
+        system_prompt = (
+            "You are an expert document reconstruction and Markdown repair assistant. "
+            "Your task is to take a raw, imperfectly extracted Markdown document and return a cleaned, "
+            "semantically correct, and structurally valid Markdown version.\n\n"
+            "CRITICAL INSTRUCTIONS:\n"
+            "1. Fix broken Markdown table structures. Ensure tables have proper pipes, headers, and separator rows (e.g., |---|---).\n"
+            "2. Merge separated table headers and data if they were split.\n"
+            "3. Restore decimal quantities (e.g., if a quantity or rate lost its dot and became 9000 instead of 9.000, correct it based on the context).\n"
+            "4. Merge split words (e.g., merge 'Maintenanc e' into 'Maintenance', 'elnvoice' to 'eInvoice').\n"
+            "5. Keep all document values, numbers, names, and text content completely unchanged. Do not summarize or omit any information.\n"
+            "6. DO NOT modify, remove, or corrupt any image placeholders like __IMG_BASE64_PLACEHOLDER_0__. Keep them exactly in their original positions/tags.\n"
+            "7. Return ONLY the valid Markdown. Do not include markdown code fences (like ```markdown), do not write any introductory or concluding text."
+        )
+
+        try:
+            logger.info("Starting LLM-based Markdown repair in parallel segments...")
+            segments = PDFExtractor._split_into_segments(placeholder_md, max_segment_chars=6000)
+            logger.info(f"Split Markdown into {len(segments)} segments.")
+            
+            repaired_segments = []
+            batch_size = 5
+            for i in range(0, len(segments), batch_size):
+                batch_segs = segments[i:i+batch_size]
+                batch_tasks = [
+                    PDFExtractor._repair_segment(batch_segs[j], i+j, len(segments), system_prompt)
+                    for j in range(len(batch_segs))
+                ]
+                batch_res = await asyncio.gather(*batch_tasks)
+                repaired_segments.extend(batch_res)
+                
+            repaired_md = "\n\n".join(repaired_segments)
+            repaired_md = repaired_md.strip()
+
+            if repaired_md:
+                logger.info(f"LLM Markdown repair success: original length {len(markdown_content)} -> repaired length {len(repaired_md)}")
+                
+                # Restore original base64 images
+                for placeholder, base64_str in image_placeholders.items():
+                    repaired_md = repaired_md.replace(placeholder, base64_str)
+                    
+                return repaired_md
+        except Exception as e:
+            logger.error(f"Failed to repair Markdown with LLM: {e}")
+            
+        return markdown_content
+
+    @staticmethod
+    async def _reconstruct_text_to_markdown_with_llm(raw_text: str) -> str:
+        """
+        Use the LLM (Qwen/GPT) to reconstruct messy, layout-scrambled plain text
+        from pdfplumber/OCR into clean, semantic, and well-structured Markdown.
+        """
+        if not raw_text or not raw_text.strip():
+            return raw_text
+
+        system_prompt = (
+            "You are an expert document reconstruction assistant. Your task is to take messy, "
+            "scrambled plain text extracted from a PDF (where tables, columns, and sections are interleaved "
+            "or flattened) and reconstruct it into clean, well-formatted, and semantically correct Markdown.\n\n"
+            "CRITICAL INSTRUCTIONS:\n"
+            "1. Identify and reconstruct tables. Group headers and data rows correctly in standard Markdown table format (e.g., | Col1 | Col2 |\n|---|---|\n| Val1 | Val2 |).\n"
+            "2. Preserve decimal quantities. Ensure quantities, rates, and values do not lose their decimal points (e.g., '9.000' should remain '9.000' or '9.0').\n"
+            "3. Merge split words (e.g., 'Maintenanc e' -> 'Maintenance', 'elnvoice' -> 'eInvoice').\n"
+            "4. Retain all original information, including names, dates, amounts, invoice numbers, and line items. Do not omit, summarize, or truncate any data.\n"
+            "5. Reconstruct the document hierarchy logically using Markdown syntax: headings (#, ##, ###), lists, etc.\n"
+            "6. Return ONLY the valid Markdown. Do not include markdown code fences (like ```markdown), do not write any introductory or concluding text."
+        )
+
+        try:
+            logger.info("Starting LLM-based text to Markdown reconstruction in parallel segments...")
+            segments = PDFExtractor._split_into_segments(raw_text, max_segment_chars=6000)
+            logger.info(f"Split text into {len(segments)} segments.")
+            
+            reconstructed_segments = []
+            batch_size = 5
+            for i in range(0, len(segments), batch_size):
+                batch_segs = segments[i:i+batch_size]
+                batch_tasks = [
+                    PDFExtractor._reconstruct_segment(batch_segs[j], i+j, len(segments), system_prompt)
+                    for j in range(len(batch_segs))
+                ]
+                batch_res = await asyncio.gather(*batch_tasks)
+                reconstructed_segments.extend(batch_res)
+                
+            reconstructed_md = "\n\n".join(reconstructed_segments)
+            reconstructed_md = reconstructed_md.strip()
+
+            if reconstructed_md:
+                logger.info(f"LLM text reconstruction success: original length {len(raw_text)} -> markdown length {len(reconstructed_md)}")
+                return reconstructed_md
+        except Exception as e:
+            logger.error(f"Failed to reconstruct text with LLM: {e}")
+            
+        return raw_text
 
     @staticmethod
     async def _repair_html_with_llm(html_content: str) -> str:

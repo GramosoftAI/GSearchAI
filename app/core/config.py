@@ -1,4 +1,4 @@
-"""Production-grade configuration system using Pydantic BaseSettings"""
+"""Production-grade configuration system using Pydantic BaseSettings (reloaded)"""
 
 
 

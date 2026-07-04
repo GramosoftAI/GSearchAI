@@ -731,8 +731,14 @@ async def ingest_file(
             parsed_url = None
             try:
                 is_html = getattr(document_text, "is_html", False)
-                raw_content = getattr(document_text, "raw_html", document_text)
-                content_type = "text/html" if is_html else "text/plain"
+                is_markdown = getattr(document_text, "is_markdown", False)
+                raw_content = getattr(document_text, "raw_content", getattr(document_text, "raw_html", document_text))
+                if is_markdown:
+                    content_type = "text/markdown"
+                elif is_html:
+                    content_type = "text/html"
+                else:
+                    content_type = "text/plain"
 
                 parsed_url = s3_service.store_parsed_content(
                     tenant_id=str(tenant_id),

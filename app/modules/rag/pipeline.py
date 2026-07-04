@@ -355,7 +355,7 @@ class RAGPipeline:
 
 
 
-        top_k: int = 10,
+        top_k: int = 15,
 
 
 
@@ -680,7 +680,7 @@ class RAGPipeline:
 
 
 
-            top_k = min(top_k * 2, 30)  # Broader initial sweep for summary
+            top_k = 20  # Broader initial sweep for summary
 
 
 
@@ -1076,6 +1076,8 @@ class RAGPipeline:
 
             query_embedding=query_embedding,
 
+            search_type=search_type,
+
 
 
         )
@@ -1267,7 +1269,12 @@ class RAGPipeline:
                             if chunk.position == 0:
                                 chunk.position = db_c.chunk_index
                             if parsed_path:
-                                chunk.content_type = "text/html" if parsed_path.endswith(".html") else "text/plain"
+                                if parsed_path.endswith(".html"):
+                                    chunk.content_type = "text/html"
+                                elif parsed_path.endswith(".md"):
+                                    chunk.content_type = "text/markdown"
+                                else:
+                                    chunk.content_type = "text/plain"
                 except Exception as db_err:
                     logger.error(f"Failed to bulk fetch chunk details from PostgreSQL: {db_err}")
 
@@ -1297,7 +1304,12 @@ class RAGPipeline:
                         chunk.source = n_c.get("source")
                         parsed_path = n_c.get("parsed_path")
                         if parsed_path:
-                            chunk.content_type = "text/html" if parsed_path.endswith(".html") else "text/plain"
+                            if parsed_path.endswith(".html"):
+                                chunk.content_type = "text/html"
+                            elif parsed_path.endswith(".md"):
+                                chunk.content_type = "text/markdown"
+                            else:
+                                chunk.content_type = "text/plain"
 
             except Exception as neo_err:
                 logger.error(f"Failed to bulk fetch chunk details from Neo4j: {neo_err}")
@@ -1634,11 +1646,100 @@ class RAGPipeline:
 
         # (If not CSV, fallback to standard SQL generation)
         if not dataset_schema:
-            sample_query = "SELECT row_data FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) LIMIT 1;"
+            sample_query = "SELECT row_data FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) LIMIT 10;"
             result = await self.db.execute(text(sample_query), {"kb_ids": kb_ids})
-            sample_row = result.scalar()
-            if sample_row:
-                dataset_schema = {k: "unknown" for k in sample_row.keys()}
+            rows = result.scalars().all()
+            if rows:
+                dataset_schema = {}
+                all_keys = set()
+                for row in rows:
+                    all_keys.update(row.keys())
+                
+                import re
+                for k in all_keys:
+                    vals = [row[k] for row in rows if k in row and row[k] is not None and str(row[k]).strip() != ""]
+                    if not vals:
+                        dataset_schema[k] = "string"
+                        continue
+                        
+                    # 1. Check boolean
+                    unique_vals = set(str(v).lower().strip() for v in vals)
+                    if unique_vals.issubset({"true", "false", "yes", "no", "t", "f"}):
+                        dataset_schema[k] = "boolean"
+                        continue
+                        
+                    # 2. Check numeric, currency, and percentage
+                    is_numeric_candidate = True
+                    has_currency_symbols = False
+                    has_percentage_symbols = False
+                    is_integer_all = True
+                    cleaned_values = []
+                    
+                    for val in vals:
+                        val_str = str(val).strip()
+                        if not val_str or val_str.lower() in ["na", "n/a", "none", "null", "-", ""]:
+                            continue
+                            
+                        is_neg = False
+                        if val_str.startswith("(") and val_str.endswith(")"):
+                            is_neg = True
+                            val_str = val_str[1:-1].strip()
+                            
+                        if any(c in val_str for c in ["$", "€", "£", "₹"]):
+                            has_currency_symbols = True
+                            val_str = re.sub(r'[\$\€\£\₹]', '', val_str).strip()
+                            
+                        if "%" in val_str:
+                            has_percentage_symbols = True
+                            val_str = val_str.replace("%", "").strip()
+                            
+                        if "," in val_str:
+                            if "." in val_str:
+                                val_str = val_str.replace(",", "")
+                            else:
+                                parts = val_str.split(",")
+                                if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):
+                                    val_str = val_str.replace(",", "")
+                                elif len(parts) == 2 and len(parts[1]) != 3:
+                                    val_str = val_str.replace(",", ".")
+                                else:
+                                    val_str = val_str.replace(",", "")
+                                    
+                        if is_neg:
+                            val_str = "-" + val_str
+                            
+                        try:
+                            num_val = float(val_str)
+                            cleaned_values.append(num_val)
+                            if not num_val.is_integer():
+                                is_integer_all = False
+                        except ValueError:
+                            is_numeric_candidate = False
+                            break
+                            
+                    if is_numeric_candidate and cleaned_values:
+                        if has_currency_symbols:
+                            dataset_schema[k] = "currency"
+                        elif has_percentage_symbols:
+                            dataset_schema[k] = "percentage"
+                        elif is_integer_all:
+                            dataset_schema[k] = "integer"
+                        else:
+                            dataset_schema[k] = "float"
+                        continue
+                        
+                    # 3. Check datetime
+                    try:
+                        if all(re.search(r'[-/:]', str(v)) for v in vals):
+                            import pandas as pd
+                            for v in vals:
+                                pd.to_datetime(v)
+                            dataset_schema[k] = "datetime"
+                            continue
+                    except Exception:
+                        pass
+                        
+                    dataset_schema[k] = "string"
             else:
                 return None
                 
@@ -2203,6 +2304,8 @@ Return ONLY JSON, no markdown formatting.
 
         query_embedding: List[float],
 
+        search_type: SearchType = SearchType.CHUNK_SEARCH,
+
 
 
     ) -> List[RetrievedChunk]:
@@ -2289,6 +2392,27 @@ Return ONLY JSON, no markdown formatting.
 
 
 
+        # Determine adaptive weights for hybrid search based on SearchType
+        if search_type == SearchType.CHUNK_SEARCH:
+            vector_weight = 1.0
+            graph_weight = 0.0
+        elif search_type in [SearchType.ENTITY_CONNECTION, SearchType.CHAIN_OF_THOUGHT]:
+            vector_weight = 0.3
+            graph_weight = 0.7
+        elif search_type == SearchType.GRAPH_SUMMARY:
+            vector_weight = 0.5
+            graph_weight = 0.5
+        else:
+            # Default / FALLBACK weight
+            vector_weight = 0.6
+            graph_weight = 0.4
+
+
+
+
+
+
+
         # Score seed chunks (already have embedding similarity)
 
 
@@ -2309,7 +2433,7 @@ Return ONLY JSON, no markdown formatting.
 
 
 
-            base_hybrid = 0.6 * seed["similarity"] + 0.4 * graph_score
+            base_hybrid = vector_weight * seed["similarity"] + graph_weight * graph_score
 
 
 
@@ -2429,7 +2553,7 @@ Return ONLY JSON, no markdown formatting.
 
 
 
-            base_hybrid = 0.6 * embedding_similarity + 0.4 * graph_score
+            base_hybrid = vector_weight * embedding_similarity + graph_weight * graph_score
 
 
 
