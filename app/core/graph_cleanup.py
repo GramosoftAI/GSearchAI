@@ -225,15 +225,9 @@ class GraphCleanupService:
         MATCH (n)
         WHERE (n:Entity OR n:TripletEntity) AND n.tenant_id = $tenant_id
         
-        OPTIONAL MATCH (n)-[r]->(target)
-        WHERE target.tenant_id = $tenant_id
-        
-        OPTIONAL MATCH (source)-[r_in]->(n)
-        WHERE source.tenant_id = $tenant_id
-        
         RETURN n, labels(n) AS labels, elementId(n) as internal_id,
-               collect(DISTINCT {type: type(r), target_id: target.id, target_label: labels(target)[0], target_name: coalesce(target.name, target.display_name, target["title"])}) AS outgoing,
-               collect(DISTINCT {type: type(r_in), source_id: source.id, source_label: labels(source)[0], source_name: coalesce(source.name, source.display_name, source["title"])}) AS incoming
+               [(n)-[r]->(target) WHERE target.tenant_id = $tenant_id | {type: type(r), target_id: target.id, target_label: labels(target)[0], target_name: coalesce(target.name, target.display_name, target["title"])}] AS outgoing,
+               [(source)-[r_in]->(n) WHERE source.tenant_id = $tenant_id | {type: type(r_in), source_id: source.id, source_label: labels(source)[0], source_name: coalesce(source.name, source.display_name, source["title"])}] AS incoming
         """
         results = await self.neo4j_repo.execute_read(query)
 
@@ -1091,15 +1085,9 @@ Return ONLY a pure JSON response in the following format (do not include any com
         MATCH (n)
         WHERE (n:Entity OR n:TripletEntity) AND n.tenant_id = $tenant_id
         
-        OPTIONAL MATCH (n)-[r]->(target)
-        WHERE target.tenant_id = $tenant_id
-        
-        OPTIONAL MATCH (source)-[r_in]->(n)
-        WHERE source.tenant_id = $tenant_id
-        
         RETURN n, labels(n) AS labels, elementId(n) as internal_id,
-               collect(DISTINCT {type: type(r), target_id: target.id, target_label: labels(target)[0], target_name: coalesce(target.name, target.display_name, target["title"])}) AS outgoing,
-               collect(DISTINCT {type: type(r_in), source_id: source.id, source_label: labels(source)[0], source_name: coalesce(source.name, source.display_name, source["title"])}) AS incoming
+               [(n)-[r]->(target) WHERE target.tenant_id = $tenant_id | {type: type(r), target_id: target.id, target_label: labels(target)[0], target_name: coalesce(target.name, target.display_name, target["title"])}] AS outgoing,
+               [(source)-[r_in]->(n) WHERE source.tenant_id = $tenant_id | {type: type(r_in), source_id: source.id, source_label: labels(source)[0], source_name: coalesce(source.name, source.display_name, source["title"])}] AS incoming
         """
         results_all = await self.neo4j_repo.execute_read(query_all)
         for record in results_all:
