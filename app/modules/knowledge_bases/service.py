@@ -508,7 +508,7 @@ class KnowledgeBaseService:
         """
 
         from .models import DocumentIngestionRun
-        from app.models.document import DocumentChunk
+        from .models import DocumentChunk
         import time
         import json
         import hashlib
