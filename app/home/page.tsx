@@ -58,8 +58,8 @@ export default function HomePage() {
   return (
     <>
       <Navbar />
-      <div className="reveal"><Hero /></div>
-      <div className="reveal"><LogoStrip /></div>
+      <div className="fade-in-up"><Hero /></div>
+      <LogoStrip />
       <div className="reveal"><FeatureTrio /></div>
       <div className="reveal"><HowItWorks /></div>
       <div className="reveal"><Connectors /></div>

@@ -175,7 +175,7 @@ export default function BotsPage() {
   useEffect(() => {
   if (res2?.data?.personalities) {
     form.setFieldsValue({
-      personality_id: "65d0d180-7aaa-4174-b70d-1d9b7a3c9b3e"
+      personality_id: "615c862a-08fd-4c76-a4fd-9714b2711934"
     });
   }
 }, [res2]);
