@@ -1,5 +1,3 @@
-"use client";
-import { useEffect } from "react";
 import Navbar from "../components/landing/Navbar";
 import Hero from "../components/landing/Hero";
 import LogoStrip from "../components/landing/LogoStrip";
@@ -16,47 +14,13 @@ import TeamSwitcher from "../components/landing/TeamSwitcher";
 import Faq from "../components/landing/Faq";
 import FinalCta from "../components/landing/FinalCta";
 import Footer from "../components/landing/Footer";
+import ScrollReveal from "../components/landing/ScrollReveal";
 import "./style.css"
 
 export default function HomePage() {
-  useEffect(() => {
-    // Prevent browser auto-scroll restoration on landing page
-    if ('scrollRestoration' in window.history) {
-      window.history.scrollRestoration = 'manual';
-    }
-    window.scrollTo(0, 0);
-  }, []);
-
-  useEffect(() => {
-    const revealElements = document.querySelectorAll(".reveal");
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add("active");
-            // Stop observing once visible (first-time scroll reveal only)
-            observer.unobserve(entry.target);
-          }
-        });
-      },
-      {
-        threshold: 0.1,
-        rootMargin: "0px 0px -50px 0px",
-      }
-    );
-
-    revealElements.forEach((el) => {
-      observer.observe(el);
-    });
-
-    return () => {
-      observer.disconnect();
-    };
-  }, []);
-
   return (
     <>
+      <ScrollReveal />
       <Navbar />
       <div className="fade-in-up"><Hero /></div>
       <LogoStrip />

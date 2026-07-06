@@ -1,3 +1,4 @@
+"use client";
 import React from "react";
 import { Collapse, Typography } from "antd";
 import type { CollapseProps } from "antd";

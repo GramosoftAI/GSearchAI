@@ -1,3 +1,4 @@
+"use client";
 import React from "react";
 import { Typography } from "antd";
 import { connectorApps } from "../lib/content";

@@ -1,4 +1,4 @@
-
+"use client";
 import { Row, Col, Card, Typography } from "antd";
 
 const { Title, Paragraph } = Typography;

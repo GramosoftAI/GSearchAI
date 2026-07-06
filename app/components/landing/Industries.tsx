@@ -1,3 +1,4 @@
+"use client";
 import React from "react";
 import { Row, Col, Card, Typography } from "antd";
 // import { Plane, Car, Shield, Factory } from "lucide-react";

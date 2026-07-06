@@ -1,3 +1,4 @@
+"use client";
 import React from "react";
 import { Row, Col, Divider, Typography } from "antd";
 import BrandGlyph from "./BrandGlyph";

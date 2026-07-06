@@ -1,3 +1,4 @@
+"use client";
 import React from "react";
 import { Row, Col, Tag, Typography } from "antd";
 import { Tabs } from "antd";
