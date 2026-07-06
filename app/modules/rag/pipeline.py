@@ -508,7 +508,7 @@ class RAGPipeline:
                         chunks=[],
                         entity_mentions={},
                         total_tokens=0,
-                        triplet_context=f"STRUCTURED TABLE ANALYTICS RESULTS:\n{table_results}",
+                        triplet_context=f"### Table Analytics Results\n\n{table_results}",
                         search_type=search_type.name
                     )
                 else:
@@ -1627,15 +1627,18 @@ class RAGPipeline:
             
         t_start = time.perf_counter()
         
-        # 1. Fetch schema and parsed_path
-        kb_query = "SELECT dataset_schema, parsed_path, source FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[])) LIMIT 1;"
+        # 1. Fetch schema, name, and parsed_path for target KBs
+        kb_query = "SELECT id, name, dataset_schema, parsed_path, source FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[]));"
         result = await self.db.execute(text(kb_query), {"kb_ids": kb_ids})
-        row = result.fetchone()
+        kb_rows = result.all()
         
-        if row:
-            dataset_schema, parsed_path, source = row
-        else:
+        if not kb_rows:
             return None
+            
+        kb_names = {str(r.id): r.name for r in kb_rows}
+        dataset_schema = kb_rows[0].dataset_schema
+        parsed_path = kb_rows[0].parsed_path
+        source = kb_rows[0].source
             
         # 1.5. HYBRID PANDAS ENGINE ROUTING FOR CSV FILES
         if parsed_path and str(parsed_path).lower().endswith('.csv'):
@@ -1845,7 +1848,7 @@ Return ONLY JSON, no markdown formatting.
 
         # 3. Secure Backend Query Builder
         t_sql_start = time.perf_counter()
-        select_clause = "row_data"
+        select_clause = "row_data, kb_id, page_number, table_index"
         if operation == "COUNT":
             select_clause = "COUNT(*)"
         elif operation in ["AVG", "MAX", "MIN", "SUM"] and target_field:
@@ -1939,7 +1942,69 @@ Return ONLY JSON, no markdown formatting.
                         
                 formatted_rows.append(row_dict)
                     
-            formatted = json.dumps(formatted_rows, indent=2)
+            # Group rows by (kb_id, page_number, table_index)
+            tables_map = {}
+            for r in formatted_rows:
+                if "row_data" in r and isinstance(r["row_data"], dict):
+                    kb_val = r.get("kb_id")
+                    page_num = r.get("page_number", 1)
+                    tbl_val = r.get("table_index", 0)
+                    key = (str(kb_val) if kb_val else "unknown_kb", page_num, tbl_val)
+                    if key not in tables_map:
+                        tables_map[key] = []
+                    tables_map[key].append(r["row_data"])
+                else:
+                    key = ("agg", 0, 0)
+                    if key not in tables_map:
+                        tables_map[key] = []
+                    tables_map[key].append(r)
+            
+            # Sort keys to preserve natural document order (page_number first, then table_index)
+            sorted_keys = sorted(tables_map.keys(), key=lambda x: (x[0], x[1], x[2]))
+            
+            # Format each group as a separate markdown table
+            markdown_tables = []
+            kb_table_counters = {}
+            
+            for key in sorted_keys:
+                kb_id_str, page_num, tbl_index = key
+                data_rows = tables_map[key]
+                headers = []
+                for r in data_rows:
+                    for k in r.keys():
+                        if k not in headers:
+                            headers.append(k)
+                
+                if headers:
+                    table_lines = []
+                    # Add a title if it's not a simple aggregation
+                    if kb_id_str != "agg":
+                        kb_name = kb_names.get(kb_id_str, "Knowledge Base")
+                        kb_display = kb_name.replace("PDF: ", "").replace("Spreadsheet: ", "")
+                        
+                        # Increment table count for this KB
+                        kb_table_counters[kb_id_str] = kb_table_counters.get(kb_id_str, 0) + 1
+                        display_idx = kb_table_counters[kb_id_str]
+                        
+                        table_lines.append(f"#### Table: {kb_display} (Table #{display_idx})")
+                        table_lines.append("")
+                        
+                    table_lines.append("| " + " | ".join(headers) + " |")
+                    table_lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
+                    for r in data_rows:
+                        row_vals = []
+                        for h in headers:
+                            val = r.get(h, "")
+                            val_str = str(val).replace("\n", " ").replace("|", "\\|")
+                            row_vals.append(val_str)
+                        table_lines.append("| " + " | ".join(row_vals) + " |")
+                    
+                    markdown_tables.append("\n".join(table_lines))
+            
+            if markdown_tables:
+                formatted = "\n\n".join(markdown_tables)
+            else:
+                formatted = json.dumps(formatted_rows, indent=2)
             
             # 5. Explainability Layer
             explanation = "\n\n---\nComputed using:\n"

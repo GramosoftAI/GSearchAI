@@ -17,6 +17,7 @@ class JobRepository(BaseRepository):
             user_id=uuid.UUID(user_id) if isinstance(user_id, str) else user_id,
             job_type=job_in.job_type,
             file_name=job_in.file_name,
+            kb_id=job_in.kb_id,
             status="queued"
         )
         self.db.add(job)
@@ -37,7 +38,8 @@ class JobRepository(BaseRepository):
         status: str, 
         progress: int = None, 
         current_step: str = None, 
-        error_message: str = None
+        error_message: str = None,
+        kb_id: str = None
     ) -> Optional[ProcessingJob]:
         
         job = await self.get_job(job_id)
@@ -52,6 +54,8 @@ class JobRepository(BaseRepository):
             update_data["current_step"] = current_step
         if error_message is not None:
             update_data["error_message"] = error_message
+        if kb_id is not None:
+            update_data["kb_id"] = uuid.UUID(kb_id) if isinstance(kb_id, str) else kb_id
             
         if status == "processing" and job.started_at is None:
             update_data["started_at"] = datetime.utcnow()

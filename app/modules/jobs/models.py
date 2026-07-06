@@ -12,6 +12,7 @@ class ProcessingJob(Base):
     user_id = Column(UUID(as_uuid=True), nullable=False)
     
     job_type = Column(String, nullable=False, index=True)  # e.g., 'pdf_ingestion'
+    kb_id = Column(UUID(as_uuid=True), nullable=True)
     status = Column(String, nullable=False, default="queued")  # queued, processing, completed, failed
     progress = Column(Integer, default=0)
     current_step = Column(String, nullable=True)

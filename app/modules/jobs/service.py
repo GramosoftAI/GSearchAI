@@ -34,9 +34,9 @@ class JobService:
             logger.error(f"Failed to fetch job {job_id}: {e}")
             return format_error(f"Failed to fetch job: {str(e)}")
 
-    async def update_job_progress(self, job_id: str, status: str, progress: int = None, current_step: str = None, error_message: str = None) -> Dict[str, Any]:
+    async def update_job_progress(self, job_id: str, status: str, progress: int = None, current_step: str = None, error_message: str = None, kb_id: str = None) -> Dict[str, Any]:
         try:
-            job = await self.repo.update_job_status(job_id, status, progress, current_step, error_message)
+            job = await self.repo.update_job_status(job_id, status, progress, current_step, error_message, kb_id)
             await self.db.commit()
             return format_success({"job": JobResponse.model_validate(job)})
         except Exception as e:

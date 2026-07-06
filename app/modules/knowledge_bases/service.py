@@ -651,10 +651,10 @@ class KnowledgeBaseService:
                     logger.warning(f"Unified extraction failed for chunk {idx}: {e}")
                     return {"entities": [], "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"failed_completely": True, "chunk_idx": idx}}
 
-            logger.info(f" Processing Unified Extractions for {len(chunks)} chunks in sequential batches of 10...")
+            logger.info(f" Processing Unified Extractions for {len(chunks)} chunks in parallel...")
             
             unified_results = []
-            batch_size = 10
+            batch_size = len(chunks) if chunks else 1
             for i in range(0, len(chunks), batch_size):
                 batch_chunks = chunks[i:i+batch_size]
                 batch_tasks = [safe_extract_unified(f"idx_{i+j}", batch_chunks[j], i+j) for j in range(len(batch_chunks))]
@@ -1268,6 +1268,21 @@ class KnowledgeBaseService:
             if r.document_id not in kb_runs:
                 kb_runs[r.document_id] = r
 
+        # Fetch processing jobs associated with each KB
+        from ..jobs.models import ProcessingJob
+        from ..jobs.schemas import JobResponse
+        
+        job_query = select(ProcessingJob).where(
+            ProcessingJob.kb_id.in_(kb_ids),
+            ProcessingJob.tenant_id == self.tenant_id
+        ).order_by(ProcessingJob.created_at.desc())
+        
+        job_res = await self.db.execute(job_query)
+        kb_jobs = {}
+        for job in job_res.scalars().all():
+            if job.kb_id not in kb_jobs:
+                kb_jobs[job.kb_id] = JobResponse.model_validate(job).model_dump(mode="json")
+
         def format_duration(started_at, completed_at, total_duration_ms, status) -> Optional[str]:
             if started_at and completed_at:
                 delta = completed_at - started_at
@@ -1328,6 +1343,7 @@ class KnowledgeBaseService:
             else:
                 kb_dict["time_taken"] = None
                 
+            kb_dict["processing_jobs"] = kb_jobs.get(kb.id)
             responses.append(kb_dict)
         return responses
 

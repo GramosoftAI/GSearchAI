@@ -133,6 +133,7 @@ async def run_pdf_ingestion_job(
                 return
                 
             kb_id = str(kb_result["data"]["kb"].id)
+            await job_service.update_job_progress(job_id, status="processing", progress=45, current_step="Knowledge Base Created", kb_id=kb_id)
             
             # Step 2.5: Save Table Rows
             if table_rows:

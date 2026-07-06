@@ -6,6 +6,36 @@ import re
 
 logger = logging.getLogger(__name__)
 
+def format_records_as_markdown_table(records) -> str:
+    if not records:
+        return "No records found."
+    if not isinstance(records, list):
+        return str(records)
+    
+    headers = []
+    for r in records:
+        if isinstance(r, dict):
+            for k in r.keys():
+                if k not in headers:
+                    headers.append(k)
+        else:
+            return str(records)
+            
+    if not headers:
+        return "No columns found."
+        
+    markdown_lines = []
+    markdown_lines.append("| " + " | ".join(headers) + " |")
+    markdown_lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
+    for r in records:
+        row_vals = []
+        for h in headers:
+            val = r.get(h, "")
+            val_str = str(val).replace("\n", " ").replace("|", "\\|")
+            row_vals.append(val_str)
+        markdown_lines.append("| " + " | ".join(row_vals) + " |")
+    return "\n".join(markdown_lines)
+
 class PandasQueryEngine:
     """
     Executes analytical queries directly on CSV datasets using Pandas and LLMs via a secure JSON AST.
@@ -159,10 +189,12 @@ Notes:
                 else:
                     df = df.head(n)
                     
-                result_str = df[cols_to_return].to_json(orient="records")
+                result_records = df[cols_to_return].to_dict(orient="records")
+                result_str = format_records_as_markdown_table(result_records)
                 
             elif action == "filter":
-                result_str = df.head(50).to_json(orient="records")
+                result_records = df.head(50).to_dict(orient="records")
+                result_str = format_records_as_markdown_table(result_records)
             else:
                 result_str = f"Unknown action: {action}"
 

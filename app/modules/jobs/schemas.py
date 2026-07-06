@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 class JobResponse(BaseModel):
     id: UUID4
     job_type: str
+    kb_id: Optional[UUID4] = None
     status: str
     progress: int
     current_step: Optional[str]
@@ -55,3 +56,4 @@ class JobResponse(BaseModel):
 class JobCreate(BaseModel):
     job_type: str
     file_name: Optional[str] = None
+    kb_id: Optional[UUID4] = None
