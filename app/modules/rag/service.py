@@ -665,7 +665,9 @@ If you'd like, I can also:
 
             formatted_context, 
 
-            agent_persona=agent_persona
+            agent_persona=agent_persona,
+
+            enable_thinking=False,
 
         ):
 
@@ -2035,6 +2037,8 @@ If you'd like, I can also:
                 agent_id=agent_id,
 
                 agent_persona=agent_persona,
+
+                enable_thinking=False,
 
             )
 

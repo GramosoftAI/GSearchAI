@@ -372,6 +372,8 @@ class DeepInfraLLMClient:
 
         temperature: Optional[float] = None,
 
+        enable_thinking: bool = False,
+
     ) -> str:
 
         """
@@ -408,7 +410,13 @@ class DeepInfraLLMClient:
 
             "max_tokens": max_tokens or self.max_tokens,
 
+            "enable_thinking": enable_thinking,
+
         }
+
+        if not enable_thinking:
+
+            payload["reasoning_effort"] = "none"
 
         
 
@@ -459,6 +467,7 @@ class DeepInfraLLMClient:
         system_prompt: str = "You are a helpful assistant.",
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
+        enable_thinking: bool = False,
     ) -> Dict[str, Any]:
         """
         Similar to generate() but returns token usage alongside content.
@@ -476,7 +485,10 @@ class DeepInfraLLMClient:
             ],
             "temperature": temperature if temperature is not None else self.temperature,
             "max_tokens": max_tokens or self.max_tokens,
+            "enable_thinking": enable_thinking,
         }
+        if not enable_thinking:
+            payload["reasoning_effort"] = "none"
         
         last_error = None
         for attempt in range(3):
@@ -520,6 +532,8 @@ class DeepInfraLLMClient:
         agent_id: Optional[str] = None,
 
         agent_persona: Optional[dict] = None,
+
+        enable_thinking: Optional[bool] = None,
 
     ):
 
@@ -622,6 +636,14 @@ class DeepInfraLLMClient:
             "stream": True,
 
         }
+
+        if enable_thinking is not None:
+
+            payload["enable_thinking"] = enable_thinking
+
+            if enable_thinking is False:
+
+                payload["reasoning_effort"] = "none"
 
         
 
@@ -739,6 +761,8 @@ class DeepInfraLLMClient:
         agent_id: Optional[str] = None,
 
         agent_persona: Optional[dict] = None,
+
+        enable_thinking: Optional[bool] = None,
 
     ) -> LLMResponse:
 
@@ -989,6 +1013,14 @@ class DeepInfraLLMClient:
             "max_tokens": self.max_tokens,
 
         }
+
+        if enable_thinking is not None:
+
+            payload["enable_thinking"] = enable_thinking
+
+            if enable_thinking is False:
+
+                payload["reasoning_effort"] = "none"
 
 
 
