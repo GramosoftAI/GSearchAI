@@ -1183,7 +1183,7 @@ export default function KnowledgeBasePage() {
                           "DD MMM YYYY hh:mm A"
                         )}
                       </Text>
-                      {/* {item.time_taken && (
+                      {item?.processing_jobs?.time_taken && (
                         <span 
                           style={{ 
                             fontSize: '10px', 
@@ -1200,9 +1200,9 @@ export default function KnowledgeBasePage() {
                           }}
                         >
                           <Clock size={10} strokeWidth={3} />
-                          {item.time_taken}
+                          {item?.processing_jobs?.time_taken}
                         </span>
-                      )} */}
+                      )}
                     </div>
                   </div>
                 </div>

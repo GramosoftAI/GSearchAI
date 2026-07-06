@@ -11,6 +11,389 @@ type Message = {
   content: string;
 };
 
+function stripThinking(content: string): string {
+  if (!content) return "";
+  let cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, "");
+  const openThinkIndex = cleaned.indexOf("<think>");
+  if (openThinkIndex !== -1) {
+    cleaned = cleaned.substring(0, openThinkIndex);
+  }
+  return cleaned;
+}
+
+const renderBoldText = (text: string, key: any, isUser: boolean) => {
+  if (!text) return null;
+  const boldRegex = /(\*\*[^*]+(?:\*\*|\*)|\*[^*]+(?:\*\*|\*))/g;
+  const subparts = text.split(boldRegex);
+  return (
+    <span key={key}>
+      {subparts.map((subpart, subIndex) => {
+        const isBold = (subpart.startsWith("**") || subpart.startsWith("*")) &&
+                       (subpart.endsWith("**") || subpart.endsWith("*")) &&
+                       subpart !== "*" && subpart !== "**";
+        if (isBold) {
+          const content = subpart.replace(/^(\*\*|\*)/, "").replace(/(\*\*|\*)$/, "");
+          return (
+            <strong
+              key={subIndex}
+              style={{ fontWeight: "800", color: "#18181b" }}
+            >
+              {content}
+            </strong>
+          );
+        }
+        return subpart;
+      })}
+    </span>
+  );
+};
+
+const renderTextWithLinks = (text: string, isUser: boolean) => {
+  if (!text) return null;
+  const urlRegex = /(https?:\/\/[^\s]+)/gi;
+  const parts = text.split(urlRegex);
+  return parts.map((part, index) => {
+    if (part.match(urlRegex)) {
+      return (
+        <a
+          key={index}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            textDecoration: "underline",
+            wordBreak: "break-all",
+            fontWeight: "bold",
+            color: "#0fb5a1"
+          }}
+        >
+          {part}
+        </a>
+      );
+    }
+    return renderBoldText(part, index, isUser);
+  });
+};
+
+interface Block {
+  type: 'text' | 'table' | 'code';
+  lines?: string[];
+  tableData?: {
+    headers: string[];
+    alignments: ('left' | 'center' | 'right')[];
+    rows: string[][];
+  };
+  codeData?: {
+    language: string;
+    code: string;
+  };
+}
+
+const parseRowCells = (rowLine: string): string[] => {
+  const cells = rowLine.split('|').map(c => c.trim());
+  if (rowLine.trim().startsWith('|')) {
+    cells.shift();
+  }
+  if (rowLine.trim().endsWith('|')) {
+    cells.pop();
+  }
+  return cells;
+};
+
+const parseBlocks = (content: string): Block[] => {
+  const stripped = stripThinking(content).trim();
+  if (!stripped) return [];
+
+  const lines = stripped.split('\n');
+  const blocks: Block[] = [];
+  let currentLines: string[] = [];
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // 1. Check for Code Block start
+    if (trimmed.startsWith('```')) {
+      if (currentLines.length > 0) {
+        blocks.push({ type: 'text', lines: [...currentLines] });
+        currentLines = [];
+      }
+      
+      const lang = trimmed.slice(3).trim();
+      const codeLines: string[] = [];
+      i++; // move past the opening ```
+      
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      
+      blocks.push({
+        type: 'code',
+        codeData: {
+          language: lang,
+          code: codeLines.join('\n')
+        }
+      });
+      
+      i++; // move past the closing ```
+      continue;
+    }
+
+    // 2. Check for Table start
+    if ((trimmed.startsWith('|') || trimmed.includes('|')) && i + 1 < lines.length) {
+      const nextLine = lines[i + 1].trim();
+      const isDelimiter = nextLine.includes('|') && nextLine.includes('-') && /^\|?(?:\s*:?-+:?\s*\|?)+\s*$/.test(nextLine);
+
+      if (isDelimiter) {
+        if (currentLines.length > 0) {
+          blocks.push({ type: 'text', lines: [...currentLines] });
+          currentLines = [];
+        }
+
+        const headers = parseRowCells(trimmed);
+        const delimiters = parseRowCells(nextLine);
+
+        const alignments = delimiters.map(cell => {
+          const left = cell.startsWith(':');
+          const right = cell.endsWith(':');
+          if (left && right) return 'center';
+          if (right) return 'right';
+          return 'left';
+        });
+
+        const rows: string[][] = [];
+        i += 2; // skip header and delimiter
+
+        while (i < lines.length) {
+          const rowLine = lines[i];
+          const trimmedRow = rowLine.trim();
+          if (trimmedRow.startsWith('|') || trimmedRow.includes('|')) {
+            const cells = parseRowCells(rowLine);
+            if (cells.length > 0 && rowLine.includes('|')) {
+              const paddedCells = Array(headers.length).fill('');
+              cells.forEach((cell, idx) => {
+                if (idx < headers.length) {
+                  paddedCells[idx] = cell;
+                }
+              });
+              rows.push(paddedCells);
+              i++;
+              continue;
+            }
+          }
+          break; // Non-table line ends the table block
+        }
+
+        blocks.push({
+          type: 'table',
+          tableData: { headers, alignments, rows }
+        });
+        continue;
+      }
+    }
+
+    currentLines.push(line);
+    i++;
+  }
+
+  if (currentLines.length > 0) {
+    blocks.push({ type: 'text', lines: currentLines });
+  }
+
+  return blocks;
+};
+
+const renderFormattedContent = (content: string, isUser: boolean) => {
+  const blocks = parseBlocks(content);
+  if (blocks.length === 0) return null;
+
+  return blocks.map((block, bIdx) => {
+    if (block.type === 'table' && block.tableData) {
+      return (
+        <div key={`table-${bIdx}`} style={{
+          overflowX: "auto",
+          marginTop: "12px",
+          marginBottom: "12px",
+          borderRadius: "8px",
+          border: "1px solid #e4e4e7",
+          maxWidth: "100%"
+        }}>
+          <table style={{
+            minWidth: "100%",
+            borderCollapse: "collapse",
+            fontSize: "12px",
+            lineHeight: "1.5"
+          }}>
+            <thead>
+              <tr style={{
+                background: "#f4f4f5",
+                borderBottom: "1px solid #e4e4e7"
+              }}>
+                {block.tableData.headers.map((header, idx) => {
+                  const align = block.tableData!.alignments[idx] || 'left';
+                  return (
+                    <th
+                      key={idx}
+                      style={{
+                        padding: "8px 12px",
+                        fontWeight: "bold",
+                        textAlign: align as any,
+                        color: "#71717a",
+                        borderBottom: "1px solid #e4e4e7"
+                      }}
+                    >
+                      {renderTextWithLinks(header, isUser)}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {block.tableData.rows.map((row, rowIdx) => (
+                <tr key={rowIdx} style={{
+                  background: rowIdx % 2 === 0 ? "transparent" : "#fbfbfb",
+                  borderBottom: rowIdx === block.tableData!.rows.length - 1 ? "none" : "1px solid #e4e4e7"
+                }}>
+                  {block.tableData!.headers.map((_, colIdx) => {
+                    const cellValue = row[colIdx] || "";
+                    const align = block.tableData!.alignments[colIdx] || 'left';
+                    return (
+                      <td
+                        key={colIdx}
+                        style={{
+                          padding: "8px 12px",
+                          textAlign: align as any,
+                          color: "#3f3f46"
+                        }}
+                      >
+                        {renderTextWithLinks(cellValue, isUser)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    if (block.type === 'code' && block.codeData) {
+      return (
+        <div key={`code-${bIdx}`} style={{
+          marginTop: "12px",
+          marginBottom: "12px",
+          borderRadius: "8px",
+          overflow: "hidden",
+          border: "1px solid #e4e4e7",
+          maxWidth: "100%"
+        }}>
+          {block.codeData.language && (
+            <div style={{
+              padding: "6px 12px",
+              fontSize: "10px",
+              fontWeight: "bold",
+              textTransform: "uppercase",
+              borderBottom: "1px solid #e4e4e7",
+              background: "#f4f4f5",
+              color: "#71717a"
+            }}>
+              {block.codeData.language}
+            </div>
+          )}
+          <pre style={{
+            margin: 0,
+            padding: "12px",
+            overflowX: "auto",
+            maxHeight: "250px",
+            overflowY: "auto",
+            whiteSpace: "pre",
+            fontSize: "12px",
+            fontFamily: "monospace",
+            background: "#18181b",
+            color: "#f4f4f5",
+            maxWidth: "100%"
+          }}>
+            <code>{block.codeData.code}</code>
+          </pre>
+        </div>
+      );
+    }
+
+    if (block.lines) {
+      return block.lines.map((line, index) => {
+        const headingWithColonRegex = /^(?:\*\*|\*)(.*?)(?:\*\*|\*):\s*(.*)$/;
+        const headingOnlyRegex = /^(?:\*\*|\*)(.*?)(?:\*\*|\*)\s*$/;
+        const bulletRegex = /^(\s*[-*•]\s+)(.*)$/;
+        const numberListRegex = /^(\s*\d+\.\s+)(.*)$/;
+
+        let match = line.match(headingWithColonRegex);
+        if (match) {
+          const headingText = match[1];
+          const restText = match[2];
+          return (
+            <div key={`${bIdx}-${index}`} style={{ marginBottom: "8px", marginTop: "8px" }}>
+              <div style={{ fontWeight: "800", fontSize: "14px", color: "#0fb5a1" }}>
+                {headingText}
+              </div>
+              {restText && (
+                <div style={{ fontSize: "13px", marginTop: "4px", lineHeight: "1.45" }}>
+                  {renderTextWithLinks(restText, isUser)}
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        match = line.match(headingOnlyRegex);
+        if (match) {
+          const headingText = match[1];
+          return (
+            <div key={`${bIdx}-${index}`} style={{ fontWeight: "800", fontSize: "14px", color: "#0fb5a1", marginBottom: "8px", marginTop: "8px" }}>
+              {headingText}
+            </div>
+          );
+        }
+
+        let bulletMatch = line.match(bulletRegex);
+        if (bulletMatch) {
+          return (
+            <div key={`${bIdx}-${index}`} style={{ display: "flex", alignItems: "flex-start", gap: "8px", paddingLeft: "8px", margin: "4px 0" }}>
+              <span style={{ flexShrink: 0, color: "#71717a" }}>•</span>
+              <span style={{ flex: 1, fontSize: "13px", lineHeight: "1.45" }}>
+                {renderTextWithLinks(bulletMatch[2], isUser)}
+              </span>
+            </div>
+          );
+        }
+
+        let numberMatch = line.match(numberListRegex);
+        if (numberMatch) {
+          const prefix = numberMatch[1].trim();
+          return (
+            <div key={`${bIdx}-${index}`} style={{ display: "flex", alignItems: "flex-start", gap: "8px", paddingLeft: "8px", margin: "4px 0" }}>
+              <span style={{ flexShrink: 0, fontWeight: "bold", fontSize: "13px", color: "#71717a" }}>{prefix}</span>
+              <span style={{ flex: 1, fontSize: "13px", lineHeight: "1.45" }}>
+                {renderTextWithLinks(numberMatch[2], isUser)}
+              </span>
+            </div>
+          );
+        }
+
+        return (
+          <div key={`${bIdx}-${index}`} style={{ minHeight: "1.25rem", lineHeight: "1.45", fontSize: "13px", margin: "2px 0" }}>
+            {renderTextWithLinks(line, isUser)}
+          </div>
+        );
+      });
+    }
+
+    return null;
+  });
+};
+
 export default function WidgetPage() {
   const searchParams = useSearchParams();
   const agentId = searchParams.get("agentId");
@@ -245,10 +628,12 @@ export default function WidgetPage() {
                     fontSize: "14px",
                     lineHeight: "1.45",
                     maxWidth: "85%",
+                    width: isUser ? "auto" : "100%",
+                    boxSizing: "border-box",
                     wordBreak: "break-word",
                   }}
                 >
-                  {msg.content}
+                  {renderFormattedContent(msg.content, isUser)}
                 </div>
               </div>
             );

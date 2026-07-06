@@ -507,74 +507,273 @@ const renderTextWithLinks = (text: string, isUser: boolean) => {
   });
 };
 
-const renderFormattedContent = (content: string, isUser: boolean) => {
-  const stripped = stripThinking(content).trim();
-  if (!stripped) return null;
-  const lines = stripped.split('\n');
-  return lines.map((line, index) => {
-    const headingWithColonRegex = /^(?:\*\*|\*)(.*?)(?:\*\*|\*):\s*(.*)$/;
-    const headingOnlyRegex = /^(?:\*\*|\*)(.*?)(?:\*\*|\*)\s*$/;
-    const bulletRegex = /^(\s*[-*•]\s+)(.*)$/;
-    const numberListRegex = /^(\s*\d+\.\s+)(.*)$/;
+interface Block {
+  type: 'text' | 'table' | 'code';
+  lines?: string[];
+  tableData?: {
+    headers: string[];
+    alignments: ('left' | 'center' | 'right')[];
+    rows: string[][];
+  };
+  codeData?: {
+    language: string;
+    code: string;
+  };
+}
 
-    let match = line.match(headingWithColonRegex);
-    if (match) {
-      const headingText = match[1];
-      const restText = match[2];
+const parseRowCells = (rowLine: string): string[] => {
+  const cells = rowLine.split('|').map(c => c.trim());
+  if (rowLine.trim().startsWith('|')) {
+    cells.shift();
+  }
+  if (rowLine.trim().endsWith('|')) {
+    cells.pop();
+  }
+  return cells;
+};
+
+const parseBlocks = (content: string): Block[] => {
+  const stripped = stripThinking(content).trim();
+  if (!stripped) return [];
+
+  const lines = stripped.split('\n');
+  const blocks: Block[] = [];
+  let currentLines: string[] = [];
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // 1. Check for Code Block start
+    if (trimmed.startsWith('```')) {
+      if (currentLines.length > 0) {
+        blocks.push({ type: 'text', lines: [...currentLines] });
+        currentLines = [];
+      }
+      
+      const lang = trimmed.slice(3).trim();
+      const codeLines: string[] = [];
+      i++; // move past the opening ```
+      
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      
+      blocks.push({
+        type: 'code',
+        codeData: {
+          language: lang,
+          code: codeLines.join('\n')
+        }
+      });
+      
+      i++; // move past the closing ```
+      continue;
+    }
+
+    // 2. Check for Table start
+    if ((trimmed.startsWith('|') || trimmed.includes('|')) && i + 1 < lines.length) {
+      const nextLine = lines[i + 1].trim();
+      const isDelimiter = nextLine.includes('|') && nextLine.includes('-') && /^\|?(?:\s*:?-+:?\s*\|?)+\s*$/.test(nextLine);
+
+      if (isDelimiter) {
+        if (currentLines.length > 0) {
+          blocks.push({ type: 'text', lines: [...currentLines] });
+          currentLines = [];
+        }
+
+        const headers = parseRowCells(trimmed);
+        const delimiters = parseRowCells(nextLine);
+
+        const alignments = delimiters.map(cell => {
+          const left = cell.startsWith(':');
+          const right = cell.endsWith(':');
+          if (left && right) return 'center';
+          if (right) return 'right';
+          return 'left';
+        });
+
+        const rows: string[][] = [];
+        i += 2; // skip header and delimiter
+
+        while (i < lines.length) {
+          const rowLine = lines[i];
+          const trimmedRow = rowLine.trim();
+          if (trimmedRow.startsWith('|') || trimmedRow.includes('|')) {
+            const cells = parseRowCells(rowLine);
+            if (cells.length > 0 && rowLine.includes('|')) {
+              const paddedCells = Array(headers.length).fill('');
+              cells.forEach((cell, idx) => {
+                if (idx < headers.length) {
+                  paddedCells[idx] = cell;
+                }
+              });
+              rows.push(paddedCells);
+              i++;
+              continue;
+            }
+          }
+          break; // Non-table line ends the table block
+        }
+
+        blocks.push({
+          type: 'table',
+          tableData: { headers, alignments, rows }
+        });
+        continue;
+      }
+    }
+
+    currentLines.push(line);
+    i++;
+  }
+
+  if (currentLines.length > 0) {
+    blocks.push({ type: 'text', lines: currentLines });
+  }
+
+  return blocks;
+};
+
+const renderFormattedContent = (content: string, isUser: boolean) => {
+  const blocks = parseBlocks(content);
+  if (blocks.length === 0) return null;
+
+  return blocks.map((block, bIdx) => {
+    if (block.type === 'table' && block.tableData) {
       return (
-        <div key={index} className="mb-3 mt-2">
-          <div className={`font-extrabold text-sm md:text-base tracking-tight ${isUser ? "text-white" : "text-[#0fb5a1] dark:text-sky-400"}`}>
-            {headingText}
-          </div>
-          {restText && (
-            <div className={`text-xs md:text-sm mt-1 leading-relaxed font-normal ${isUser ? "text-white/95" : "text-[var(--app-text)] opacity-95"}`}>
-              {renderTextWithLinks(restText, isUser)}
+        <div key={`table-${bIdx}`} className="overflow-x-auto my-4 rounded-xl border border-[var(--app-border)]/40 shadow-sm max-w-full">
+          <table className="min-w-full divide-y divide-[var(--app-border)]/30 text-xs md:text-sm">
+            <thead className={isUser ? "bg-black/10" : "bg-[var(--app-surface)]"}>
+              <tr>
+                {block.tableData.headers.map((header, idx) => {
+                  const align = block.tableData!.alignments[idx] || 'left';
+                  return (
+                    <th
+                      key={idx}
+                      className={`px-4 py-3 text-[10px] font-black uppercase tracking-wider ${
+                        isUser ? "text-white/90" : "text-[var(--app-text-soft)]"
+                      }`}
+                      style={{ textAlign: align as any }}
+                    >
+                      {renderTextWithLinks(header, isUser)}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody className={`divide-y divide-[var(--app-border)]/20 ${isUser ? "bg-white/5" : "bg-[var(--app-surface-muted)]/40"}`}>
+              {block.tableData.rows.map((row, rowIdx) => (
+                <tr key={rowIdx} className="hover:bg-[var(--app-hover)]/10 transition-colors">
+                  {block.tableData!.headers.map((_, colIdx) => {
+                    const cellValue = row[colIdx] || "";
+                    const align = block.tableData!.alignments[colIdx] || 'left';
+                    return (
+                      <td
+                        key={colIdx}
+                        className={`px-4 py-3 text-xs leading-relaxed ${
+                          isUser ? "text-white" : "text-[var(--app-text)]"
+                        }`}
+                        style={{ textAlign: align as any }}
+                      >
+                        {renderTextWithLinks(cellValue, isUser)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    if (block.type === 'code' && block.codeData) {
+      return (
+        <div key={`code-${bIdx}`} className="my-3 rounded-lg overflow-hidden border border-[var(--app-border)]/40 shadow-sm max-w-full">
+          {block.codeData.language && (
+            <div className={`px-4 py-1.5 text-[10px] font-black uppercase tracking-wider border-b border-[var(--app-border)]/30 flex justify-between items-center ${isUser ? "bg-black/10 text-white/80" : "bg-[var(--app-surface)] text-[var(--app-text-soft)]"}`}>
+              <span>{block.codeData.language}</span>
             </div>
           )}
+          <pre className="p-4 overflow-x-auto max-h-[250px] overflow-y-auto whitespace-pre text-xs md:text-sm font-mono bg-neutral-900 text-neutral-100 max-w-full custom-scrollbar">
+            <code>{block.codeData.code}</code>
+          </pre>
         </div>
       );
     }
 
-    match = line.match(headingOnlyRegex);
-    if (match) {
-      const headingText = match[1];
-      return (
-        <div key={index} className={`font-extrabold text-sm md:text-base tracking-tight mb-2 mt-2 ${isUser ? "text-white" : "text-[#0fb5a1] dark:text-sky-400"}`}>
-          {headingText}
-        </div>
-      );
+    if (block.lines) {
+      return block.lines.map((line, index) => {
+        const headingWithColonRegex = /^(?:\*\*|\*)(.*?)(?:\*\*|\*):\s*(.*)$/;
+        const headingOnlyRegex = /^(?:\*\*|\*)(.*?)(?:\*\*|\*)\s*$/;
+        const bulletRegex = /^(\s*[-*•]\s+)(.*)$/;
+        const numberListRegex = /^(\s*\d+\.\s+)(.*)$/;
+
+        let match = line.match(headingWithColonRegex);
+        if (match) {
+          const headingText = match[1];
+          const restText = match[2];
+          return (
+            <div key={`${bIdx}-${index}`} className="mb-3 mt-2">
+              <div className={`font-extrabold text-sm md:text-base tracking-tight ${isUser ? "text-white" : "text-[#0fb5a1] dark:text-sky-400"}`}>
+                {headingText}
+              </div>
+              {restText && (
+                <div className={`text-xs md:text-sm mt-1 leading-relaxed font-normal ${isUser ? "text-white/95" : "text-[var(--app-text)] opacity-95"}`}>
+                  {renderTextWithLinks(restText, isUser)}
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        match = line.match(headingOnlyRegex);
+        if (match) {
+          const headingText = match[1];
+          return (
+            <div key={`${bIdx}-${index}`} className={`font-extrabold text-sm md:text-base tracking-tight mb-2 mt-2 ${isUser ? "text-white" : "text-[#0fb5a1] dark:text-sky-400"}`}>
+              {headingText}
+            </div>
+          );
+        }
+
+        let bulletMatch = line.match(bulletRegex);
+        if (bulletMatch) {
+          return (
+            <div key={`${bIdx}-${index}`} className="flex items-start gap-2 pl-2 my-1">
+              <span className={`shrink-0 ${isUser ? "text-white/80" : "text-[var(--app-text-soft)]"}`}>•</span>
+              <span className="flex-1 text-xs md:text-sm leading-relaxed">
+                {renderTextWithLinks(bulletMatch[2], isUser)}
+              </span>
+            </div>
+          );
+        }
+
+        let numberMatch = line.match(numberListRegex);
+        if (numberMatch) {
+          const prefix = numberMatch[1].trim();
+          return (
+            <div key={`${bIdx}-${index}`} className="flex items-start gap-2 pl-2 my-1">
+              <span className={`shrink-0 font-bold text-xs md:text-sm ${isUser ? "text-white/80" : "text-[var(--app-text-soft)]"}`}>{prefix}</span>
+              <span className="flex-1 text-xs md:text-sm leading-relaxed">
+                {renderTextWithLinks(numberMatch[2], isUser)}
+              </span>
+            </div>
+          );
+        }
+
+        return (
+          <div key={`${bIdx}-${index}`} className="min-h-[1.5rem] leading-relaxed text-xs md:text-sm">
+            {renderTextWithLinks(line, isUser)}
+          </div>
+        );
+      });
     }
 
-    let bulletMatch = line.match(bulletRegex);
-    if (bulletMatch) {
-      return (
-        <div key={index} className="flex items-start gap-2 pl-2 my-1">
-          <span className={`shrink-0 ${isUser ? "text-white/80" : "text-[var(--app-text-soft)]"}`}>•</span>
-          <span className="flex-1 text-xs md:text-sm leading-relaxed">
-            {renderTextWithLinks(bulletMatch[2], isUser)}
-          </span>
-        </div>
-      );
-    }
-
-    let numberMatch = line.match(numberListRegex);
-    if (numberMatch) {
-      const prefix = numberMatch[1].trim();
-      return (
-        <div key={index} className="flex items-start gap-2 pl-2 my-1">
-          <span className={`shrink-0 font-bold text-xs md:text-sm ${isUser ? "text-white/80" : "text-[var(--app-text-soft)]"}`}>{prefix}</span>
-          <span className="flex-1 text-xs md:text-sm leading-relaxed">
-            {renderTextWithLinks(numberMatch[2], isUser)}
-          </span>
-        </div>
-      );
-    }
-
-    return (
-      <div key={index} className="min-h-[1.5rem] leading-relaxed text-xs md:text-sm">
-        {renderTextWithLinks(line, isUser)}
-      </div>
-    );
+    return null;
   });
 };
 
@@ -2231,7 +2430,7 @@ export default function ChatPlaygroundPage() {
 
             return (
               <div key={i} className={`flex w-full ${isUser ? "justify-end" : "justify-start"} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
-                <div className={`flex gap-3 transition-all duration-300 ${editingMessageIndex === i ? "w-full max-w-[95%] md:max-w-[85%]" : "max-w-[88%] md:max-w-[75%]"} ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+                <div className={`flex gap-3 min-w-0 transition-all duration-300 ${editingMessageIndex === i ? "w-full max-w-[95%] md:max-w-[85%]" : "max-w-[88%] md:max-w-[75%]"} ${isUser ? "flex-row-reverse" : "flex-row"}`}>
                   {isUser ? (
                     <div className="relative shrink-0">
                       <Avatar
@@ -2249,7 +2448,7 @@ export default function ChatPlaygroundPage() {
                     <GSearchLogoAvatar size={32} />
                   )}
 
-                  <div className={`flex flex-col space-y-1 ${editingMessageIndex === i ? "flex-1 min-w-0" : ""}`}>
+                  <div className="flex flex-col space-y-1 min-w-0 flex-1">
                     <span className={`text-[9px] font-bold text-[var(--app-text-soft)] px-1 ${isUser ? "text-right" : "text-left"}`}>
                       {msg.timestamp}
                     </span>
@@ -2434,9 +2633,9 @@ export default function ChatPlaygroundPage() {
 
           {isTyping && (
             <div className="flex w-full justify-start animate-in fade-in duration-300">
-              <div className="flex gap-3 max-w-[80%] items-start">
+              <div className="flex gap-3 min-w-0 max-w-[80%] items-start">
                 <GSearchLogoAvatar size={32} />
-                <div className="flex flex-col space-y-1">
+                <div className="flex flex-col space-y-1 min-w-0 flex-1">
                   <span className="text-[9px] font-bold text-[var(--app-text-soft)] italic px-1">Processing...</span>
                   <div className="p-4 bg-[var(--app-surface-muted)]/60 border border-[var(--app-border)]/40 text-[var(--app-text)] rounded-2xl rounded-tl-none shadow-sm min-w-[120px]">
                     {stripThinking(streamingText).trim() ? (
