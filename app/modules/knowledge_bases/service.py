@@ -676,6 +676,8 @@ class KnowledgeBaseService:
             
             # Mutable counters for routing observability
             routing_stats = {"fluff": 0, "processed": 0, "cache_hits": 0, "kg_calls": 0}
+            
+            sem = asyncio.Semaphore(10)
 
             async def safe_extract_unified(chunk_id: str, text: str, idx: int):
                 # Fast-Path: Skip LLM extraction for fluff chunks to save time
@@ -698,7 +700,8 @@ class KnowledgeBaseService:
 
                 routing_stats["kg_calls"] += 1
                 try:
-                    result = await unified_extractor.extract_all(chunk_id, text)
+                    async with sem:
+                        result = await unified_extractor.extract_all(chunk_id, text)
                     _chunk_extract_cache[text_hash] = result
                     return result
                 except Exception as e:
@@ -707,13 +710,8 @@ class KnowledgeBaseService:
 
             logger.info(f" Processing Unified Extractions for {len(chunks)} chunks in parallel...")
             
-            unified_results = []
-            batch_size = len(chunks) if chunks else 1
-            for i in range(0, len(chunks), batch_size):
-                batch_chunks = chunks[i:i+batch_size]
-                batch_tasks = [safe_extract_unified(f"idx_{i+j}", batch_chunks[j], i+j) for j in range(len(batch_chunks))]
-                batch_res = await asyncio.gather(*batch_tasks)
-                unified_results.extend(batch_res)
+            batch_tasks = [safe_extract_unified(f"idx_{i}", chunks[i], i) for i in range(len(chunks))]
+            unified_results = await asyncio.gather(*batch_tasks)
             
             # --- Unpack unified results to maintain backward compatibility ---
             entity_results = [res.get("entities", []) for res in unified_results]
