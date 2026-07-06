@@ -1026,6 +1026,16 @@ class AdaptiveChunker:
         source_type = source_type.lower().strip()
         max_chunk_size = 2500
         
+        # Adaptive chunk sizing based on text density
+        if isinstance(content, str):
+            lines = [line.strip() for line in content.splitlines() if line.strip()]
+            if lines:
+                avg_words_per_line = sum(len(line.split()) for line in lines) / len(lines)
+                if avg_words_per_line > 12:
+                    max_chunk_size = 4000  # Dense text: use larger chunks to reduce LLM calls
+                elif avg_words_per_line < 5:
+                    max_chunk_size = 1500  # Sparse text (TOC, lists): smaller chunks
+                    
         if source_type in ["excel", "xlsx", "xls"]:
             if isinstance(content, pd.DataFrame):
                 sheet_name = (metadata or {}).get("sheet_name", "Sheet1")

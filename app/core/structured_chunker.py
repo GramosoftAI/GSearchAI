@@ -17,10 +17,14 @@ class StructuredChunk(BaseModel):
     text: str
     metadata: Dict[str, Any]
 
+from .structured_chunker_helpers import detect_label_column, normalize_numeric
+
 class StructuredChunker:
     """
     Chunks structured records (like spreadsheet rows or JSON array elements)
-    while strictly preserving row boundaries and prepending schema metadata.
+    using a dual-representation strategy:
+    1. Atomic Cell-Statements: High precision for exact point-lookups.
+    2. Consolidated Table Chunks: High recall for aggregation and table-scan queries.
     """
     
     @staticmethod
@@ -29,26 +33,70 @@ class StructuredChunker:
             return []
             
         chunks = []
-        current_chunk_records = []
         
-        # Ensure records are sorted sequentially by index
+        # ---------------------------------------------------------
+        # 1. Generate Atomic Cell-Level Chunks
+        # ---------------------------------------------------------
+        for rec in records:
+            label_col = detect_label_column(rec)
+            row_label = str(rec.values.get(label_col, "")).strip() or f"Row {rec.row_index}"
+            parent_prefix = f"{getattr(rec, 'parent_label', '')} > " if getattr(rec, "parent_label", None) else ""
+            table_id = rec.group_name
+            
+            for col_name, raw_value in rec.values.items():
+                if col_name == label_col:
+                    continue
+                    
+                cell_value = str(raw_value).strip()
+                if cell_value and cell_value.lower() not in ("none", "null", ""):
+                    # The highly explicit, domain-agnostic statement
+                    statement = f"- [{table_id}] {parent_prefix}{row_label}, {col_name}: {cell_value}"
+                    
+                    metadata = {
+                        "document_type": rec.document_type,
+                        "source_file": rec.source_file,
+                        "table_id": table_id,
+                        "row_label": row_label,
+                        "parent_label": getattr(rec, "parent_label", None),
+                        "column_label": col_name,
+                        "raw_value": cell_value,
+                        "parsed_value": normalize_numeric(cell_value),
+                        "chunk_type": "atomic" # Distinguishes from consolidated chunks
+                    }
+                    
+                    chunks.append(StructuredChunk(text=statement, metadata=metadata))
+
+        # ---------------------------------------------------------
+        # 2. Generate Consolidated Table Chunks (Batched)
+        # ---------------------------------------------------------
+        current_chunk_records = []
         sorted_records = sorted(records, key=lambda x: x.row_index)
         
-        def format_chunk(rec_list: List[StructuredRecord]) -> Optional[StructuredChunk]:
+        def format_consolidated_chunk(rec_list: List[StructuredRecord]) -> Optional[StructuredChunk]:
             if not rec_list:
                 return None
                 
             first_rec = rec_list[0]
-            # Build schema context header
             header = f"Source: {first_rec.source_file} -> {first_rec.group_name}\n"
             header += f"Columns: {', '.join(first_rec.columns)}\n\n"
             
-            # Build row text
             row_texts = []
             for rec in rec_list:
-                row_str = f"- Row {rec.row_index}: "
-                row_str += ", ".join([f"[{k}]: {v}" for k, v in rec.values.items() if str(v).strip()])
-                row_texts.append(row_str)
+                label_col = detect_label_column(rec)
+                row_label = str(rec.values.get(label_col, "")).strip() or f"Row {rec.row_index}"
+                parent_prefix = f"{getattr(rec, 'parent_label', '')} > " if getattr(rec, "parent_label", None) else ""
+                
+                # Use the same semantic statements inside the consolidated chunk
+                row_statements = []
+                for col_name, raw_value in rec.values.items():
+                    if col_name == label_col:
+                        continue
+                    cell_value = str(raw_value).strip()
+                    if cell_value and cell_value.lower() not in ("none", "null", ""):
+                        row_statements.append(f"{col_name}: {cell_value}")
+                
+                if row_statements:
+                    row_texts.append(f"- {parent_prefix}{row_label} -> " + ", ".join(row_statements))
                 
             text = header + "\n".join(row_texts)
             
@@ -59,31 +107,27 @@ class StructuredChunker:
                 "start_row": rec_list[0].row_index,
                 "end_row": rec_list[-1].row_index,
                 "row_count": len(rec_list),
-                "columns": first_rec.columns
+                "columns": first_rec.columns,
+                "chunk_type": "consolidated"
             }
             
             return StructuredChunk(text=text, metadata=metadata)
             
         def estimate_len(rec: StructuredRecord) -> int:
-            # Approximate character length of a single row string
-            return len(", ".join([f"[{k}]: {v}" for k, v in rec.values.items() if str(v).strip()])) + 50
+            return sum(len(str(v)) + len(str(k)) for k, v in rec.values.items()) + 100
             
         current_len = 0
-        header_len = 200 # Fixed buffer for the header string
+        header_len = 200
         
         for rec in sorted_records:
             rec_len = estimate_len(rec)
             
-            # If current chunk is getting too big, flush it
             if current_len + rec_len + header_len > chunk_size and current_chunk_records:
-                chunk_obj = format_chunk(current_chunk_records)
+                chunk_obj = format_consolidated_chunk(current_chunk_records)
                 if chunk_obj:
                     chunks.append(chunk_obj)
                 
-                # Establish row-level overlap
                 overlap_candidates = current_chunk_records[-overlap_rows:] if overlap_rows > 0 else []
-                
-                # Safety check: if overlap + new record is too massive, trim overlap
                 while overlap_candidates and sum(estimate_len(r) for r in overlap_candidates) + rec_len + header_len > chunk_size:
                     overlap_candidates.pop(0)
                     
@@ -93,11 +137,10 @@ class StructuredChunker:
                 current_chunk_records.append(rec)
                 current_len += rec_len
                 
-        # Flush remainder
         if current_chunk_records:
-            chunk_obj = format_chunk(current_chunk_records)
+            chunk_obj = format_consolidated_chunk(current_chunk_records)
             if chunk_obj:
                 chunks.append(chunk_obj)
                 
-        logger.info(f"StructuredChunker successfully batched {len(records)} records into {len(chunks)} row-aware chunks.")
+        logger.info(f"StructuredChunker successfully generated {len(chunks)} dual-representation chunks.")
         return chunks

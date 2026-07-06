@@ -487,6 +487,13 @@ class DocumentIngestionRun(Base):
     nodes_merged = Column(Integer, nullable=False, default=0)
     relationships_merged = Column(Integer, nullable=False, default=0)
     
+    # Routing / Optimization Metrics
+    fluff_chunks_skipped = Column(Integer, nullable=False, default=0)
+    processed_chunks = Column(Integer, nullable=False, default=0)
+    routing_version = Column(String(50), nullable=True, default="1.0")
+    cache_hits = Column(Integer, nullable=False, default=0)
+    kg_extraction_calls = Column(Integer, nullable=False, default=0)
+    
     document_category = Column(String(100), nullable=False, default="general_document", index=True)
     sample_entities = Column(JSON, nullable=True)
     sample_triplets = Column(JSON, nullable=True)

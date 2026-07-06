@@ -644,9 +644,63 @@ class KnowledgeBaseService:
             use_triplets = settings.use_triplet_extraction
             unified_extractor = UnifiedExtractor(tenant_id=str(self.tenant_id))
             
+            def is_dense_chunk(chunk_text: str) -> bool:
+                # Fast NLP heuristic (Enterprise Safe)
+                text_len = len(chunk_text)
+                
+                # Check sentence count (using simple punctuation split as a fast heuristic)
+                sentences = [s for s in re.split(r'[.!?]+', chunk_text) if s.strip()]
+                sentence_count = len(sentences)
+                
+                # 1. Skip ultra-short fluff, BUT preserve concise single sentences
+                # Example: "Page 14" (len=7, sentences=0) -> Skip
+                # Example: "The supplier shall maintain cybersecurity controls." (len=51, sentences=1) -> Keep
+                if text_len < 150 and sentence_count < 1:
+                    return False
+                    
+                # 2. Skip repetitive characters (e.g. "............", "-------") often found in TOCs
+                if re.search(r'([.\-_])\1{5,}', chunk_text):
+                    return False
+                    
+                # 3. Skip obvious Table of Contents patterns
+                if re.search(r'(?i)^(table of contents|contents|index)\s*$', chunk_text.splitlines()[0][:50]):
+                    return False
+                    
+                # 4. Skip chunks that look entirely like pagination or footers
+                if re.match(r'(?i)^\s*(page\s*\d+\s*of\s*\d+|\d+)\s*$', chunk_text):
+                    return False
+                    
+                return True
+
+            _chunk_extract_cache = {}
+            
+            # Mutable counters for routing observability
+            routing_stats = {"fluff": 0, "processed": 0, "cache_hits": 0, "kg_calls": 0}
+
             async def safe_extract_unified(chunk_id: str, text: str, idx: int):
+                # Fast-Path: Skip LLM extraction for fluff chunks to save time
+                if not is_dense_chunk(text):
+                    routing_stats["fluff"] += 1
+                    logger.debug(f"Chunk {idx} routed to Fast-Path (skipped LLM extraction)")
+                    return {"entities": [], "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"skipped_extraction": True, "chunk_idx": idx}}
+
+                routing_stats["processed"] += 1
+
+                # Chunk Caching (Idempotency for identical text like headers/footers)
+                import hashlib
+                text_hash = hashlib.sha256(text.encode()).hexdigest()
+                if text_hash in _chunk_extract_cache:
+                    routing_stats["cache_hits"] += 1
+                    logger.debug(f"Chunk {idx} hit extract cache")
+                    cached_result = dict(_chunk_extract_cache[text_hash])
+                    cached_result["_metadata"]["cached"] = True
+                    return cached_result
+
+                routing_stats["kg_calls"] += 1
                 try:
-                    return await unified_extractor.extract_all(chunk_id, text)
+                    result = await unified_extractor.extract_all(chunk_id, text)
+                    _chunk_extract_cache[text_hash] = result
+                    return result
                 except Exception as e:
                     logger.warning(f"Unified extraction failed for chunk {idx}: {e}")
                     return {"entities": [], "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"failed_completely": True, "chunk_idx": idx}}
@@ -732,7 +786,15 @@ class KnowledgeBaseService:
             audit_run.repair_count = repair_count
             audit_run.retry_count = retry_count
             audit_run.fallback_count = fallback_count
-            audit_run.llm_calls = len(chunks) + retry_count
+            
+            # Routing Observability
+            audit_run.fluff_chunks_skipped = routing_stats["fluff"]
+            audit_run.processed_chunks = routing_stats["processed"]
+            audit_run.routing_version = "1.1" # Enterprise-Safe Routing
+            audit_run.cache_hits = routing_stats["cache_hits"]
+            audit_run.kg_extraction_calls = routing_stats["kg_calls"]
+            
+            audit_run.llm_calls = len(chunks) + retry_count - routing_stats["fluff"] - routing_stats["cache_hits"]
             audit_run.model_name = first_meta.get("model_name", "unknown")
             audit_run.schema_version = first_meta.get("schema_version", "unknown")
             audit_run.extractor_version = "legacy_ensemble" if first_meta.get("fallback_used") else "unified_extractor_v1"
