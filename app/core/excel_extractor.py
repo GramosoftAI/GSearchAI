@@ -235,7 +235,17 @@ class ExcelExtractor:
                         continue
 
                     # Fallback
-                    dataset_schema[col] = "string"
+                    str_series = col_series.astype(str).str.strip()
+                    non_empty_series = str_series[str_series != ""]
+                    if not non_empty_series.empty:
+                        avg_len = non_empty_series.str.len().mean()
+                        has_sentences = non_empty_series.apply(lambda x: len(str(x).split()) > 8).mean() > 0.2
+                        if avg_len > 80 or has_sentences:
+                            dataset_schema[col] = "unstructured_text"
+                        else:
+                            dataset_schema[col] = "string"
+                    else:
+                        dataset_schema[col] = "string"
 
                 body_df = body_df.fillna("")
                 

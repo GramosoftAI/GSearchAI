@@ -98,7 +98,8 @@ Notes:
                 prompt=prompt,
                 system_prompt="You are a Pandas JSON AST generator. Return only JSON.",
                 temperature=0.0,
-                max_tokens=500
+                max_tokens=500,
+                enable_thinking=False
             )
             
             ast_response = ast_response.strip()

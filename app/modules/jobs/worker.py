@@ -1,5 +1,7 @@
 import logging
 import asyncio
+import time
+import re
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -16,6 +18,35 @@ from app.core.llm.deepinfra_llm import DeepInfraLLMClient
 
 logger = logging.getLogger(__name__)
 
+
+def classify_document_fast(text: str) -> str:
+    """
+    Fast regex-based document classifier. Replaces slow LLM classification.
+    Analyzes the first 3000 characters for keyword patterns.
+    """
+    sample = text[:3000].lower()
+    
+    # Score each type by keyword matches
+    patterns = {
+        "PRICE_LIST": [r'\bprice\s*list\b', r'\bunit\s*price\b', r'\brate\s*card\b', r'\bmsrp\b', r'\blist\s*price\b'],
+        "INVOICE": [r'\binvoice\b', r'\bbill\s*to\b', r'\binv[\.\s\-]?no\b', r'\btax\s*invoice\b', r'\bdue\s*date\b', r'\bamount\s*due\b'],
+        "QUOTATION": [r'\bquotation\b', r'\bquote\b', r'\bestimate\b', r'\bproforma\b', r'\bvalidity\b'],
+        "PURCHASE_ORDER": [r'\bpurchase\s*order\b', r'\bp\.?o\.?\s*(?:no|number)\b', r'\bship\s*to\b', r'\border\s*(?:no|number)\b'],
+        "STOCK_REPORT": [r'\bstock\s*report\b', r'\binventory\b', r'\bsku\b', r'\bquantity\s*on\s*hand\b', r'\bwarehouse\b'],
+        "FINANCIAL_STATEMENT": [r'\bbalance\s*sheet\b', r'\bincome\s*statement\b', r'\bcash\s*flow\b', r'\btotal\s*(?:revenue|assets|liabilities)\b', r'\bearnings?\s*per\s*share\b', r'\bfiscal\s*(?:year|quarter)\b', r'\bnet\s*income\b', r'\bgross\s*(?:profit|margin)\b', r'\boperating\s*(?:income|expenses?)\b'],
+    }
+    
+    best_type = "GENERAL"
+    best_score = 0
+    
+    for doc_type, regexes in patterns.items():
+        score = sum(1 for r in regexes if re.search(r, sample))
+        if score > best_score and score >= 2:  # Need at least 2 keyword matches
+            best_score = score
+            best_type = doc_type
+    
+    return best_type
+
 async def run_pdf_ingestion_job(
     tenant_id: str,
     user_id: str,
@@ -29,6 +60,10 @@ async def run_pdf_ingestion_job(
     Updates the ProcessingJob table with progress.
     """
     try:
+        # Calculate file hash
+        import hashlib
+        file_hash = hashlib.sha256(content).hexdigest()
+
         async with AsyncSessionLocal() as db:
             # Important: set tenant context!
             await db.execute(
@@ -38,6 +73,29 @@ async def run_pdf_ingestion_job(
             
             job_service = JobService(db, tenant_id)
             
+            # Check database for duplicate hash
+            from sqlalchemy import select
+            from app.modules.knowledge_bases.models import KnowledgeBase
+            import uuid
+            
+            stmt = select(KnowledgeBase).where(
+                KnowledgeBase.tenant_id == uuid.UUID(tenant_id),
+                KnowledgeBase.file_hash == file_hash,
+                KnowledgeBase.is_active == True
+            )
+            res = await db.execute(stmt)
+            existing_kb = res.scalars().first()
+            if existing_kb:
+                logger.info(f"Job {job_id}: Duplicate file hash {file_hash} detected in run_pdf_ingestion_job. Skipping processing and linking to existing KB.")
+                await job_service.update_job_progress(
+                    job_id,
+                    status="completed",
+                    progress=100,
+                    current_step="Complete",
+                    kb_id=str(existing_kb.id)
+                )
+                return
+
             is_spreadsheet = filename.lower().endswith(('.csv', '.xls', '.xlsx'))
             
             # Update status to processing
@@ -88,15 +146,11 @@ async def run_pdf_ingestion_job(
                 await job_service.update_job_progress(job_id, status="failed", progress=5, current_step=err_step, error_message=err_msg)
                 return
                 
-            # Classify Document Type
+            # Classify Document Type (Fast regex classifier - no LLM call needed)
             await job_service.update_job_progress(job_id, status="processing", progress=15, current_step="Classifying Document Type")
-            llm_client = DeepInfraLLMClient()
-            prompt = f"Analyze the first 2000 characters of this document and classify its type. Valid types are: PRICE_LIST, INVOICE, QUOTATION, PURCHASE_ORDER, STOCK_REPORT, FINANCIAL_STATEMENT, GENERAL. Return ONLY the type string, nothing else.\n\nDOCUMENT START:\n{document_text[:2000]}"
-            document_type = await llm_client.generate(prompt=prompt, system_prompt="You are a document classifier. Return only the exact category string.", temperature=0.0, max_tokens=15)
-            document_type = document_type.strip()
-            if document_type not in ["PRICE_LIST", "INVOICE", "QUOTATION", "PURCHASE_ORDER", "STOCK_REPORT", "FINANCIAL_STATEMENT", "GENERAL"]:
-                document_type = "GENERAL"
-            logger.info(f"Classified document as: {document_type}")
+            t_classify = time.time()
+            document_type = classify_document_fast(document_text)
+            logger.info(f"Job {job_id}: Classified document as: {document_type} (took {time.time() - t_classify:.2f}s)")
                 
             await job_service.update_job_progress(job_id, status="processing", progress=25, current_step="Extracting Structured Tables")
             
@@ -124,7 +178,8 @@ async def run_pdf_ingestion_job(
                 source=kb_source,
                 document_type=document_type,
                 dataset_schema=dataset_schema,
-                s3_path=s3_url
+                s3_path=s3_url,
+                file_hash=file_hash
             )
             
             kb_result = await kb_service.create_knowledge_base(user_id, kb_request)
@@ -165,6 +220,7 @@ async def run_pdf_ingestion_job(
             # Step 3: Ingest Document (Chunking + Embeddings + Neo4j)
             await job_service.update_job_progress(job_id, status="processing", progress=60, current_step="Chunking and Generating Embeddings")
             
+            t_ingest_start = time.time()
             logger.info(f"Job {job_id}: Starting embedding and graph ingestion for {kb_id}")
             ingest_result = await kb_service.ingest_document(
                 kb_id, 
@@ -175,7 +231,8 @@ async def run_pdf_ingestion_job(
                 structured_records=structured_records
             )
 
-
+            t_ingest_end = time.time()
+            logger.info(f"Job {job_id}: Ingestion completed in {t_ingest_end - t_ingest_start:.1f}s")
             
             if not ingest_result.get("success"):
                 error_msg = ingest_result.get("error", "Unknown ingestion error")

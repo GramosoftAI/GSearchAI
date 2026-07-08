@@ -29,6 +29,9 @@ settings = get_settings()
 # Global rate limiter (max 25 concurrent API calls)
 _embedding_semaphore = asyncio.Semaphore(25)
 
+# Persistent HTTP client for embedding API (reused across batch calls)
+_embedding_http_client: httpx.AsyncClient = None
+
 # Global embedding cache (text_hash -> embedding vector)
 # With LRU eviction to prevent unbounded memory growth
 _embedding_cache = {}
@@ -72,7 +75,7 @@ class DeepInfraEmbeddingClient:
         self.model = "BAAI/bge-large-en-v1.5"
         self.timeout = 30.0  # Request timeout in seconds
         self.max_retries = 3  # Number of retry attempts
-        self.max_text_length = 500  # Prevent API overload (approx 125 tokens)
+        self.max_text_length = 2000  # Allow full chunk content for better semantic quality
         self.expected_dimension = EXPECTED_EMBEDDING_DIMENSION  # 1024
 
         logger.info(
@@ -329,26 +332,31 @@ class DeepInfraEmbeddingClient:
                     "input": chunk,
                 }
                 
+                # Reuse persistent HTTP client across batches
+                global _embedding_http_client
+                if _embedding_http_client is None or _embedding_http_client.is_closed:
+                    _embedding_http_client = httpx.AsyncClient(timeout=self.timeout)
+                
                 last_error = None
                 for attempt in range(self.max_retries):
                     try:
-                        async with httpx.AsyncClient(timeout=self.timeout) as client:
-                            response = await client.post(self.base_url, headers=headers, json=payload)
-                            response.raise_for_status()
-                            data = response.json()
-                            
-                            # Extract embeddings: {"data": [{"embedding": [...], "index": 0}, ...]}
-                            new_batch = [item["embedding"] for item in sorted(data["data"], key=lambda x: x["index"])]
-                            all_new_embeddings.extend(new_batch)
-                            
-                            # Update cache
-                            for j, emb in enumerate(new_batch):
-                                orig_text = chunk[j]
-                                t_hash = hashlib.sha256(orig_text.encode()).hexdigest()
-                                _embedding_cache[t_hash] = emb
-                                if t_hash not in _embedding_cache_insertion_order:
-                                    _embedding_cache_insertion_order.append(t_hash)
-                            break  # Success, exit retry loop
+                        client = _embedding_http_client
+                        response = await client.post(self.base_url, headers=headers, json=payload)
+                        response.raise_for_status()
+                        data = response.json()
+                        
+                        # Extract embeddings: {"data": [{"embedding": [...], "index": 0}, ...]}
+                        new_batch = [item["embedding"] for item in sorted(data["data"], key=lambda x: x["index"])]
+                        all_new_embeddings.extend(new_batch)
+                        
+                        # Update cache
+                        for j, emb in enumerate(new_batch):
+                            orig_text = chunk[j]
+                            t_hash = hashlib.sha256(orig_text.encode()).hexdigest()
+                            _embedding_cache[t_hash] = emb
+                            if t_hash not in _embedding_cache_insertion_order:
+                                _embedding_cache_insertion_order.append(t_hash)
+                        break  # Success, exit retry loop
                             
                     except httpx.TimeoutException:
                         last_error = TimeoutError(f"API timeout after {self.timeout}s (attempt {attempt + 1})")

@@ -615,7 +615,7 @@ If you'd like, I can also:
 
         # 3.5 Check for empty context or bypass intents
         is_extractive = context.search_type == "EXTRACTIVE" if context else False
-        is_table_analytics = context.search_type in ["TABLE_ANALYTICS", "DATA_ANALYSIS"] if context else False
+        is_table_analytics = context.search_type == "TABLE_ANALYTICS" if context else False
 
         if is_extractive or is_table_analytics:
             logger.info(f"Bypassing LLM stream for {context.search_type} mode.")
@@ -1330,7 +1330,7 @@ If you'd like, I can also:
             }
         
         is_extractive = context.search_type == "EXTRACTIVE" if context else False
-        is_table_analytics = context.search_type in ["TABLE_ANALYTICS", "DATA_ANALYSIS"] if context else False
+        is_table_analytics = context.search_type == "TABLE_ANALYTICS" if context else False
 
         if is_extractive or is_table_analytics:
             logger.info(f"Bypassing LLM generation for {context.search_type} mode.")

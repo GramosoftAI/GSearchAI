@@ -107,6 +107,7 @@ class KnowledgeBase(Base):
 
     s3_path = Column(String(1024), nullable=True)
     parsed_path = Column(String(1024), nullable=True)
+    file_hash = Column(String(64), nullable=True, index=True)
 
 
 

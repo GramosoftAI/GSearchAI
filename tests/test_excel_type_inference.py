@@ -101,3 +101,23 @@ def test_robust_excel_schema_inference():
     assert dataset_schema["col_float"] == "float"
     assert dataset_schema["col_boolean"] == "boolean"
     assert dataset_schema["col_string"] == "string"
+
+
+@pytest.mark.asyncio
+async def test_excel_extractor_unstructured_classification():
+    # Construct a CSV with structured and unstructured columns
+    csv_content = (
+        "id,name,complaint\n"
+        "1,Joseph,The printer stopped working after installing Windows updates. It keeps saying error 0x002.\n"
+        "2,Alice,The mouse pointer is lagging and jumping around the screen when using multiple monitors.\n"
+        "3,Bob,System fails to boot and displays blue screen of death with code page_fault_in_nonpaged_area.\n"
+    )
+    
+    # Extract
+    _, _, schema = await ExcelExtractor.extract(csv_content.encode('utf-8'), "tickets.csv")
+    
+    # Assert
+    assert schema["id"] == "integer"
+    assert schema["name"] == "string"
+    assert schema["complaint"] == "unstructured_text"
+

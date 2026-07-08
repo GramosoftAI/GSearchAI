@@ -331,6 +331,7 @@ class KnowledgeBaseService:
                 source=request.source or "user_upload",
                 s3_path=request.s3_path,
                 dataset_schema=request.dataset_schema,
+                file_hash=request.file_hash,
             )
 
             kb_id = str(pg_kb.id)
@@ -608,6 +609,8 @@ class KnowledgeBaseService:
                     source_type = "url"
 
             chunk_metadata_list = []
+            import time as _time
+            t_chunk_start = _time.time()
             if structured_records:
                 from app.core.structured_chunker import StructuredChunker
                 structured_chunks = StructuredChunker.chunk(structured_records)
@@ -622,19 +625,23 @@ class KnowledgeBaseService:
             if not chunks:
                 return format_error("Document produced no chunks", meta={"status_code": 400})
 
-            logger.info(f" Chunked document into {len(chunks)} chunks using Adaptive/Structured Chunking ({source_type})")
+            t_chunk_end = _time.time()
+            logger.info(f" Chunked document into {len(chunks)} chunks using Adaptive/Structured Chunking ({source_type}) in {t_chunk_end - t_chunk_start:.1f}s")
 
 
 
             # 3. GENERATE EMBEDDINGS (Optimized Batching)
-
+            t_embed_start = _time.time()
             embeddings = await EmbeddingGenerator.generate_embeddings_batch(chunks)
+            # Yield control back to event loop so server stays responsive
+            await asyncio.sleep(0)
 
             if len(embeddings) != len(chunks):
 
                 return format_error("Embedding generation failed")
 
-            logger.info(f" Generated {len(embeddings)} embeddings")
+            t_embed_end = _time.time()
+            logger.info(f" Generated {len(embeddings)} embeddings in {t_embed_end - t_embed_start:.1f}s")
 
 
 
@@ -644,6 +651,17 @@ class KnowledgeBaseService:
             use_triplets = settings.use_triplet_extraction
             unified_extractor = UnifiedExtractor(tenant_id=str(self.tenant_id))
             
+            # Check if this is a structured spreadsheet and all columns are structured (no unstructured text)
+            skip_all_llm_extraction = False
+            if kb.dataset_schema and isinstance(kb.dataset_schema, dict):
+                has_unstructured_col = any(
+                    str(val).lower() == "unstructured_text"
+                    for val in kb.dataset_schema.values()
+                )
+                if not has_unstructured_col:
+                    skip_all_llm_extraction = True
+                    logger.info(f"Skipping LLM extraction for structured Knowledge Base {kb_id} because all columns are structured.")
+
             def is_dense_chunk(chunk_text: str) -> bool:
                 # Fast NLP heuristic (Enterprise Safe)
                 text_len = len(chunk_text)
@@ -678,8 +696,8 @@ class KnowledgeBaseService:
             routing_stats = {"fluff": 0, "processed": 0, "cache_hits": 0, "kg_calls": 0}
 
             async def safe_extract_unified(chunk_id: str, text: str, idx: int):
-                # Fast-Path: Skip LLM extraction for fluff chunks to save time
-                if not is_dense_chunk(text):
+                # Fast-Path: Skip LLM extraction for fluff chunks or purely structured spreadsheet chunks to save time
+                if skip_all_llm_extraction or not is_dense_chunk(text):
                     routing_stats["fluff"] += 1
                     logger.debug(f"Chunk {idx} routed to Fast-Path (skipped LLM extraction)")
                     return {"entities": [], "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"skipped_extraction": True, "chunk_idx": idx}}
@@ -705,16 +723,25 @@ class KnowledgeBaseService:
                     logger.warning(f"Unified extraction failed for chunk {idx}: {e}")
                     return {"entities": [], "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"failed_completely": True, "chunk_idx": idx}}
 
-            logger.info(f" Processing Unified Extractions for {len(chunks)} chunks in parallel...")
+            logger.info(f" Processing Unified Extractions for {len(chunks)} chunks (concurrency=5)...")
             
+            # Process chunks in small batches of 5 to:
+            # 1. Avoid overwhelming the LLM API with too many concurrent requests
+            # 2. Yield control back to the event loop between batches so the server
+            #    stays responsive to health checks and frontend polling requests
+            t_extract_start = _time.time()
             unified_results = []
-            batch_size = len(chunks) if chunks else 1
-            for i in range(0, len(chunks), batch_size):
-                batch_chunks = chunks[i:i+batch_size]
+            extract_batch_size = 5  # Small batches to keep server responsive
+            for i in range(0, len(chunks), extract_batch_size):
+                batch_chunks = chunks[i:i+extract_batch_size]
                 batch_tasks = [safe_extract_unified(f"idx_{i+j}", batch_chunks[j], i+j) for j in range(len(batch_chunks))]
                 batch_res = await asyncio.gather(*batch_tasks)
                 unified_results.extend(batch_res)
-            
+                # Critical: yield control to event loop so server can handle
+                # HTTP requests (job polling, health checks) between batches
+                await asyncio.sleep(0)
+            t_extract_end = _time.time()
+            logger.info(f" Unified extraction completed in {t_extract_end - t_extract_start:.1f}s (routing: {routing_stats})")            
             # --- Unpack unified results to maintain backward compatibility ---
             entity_results = [res.get("entities", []) for res in unified_results]
             

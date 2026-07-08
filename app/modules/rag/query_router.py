@@ -234,7 +234,8 @@ Return ONLY valid JSON in this exact format, with no markdown formatting or back
                 prompt=prompt,
                 system_prompt="You are a query rewriting engine. Return only JSON.",
                 temperature=0.0,
-                max_tokens=1024
+                max_tokens=1024,
+                enable_thinking=False
             )
             # Clean up markdown if present
             import re
@@ -305,7 +306,8 @@ Query:
                 prompt=prompt,
                 system_prompt="You are an enterprise RAG router. Return only JSON.",
                 temperature=0.0,
-                max_tokens=1024
+                max_tokens=1024,
+                enable_thinking=False
             )
             import re
             json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)

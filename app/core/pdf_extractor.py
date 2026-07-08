@@ -208,32 +208,35 @@ class PDFExtractor:
             )
 
         # ============= FALLBACK: PDFPLUMBER + AI-OCR =============
-        try:
-            extracted_text = await PDFExtractor._extract_pdfplumber(
-                pdf_bytes, filename, tenant_id, agent_id
-            )
-            if extracted_text and extracted_text.strip():
-                logger.info(
-                    f" pdfplumber extraction success: {filename} "
-                    f"({len(extracted_text)} chars)"
+        if settings.enable_pdf_fallback:
+            try:
+                extracted_text = await PDFExtractor._extract_pdfplumber(
+                    pdf_bytes, filename, tenant_id, agent_id
                 )
-                # LLM-based reconstruction of raw text to clean semantic Markdown
-                try:
-                    reconstructed_markdown = await PDFExtractor._reconstruct_text_to_markdown_with_llm(extracted_text)
-                    cleaned = PDFExtractor._clean_markdown_for_rag(reconstructed_markdown)
-                    logger.info("Successfully reconstructed pdfplumber plain text to Markdown via LLM")
-                    return ExtractedText(cleaned, reconstructed_markdown, is_markdown=True)
-                except Exception as llm_err:
-                    logger.warning(f"LLM text reconstruction to Markdown failed: {llm_err}. Returning raw plain text.")
-                
-                return ExtractedText(extracted_text, extracted_text, is_markdown=False)
-        except Exception as e:
-            logger.error(f" pdfplumber also failed for {filename}: {e}")
+                if extracted_text and extracted_text.strip():
+                    logger.info(
+                        f" pdfplumber extraction success: {filename} "
+                        f"({len(extracted_text)} chars)"
+                    )
+                    # LLM-based reconstruction of raw text to clean semantic Markdown
+                    try:
+                        reconstructed_markdown = await PDFExtractor._reconstruct_text_to_markdown_with_llm(extracted_text)
+                        cleaned = PDFExtractor._clean_markdown_for_rag(reconstructed_markdown)
+                        logger.info("Successfully reconstructed pdfplumber plain text to Markdown via LLM")
+                        return ExtractedText(cleaned, reconstructed_markdown, is_markdown=True)
+                    except Exception as llm_err:
+                        logger.warning(f"LLM text reconstruction to Markdown failed: {llm_err}. Returning raw plain text.")
+                    
+                    return ExtractedText(extracted_text, extracted_text, is_markdown=False)
+            except Exception as e:
+                logger.error(f" pdfplumber also failed for {filename}: {e}")
+        else:
+            logger.info("PDF fallback is disabled by configuration settings.")
 
         # ============= BOTH FAILED =============
         raise ValueError(
             f"Could not extract text from PDF: {filename}. "
-            f"Both Gdocz SDK and pdfplumber failed."
+            f"Gdocz SDK failed and PDF fallback is disabled or failed."
         )
 
     # ========================================================================
@@ -397,6 +400,41 @@ class PDFExtractor:
     # ========================================================================
     # MARKDOWN CLEANING (GraphRAG-Friendly)
     # ========================================================================
+
+    @staticmethod
+    def _get_adaptive_max_tokens(
+        text: str,
+        multiplier: int = 3,
+        default_add: int = 1000,
+        fallback_max: int = 4096
+    ) -> int:
+        """
+        Dynamically calculate max_tokens based on text/segment length.
+        Estimates expected output token size using actual token counts to prevent truncation while optimizing latency.
+        """
+        if not text:
+            return 700
+            
+        try:
+            import tiktoken
+            encoding = tiktoken.get_encoding("cl100k_base")
+            input_tokens = len(encoding.encode(text, disallowed_special=()))
+        except Exception:
+            input_tokens = len(text) // 4
+            
+        # Estimate expected output token length:
+        # For reconstruction/repair, expected output is comparable to input size plus formatting.
+        # Add a safe buffer of 400 tokens to ensure zero truncation.
+        estimated_output_tokens = int(input_tokens * 1.1) + 400
+        
+        if input_tokens < 250:
+            base_cap = 700
+        elif input_tokens < 500:
+            base_cap = 1000
+        else:
+            base_cap = min(fallback_max, input_tokens * multiplier + default_add)
+            
+        return max(base_cap, estimated_output_tokens)
 
     @staticmethod
     def _clean_markdown_for_rag(raw_markdown: str) -> str:
@@ -625,7 +663,7 @@ class PDFExtractor:
             f"{segment}"
         )
         try:
-            max_tokens = min(4096, len(segment) * 3 + 1000)
+            max_tokens = PDFExtractor._get_adaptive_max_tokens(segment, 3, 1000, 4096)
             res = await llm_client.generate(
                 prompt=user_prompt,
                 system_prompt=system_prompt,
@@ -653,7 +691,7 @@ class PDFExtractor:
             f"{segment}"
         )
         try:
-            max_tokens = min(4096, len(segment) * 4 + 1000)
+            max_tokens = PDFExtractor._get_adaptive_max_tokens(segment, 4, 1000, 4096)
             res = await llm_client.generate(
                 prompt=user_prompt,
                 system_prompt=system_prompt,
@@ -842,7 +880,7 @@ class PDFExtractor:
             logger.info("Starting LLM-based HTML repair...")
             llm_client = DeepInfraLLMClient()
             # Set a high token limit since the HTML can be large
-            max_tokens = min(16384, len(placeholder_html) * 3 + 2000)
+            max_tokens = PDFExtractor._get_adaptive_max_tokens(placeholder_html, 3, 2000, 16384)
             repaired_html = await llm_client.generate(
                 prompt=user_prompt,
                 system_prompt=system_prompt,
@@ -906,7 +944,7 @@ class PDFExtractor:
         try:
             logger.info("Starting LLM-based text to HTML reconstruction...")
             llm_client = DeepInfraLLMClient()
-            max_tokens = min(16384, len(raw_text) * 4 + 2000)
+            max_tokens = PDFExtractor._get_adaptive_max_tokens(raw_text, 4, 2000, 16384)
             reconstructed_html = await llm_client.generate(
                 prompt=user_prompt,
                 system_prompt=system_prompt,

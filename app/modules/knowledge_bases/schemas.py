@@ -43,6 +43,11 @@ class KBCreate(BaseModel):
         max_length=1024,
         description="S3 storage path of the file",
     )
+    file_hash: Optional[str] = Field(
+        None,
+        max_length=64,
+        description="SHA-256 hash of the uploaded document",
+    )
 
 
     class Config:

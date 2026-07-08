@@ -232,7 +232,7 @@ class DeepInfraLLMClient:
 
         self.max_answer_length = 2000  # Max chars in answer (latency + cost guard)
 
-        self.temperature = 0.7  # Balance creativity + consistency
+        self.temperature = 0.0  # Maximize consistency and minimize hallucinations for RAG and extraction tasks
 
 
 
@@ -647,6 +647,8 @@ class DeepInfraLLMClient:
 
         
 
+        think_state = 0
+        think_buf = ""
         try:
             client = await self.get_client()
             # PROD-GRADE STREAMING TIMEOUT: read=None is crucial for SSE/WebSockets
@@ -687,48 +689,36 @@ class DeepInfraLLMClient:
                                 chunk = data["choices"][0]["delta"].get("content", "")
                                 if not chunk: continue
                                 
-                                if not hasattr(self, "_last_cum"):
-                                    self._last_cum = ""
-                                    self._think_state = 0
-                                    self._think_buf = ""
-                                    
-                                # 1. Convert to true delta (works for both cumulative and delta inputs)
-                                if chunk.startswith(self._last_cum):
-                                    delta = chunk[len(self._last_cum):]
-                                else:
-                                    delta = chunk
-                                self._last_cum = chunk
+                                delta = chunk
                                 
-                                if not delta: continue
-                                
-                                # 2. State machine to filter <think> tags from true deltas
+                                # State machine to filter <think> tags from true deltas
                                 clean_delta = ""
-                                if self._think_state == 0:
-                                    self._think_buf += delta
-                                    b = self._think_buf.lstrip()
+                                if think_state == 0:
+                                    think_buf += delta
+                                    b = think_buf.lstrip()
                                     
                                     if b.startswith("<think>"):
-                                        self._think_state = 1
-                                        self._think_buf = b[7:]
-                                        if "</think>" in self._think_buf:
-                                            self._think_state = 2
-                                            clean_delta = self._think_buf.split("</think>", 1)[1].lstrip("\n")
-                                            self._think_buf = ""
+                                        think_state = 1
+                                        think_buf = b[7:]
+                                        if "</think>" in think_buf:
+                                            think_state = 2
+                                            clean_delta = think_buf.split("</think>", 1)[1].lstrip("\n")
+                                            think_buf = ""
                                     elif "<think>".startswith(b):
                                         pass # wait
                                     else:
-                                        self._think_state = 2
-                                        clean_delta = self._think_buf
-                                        self._think_buf = ""
+                                        think_state = 2
+                                        clean_delta = think_buf
+                                        think_buf = ""
                                         
-                                elif self._think_state == 1:
-                                    self._think_buf += delta
-                                    if "</think>" in self._think_buf:
-                                        self._think_state = 2
-                                        clean_delta = self._think_buf.split("</think>", 1)[1].lstrip("\n")
-                                        self._think_buf = ""
+                                elif think_state == 1:
+                                    think_buf += delta
+                                    if "</think>" in think_buf:
+                                        think_state = 2
+                                        clean_delta = think_buf.split("</think>", 1)[1].lstrip("\n")
+                                        think_buf = ""
                                         
-                                elif self._think_state == 2:
+                                elif think_state == 2:
                                     clean_delta = delta
                                     
                                 if clean_delta:
