@@ -28,26 +28,26 @@ E-WAY_BILL_NUMBER, INVOICE_NUMBER, GSTIN, PAN, REGISTRATION_NO. Provide the exac
 Extract Document Sections:
 "Place of Delivery", "Billing Address".
 
-CRITICAL INSTRUCTION: You MUST NOT output any reasoning, explanations, or <think> blocks. Your very first output character MUST be `{{` and your last MUST be `}}`. Return EXACTLY the following JSON format:
-{{
+CRITICAL INSTRUCTION: You MUST NOT output any reasoning, explanations, or <think> blocks. Your very first output character MUST be `{` and your last MUST be `}`. Return EXACTLY the following JSON format:
+{
     "schema_version": "1.0",
-    "metadata": {{
+    "metadata": {
         "model": "deepseek-v3",
         "chunk_id": "{chunk_id}"
-    }},
+    },
     "entities": [
-        {{"text": "Apple Inc", "type": "ORGANIZATION", "start_char": 0, "end_char": 9, "confidence": 0.99}}
+        {"text": "Apple Inc", "type": "ORGANIZATION", "start_char": 0, "end_char": 9, "confidence": 0.99}
     ],
     "triplets": [
-        {{"subject": "Apple Inc", "predicate": "LOCATED_IN", "object": "California", "subject_type": "ORGANIZATION", "object_type": "LOCATION", "evidence": "Apple Inc is based in California", "confidence": 0.95}}
+        {"subject": "Apple Inc", "predicate": "LOCATED_IN", "object": "California", "subject_type": "ORGANIZATION", "object_type": "LOCATION", "evidence": "Apple Inc is based in California", "confidence": 0.95}
     ],
     "identifiers": [
-        {{"type": "GSTIN", "candidate_value": "33AAACS8779D1Z7", "source_span": "GSTIN: 33AAACS8779D1Z7", "confidence": 0.99}}
+        {"type": "GSTIN", "candidate_value": "33AAACS8779D1Z7", "source_span": "GSTIN: 33AAACS8779D1Z7", "confidence": 0.99}
     ],
     "sections": [
-        {{"name": "Billing Address", "content": {{"address": "123 Main St"}}}}
+        {"name": "Billing Address", "content": {"address": "123 Main St"}}
     ]
-}}
+}
 
 TEXT: {text}
 """
@@ -114,6 +114,37 @@ class UnifiedExtractor:
         # For Tier 4 fallback
         self.triplet_extractor = TripletExtractor(tenant_id=tenant_id)
         
+    @staticmethod
+    def _estimate_extraction_max_tokens(chunk_text: str) -> int:
+        """
+        Dynamically estimate the expected length of the JSON extraction response to set max_tokens.
+        Uses actual token counts to prevent truncation while optimizing latency.
+        """
+        if not chunk_text:
+            return 1000
+            
+        try:
+            import tiktoken
+            encoding = tiktoken.get_encoding("cl100k_base")
+            input_tokens = len(encoding.encode(chunk_text, disallowed_special=()))
+        except Exception:
+            input_tokens = len(chunk_text) // 4
+            
+        # Heuristic: 
+        # A typical JSON response has some schema overhead.
+        # Let's estimate: expected output is around 1.3x of input tokens to cover schema key/value formatting overhead.
+        # Add a buffer of 400 tokens to prevent truncation.
+        estimated_needed = int(input_tokens * 1.3) + 400
+        
+        if input_tokens < 250:
+            base_cap = 1000
+        elif input_tokens < 600:
+            base_cap = 2000
+        else:
+            base_cap = 4000
+            
+        return min(4000, max(base_cap, estimated_needed))
+
     async def extract_all(self, chunk_id: str, chunk_text: str) -> Dict[str, Any]:
         """
         Extracts entities, triplets, and structured sections in a single LLM pass.
@@ -138,6 +169,9 @@ class UnifiedExtractor:
         repair_used = False
         retry_used = False
         
+        # Calculate adaptive max_tokens for generation
+        max_tokens = self._estimate_extraction_max_tokens(chunk_text)
+        
         for attempt in range(2):
             try:
                 llm_start_time = time.time()
@@ -145,7 +179,7 @@ class UnifiedExtractor:
                     prompt=prompt,
                     system_prompt=system_prompt,
                     temperature=0.0,
-                    max_tokens=4000
+                    max_tokens=max_tokens
                 )
                 response = response_dict["content"]
                 prompt_tokens = response_dict["prompt_tokens"]

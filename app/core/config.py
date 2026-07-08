@@ -283,6 +283,8 @@ class Settings(BaseSettings):
 
     use_llm_entity_extraction: bool = False  # Phase 3: Switch to LLM-based
 
+    enable_pdf_fallback: bool = True  # Enable/disable heavy LLM fallback/pdfplumber mechanisms when Gdocz fails/is not configured
+
     enable_billing: bool = False  # Billing system toggle (per-tenant cost tracking)
 
     reset_db_on_start: bool = False  # DANGEROUS: Only True in development for testing
@@ -321,7 +323,7 @@ class Settings(BaseSettings):
 
     similarity_brute_force_threshold: int = 500  # Use O(n) if chunks < this
 
-    similarity_min_threshold: float = 0.7  # Only link chunks with >70% similarity
+    similarity_min_threshold: float = 0.5  # Only link chunks with >50% similarity
 
     max_similar_per_chunk: int = 5  # Cap edges per chunk to keep graph clean
 

@@ -204,3 +204,6 @@ create_neo4j_indexes.py
 
 # Ignore large PDFs in fixtures
 tests/fixtures/benchmark_docs/*.pdf
+
+# Local Ingestion Optimization test
+tests/test_pdf_ingestion_optimization.py

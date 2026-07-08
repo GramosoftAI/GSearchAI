@@ -669,6 +669,29 @@ async def ingest_file(
         # Read file content
         content = await file.read()
         
+        # Calculate file hash
+        import hashlib
+        import uuid
+        file_hash = hashlib.sha256(content).hexdigest()
+
+        # Check database for duplicate hash
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select
+            from .models import KnowledgeBase
+            stmt = select(KnowledgeBase).where(
+                KnowledgeBase.tenant_id == uuid.UUID(tenant_id),
+                KnowledgeBase.file_hash == file_hash,
+                KnowledgeBase.is_active == True
+            )
+            res = await db.execute(stmt)
+            existing_kb = res.scalars().first()
+            if existing_kb:
+                logger.info(f"Duplicate file hash detected in ingest_file for tenant {tenant_id}: {file.filename} (Hash: {file_hash}). Rejecting upload.")
+                raise HTTPException(
+                    status_code=400,
+                    detail="File already uploaded. Duplicates are not allowed."
+                )
+
         # 1. Store in S3 and check for duplicates
         from ...core.s3 import S3StorageService
         s3_service = S3StorageService()
@@ -774,7 +797,14 @@ async def ingest_file(
 
                     raise HTTPException(status_code=status_code, detail=error_msg)
 
-
+                # Set file_hash on the KnowledgeBase
+                from sqlalchemy import update
+                await db.execute(
+                    update(KnowledgeBase)
+                    .where(KnowledgeBase.id == uuid.UUID(kb_id))
+                    .values(file_hash=file_hash)
+                )
+                await db.commit()
 
                 return result
 
@@ -815,7 +845,14 @@ async def ingest_file(
 
                     raise HTTPException(status_code=status_code, detail=error_msg)
 
-
+                # Set file_hash on the KnowledgeBase
+                from sqlalchemy import update
+                await db.execute(
+                    update(KnowledgeBase)
+                    .where(KnowledgeBase.id == uuid.UUID(kb_id))
+                    .values(file_hash=file_hash)
+                )
+                await db.commit()
 
                 return result
 

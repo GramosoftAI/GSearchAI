@@ -825,6 +825,10 @@ async def init_db():
 
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
 
+            # Run migration to add file_hash to knowledge_bases table if not present
+            await conn.execute(text("ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_kbs_file_hash ON knowledge_bases(file_hash)"))
+
             await conn.run_sync(Base.metadata.create_all)
 
         logger.info(

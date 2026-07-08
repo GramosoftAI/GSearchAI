@@ -35,36 +35,31 @@ class StructuredChunker:
         chunks = []
         
         # ---------------------------------------------------------
-        # 1. Generate Atomic Cell-Level Chunks
+        # 1. Generate Atomic Row-Level Chunks
         # ---------------------------------------------------------
         for rec in records:
             label_col = detect_label_column(rec)
             row_label = str(rec.values.get(label_col, "")).strip() or f"Row {rec.row_index}"
-            parent_prefix = f"{getattr(rec, 'parent_label', '')} > " if getattr(rec, "parent_label", None) else ""
             table_id = rec.group_name
             
+            lines = []
             for col_name, raw_value in rec.values.items():
-                if col_name == label_col:
-                    continue
-                    
                 cell_value = str(raw_value).strip()
                 if cell_value and cell_value.lower() not in ("none", "null", ""):
-                    # The highly explicit, domain-agnostic statement
-                    statement = f"- [{table_id}] {parent_prefix}{row_label}, {col_name}: {cell_value}"
+                    lines.append(f"{col_name}: {cell_value}")
                     
-                    metadata = {
-                        "document_type": rec.document_type,
-                        "source_file": rec.source_file,
-                        "table_id": table_id,
-                        "row_label": row_label,
-                        "parent_label": getattr(rec, "parent_label", None),
-                        "column_label": col_name,
-                        "raw_value": cell_value,
-                        "parsed_value": normalize_numeric(cell_value),
-                        "chunk_type": "atomic" # Distinguishes from consolidated chunks
-                    }
-                    
-                    chunks.append(StructuredChunk(text=statement, metadata=metadata))
+            if lines:
+                statement = f"[{table_id}]\n\n" + "\n".join(lines)
+                metadata = {
+                    "document_type": rec.document_type,
+                    "source_file": rec.source_file,
+                    "table_id": table_id,
+                    "row_label": row_label,
+                    "parent_label": getattr(rec, "parent_label", None),
+                    "raw_data": rec.values,
+                    "chunk_type": "atomic" # Distinguishes from consolidated chunks
+                }
+                chunks.append(StructuredChunk(text=statement, metadata=metadata))
 
         # ---------------------------------------------------------
         # 2. Generate Consolidated Table Chunks (Batched)

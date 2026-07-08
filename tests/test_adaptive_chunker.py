@@ -290,4 +290,39 @@ async def test_pdf_adaptive_chunking_resume(mock_emb_batch):
         assert "position" in c["metadata"]
 
 
+def test_structured_chunker():
+    from app.core.structured_chunker import StructuredChunker, StructuredRecord
+    
+    records = [
+        StructuredRecord(
+            document_type="spreadsheet",
+            source_file="employees.csv",
+            group_name="Sheet1",
+            row_index=2,
+            columns=["Employee ID", "First Name", "Job Title", "Salary"],
+            values={
+                "Employee ID": "EMP1004",
+                "First Name": "Joseph",
+                "Job Title": "Software Engineer",
+                "Salary": "63032"
+            }
+        )
+    ]
+    
+    chunks = StructuredChunker.chunk(records)
+    
+    # We expect 2 chunks: 1 atomic row-level chunk and 1 consolidated chunk
+    assert len(chunks) == 2
+    
+    atomic_chunk = next(c for c in chunks if c.metadata["chunk_type"] == "atomic")
+    assert atomic_chunk.metadata["table_id"] == "Sheet1"
+    assert atomic_chunk.metadata["row_label"] == "EMP1004"
+    assert "[Sheet1]" in atomic_chunk.text
+    assert "Employee ID: EMP1004" in atomic_chunk.text
+    assert "First Name: Joseph" in atomic_chunk.text
+    assert "Job Title: Software Engineer" in atomic_chunk.text
+    assert "Salary: 63032" in atomic_chunk.text
+
+
+
 

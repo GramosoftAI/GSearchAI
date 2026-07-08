@@ -488,6 +488,25 @@ class RAGPipeline:
         search_type = route_result.intent
         rewritten_data = route_result.rewritten or {}
         extracted_keywords = rewritten_data.get("keywords", [])
+        if extracted_keywords:
+            split_keywords = []
+            for kw in extracted_keywords:
+                for word in kw.split():
+                    cleaned = "".join(c for c in word if c.isalnum() or c in "-.")
+                    if cleaned:
+                        split_keywords.append(cleaned)
+            # Filter out domain-specific noise words (case-insensitive)
+            NOISY_WORDS = {
+                "apple", "aapl", "company", "corporation", "inc", "quarter", "quarters",
+                "period", "periods", "months", "ended", "report", "reports", "form",
+                "10-q", "10-k", "disclose", "disclosed", "disclosures", "financial",
+                "performance", "statement", "statements", "sheet", "sheets", "item", "items"
+            }
+            split_keywords = [
+                k for k in split_keywords
+                if k.lower() not in NOISY_WORDS
+            ]
+            extracted_keywords = list(dict.fromkeys(split_keywords))
         
         logger.info(f" Query Router selected strategy: {search_type.name} (Confidence: {route_result.confidence})")
         if extracted_keywords:
@@ -498,7 +517,7 @@ class RAGPipeline:
 
 
         # STAGE 0.5: EARLY EXIT FOR TABLE ANALYTICS
-        if search_type in [SearchType.TABLE_ANALYTICS, SearchType.DATA_ANALYSIS]:
+        if search_type == SearchType.TABLE_ANALYTICS:
             logger.info("   -> Intercepting query for SQL Table Analytics engine!")
             try:
                 table_results = await self._execute_table_analytics(query, kb_ids)
@@ -516,6 +535,8 @@ class RAGPipeline:
                     search_type = SearchType.CHUNK_SEARCH
             except Exception as e:
                 logger.error(f"   -> SQL Table Analytics failed: {e}. Falling back to vector search.", exc_info=True)
+                if self.db:
+                    await self.db.rollback()
                 search_type = SearchType.CHUNK_SEARCH
 
         # STAGE 0.6: HYBRID CONTEXT INJECTION (Extractive DB + Vector Search)
@@ -1135,6 +1156,20 @@ class RAGPipeline:
 
         logger.info(f" Scored {len(scored_chunks)} chunks")
 
+        # Retrieve and inject reconstructed tables matching query keywords
+        try:
+            table_chunks = await self._retrieve_reconstructed_tables(
+                keywords=extracted_keywords,
+                kb_ids=kb_ids
+            )
+            if table_chunks:
+                logger.info(f"   -> Injecting {len(table_chunks)} reconstructed tables into context.")
+                scored_chunks.extend(table_chunks)
+                # Sort scored_chunks again by hybrid_score descending
+                scored_chunks.sort(key=lambda x: x.hybrid_score, reverse=True)
+        except Exception as e:
+            logger.error(f"Failed to inject reconstructed tables: {e}", exc_info=True)
+
 
 
 
@@ -1299,9 +1334,17 @@ class RAGPipeline:
                 try:
                     from sqlalchemy import select
                     from app.modules.knowledge_bases.models import DocumentChunk, KnowledgeBase
+                    uuid_chunk_ids = []
+                    for cid in needed_chunk_ids:
+                        if not cid.startswith("table-"):
+                            try:
+                                uuid_chunk_ids.append(UUID(cid))
+                            except ValueError:
+                                pass
+                                
                     stmt = select(DocumentChunk, KnowledgeBase.parsed_path).outerjoin(
                         KnowledgeBase, DocumentChunk.kb_id == KnowledgeBase.id
-                    ).where(DocumentChunk.id.in_([UUID(cid) for cid in needed_chunk_ids]))
+                    ).where(DocumentChunk.id.in_(uuid_chunk_ids))
                     res = await self.db.execute(stmt)
                     
                     db_chunks = {}
@@ -1449,6 +1492,7 @@ class RAGPipeline:
         Retrieve top-k chunks by embedding similarity.
         Uses PostgreSQL pgvector if available, with a resilient fallback to Neo4j.
         """
+        candidate_limit = max(top_k * 3, 45)
         # Extract exact terms (numbers >= 4 digits, alphanumeric >= 5 chars) from query for hybrid search/boosting
         if exact_terms is None:
             exact_terms = []
@@ -1484,7 +1528,7 @@ class RAGPipeline:
                         )
                     )
                     .order_by(DocumentChunk.embedding.cosine_distance(query_embedding).asc())
-                    .limit(top_k)
+                    .limit(candidate_limit)
                 )
 
                 result = await self.db.execute(stmt)
@@ -1508,9 +1552,11 @@ class RAGPipeline:
                         weight = 1.0
                         boosted_similarity = similarity
                         if exact_terms:
-                            if any(term in chunk_text for term in exact_terms):
-                                boosted_similarity = max(similarity, 0.85)
-                                weight = 1.5
+                            STOPWORDS = {"how", "has", "had", "have", "from", "across", "the", "and", "for", "with", "this", "that", "what", "who", "whom", "which", "where", "when", "why", "been", "were", "was", "are", "their", "them", "they", "than", "then", "into", "onto", "your", "mine", "some", "more", "most", "each", "both", "either", "neither", "about", "above", "after", "again", "against", "all", "any", "are", "arent", "because", "before", "being", "below", "between", "but", "down", "during", "each", "few", "further", "here", "just", "more", "once", "only", "other", "our", "out", "over", "same", "should", "some", "such", "than", "then", "there", "these", "this", "those", "through", "under", "until", "very", "were", "what", "when", "where", "which", "while", "with", "you", "your", "yours", "yourself"}
+                            matching_terms = [t for t in exact_terms if t.lower() not in STOPWORDS]
+                            if matching_terms and any(term.lower() in chunk_text.lower() for term in matching_terms):
+                                boosted_similarity = similarity + 0.15
+                                weight = 1.2
 
                         pg_chunks.append({
                             "chunk_id": chunk_id,
@@ -1527,7 +1573,7 @@ class RAGPipeline:
                 if exact_terms:
                     conditions = []
                     for term in exact_terms:
-                        conditions.append(DocumentChunk.text.like(f"%{term}%"))
+                        conditions.append(DocumentChunk.text.ilike(f"%{term}%"))
                     
                     if conditions:
                         stmt_kw = (
@@ -1546,7 +1592,7 @@ class RAGPipeline:
                                     or_(*conditions)
                                 )
                             )
-                            .limit(top_k)
+                            .limit(candidate_limit)
                         )
                         
                         res_kw = await self.db.execute(stmt_kw)
@@ -1561,14 +1607,15 @@ class RAGPipeline:
                                 if row.metadata_json:
                                     row_id_attr = f' row_id="{row.metadata_json.get("row_id")}"' if row.metadata_json.get("row_id") else ""
                                     chunk_text += f"\n<ROW_DATA{row_id_attr}>\n{json.dumps(row.metadata_json, indent=2)}\n</ROW_DATA>"
+                                raw_sim = float(row.similarity) if row.similarity else 0.4
                                 pg_chunks.append({
                                     "chunk_id": chunk_id,
                                     "text": chunk_text,
                                     "position": row.chunk_index,
                                     "kb_id": str(row.kb_id),
                                     "embedding": None,
-                                    "similarity": max(float(row.similarity) if row.similarity else 0.5, 0.7),
-                                    "weight": 1.2,
+                                    "similarity": raw_sim + 0.05,
+                                    "weight": 1.05,
                                     "source": None
                                 })
                                 retrieved_ids.add(chunk_id)
@@ -1579,7 +1626,7 @@ class RAGPipeline:
                 logger.info(f" PostgreSQL pgvector/keyword retrieved {len(pg_chunks)} seed chunks")
                 if pg_chunks:
                     pg_chunks.sort(key=lambda x: x["similarity"], reverse=True)
-                    return pg_chunks[:top_k]
+                    return pg_chunks[:candidate_limit]
 
                 logger.warning(" No chunks met similarity threshold in PostgreSQL. Falling back to Neo4j...")
             except Exception as pg_err:
@@ -1623,9 +1670,11 @@ class RAGPipeline:
                 weight = result.get("weight", 1.0)
                 if exact_terms:
                     chunk_text = result["text"] or ""
-                    if any(term in chunk_text for term in exact_terms):
-                        similarity = max(similarity, 0.85)
-                        weight = 1.5
+                    STOPWORDS = {"how", "has", "had", "have", "from", "across", "the", "and", "for", "with", "this", "that", "what", "who", "whom", "which", "where", "when", "why", "been", "were", "was", "are", "their", "them", "they", "than", "then", "into", "onto", "your", "mine", "some", "more", "most", "each", "both", "either", "neither", "about", "above", "after", "again", "against", "all", "any", "are", "arent", "because", "before", "being", "below", "between", "but", "down", "during", "each", "few", "further", "here", "just", "more", "once", "only", "other", "our", "out", "over", "same", "should", "some", "such", "than", "then", "there", "these", "this", "those", "through", "under", "until", "very", "were", "what", "when", "where", "which", "while", "with", "you", "your", "yours", "yourself"}
+                    matching_terms = [t for t in exact_terms if t.lower() not in STOPWORDS]
+                    if matching_terms and any(term.lower() in chunk_text.lower() for term in matching_terms):
+                        similarity = similarity + 0.05
+                        weight = 1.15
 
                 chunks_with_similarity.append(
                     {
@@ -1653,7 +1702,7 @@ class RAGPipeline:
             else:
                 logger.warning(" No chunks found in Neo4j (with embeddings) for this Knowledge Base.")
 
-            return sorted_chunks[:top_k]
+            return sorted_chunks[:candidate_limit]
 
         except Exception as e:
             logger.error(f" Failed to retrieve seed chunks via Neo4j: {e}")
@@ -1829,7 +1878,8 @@ Return ONLY JSON, no markdown formatting.
             prompt=prompt,
             system_prompt="You are a Structured Query Planner. Return only JSON.",
             temperature=0.0,
-            max_tokens=4000
+            max_tokens=4000,
+            enable_thinking=False
         )
         
         import re
@@ -1990,6 +2040,22 @@ Return ONLY JSON, no markdown formatting.
                         row_dict[k] = float(v)
                         
                 formatted_rows.append(row_dict)
+            
+            # If all target/aggregation values are None, return None to trigger fallback
+            all_none = True
+            for r in formatted_rows:
+                meta_keys = {"kb_id", "page_number", "table_index", "row_index", "id", "tenant_id", "created_at"}
+                for k, v in r.items():
+                    if k in meta_keys:
+                        continue
+                    if v is not None and str(v).strip().lower() not in ["", "none", "null"]:
+                        all_none = False
+                        break
+                if not all_none:
+                    break
+            if all_none:
+                logger.warning("SQL execution returned only None or empty values. Falling back to vector search.")
+                return None
                     
             # Group rows by (kb_id, page_number, table_index)
             tables_map = {}
@@ -2078,6 +2144,8 @@ Return ONLY JSON, no markdown formatting.
             
         except Exception as e:
             logger.error(f" SQL Execution Failed: {e}")
+            if self.db:
+                await self.db.rollback()
             return None
 
     async def _expand_via_graph(
@@ -2394,11 +2462,166 @@ Return ONLY JSON, no markdown formatting.
 
         return expanded
 
-
-
-
-
-
+    async def _retrieve_reconstructed_tables(
+        self,
+        keywords: List[str],
+        kb_ids: List[str],
+    ) -> List[RetrievedChunk]:
+        """
+        Searches document_table_rows for rows matching the keywords,
+        groups them by (kb_id, page_number, table_index),
+        reconstructs the tables in Markdown, and returns them as RetrievedChunks.
+        """
+        if not keywords or not kb_ids:
+            return []
+            
+        import uuid
+        from collections import defaultdict
+        
+        # We also want to include synonyms or sub-words if keywords are phrases
+        search_keywords = []
+        for kw in keywords:
+            cleaned = kw.strip().lower()
+            if cleaned and cleaned not in search_keywords:
+                search_keywords.append(cleaned)
+        
+        if not search_keywords:
+            return []
+            
+        # Build query to find matching tables
+        like_clauses = " OR ".join([f"row_data::text ILIKE :kw_{i}" for i in range(len(search_keywords))])
+        params = {f"kw_{i}": f"%{kw}%" for i, kw in enumerate(search_keywords)}
+        
+        # Convert kb_ids to UUID objects for safe SQL execution
+        kb_uuids = []
+        for k in kb_ids:
+            try:
+                kb_uuids.append(uuid.UUID(k))
+            except:
+                pass
+        if not kb_uuids:
+            return []
+            
+        params["kb_ids"] = kb_uuids
+        
+        # Pre-rank: count keyword hits per (kb_id, page_number, table_index) to prioritise most-relevant tables
+        # Cap results at MAX_TABLES_PER_KB per source document and MAX_TOTAL_TABLES total
+        MAX_TABLES_PER_KB = 2
+        MAX_TOTAL_TABLES = 6
+        
+        # Count hits per table group for ranking (prioritizing unique keyword hits, then total keyword occurrences)
+        max_clauses = " + ".join(
+            [f"MAX(CASE WHEN row_data::text ILIKE :kw_{i} THEN 1 ELSE 0 END)" for i in range(len(search_keywords))]
+        )
+        sum_clauses = " + ".join(
+            [f"SUM(CASE WHEN row_data::text ILIKE :kw_{i} THEN 1 ELSE 0 END)" for i in range(len(search_keywords))]
+        )
+        rank_query_str = f"""
+            SELECT kb_id, page_number, table_index, 
+                   ({max_clauses}) AS unique_hits,
+                   ({sum_clauses}) AS total_hits
+            FROM document_table_rows 
+            WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) AND ({like_clauses})
+            GROUP BY kb_id, page_number, table_index
+            ORDER BY unique_hits DESC, total_hits DESC
+        """
+        
+        try:
+            from sqlalchemy import text
+            res = await self.db.execute(text(rank_query_str), params)
+            all_ranked_tables = res.fetchall()
+            if not all_ranked_tables:
+                return []
+            
+            # Limit per KB, cap total
+            tables_per_kb: dict = {}
+            matched_tables = []
+            min_hits_threshold = 2 if len(search_keywords) >= 3 else 1
+            for row in all_ranked_tables:
+                if row.unique_hits < min_hits_threshold:
+                    continue
+                kb_key = str(row.kb_id)
+                if tables_per_kb.get(kb_key, 0) < MAX_TABLES_PER_KB:
+                    matched_tables.append((row.kb_id, row.page_number, row.table_index, row.unique_hits))
+                    tables_per_kb[kb_key] = tables_per_kb.get(kb_key, 0) + 1
+                if len(matched_tables) >= MAX_TOTAL_TABLES:
+                    break
+                
+            logger.info(f"   -> Table search found {len(all_ranked_tables)} tables; injecting top {len(matched_tables)}.")
+            
+            chunks = []
+            for kb_id, page, table_idx, hit_count in matched_tables:
+                # Fetch ALL rows for this specific table to reconstruct it completely
+                stmt = text("""
+                    SELECT row_index, row_data 
+                    FROM document_table_rows 
+                    WHERE kb_id = :kb_id AND page_number = :page AND table_index = :table_idx
+                    ORDER BY row_index ASC
+                """)
+                table_res = await self.db.execute(stmt, {"kb_id": kb_id, "page": page, "table_idx": table_idx})
+                row_list = table_res.fetchall()
+                if not row_list:
+                    continue
+                    
+                # Determine all keys in order of appearance
+                all_keys = []
+                seen_keys = set()
+                for r_idx, r_data in row_list:
+                    if not r_data:
+                        continue
+                    for k in r_data.keys():
+                        if k not in seen_keys:
+                            seen_keys.add(k)
+                            all_keys.append(k)
+                
+                if not all_keys:
+                    continue
+                    
+                # Build markdown table
+                headers = [str(k) for k in all_keys]
+                md_lines = []
+                md_lines.append("| " + " | ".join(headers) + " |")
+                md_lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
+                
+                for r_idx, r_data in row_list:
+                    row_vals = [str(r_data.get(k, "")).replace("|", "\\|") for k in all_keys]
+                    md_lines.append("| " + " | ".join(row_vals) + " |")
+                    
+                table_md = "\n".join(md_lines)
+                
+                # Fetch knowledge base name for source attribution
+                stmt_kb = text("SELECT name FROM knowledge_bases WHERE id = :kb_id")
+                kb_res = await self.db.execute(stmt_kb, {"kb_id": kb_id})
+                kb_name = kb_res.scalar() or str(kb_id)
+                
+                source_str = f"{kb_name} Page {page}"
+                
+                # Use pre-computed hit_count for similarity score
+                sim_score = min(1.0, hit_count / max(len(search_keywords), 1))
+                
+                # Tiered scoring formula: High-match tables get a boost, low-match tables do not outrank semantic text chunks
+                if sim_score >= 0.5:
+                    tbl_hybrid_score = 1.2 + sim_score  # Prioritized table
+                else:
+                    tbl_hybrid_score = 0.4 + sim_score  # Low-match table, kept but not prioritized
+                
+                # Create a virtual RetrievedChunk with tiered hybrid score
+                chunks.append(RetrievedChunk(
+                    chunk_id=f"table-{kb_id}-{page}-{table_idx}",
+                    text=f"### Table from {source_str} (Page {page}, Table {table_idx}):\n\n{table_md}",
+                    kb_id=str(kb_id),
+                    position=0,
+                    embedding_similarity=sim_score,
+                    graph_score=1.0,
+                    hybrid_score=tbl_hybrid_score,
+                    reason="TABLE_RECONSTRUCTED",
+                    source=kb_name
+                ))
+                
+            return chunks
+        except Exception as e:
+            logger.error(f"Error in _retrieve_reconstructed_tables: {e}", exc_info=True)
+            return []
 
     async def _score_chunks(
 
@@ -2551,7 +2774,7 @@ Return ONLY JSON, no markdown formatting.
 
 
 
-            hybrid_score = min(1.0, base_hybrid * seed["weight"])
+            hybrid_score = base_hybrid * seed["weight"]
 
 
 
@@ -2671,7 +2894,7 @@ Return ONLY JSON, no markdown formatting.
 
 
 
-            hybrid_score = min(1.0, base_hybrid * meta.get("weight", 1.0))
+            hybrid_score = base_hybrid * meta.get("weight", 1.0)
 
 
 
@@ -2900,14 +3123,8 @@ Return ONLY JSON, no markdown formatting.
 
 
             else:
-
-
-
-                # Over budget, stop
-
-
-
-                break
+                # Over budget for this chunk, skip and try other ones
+                continue
 
 
 
@@ -3115,67 +3332,24 @@ Return ONLY JSON, no markdown formatting.
 
 
 
-                    # Heuristic: chunks with same reason are likely similar
-
-
-
-                    if chunk.reason == selected_chunk.reason:
-
-
-
-                        max_similarity_to_selected = max(
-
-
-
-                            max_similarity_to_selected, 0.9
-
-
-
-                        )  # High similarity
-
-
-
-                    # Heuristic: chunks with embedding sim difference
-
-
-
-                    elif (
-
-
-
-                        abs(
-
-
-
-                            chunk.embedding_similarity
-
-
-
-                            - selected_chunk.embedding_similarity
-
-
-
-                        )
-
-
-
-                        < 0.1
-
-
-
-                    ):
-
-
-
-                        max_similarity_to_selected = max(
-
-
-
-                            max_similarity_to_selected, 0.7
-
-
-
-                        )  # Moderate similarity
+                    # Heuristic: chunks from the same knowledge base (source document) are only redundant if they are close in position
+                    if chunk.kb_id and selected_chunk.kb_id and chunk.kb_id == selected_chunk.kb_id:
+                        pos_diff = abs(chunk.position - selected_chunk.position)
+                        if pos_diff < 3:
+                            max_similarity_to_selected = max(
+                                max_similarity_to_selected, 0.85
+                            )
+                        else:
+                            # Chunks from different parts of the same document are not redundant
+                            max_similarity_to_selected = max(
+                                max_similarity_to_selected, 0.3
+                            )
+                        
+                        # If they also have the same non-seed reason, add a bit more similarity
+                        if chunk.reason == selected_chunk.reason and chunk.reason != "Seed chunk (semantic similarity)":
+                            max_similarity_to_selected = max(
+                                max_similarity_to_selected, 0.5
+                            )
 
 
 
@@ -3184,17 +3358,8 @@ Return ONLY JSON, no markdown formatting.
 
 
                 # Apply diversity penalty
-
-
-
-                adjusted_score = (0.8 * adjusted_scores[i]) - (
-
-
-
-                    0.2 * max_similarity_to_selected
-
-
-
+                adjusted_score = (0.6 * adjusted_scores[i]) - (
+                    0.4 * max_similarity_to_selected
                 )
 
 
@@ -3243,11 +3408,11 @@ Return ONLY JSON, no markdown formatting.
 
 
 
-        result = [scored_chunks[i] for i in sorted(selected_indices)]
+        result = [scored_chunks[i] for i in selected_indices]
 
 
 
-        result.sort(key=lambda x: x.hybrid_score, reverse=True)
+        # Result is already in MMR selection order
 
 
 

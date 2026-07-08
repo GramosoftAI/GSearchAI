@@ -986,7 +986,6 @@ from fastapi import BackgroundTasks
 async def instant_ingest_pdf(
     request: Request,
     agent_id: str,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
 ) -> dict:
 
@@ -1028,6 +1027,29 @@ async def instant_ingest_pdf(
 
         content = await file.read()
 
+        # Calculate file hash
+        import hashlib
+        import uuid
+        file_hash = hashlib.sha256(content).hexdigest()
+
+        # Check database for duplicate hash
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select
+            from app.modules.knowledge_bases.models import KnowledgeBase
+            stmt = select(KnowledgeBase).where(
+                KnowledgeBase.tenant_id == uuid.UUID(tenant_id),
+                KnowledgeBase.file_hash == file_hash,
+                KnowledgeBase.is_active == True
+            )
+            res = await db.execute(stmt)
+            existing_kb = res.scalars().first()
+            if existing_kb:
+                logger.info(f"Duplicate file hash detected in instant_ingest_pdf for tenant {tenant_id}: {filename} (Hash: {file_hash}). Rejecting upload.")
+                raise HTTPException(
+                    status_code=400,
+                    detail="File already uploaded. Duplicates are not allowed."
+                )
+
         # ----------------------------------------------------
         # S3 STORAGE & DUPLICATE PREVENTION
         # ----------------------------------------------------
@@ -1067,15 +1089,18 @@ async def instant_ingest_pdf(
                 
             job_id = str(job_result["data"]["job"].id)
             
-        # 3. Add task to background
-        background_tasks.add_task(
-            run_pdf_ingestion_job,
-            tenant_id=str(tenant_id),
-            user_id=str(user_id),
-            agent_id=str(agent_id),
-            job_id=job_id,
-            filename=filename,
-            content=content
+        # 3. Launch ingestion as an independent async task (not via background_tasks
+        # which runs AFTER the response and can block the event loop for other requests)
+        import asyncio
+        asyncio.create_task(
+            run_pdf_ingestion_job(
+                tenant_id=str(tenant_id),
+                user_id=str(user_id),
+                agent_id=str(agent_id),
+                job_id=job_id,
+                filename=filename,
+                content=content
+            )
         )
 
         return {

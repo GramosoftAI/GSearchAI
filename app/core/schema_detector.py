@@ -60,6 +60,7 @@ class SchemaDetector:
                 system_prompt="You are an ontology extraction engine. Return only valid JSON.",
                 temperature=0.1,
                 max_tokens=1024,
+                enable_thinking=False,
             )
             
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)

@@ -84,6 +84,8 @@ class KnowledgeBaseRepository(BaseRepository):
 
         dataset_schema: Optional[dict] = None,
 
+        file_hash: Optional[str] = None,
+
     ) -> KnowledgeBase:
 
         """
@@ -116,6 +118,8 @@ class KnowledgeBaseRepository(BaseRepository):
 
             s3_path: Optional S3 URL/path
 
+            file_hash: Optional SHA-256 hash of the uploaded document
+
 
 
         Returns:
@@ -146,6 +150,7 @@ class KnowledgeBaseRepository(BaseRepository):
 
             s3_path=s3_path,
             dataset_schema=dataset_schema,
+            file_hash=file_hash,
         )
 
 
