@@ -887,13 +887,13 @@ Return ONLY a pure JSON response in the following format (do not include any com
                                 "properties": rel_props
                             })
 
-                    # Detach and delete the duplicate node
-                    delete_query = """
-                    MATCH (dup)
-                    WHERE elementId(dup) = $duplicate_id AND dup.tenant_id = $tenant_id
-                    DETACH DELETE dup
+                    # Non-destructive merging: keep the duplicate node and add an ALIAS_OF relationship
+                    alias_query = """
+                    MATCH (dup), (can)
+                    WHERE elementId(dup) = $duplicate_id AND elementId(can) = $canonical_id AND dup.tenant_id = $tenant_id AND can.tenant_id = $tenant_id
+                    CREATE (dup)-[:ALIAS_OF]->(can)
                     """
-                    await tx.run(delete_query, {"duplicate_id": duplicate_id, "tenant_id": self.tenant_id})
+                    await tx.run(alias_query, {"duplicate_id": duplicate_id, "canonical_id": canonical_id, "tenant_id": self.tenant_id})
 
                     # Update canonical properties and labels (executed after delete to avoid unique constraint violations)
                     all_labels = set(canonical_node.get("_labels", [])) | set(duplicate_node.get("_labels", []))
@@ -1015,6 +1015,9 @@ Return ONLY a pure JSON response in the following format (do not include any com
             score = self.calculate_similarity(n1, n2)
             if score >= self.auto_merge_threshold:
                 auto_merges_to_apply.append((n1, n2, score, "auto", None))
+            elif score >= 85.0:
+                logger.info(f"PENDING MANUAL REVIEW (Two-threshold policy): Candidate pair {n1.get('display_name')} and {n2.get('display_name')} scored {score:.1f}")
+                # Route the borderline band to manual review queue; skip LLM
             else:
                 name_sim = self._levenshtein_similarity(n1.get("normalized_name", ""), n2.get("normalized_name", ""))
                 emb_sim = self._calculate_embedding_similarity(n1, n2)

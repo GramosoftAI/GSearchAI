@@ -103,7 +103,7 @@ class QueryRouter:
         }
         self.llm_client = DeepInfraLLMClient()
 
-    async def route_query(self, query: str) -> RouteResult:
+    async def route_query(self, query: str, tenant_id: Optional[str] = None) -> RouteResult:
         """
         Routes the query using a professional hybrid approach.
         """
@@ -165,6 +165,25 @@ class QueryRouter:
                     requested_entities=requested_entities,
                     requested_groups=[group_matched]
                 )
+
+        # --- STAGE -0.5: IDENTIFIER MATCHING (Dynamic Graph-Backed) ---
+        if tenant_id:
+            try:
+                from app.modules.rag.identifier_resolver import IdentifierResolver
+                resolver = IdentifierResolver(tenant_id)
+                resolved_id = await resolver.resolve_identifier(query)
+                if resolved_id:
+                    logger.info(f" Router Stage -0.5: Dynamic Identifier Match -> {resolved_id}")
+                    return RouteResult(
+                        intent=SearchType.EXTRACTIVE, 
+                        confidence=1.0, 
+                        reason=f"Structured Identifier match: {resolved_id}", 
+                        rewritten={"rewritten_query": query},
+                        requested_entities=[resolved_id],
+                        requested_groups=[]
+                    )
+            except Exception as e:
+                logger.error(f"Identifier Resolver failed: {e}")
 
         # --- STAGE 0: QUERY REWRITING ---
         rewritten = await self.rewrite_query(query)

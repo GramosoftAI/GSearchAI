@@ -8,6 +8,8 @@ from .entity_extraction import Entity, EntityExtractor
 from .triplet_extractor import ExtractedTriplet, TripletExtractor
 from .pdf_extractor import PDFExtractor
 from .llm.deepinfra_llm import DeepInfraLLMClient
+from json_repair import repair_json
+from .schema_config import ALLOWED_SCHEMA_MATRIX
 
 logger = logging.getLogger(__name__)
 
@@ -53,24 +55,14 @@ TEXT: {text}
 def fix_busted_json(json_str: str) -> str:
     """
     Tier 2: Lightweight repair for common LLM JSON mistakes.
-    
-    Supported:
-    ✓ trailing commas
-    ✓ markdown code fences
-    ✓ extra text before/after JSON
-    ✓ missing final brace/bracket
-
-    Unsupported (Will trigger Tier 3 Retry / Tier 4 Fallback):
-    ✗ deeply malformed structures
-    ✗ duplicated keys
-    ✗ semantic corruption
+    Uses json_repair for deterministic parsing.
     """
-    s = json_str.strip()
-    s = s.replace("```json", "")
-    s = s.replace("```", "")
-    
-    start = s.find("{")
-    end = s.rfind("}")
+    try:
+        repaired = repair_json(json_str, return_objects=False)
+        return str(repaired)
+    except Exception as e:
+        logger.error(f"json_repair failed: {e}")
+        return json_str
     
     if start >= 0 and end > start:
         s = s[start:end+1]
@@ -199,18 +191,36 @@ class UnifiedExtractor:
                         ))
                         
                 # Parse Triplets
+                def normalize_text(t: str) -> str:
+                    return re.sub(r'\s+', '', t.lower()) if t else ""
+                    
                 for tri in data.get("triplets", []):
                     if tri.get("subject") and tri.get("predicate") and tri.get("object"):
+                        subject_type = str(tri.get("subject_type", "CONCEPT")).strip().upper()
+                        predicate = str(tri["predicate"]).strip().upper().replace(" ", "_")
+                        object_type = str(tri.get("object_type", "CONCEPT")).strip().upper()
+                        
+                        # Schema verification (Gap 2)
+                        if (subject_type, predicate, object_type) not in ALLOWED_SCHEMA_MATRIX:
+                            logger.warning(f"Hallucination caught: Schema violation {(subject_type, predicate, object_type)}")
+                            continue
+                            
                         t = ExtractedTriplet(
                             subject=str(tri["subject"]).strip().lower(),
-                            predicate=str(tri["predicate"]).strip().upper().replace(" ", "_"),
+                            predicate=predicate,
                             object=str(tri["object"]).strip().lower(),
-                            subject_type=str(tri.get("subject_type", "CONCEPT")).strip().upper(),
-                            object_type=str(tri.get("object_type", "CONCEPT")).strip().upper(),
+                            subject_type=subject_type,
+                            object_type=object_type,
                             confidence=float(tri.get("confidence", 1.0)),
                             evidence=tri.get("evidence")
                         )
-                        result["triplets"].append(t)
+                        
+                        # Evidence verification (Gap 1)
+                        evidence = tri.get("evidence", "").strip()
+                        if evidence and normalize_text(evidence) in normalize_text(chunk_text):
+                            result["triplets"].append(t)
+                        else:
+                            logger.warning(f"Hallucination caught: Triplet evidence not in source. Triplet: {t}")
                         
                 # Parse Structured Identifiers (Deterministic Validation)
                 for ident in data.get("identifiers", []):
@@ -219,17 +229,21 @@ class UnifiedExtractor:
                     source_span = str(ident.get("source_span", cand))
                     
                     # Deterministic validator: Reject hallucinated IDs
-                    if cand and raw_type and source_span in chunk_text and cand in source_span:
-                        canonical_type = str(raw_type).strip().upper().replace(' ', '_')
-                        idx = chunk_text.find(cand)
-                        result["structured"]["identifiers"].append({
-                            "type": canonical_type,
-                            "value": chunk_text[idx:idx+len(cand)],
-                            "start_offset": idx,
-                            "end_offset": idx+len(cand),
-                            "source_text": source_span,
-                            "confidence": float(ident.get("confidence", 1.0))
-                        })
+                    if cand and raw_type and source_span in chunk_text:
+                        pattern = r"(?<![A-Za-z0-9])" + re.escape(cand) + r"(?![A-Za-z0-9])"
+                        if re.search(pattern, source_span):
+                            canonical_type = str(raw_type).strip().upper().replace(' ', '_')
+                            idx = chunk_text.find(cand)
+                            result["structured"]["identifiers"].append({
+                                "type": canonical_type,
+                                "value": chunk_text[idx:idx+len(cand)],
+                                "start_offset": idx,
+                                "end_offset": idx+len(cand),
+                                "source_text": source_span,
+                                "confidence": float(ident.get("confidence", 1.0))
+                            })
+                        else:
+                            logger.warning(f"Hallucination caught: Identifier boundary match failed for {cand}")
                             
                 # Parse Structured Sections
                 for sec in data.get("sections", []):

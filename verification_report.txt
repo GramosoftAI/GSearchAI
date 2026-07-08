@@ -1,0 +1,6 @@
+Manual Verification Report
+==========================
+Total Questions: 13
+Passed Verification: 2
+Failed Verification: 11
+Success Rate: 15.38%

@@ -66,6 +66,11 @@ class EntityExtractor:
         "CONCEPT": [
             r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\s+(?:Model|Algorithm|Framework|Theory|Architecture|System|Protocol|Engine|Service)\b", # Specific concepts
         ],
+        "STRUCTURED_IDENTIFIER": [
+            r"\b(?:Control|Requirement|Article|Clause|Section|ISO)\s*[\-\:]?\s*[A-Z]?\d+[\.\-]\d+\b",
+            r"\bRFC\s*\d+\s+(?:Section|Clause)\s+[\d\.]+\b",
+            r"\b[A-Z]?\d+[\.\-]\d+\b",
+        ],
     }
 
     # Stop words to filter (common words that shouldn't be entities)
@@ -107,6 +112,29 @@ class EntityExtractor:
         "with",
         "from",
     }
+
+    @classmethod
+    def _normalize_identifier(cls, text: str) -> str:
+        """
+        Normalize generic identifiers.
+        E.g., "ISO 8-11" -> "8.11", "RFC 9110 Section 8.2" -> "RFC9110:8.2"
+        """
+        text = text.strip()
+        
+        # 1. RFC 9110 Section 8.2 -> RFC9110:8.2
+        rfc_match = re.search(r'(RFC\s*\d+)\s+(?:Section|Clause)\s+([\d\.]+)', text, re.IGNORECASE)
+        if rfc_match:
+            return f"{rfc_match.group(1).replace(' ', '')}:{rfc_match.group(2)}"
+            
+        # 2. ISO / Control / Requirement / Article / Clause prefix removal
+        prefix_pattern = r'^(?:Control|Requirement|Article|Clause|Section|ISO)\s*[\-\:]?\s*'
+        text = re.sub(prefix_pattern, '', text, flags=re.IGNORECASE)
+        
+        # 3. Replace dashes with dots if it's purely numbers
+        if re.match(r'^[A-Z]?\d+[\-\.]\d+$', text, re.IGNORECASE):
+            text = text.replace('-', '.')
+            
+        return text.lower().strip()
 
     @classmethod
     async def extract_entities(
@@ -193,7 +221,10 @@ class EntityExtractor:
 
                         # NORMALIZATION: Prevent "Guido", "guido", "GUIDO" as separate entities
                         # Store original for display, use normalized for deduplication
-                        normalized_text = entity_text.lower().strip()
+                        if entity_type == "STRUCTURED_IDENTIFIER":
+                            normalized_text = cls._normalize_identifier(entity_text)
+                        else:
+                            normalized_text = entity_text.lower().strip()
 
                         # Create entity with confidence
                         # Longer matches typically higher confidence
@@ -305,7 +336,10 @@ class EntityExtractor:
         seen_texts = set()
 
         for entity in entities:
-            normalized = entity.text.lower().strip()
+            if entity.entity_type == "STRUCTURED_IDENTIFIER":
+                normalized = cls._normalize_identifier(entity.text)
+            else:
+                normalized = entity.text.lower().strip()
 
             # Check if we've seen this exact text
             if normalized in seen_texts:

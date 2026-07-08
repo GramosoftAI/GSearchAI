@@ -1,4 +1,4 @@
-﻿ag-ui-protocol==0.1.18
+ag-ui-protocol==0.1.18
 aiofile==3.9.0
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.5
@@ -236,3 +236,4 @@ zipp==3.23.1
 arq==0.25.0
 redis==5.0.1
 beautifulsoup4==4.12.3
+json-repair==0.30.0

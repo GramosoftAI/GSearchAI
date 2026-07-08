@@ -96,17 +96,21 @@ class SemanticChunker:
     """
     @staticmethod
     async def chunk(text: str, max_chunk_size: int = 2500, threshold: float = 0.75) -> List[str]:
-        # 1. Split into paragraphs
-        paragraphs = [p.strip() for p in re.split(r'\n\n+', text) if p.strip()]
+        from app.core.structural_parser import RegionDetector, RegionType
         
-        # If we have only 1 paragraph and it is larger than max_chunk_size, we need to split it by single newlines
-        if len(paragraphs) <= 1 and len(text) > max_chunk_size:
-            paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
-            
-        # If still only 1 (or any paragraph is larger than max_chunk_size), split further by sentences/characters
+        # 1. Parse into semantic regions
+        regions = RegionDetector.detect_regions(text)
+        
         final_paragraphs = []
-        for p in paragraphs:
-            if len(p) > max_chunk_size:
+        for region in regions:
+            p = region["content"]
+            if region["type"] == RegionType.TABLE:
+                if len(p) > max_chunk_size:
+                    table_chunks = TableChunker.chunk(p, max_chunk_size)
+                    final_paragraphs.extend(table_chunks)
+                else:
+                    final_paragraphs.append(p)
+            elif len(p) > max_chunk_size:
                 sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', p) if s.strip()]
                 for s in sentences:
                     if len(s) > max_chunk_size:
