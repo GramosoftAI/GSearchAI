@@ -1446,6 +1446,12 @@ If you'd like, I can also:
 
         answer = llm_response.answer
 
+        from app.modules.rag.orchestrator.validator import NumericValidator
+        validator = NumericValidator()
+        if not validator.validate(answer, context):
+            logger.warning("NumericValidator failed! Appending hallucination warning.")
+            answer += "\n\n> [!WARNING]\n> Some numbers in this response could not be strictly verified against the retrieved context. Please double check the source documents."
+
         logger.info(
 
             f" Answer generated ({len(answer) // 4} words, {llm_response.total_tokens} tokens, ${llm_response.cost_estimate:.6f})"

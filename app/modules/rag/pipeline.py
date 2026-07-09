@@ -483,7 +483,45 @@ class RAGPipeline:
 
 
 
-        # STEP 0: ROUTE QUERY TO OPTIMAL SEARCH STRATEGY
+        # STEP 0: ROUTE QUERY TO OPTIMAL SEARCH STRATEGY (USING NEW ADAPTIVE PLANNER)
+        from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer
+        from app.modules.rag.orchestrator.planner import AdaptivePlanner
+        from app.modules.rag.orchestrator.aggregator import EvidenceAggregator
+        
+        analyzer = QueryAnalyzer()
+        analysis = await analyzer.analyze_query(query)
+        
+        planner = AdaptivePlanner()
+        plan = planner.create_plan(analysis, query)
+        
+        all_chunks = []
+        for task in plan.tasks:
+            if task.engine_name == "table":
+                from app.modules.rag.engines.table_engine import TableEngine
+                engine = TableEngine(self.tenant_id, self.neo4j_repo)
+                chunks = await engine.retrieve(task, kb_ids)
+                all_chunks.extend(chunks)
+            elif task.engine_name == "financial":
+                from app.modules.rag.engines.financial_engine import FinancialEngine
+                engine = FinancialEngine(self.tenant_id, self.neo4j_repo)
+                chunks = await engine.retrieve(task, kb_ids)
+                all_chunks.extend(chunks)
+                
+        if all_chunks:
+            aggregator = EvidenceAggregator()
+            final_chunks = aggregator.aggregate(all_chunks, plan.aggregator_strategy, query)
+            if final_chunks:
+                logger.info("Adaptive Orchestrator successfully retrieved and aggregated chunks. Returning early.")
+                return RAGContext(
+                    query=query,
+                    chunks=final_chunks,
+                    entity_mentions={},
+                    total_tokens=sum(len(c.text.split()) for c in final_chunks),
+                    triplet_context="",
+                    search_type=analysis.intent.name
+                )
+        
+        # Fallback to standard router
         route_result = await self.router.route_query(query, tenant_id=str(self.tenant_id))
         search_type = route_result.intent
         rewritten_data = route_result.rewritten or {}
