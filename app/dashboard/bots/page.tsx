@@ -172,13 +172,24 @@ export default function BotsPage() {
   const [checkingKb, setCheckingKb] = useState(false);
   const [noKbModalOpen, setNoKbModalOpen] = useState(false);
 
-  useEffect(() => {
-  if (res2?.data?.personalities) {
-    form.setFieldsValue({
-      personality_id: "615c862a-08fd-4c76-a4fd-9714b2711934"
-    });
-  }
-}, [res2]);
+  const getAgentPersonality = (agentName: string) => {
+    const fullAgent = agentresp?.find((x: any) => x.name === agentName);
+    if (!fullAgent) return "Professional";
+    if (fullAgent.personality) return fullAgent.personality;
+    if (fullAgent.personality_id && res2?.data?.personalities) {
+      const found = res2.data.personalities.find((p: any) => p.id === fullAgent.personality_id);
+      if (found) return found.name;
+    }
+    return "Professional";
+  };
+
+//   useEffect(() => {
+//   if (res2?.data?.personalities) {
+//     form.setFieldsValue({
+//       personality: "Formal"
+//     });
+//   }
+// }, [res2]);
 
   const handleAgentClick = async (agent: any) => {
     setCheckingKb(true);
@@ -238,13 +249,15 @@ export default function BotsPage() {
     if (!agents) return [];
     return agents.filter((agent: any) =>
       agent.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      agent.description?.toLowerCase().includes(searchQuery.toLowerCase())
+      agent.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      agent.personality?.toLowerCase().includes(searchQuery.toLowerCase())
     );
   }, [agents, searchQuery]);
 
   const handleCreate = async (values: any) => {
+    console.log(values)
     await createAgent({ data: {
-      personality: res2?.data?.personalities?.find((x: any) => x.id === values.personality_id)?.name,
+      personality_id: res2?.data?.personalities?.find((x: any) => x.name === values.personality)?.id,
       ...values }});
     await getAgents(undefined, (payload) => {
       const agentsList = payload?.data?.agents ?? [];
@@ -295,7 +308,7 @@ export default function BotsPage() {
     setSelectedAgent(fullAgent);
     manageForm.setFieldsValue({
       name: fullAgent.name || "",
-      personality_id: fullAgent.personality_id || "Concise",
+      personality: getAgentPersonality(fullAgent.name) || "Concise",
       system_prompt: fullAgent.system_prompt || ""
     });
     setIsManageModalOpen(true);
@@ -303,12 +316,16 @@ export default function BotsPage() {
 
   const openDetailsModal = (agent: any) => {
     console.log("Selected Agent:", agent.id);
-    const fullAgent = agentresp.find(
+    const fullAgent = agentresp?.find(
       (x: any) => x.id === agent.id
-    );
+    ) || agent;
 
     console.log(fullAgent);
-    setSelectedAgent(fullAgent);
+    const resolvedPersonality = getAgentPersonality(fullAgent.name);
+    setSelectedAgent({
+      ...fullAgent,
+      personality: resolvedPersonality
+    });
     setIsDetailsModalOpen(true);
   };
 
@@ -338,7 +355,7 @@ export default function BotsPage() {
         centered
         styles={{ body: { borderRadius: 32, padding: 32, background: 'var(--app-surface)' } }}
       >
-        <Form form={form} layout="vertical" onFinish={handleCreate} className="mt-6" initialValues={{ personality: "Concise", system_prompt: SYSTEM_PROMPT }}>
+        <Form form={form} layout="vertical" onFinish={handleCreate} className="mt-6" initialValues={{ personality: "Formal", system_prompt: SYSTEM_PROMPT }}>
           <Form.Item
             name="name"
             label={<Text className="font-black text-[10px] uppercase tracking-widest text-[var(--app-text-soft)]">Agent Name</Text>}
@@ -356,14 +373,14 @@ export default function BotsPage() {
           </Form.Item>
 
           <Form.Item
-            name="personality_id"
+            name="personality"
             label={<Text className="font-black text-[10px] uppercase tracking-widest text-[var(--app-text-soft)]">Personality Type</Text>}
           >
             <Select
             
              className="h-14 custom-select" placeholder="Select personality"
               options={res2?.data?.personalities}
-              fieldNames={{ label: "name", value: "id" }}
+              fieldNames={{ label: "name", value: "name" }}
             />
           </Form.Item>
 
@@ -544,14 +561,14 @@ export default function BotsPage() {
           </Form.Item>
 
           <Form.Item
-            name="personality_id"
+            name="personality"
             label={<Text className="font-black text-[10px] uppercase tracking-widest text-[var(--app-text-soft)]">Agent Personality</Text>}
           >
             <Select
              
             className="h-14 custom-select" placeholder="Select personality"
               options={res2?.data?.personalities}
-              fieldNames={{ label: "name", value: "id" }}
+              fieldNames={{ label: "name", value: "name" }}
             />
           </Form.Item>
 
@@ -652,16 +669,24 @@ export default function BotsPage() {
           {/* Cards Grid Architecture */}
           <Row gutter={[32, 32]}>
             {/* MODIFIED: Renders dynamically filtered list instead of absolute base agents */}
-            {filteredAgents.map((agent, i) => (
-              <Col key={i} xs={24} sm={24} md={24} lg={12} xl={8}>
-                <AgentCard
-                  agent={agent}
-                  onManage={openManageModal}
-                  onSettings={openDetailsModal}
-                  onClick={() => handleAgentClick(agent)}
-                />
-              </Col>
-            ))}
+            {filteredAgents.map((agent, i) => {
+              const fullAgent = agentresp?.find((x: any) => x.id === agent.id) || agent;
+              const resolvedPersonality = getAgentPersonality(agent.name);
+              const agentWithPersonality = {
+                ...fullAgent,
+                personality: resolvedPersonality
+              };
+              return (
+                <Col key={i} xs={24} sm={24} md={24} lg={12} xl={8}>
+                  <AgentCard
+                    agent={agentWithPersonality}
+                    onManage={openManageModal}
+                    onSettings={openDetailsModal}
+                    onClick={() => handleAgentClick(agent)}
+                  />
+                </Col>
+              );
+            })}
 
             {/* New Agent Skeleton Card */}
             <Col xs={24} sm={24} md={24} lg={12} xl={8}>
