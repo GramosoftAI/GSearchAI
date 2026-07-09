@@ -19,10 +19,29 @@ export default function Navbar() {
   const router = useRouter();
   const stars = useGithubStars();
 
+  const handleScroll = (e: React.MouseEvent, href: string) => {
+    if (href.startsWith("#")) {
+      e.preventDefault();
+      const targetId = href.substring(1);
+      if (targetId) {
+        const element = document.getElementById(targetId);
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth" });
+        }
+      } else {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    }
+  };
+
   return (
     <nav className="gs-nav">
       <div className="wrap gs-nav-inner">
-        <a href="#" className="gs-brand">
+        <a
+          href="#"
+          className="gs-brand"
+          onClick={(e) => handleScroll(e, "#")}
+        >
           <BrandGlyph />
           GsearchAI
         </a>
@@ -30,7 +49,11 @@ export default function Navbar() {
         {/* Desktop nav links — hidden via CSS on mobile */}
         <div className="gs-nav-links">
           {navLinks.map((link) => (
-            <a key={link.label} href={link.href}>
+            <a
+              key={link.label}
+              href={link.href}
+              onClick={(e) => handleScroll(e, link.href)}
+            >
               {link.label}
             </a>
           ))}
@@ -104,7 +127,10 @@ export default function Navbar() {
             <a
               key={link.label}
               href={link.href}
-              onClick={() => setOpen(false)}
+              onClick={(e) => {
+                handleScroll(e, link.href);
+                setOpen(false);
+              }}
               style={{ fontSize: 16, fontWeight: 600, color: "var(--body)" }}
             >
               {link.label}
@@ -143,7 +169,10 @@ export default function Navbar() {
           <Button
             type="primary"
             href="#cta"
-            onClick={() => setOpen(false)}
+            onClick={(e) => {
+              handleScroll(e, "#cta");
+              setOpen(false);
+            }}
             style={{ background: "var(--teal)", borderColor: "var(--teal)", fontWeight: 700, borderRadius: 11 }}
           >
             Book a demo

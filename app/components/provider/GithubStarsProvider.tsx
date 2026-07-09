@@ -9,7 +9,7 @@ export const GithubStarsProvider = ({ children }: { children: React.ReactNode })
 
   useEffect(() => {
     const fetchStars = () => {
-      fetch("https://api.github.com/repos/GramosoftAI/GRAGAI")
+      fetch("https://api.github.com/repos/GramosoftAI/GSearchAI")
         .then((res) => res.json())
         .then((data) => {
           if (data && typeof data.stargazers_count === "number") {

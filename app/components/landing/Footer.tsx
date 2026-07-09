@@ -45,13 +45,32 @@ const footerColumns = [
 ];
 
 export default function Footer() {
+  const handleScroll = (e: React.MouseEvent, href: string) => {
+    if (href.startsWith("#")) {
+      e.preventDefault();
+      const targetId = href.substring(1);
+      if (targetId) {
+        const element = document.getElementById(targetId);
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth" });
+        }
+      } else {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    }
+  };
+
   return (
   <footer className="gs-footer">
     <div className="wrap">
       <Row gutter={[36, 36]}>
         <Col xs={24} md={6} style={{ flex: "0 0 calc(100%/5*1.5)" }}>
           <div className="gs-foot-brand">
-            <a href="#" className="gs-brand">
+            <a
+              href="#"
+              className="gs-brand"
+              onClick={(e) => handleScroll(e, "#")}
+            >
               <BrandGlyph />
               Gsearch
             </a>
@@ -70,6 +89,7 @@ export default function Footer() {
               <Link
                 key={link.label}
                 href={link.href}
+                onClick={(e) => handleScroll(e, link.href)}
                 style={{ display: "block", fontSize: 14.5, color: "var(--body)", marginBottom: 11, fontWeight: 500 }}
               >
                 {link.label}
