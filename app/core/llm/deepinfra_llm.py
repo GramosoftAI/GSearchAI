@@ -226,7 +226,7 @@ class DeepInfraLLMClient:
 
         self.timeout = settings.ingestion_llm_timeout  # Request timeout from config
 
-        self.max_retries = 3  # Number of retry attempts
+        self.max_retries = 2  # Number of retry attempts
 
         self.max_tokens = 4000  # Max output tokens (GUARD: prevent very long responses)
 
@@ -394,6 +394,8 @@ class DeepInfraLLMClient:
 
         
 
+        enable_thinking = settings.enable_thinking
+
         payload = {
 
             "model": self.model,
@@ -420,11 +422,11 @@ class DeepInfraLLMClient:
 
         
 
-        # Retry logic (3 attempts with backoff)
+        # Retry logic (2 attempts with 1s backoff)
 
         last_error = None
 
-        for attempt in range(3):
+        for attempt in range(self.max_retries):
 
             try:
 
@@ -447,17 +449,17 @@ class DeepInfraLLMClient:
 
                 last_error = e
 
-                logger.warning(f"generate() attempt {attempt+1}/3 failed: {e}")
+                logger.warning(f"generate() attempt {attempt+1}/{self.max_retries} failed: {e}")
 
-                if attempt < 2:
+                if attempt < self.max_retries - 1:
 
                     import asyncio
 
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(1.0)
 
         
 
-        logger.error(f"generate() all 3 attempts failed. Last error: {last_error}")
+        logger.error(f"generate() all {self.max_retries} attempts failed. Last error: {last_error}")
 
         raise last_error
 
@@ -477,6 +479,8 @@ class DeepInfraLLMClient:
             "Content-Type": "application/json",
         }
         
+        enable_thinking = settings.enable_thinking
+        
         payload = {
             "model": self.model,
             "messages": [
@@ -491,7 +495,7 @@ class DeepInfraLLMClient:
             payload["reasoning_effort"] = "none"
         
         last_error = None
-        for attempt in range(3):
+        for attempt in range(self.max_retries):
             try:
                 client = await self.get_client()
                 async with _llm_semaphore:
@@ -510,12 +514,12 @@ class DeepInfraLLMClient:
                 }
             except Exception as e:
                 last_error = e
-                logger.warning(f"generate_with_usage() attempt {attempt+1}/3 failed: {e}")
-                if attempt < 2:
+                logger.warning(f"generate_with_usage() attempt {attempt+1}/{self.max_retries} failed: {e}")
+                if attempt < self.max_retries - 1:
                     import asyncio
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(1.0)
         
-        logger.error(f"generate_with_usage() all 3 attempts failed. Last error: {last_error}")
+        logger.error(f"generate_with_usage() all {self.max_retries} attempts failed. Last error: {last_error}")
         raise last_error
 
 
@@ -637,13 +641,13 @@ class DeepInfraLLMClient:
 
         }
 
-        if enable_thinking is not None:
+        enable_thinking = settings.enable_thinking
 
-            payload["enable_thinking"] = enable_thinking
+        payload["enable_thinking"] = enable_thinking
 
-            if enable_thinking is False:
+        if enable_thinking is False:
 
-                payload["reasoning_effort"] = "none"
+            payload["reasoning_effort"] = "none"
 
         
 
@@ -1004,13 +1008,13 @@ class DeepInfraLLMClient:
 
         }
 
-        if enable_thinking is not None:
+        enable_thinking = settings.enable_thinking
 
-            payload["enable_thinking"] = enable_thinking
+        payload["enable_thinking"] = enable_thinking
 
-            if enable_thinking is False:
+        if enable_thinking is False:
 
-                payload["reasoning_effort"] = "none"
+            payload["reasoning_effort"] = "none"
 
 
 

@@ -777,7 +777,7 @@ async def ingest_file(
             async with AsyncSessionLocal() as db:
 
                 service = KnowledgeBaseService(db, tenant_id)
-
+                await service.clear_kb_contents(kb_id)
                 s3_url = s3_service.get_s3_url(str(tenant_id), file.filename)
 
                 result = await service.ingest_document(
@@ -819,7 +819,7 @@ async def ingest_file(
             async with AsyncSessionLocal() as db:
 
                 service = KnowledgeBaseService(db, tenant_id)
-
+                await service.clear_kb_contents(kb_id)
                 s3_url = s3_service.get_s3_url(str(tenant_id), file.filename)
 
                 result = await service.ingest_excel_or_csv(

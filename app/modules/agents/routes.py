@@ -1034,8 +1034,16 @@ async def instant_ingest_pdf(
 
         # Check database for duplicate hash
         async with AsyncSessionLocal() as db:
-            from sqlalchemy import select
+            from sqlalchemy import select, or_
             from app.modules.knowledge_bases.models import KnowledgeBase
+            from ...core.s3 import S3StorageService
+            
+            s3_service = S3StorageService()
+            s3_url = s3_service.get_s3_url(str(tenant_id), filename)
+            is_spreadsheet = filename.lower().endswith(('.csv', '.xls', '.xlsx'))
+            kb_name = f"Spreadsheet: {filename}" if is_spreadsheet else f"PDF: {filename}"
+
+            # 1. Check for exact duplicate content first
             stmt = select(KnowledgeBase).where(
                 KnowledgeBase.tenant_id == uuid.UUID(tenant_id),
                 KnowledgeBase.file_hash == file_hash,
@@ -1049,6 +1057,23 @@ async def instant_ingest_pdf(
                     status_code=400,
                     detail="File already uploaded. Duplicates are not allowed."
                 )
+
+            # 2. Check for same filename/s3_url but different hash (modified content)
+            stmt_modified = select(KnowledgeBase).where(
+                KnowledgeBase.tenant_id == uuid.UUID(tenant_id),
+                KnowledgeBase.is_active == True,
+                or_(
+                    KnowledgeBase.s3_path == s3_url,
+                    KnowledgeBase.name == kb_name
+                )
+            )
+            res_modified = await db.execute(stmt_modified)
+            existing_kb_modified = res_modified.scalars().first()
+            if existing_kb_modified:
+                logger.info(f"Modified file upload detected for {filename}. Deleting old KB {existing_kb_modified.id} before re-ingestion.")
+                from app.modules.knowledge_bases.service import KnowledgeBaseService
+                kb_service = KnowledgeBaseService(db, tenant_id)
+                await kb_service.delete_kb(str(existing_kb_modified.id), user_id=user_id)
 
         # ----------------------------------------------------
         # S3 STORAGE & DUPLICATE PREVENTION

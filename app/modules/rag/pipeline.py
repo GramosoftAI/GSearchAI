@@ -196,6 +196,12 @@ class RAGContext:
 
 
 
+import time
+
+# Module-level TTL cache for KB noisy words
+_KB_NOISY_WORDS_CACHE = {}  # kb_id -> {"data": noisy_words_list, "expiry": timestamp}
+KB_NOISY_WORDS_CACHE_TTL = 300  # 5 minutes
+
 class RAGPipeline:
 
 
@@ -495,18 +501,100 @@ class RAGPipeline:
                     cleaned = "".join(c for c in word if c.isalnum() or c in "-.")
                     if cleaned:
                         split_keywords.append(cleaned)
-            # Filter out domain-specific noise words (case-insensitive)
-            NOISY_WORDS = {
-                "apple", "aapl", "company", "corporation", "inc", "quarter", "quarters",
-                "period", "periods", "months", "ended", "report", "reports", "form",
-                "10-q", "10-k", "disclose", "disclosed", "disclosures", "financial",
-                "performance", "statement", "statements", "sheet", "sheets", "item", "items"
-            }
-            split_keywords = [
-                k for k in split_keywords
-                if k.lower() not in NOISY_WORDS
+            # Fetch dynamic noisy words from database (with caching)
+            noisy_words_scores = {}
+            now_time = time.time()
+            kbs_to_fetch = []
+            
+            for kbid in kb_ids:
+                if kbid in _KB_NOISY_WORDS_CACHE:
+                    cached = _KB_NOISY_WORDS_CACHE[kbid]
+                    if now_time < cached["expiry"]:
+                        for word_data in cached["data"]:
+                            word = word_data["word"]
+                            score = word_data["score"]
+                            noisy_words_scores[word] = max(noisy_words_scores.get(word, 0.0), score)
+                        continue
+                kbs_to_fetch.append(kbid)
+                
+            if kbs_to_fetch and self.db:
+                try:
+                    from sqlalchemy import select
+                    from app.modules.knowledge_bases.models import KnowledgeBase
+                    
+                    stmt = select(KnowledgeBase.id, KnowledgeBase.noisy_words).where(
+                        KnowledgeBase.id.in_(kbs_to_fetch),
+                        KnowledgeBase.tenant_id == self.tenant_id
+                    )
+                    res = await self.db.execute(stmt)
+                    rows = res.fetchall()
+                    
+                    for kb_id_val, noisy_words_val in rows:
+                        kb_id_str = str(kb_id_val)
+                        words_list = noisy_words_val or []
+                        _KB_NOISY_WORDS_CACHE[kb_id_str] = {
+                            "data": words_list,
+                            "expiry": now_time + KB_NOISY_WORDS_CACHE_TTL
+                        }
+                        for word_data in words_list:
+                            word = word_data["word"]
+                            score = word_data["score"]
+                            noisy_words_scores[word] = max(noisy_words_scores.get(word, 0.0), score)
+                except Exception as db_err:
+                    logger.error(f"Error fetching noisy words for KBs {kbs_to_fetch}: {db_err}")
+            
+            # Fail-safe static fallback if no dynamic noisy words are computed/available yet
+            if not noisy_words_scores:
+                noisy_words_scores = {
+                    "report": 0.99, "reports": 0.99,
+                    "financial": 0.98,
+                    "company": 0.97, "corporation": 0.97, "inc": 0.97,
+                    "statement": 0.91, "statements": 0.91,
+                    "sheet": 0.91, "sheets": 0.91,
+                    "annual": 0.83,
+                    "quarter": 0.80, "quarters": 0.80,
+                    "period": 0.75, "periods": 0.75,
+                    "months": 0.70,
+                    "ended": 0.65,
+                    "form": 0.60,
+                    "10-q": 0.55, "10-k": 0.55,
+                    "disclose": 0.50, "disclosed": 0.50, "disclosures": 0.50,
+                    "performance": 0.45,
+                    "item": 0.40, "items": 0.40,
+                    "apple": 0.30, "aapl": 0.30
+                }
+
+            # 1. ENTITY PROTECTION: Extract all entities from the route result to protect them
+            entities_to_protect = set()
+            for entity in (rewritten_data.get("entities", []) + getattr(route_result, "requested_entities", [])):
+                for part in str(entity).split():
+                    cleaned_part = "".join(c for c in part if c.isalnum() or c in "-.").lower()
+                    if cleaned_part:
+                        entities_to_protect.add(cleaned_part)
+
+            # 2. NOISY WORD CANDIDATE DETECTION & SCORES COLLECTION
+            noisy_candidates = []
+            for idx, k in enumerate(split_keywords):
+                k_lower = k.lower()
+                # Keyword is a noise candidate ONLY if it exists in score map and is NOT protected as an entity
+                if k_lower in noisy_words_scores and k_lower not in entities_to_protect:
+                    noisy_candidates.append((idx, k_lower, noisy_words_scores[k_lower]))
+
+            # 3. TOP-3 NOISY-WORD REMOVAL: Rank candidates by noise score and remove top 3
+            # Sort by score in descending order (highest noise first)
+            noisy_candidates.sort(key=lambda x: x[2], reverse=True)
+            to_remove_indices = {candidate[0] for candidate in noisy_candidates[:3]}
+
+            filtered_keywords = [
+                k for idx, k in enumerate(split_keywords)
+                if idx not in to_remove_indices
             ]
-            extracted_keywords = list(dict.fromkeys(split_keywords))
+
+            # 4. FAIL-SAFE FALLBACK: If the list is empty after filtering, restore original keywords
+            if not filtered_keywords:
+                filtered_keywords = split_keywords
+
+            extracted_keywords = list(dict.fromkeys(filtered_keywords))
         
         logger.info(f" Query Router selected strategy: {search_type.name} (Confidence: {route_result.confidence})")
         if extracted_keywords:

@@ -723,15 +723,18 @@ class KnowledgeBaseService:
                     logger.warning(f"Unified extraction failed for chunk {idx}: {e}")
                     return {"entities": [], "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"failed_completely": True, "chunk_idx": idx}}
 
-            logger.info(f" Processing Unified Extractions for {len(chunks)} chunks (concurrency=5)...")
+            extract_batch_size = min(
+                len(chunks),
+                settings.ingestion_llm_concurrency
+            )
+            logger.info(f" Processing Unified Extractions for {len(chunks)} chunks (concurrency={settings.ingestion_llm_concurrency}, batch_size={extract_batch_size})...")
             
-            # Process chunks in small batches of 5 to:
+            # Process chunks in batches based on configured concurrency to:
             # 1. Avoid overwhelming the LLM API with too many concurrent requests
             # 2. Yield control back to the event loop between batches so the server
             #    stays responsive to health checks and frontend polling requests
             t_extract_start = _time.time()
             unified_results = []
-            extract_batch_size = 5  # Small batches to keep server responsive
             for i in range(0, len(chunks), extract_batch_size):
                 batch_chunks = chunks[i:i+extract_batch_size]
                 batch_tasks = [safe_extract_unified(f"idx_{i+j}", batch_chunks[j], i+j) for j in range(len(batch_chunks))]
@@ -1169,6 +1172,10 @@ class KnowledgeBaseService:
 
             await self.db.commit()
 
+            # Trigger background dynamic noisy words extraction
+            from .tasks import generate_kb_noisy_words
+            asyncio.create_task(generate_kb_noisy_words(kb_id, str(self.tenant_id)))
+
             
 
             return format_success({
@@ -1553,6 +1560,43 @@ class KnowledgeBaseService:
             )
 
         return format_success(meta={"message": "KB deleted successfully"})
+
+
+
+    async def clear_kb_contents(self, kb_id: str) -> None:
+        """
+        Purge all chunks, embeddings, table rows, sections, and entities from PostgreSQL
+        and Neo4j for a given KB to prepare it for fresh ingestion.
+        """
+        from sqlalchemy import delete
+        from .models import DocumentChunk, DocumentTableRow, DocumentEntity, DocumentSection, DocumentIngestionRun
+        import uuid
+        
+        kb_uuid = uuid.UUID(kb_id)
+        
+        await self.db.execute(delete(DocumentChunk).where(DocumentChunk.kb_id == kb_uuid, DocumentChunk.tenant_id == self.tenant_id))
+        await self.db.execute(delete(DocumentTableRow).where(DocumentTableRow.kb_id == kb_uuid, DocumentTableRow.tenant_id == self.tenant_id))
+        await self.db.execute(delete(DocumentEntity).where(DocumentEntity.document_id == kb_uuid, DocumentEntity.tenant_id == self.tenant_id))
+        await self.db.execute(delete(DocumentSection).where(DocumentSection.document_id == kb_uuid, DocumentSection.tenant_id == self.tenant_id))
+        await self.db.execute(delete(DocumentIngestionRun).where(DocumentIngestionRun.document_id == kb_uuid, DocumentIngestionRun.tenant_id == self.tenant_id))
+        
+        # Detach and delete Chunk nodes from Neo4j
+        purge_query = """
+        MATCH (kb:KnowledgeBase {id: $kb_id, tenant_id: $tenant_id})-[:HAS_CHUNK]->(c:Chunk)
+        DETACH DELETE c
+        """
+        await retry_neo4j_operation(
+            lambda: self.neo4j_repo.execute_write(purge_query, {"kb_id": kb_id, "tenant_id": str(self.tenant_id)})
+        )
+        
+        # Reset total chunks counter
+        kb = await self.repository.get_by_id(kb_id)
+        if kb:
+            kb.total_chunks = 0
+            
+        await self.db.flush()
+
+
 
     async def disconnect_agent_integration(self, agent_id: str, integration_type: str, user_id: Optional[str] = None) -> dict:
         """

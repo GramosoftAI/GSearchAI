@@ -313,7 +313,8 @@ class Settings(BaseSettings):
 
     # ============= LLM OPTIMIZATIONS =============
     ingestion_llm_concurrency: int = 30  # Max parallel LLM extractions
-    ingestion_llm_timeout: float = 60.0  # Extended timeout for complex extractions
+    ingestion_llm_timeout: float = 120.0  # Extended timeout for complex extractions
+    enable_thinking: bool = False  # Enable/disable thinking/reasoning mode in LLM calls
 
     
 
@@ -326,6 +327,8 @@ class Settings(BaseSettings):
     similarity_min_threshold: float = 0.5  # Only link chunks with >50% similarity
 
     max_similar_per_chunk: int = 5  # Cap edges per chunk to keep graph clean
+
+    noisy_words_min_score_threshold: float = 0.3
 
 
 
