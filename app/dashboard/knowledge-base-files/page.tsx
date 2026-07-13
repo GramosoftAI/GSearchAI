@@ -17,6 +17,7 @@ import {
   Flex,
   Input,
   Segmented,
+  Tag,
 } from "antd";
 import { Eye, Search } from "lucide-react";
 import dayjs from "dayjs";
@@ -29,6 +30,161 @@ import { getCookie } from "../../config/cookies";
 
 const { Title, Text } = Typography;
 const { Option } = Select;
+
+// Helper to parse Python Dict strings (copied from knowledge-base/page.tsx)
+function parsePythonDict(str: string): any {
+  let i = 0;
+  const len = str.length;
+
+  function skipWhitespace() {
+    while (i < len && /\s/.test(str[i])) {
+      i++;
+    }
+  }
+
+  function parseValue(): any {
+    skipWhitespace();
+    if (i >= len) return null;
+
+    const char = str[i];
+
+    // Parse String
+    if (char === "'" || char === '"') {
+      const quoteChar = char;
+      i++; // skip quote
+      let val = "";
+      while (i < len) {
+        if (str[i] === "\\") {
+          i++;
+          if (i < len) {
+            const nextChar = str[i];
+            if (nextChar === "n") val += "\n";
+            else if (nextChar === "t") val += "\t";
+            else if (nextChar === "r") val += "\r";
+            else if (nextChar === "b") val += "\b";
+            else if (nextChar === "f") val += "\f";
+            else val += nextChar;
+            i++;
+          }
+        } else if (str[i] === quoteChar) {
+          i++; // skip close quote
+          return val;
+        } else {
+          val += str[i];
+          i++;
+        }
+      }
+      return val;
+    }
+
+    // Parse Object / Dict
+    if (char === "{") {
+      i++; // skip '{'
+      const obj: any = {};
+      while (i < len) {
+        skipWhitespace();
+        if (str[i] === "}") {
+          i++;
+          return obj;
+        }
+        const key = parseValue();
+        skipWhitespace();
+        if (str[i] !== ":") {
+          return obj;
+        }
+        i++; // skip ':'
+        const val = parseValue();
+        obj[key] = val;
+        skipWhitespace();
+        if (str[i] === ",") {
+          i++; // skip ','
+        }
+      }
+      return obj;
+    }
+
+    // Parse List
+    if (char === "[") {
+      i++; // skip '['
+      const arr: any[] = [];
+      while (i < len) {
+        skipWhitespace();
+        if (str[i] === "]") {
+          i++;
+          return arr;
+        }
+        const val = parseValue();
+        arr.push(val);
+        skipWhitespace();
+        if (str[i] === ",") {
+          i++; // skip ','
+        }
+      }
+      return arr;
+    }
+
+    // Parse True, False, None, or numbers
+    let word = "";
+    while (i < len && /[a-zA-Z0-9_\.\+-]/.test(str[i])) {
+      word += str[i];
+      i++;
+    }
+
+    if (word === "True") return true;
+    if (word === "False") return false;
+    if (word === "None") return null;
+
+    const num = Number(word);
+    if (!isNaN(num)) return num;
+
+    return word;
+  }
+
+  try {
+    return parseValue();
+  } catch (e) {
+    console.error("Failed to parse Python dict:", e);
+    return null;
+  }
+}
+
+// Helper to clean extracted text formatting (copied from knowledge-base/page.tsx)
+function cleanExtractedText(raw: string): string {
+  if (!raw) return "";
+
+  let processed = raw.trim();
+
+  if (processed.startsWith("{") && processed.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(processed);
+      if (parsed) {
+        processed = parsed.markdown || parsed.text || parsed.content || processed;
+      }
+    } catch (jsonErr) {
+      try {
+        const parsed = parsePythonDict(processed);
+        if (parsed) {
+          processed = parsed.markdown || parsed.text || parsed.content || processed;
+        }
+      } catch (pyErr) {
+        console.error("Failed to parse as Python dict:", pyErr);
+      }
+    }
+  }
+
+  if (typeof processed !== "string") {
+    processed = String(processed);
+  }
+
+  processed = processed
+    .replace(/\\n/g, "\n")
+    .replace(/\\t/g, "\t")
+    .replace(/\\r/g, "\r")
+    .replace(/\\'/g, "'")
+    .replace(/\\"/g, '"');
+
+  return processed;
+}
 
 export default function KnowledgeBaseFilesPage() {
   const { userId } = useStore();
@@ -64,11 +220,7 @@ export default function KnowledgeBaseFilesPage() {
   });
 
   const fetchKbs = useCallback(async () => {
-    console.log("fetchKbs triggered. activeUserId:", activeUserId);
-    if (!activeUserId) {
-      console.warn("fetchKbs skipped: activeUserId is null or empty.");
-      return;
-    }
+    if (!activeUserId) return;
 
     let path = `/${activeUserId}?limit=${limit}&offset=${offset}`;
 
@@ -181,18 +333,31 @@ export default function KnowledgeBaseFilesPage() {
         }
       }
 
-      // 2. Fetch Parsed Content text representation
+      // 2. Fetch Parsed Content text representation (with direct fetch fallback)
       if (item.parsed_path && item.id) {
         const fetchUrl = `${API_BASE_URL}/files/${item.id}/content`;
-        const res = await fetch(fetchUrl, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const rawText = data?.content || data?.text || (typeof data === "string" ? data : "");
-          setParsedText(rawText);
+        try {
+          const res = await fetch(fetchUrl, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const rawText = data?.content || data?.text || (typeof data === "string" ? data : "");
+            const cleanedText = cleanExtractedText(rawText);
+            setParsedText(cleanedText);
+          } else {
+            throw new Error("Backend file content endpoint failed");
+          }
+        } catch (err) {
+          console.warn("API parsed content failed. Trying direct parsed_path load:", err);
+          const directRes = await fetch(item.parsed_path);
+          if (directRes.ok) {
+            const rawText = await directRes.text();
+            const cleanedText = cleanExtractedText(rawText);
+            setParsedText(cleanedText);
+          }
         }
       }
     } catch (err) {
@@ -212,6 +377,14 @@ export default function KnowledgeBaseFilesPage() {
     setParsedText("");
     setPreviewItem(null);
   };
+
+  // Perform client-side filter on top of server data as fallback search
+  const filteredKbs = kbs.filter((kb) => {
+    const q = searchQuery.toLowerCase();
+    if (!q) return true;
+    const nameStr = (kb.name || kb.source || "").toLowerCase();
+    return nameStr.includes(q);
+  });
 
   const columns = [
     {
@@ -233,6 +406,42 @@ export default function KnowledgeBaseFilesPage() {
             {agent ? agent.name : agentId || "N/A"}
           </Text>
         );
+      },
+    },
+    {
+      title: "Status",
+      key: "status",
+      render: (_: any, record: any) => {
+        const job = record?.processing_jobs;
+        if (!job) {
+          return <Tag color="default">Ready</Tag>;
+        }
+
+        const status = job.status ? job.status.toLowerCase() : "";
+        if (status === "completed") {
+          return <Tag color="success">Completed</Tag>;
+        } else if (status === "failed" || status === "error") {
+          return (
+            <Tooltip title={job.error_message || "Processing failed"}>
+              <Tag color="error">Failed</Tag>
+            </Tooltip>
+          );
+        } else if (status === "processing" || status === "pending" || (job.progress < 100 && job.progress !== null)) {
+          return (
+            <Space direction="vertical" size={2} className="w-full">
+              <Tag color="processing" className="m-0">
+                Extracting ({job.progress ?? 0}%)
+              </Tag>
+              {job.current_step && (
+                <Text type="secondary" style={{ fontSize: "10px" }} className="block truncate max-w-[120px]">
+                  {job.current_step}
+                </Text>
+              )}
+            </Space>
+          );
+        }
+
+        return <Tag color="processing">{job.status || "Processing"}</Tag>;
       },
     },
     {
@@ -377,7 +586,7 @@ export default function KnowledgeBaseFilesPage() {
         <Card className="bg-[var(--app-surface)] border-[var(--app-border)] shadow-sm rounded-2xl overflow-hidden">
           <Table
             columns={columns}
-            dataSource={kbs}
+            dataSource={filteredKbs}
             rowKey="id"
             loading={loading}
             pagination={paginationConfig}
