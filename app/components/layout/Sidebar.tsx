@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { IconType } from "react-icons";
 import { FiMessageSquare } from "react-icons/fi";
-import { FaRobot, FaDatabase, FaChartBar, FaPlug, FaBrain } from "react-icons/fa";
+import { FaRobot, FaDatabase, FaChartBar, FaPlug, FaBrain, FaFileAlt } from "react-icons/fa";
 import { SlSettings } from "react-icons/sl";
 import { GoGraph } from "react-icons/go";
 import { useTheme } from "../provider/ThemeProvider";
@@ -22,6 +22,7 @@ type MenuItem = {
 export const menuItems: MenuItem[] = [
   { label: "Bots", icon: FaRobot, path: "/dashboard/bots" },
   { label: "Knowledge Base", icon: FaDatabase, path: "/dashboard/knowledge-base" },
+  { label: "Knowledge Files", icon: FaFileAlt, path: "/dashboard/knowledge-base-files" },
   { label: "Graph View", icon: GoGraph, path: "/dashboard/graph" },
   { label: "Conversations", icon: FiMessageSquare, path: "/dashboard/conversation" },
   { label: "Analytics", icon: FaChartBar, path: "/dashboard/analytics" },

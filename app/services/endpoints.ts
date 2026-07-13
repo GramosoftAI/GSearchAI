@@ -77,6 +77,10 @@ export const endpoints = {
     url: "/knowledge-bases",
     method: methods.post
   },
+  GET_USER_KBS: {
+    url: "/knowledge-bases/users",
+    method: methods.get
+  },
   DISCONNECT: {
     url: "/knowledge-bases/agent/",
     method: methods.delete
