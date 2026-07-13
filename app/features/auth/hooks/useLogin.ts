@@ -30,7 +30,10 @@ export function useLogin() {
           console.log("user data:", user);
           const userId = user?.id;
 
-          if (userId) setUserId(userId);
+          if (userId) {
+            setUserId(userId);
+            localStorage.setItem("userId", userId);
+          }
 
           if (user) {
             localStorage.setItem("userName", `${user.first_name} ${user.last_name}`);

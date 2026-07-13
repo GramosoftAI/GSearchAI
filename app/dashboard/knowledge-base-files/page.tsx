@@ -64,7 +64,11 @@ export default function KnowledgeBaseFilesPage() {
   });
 
   const fetchKbs = useCallback(async () => {
-    if (!activeUserId) return;
+    console.log("fetchKbs triggered. activeUserId:", activeUserId);
+    if (!activeUserId) {
+      console.warn("fetchKbs skipped: activeUserId is null or empty.");
+      return;
+    }
 
     let path = `/${activeUserId}?limit=${limit}&offset=${offset}`;
 
@@ -78,8 +82,11 @@ export default function KnowledgeBaseFilesPage() {
       path += `&search=${encodeURIComponent(searchQuery)}`;
     }
 
+    console.log("Requesting GET_USER_KBS with path:", path);
+
     try {
       await request({ path }, (res) => {
+        console.log("GET_USER_KBS response received:", res);
         const kbsList = res?.data?.kbs ?? [];
         const totalCount = res?.data?.total ?? 0;
         setKbs(kbsList);
