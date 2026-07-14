@@ -786,6 +786,49 @@ export default function KnowledgeBaseFilesPage() {
           margin-bottom: 0.5em;
           color: var(--app-text-muted);
         }
+
+        /* Markdown Table Styling */
+        .prose table {
+          min-width: 100%;
+          width: max-content;
+          max-width: 100%;
+          border-collapse: collapse;
+          margin: 1.5em 0;
+          font-size: 0.9em;
+          color: var(--app-text);
+          background-color: var(--app-surface) !important;
+          border: 1px solid var(--app-border) !important;
+          border-radius: 8px;
+          overflow: hidden;
+        }
+        .prose th {
+          background-color: var(--app-surface-muted) !important;
+          color: var(--app-text) !important;
+          font-weight: 700;
+          text-transform: uppercase;
+          font-size: 0.8rem;
+          letter-spacing: 0.05em;
+          padding: 10px 14px;
+          border-bottom: 2px solid var(--app-border) !important;
+          border-right: 1px solid var(--app-border) !important;
+          text-align: left;
+        }
+        .prose td {
+          padding: 10px 14px;
+          border-bottom: 1px solid var(--app-border) !important;
+          border-right: 1px solid var(--app-border) !important;
+          color: var(--app-text-soft) !important;
+          vertical-align: top;
+        }
+        .prose th:last-child, .prose td:last-child {
+          border-right: none !important;
+        }
+        .prose tr:last-child td {
+          border-bottom: none !important;
+        }
+        .prose tr:hover td {
+          background-color: var(--app-hover) !important;
+        }
       `}</style>
     </div>
   );
