@@ -1492,6 +1492,31 @@ class KnowledgeBaseService:
         enriched = await self._enrich_kbs_with_connections(kbs)
         return format_success({"kbs": enriched, "total": total})
 
+    async def list_kbs_by_user(
+        self,
+        user_id: str,
+        date: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        try:
+            kbs, total = await self.repository.list_by_user(
+                user_id=user_id,
+                date=date,
+                agent_id=agent_id,
+                limit=limit,
+                offset=offset,
+            )
+            enriched = await self._enrich_kbs_with_connections(kbs)
+            return format_success({"kbs": enriched, "total": total})
+        except ValueError as val_err:
+            return format_error(str(val_err), meta={"status_code": 400})
+        except Exception as e:
+            logger.error(f"Error listing KBs by user: {e}")
+            return format_error(f"Failed to list KBs by user: {str(e)}")
+
+
 
 
     async def delete_kb(self, kb_id: str, user_id: Optional[str] = None) -> dict:

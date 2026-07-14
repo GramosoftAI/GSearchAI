@@ -1240,19 +1240,32 @@ async def instant_ingest_text(
 
 
             # 4. Ingest
-
-            ingest_result = await kb_service.ingest_document(kb_id, document_text)
+            try:
+                ingest_result = await kb_service.ingest_document(kb_id, document_text)
+                if not ingest_result.get("success"):
+                    try:
+                        logger.info(f"Instant Ingest Text failed. Cleaning up KnowledgeBase {kb_id}.")
+                        await kb_service.delete_kb(kb_id, user_id=user_id)
+                    except Exception as cleanup_err:
+                        logger.error(f"Failed to clean up KnowledgeBase {kb_id} after text ingestion failure: {cleanup_err}")
+                    error_msg = ingest_result.get("error", "Unknown error")
+                    status_code = ingest_result.get("status_code", 400)
+                    raise HTTPException(status_code=status_code, detail=error_msg)
+            except Exception as ingest_err:
+                if isinstance(ingest_err, HTTPException):
+                    raise
+                try:
+                    logger.info(f"Instant Ingest Text encountered error. Cleaning up KnowledgeBase {kb_id}.")
+                    await kb_service.delete_kb(kb_id, user_id=user_id)
+                except Exception as cleanup_err:
+                    logger.error(f"Failed to clean up KnowledgeBase {kb_id} after text ingestion error: {cleanup_err}")
+                raise ingest_err
 
             # Add agent name to response
-
             agent_name = agent_result["data"]["agent"]["name"]
-
             ingest_result["data"]["agent_name"] = agent_name
-
             ingest_result["meta"]["message"] = f"Text knowledge stored to agent: {agent_name}"
-
             
-
             return ingest_result
 
 
@@ -1422,23 +1435,32 @@ async def instant_ingest_url(
 
 
             # 4. Ingest
-
-            # 4. Ingest
-
-            ingest_result = await kb_service.ingest_document(kb_id, document_text)
-
-            
+            try:
+                ingest_result = await kb_service.ingest_document(kb_id, document_text)
+                if not ingest_result.get("success"):
+                    try:
+                        logger.info(f"Instant Ingest URL failed. Cleaning up KnowledgeBase {kb_id}.")
+                        await kb_service.delete_kb(kb_id, user_id=user_id)
+                    except Exception as cleanup_err:
+                        logger.error(f"Failed to clean up KnowledgeBase {kb_id} after URL ingestion failure: {cleanup_err}")
+                    error_msg = ingest_result.get("error", "Unknown error")
+                    status_code = ingest_result.get("status_code", 400)
+                    raise HTTPException(status_code=status_code, detail=error_msg)
+            except Exception as ingest_err:
+                if isinstance(ingest_err, HTTPException):
+                    raise
+                try:
+                    logger.info(f"Instant Ingest URL encountered error. Cleaning up KnowledgeBase {kb_id}.")
+                    await kb_service.delete_kb(kb_id, user_id=user_id)
+                except Exception as cleanup_err:
+                    logger.error(f"Failed to clean up KnowledgeBase {kb_id} after URL ingestion error: {cleanup_err}")
+                raise ingest_err
 
             # Add agent name to response
-
             agent_name = agent_result["data"]["agent"]["name"]
-
             ingest_result["data"]["agent_name"] = agent_name
-
             ingest_result["meta"]["message"] = f"Web content from {url_data.url} stored to agent: {agent_name}"
-
             
-
             return ingest_result
 
 

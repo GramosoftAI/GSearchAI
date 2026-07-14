@@ -499,6 +499,54 @@ async def list_agent_kbs(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@router.get(
+    "/users/{user_id}",
+    response_model=dict,
+    summary="List Knowledge Bases for User",
+    description="List all knowledge bases uploaded by a specific user with optional date and agent filters",
+)
+async def list_user_kbs(
+    request: Request,
+    user_id: str,
+    date: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    try:
+        tenant_id, _ = get_tenant_and_user(request)
+
+        # Validate pagination
+        if limit < 1 or limit > 1000:
+            limit = 50
+        if offset < 0:
+            offset = 0
+
+        async with AsyncSessionLocal() as db:
+            service = KnowledgeBaseService(db, tenant_id)
+            result = await service.list_kbs_by_user(
+                user_id=user_id,
+                date=date,
+                agent_id=agent_id,
+                limit=limit,
+                offset=offset,
+            )
+
+            if not result.get("success"):
+                error_msg = result.get("error", "Unknown error")
+                status_code = result.get("status_code", 400)
+                raise HTTPException(status_code=status_code, detail=error_msg)
+
+            return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"List user KBs endpoint error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+
 
 
 

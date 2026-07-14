@@ -59,6 +59,7 @@ async def run_pdf_ingestion_job(
     Background task for extracting and ingesting a PDF.
     Updates the ProcessingJob table with progress.
     """
+    kb_id = None
     try:
         # Calculate file hash
         import hashlib
@@ -259,6 +260,11 @@ async def run_pdf_ingestion_job(
             if not ingest_result.get("success"):
                 error_msg = ingest_result.get("error", "Unknown ingestion error")
                 await job_service.update_job_progress(job_id, status="failed", progress=80, current_step="Generating Embeddings", error_message=error_msg)
+                try:
+                    logger.info(f"Job {job_id}: Ingestion failed. Cleaning up KnowledgeBase {kb_id}.")
+                    await kb_service.delete_kb(kb_id, user_id=user_id)
+                except Exception as cleanup_err:
+                    logger.error(f"Job {job_id}: Failed to clean up KnowledgeBase {kb_id} after ingestion failure: {cleanup_err}")
                 return
                 
             # Success!
@@ -275,5 +281,12 @@ async def run_pdf_ingestion_job(
                 )
                 job_service = JobService(db, tenant_id)
                 await job_service.update_job_progress(job_id, status="failed", error_message=f"Internal Server Error: {str(e)}")
+                if kb_id:
+                    try:
+                        logger.info(f"Job {job_id}: Ingestion failed due to unexpected error. Cleaning up KnowledgeBase {kb_id}.")
+                        kb_service = KnowledgeBaseService(db, tenant_id)
+                        await kb_service.delete_kb(kb_id, user_id=user_id)
+                    except Exception as cleanup_err:
+                        logger.error(f"Job {job_id}: Failed to clean up KnowledgeBase {kb_id} after unexpected error: {cleanup_err}")
         except Exception as rollback_err:
             logger.error(f"Job {job_id}: Failed to update job status on error: {rollback_err}")
