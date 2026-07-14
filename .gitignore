@@ -207,3 +207,15 @@ tests/fixtures/benchmark_docs/*.pdf
 
 # Local Ingestion Optimization test
 tests/test_pdf_ingestion_optimization.py
+
+# ==========================================================
+# Excluded per User Request (Staging)
+# ==========================================================
+*.txt
+*.pdf
+*.csv
+*.CSV
+tests/
+test_*.py
+*_test.py
+*cleanup*

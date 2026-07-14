@@ -144,8 +144,9 @@ Return ONLY valid JSON in this exact format:
     ]
 }}
 
-Valid entity types: PERSON, ORGANIZATION, LOCATION, CONCEPT, EVENT, PRODUCT, TECHNOLOGY, NUMERIC
+Valid entity types: PERSON, ORGANIZATION, LOCATION, CONCEPT, EVENT, PRODUCT, TECHNOLOGY, NUMERIC, STRUCTURED_IDENTIFIER
 7. Always extract numeric values (years, scores, prices, percentages) as the 'object' if they define a key relationship (e.g., 'completed_in', 'has_gpa').
+8. If you encounter a numeric or alphanumeric identifier representing a standard, section, or control (e.g., '8.11', 'Control A.8', 'RFC 7231', 'Requirement 7.2'), you MUST extract it as a STRUCTURED_IDENTIFIER entity.
 
 TEXT:
 {text}
@@ -204,7 +205,7 @@ class TripletExtractor:
 
         try:
             # --- ONTOLOGY GROUNDING INJECTION ---
-            valid_types_str = "PERSON, ORGANIZATION, LOCATION, CONCEPT, EVENT, PRODUCT, TECHNOLOGY, NUMERIC"
+            valid_types_str = "PERSON, ORGANIZATION, LOCATION, CONCEPT, EVENT, PRODUCT, TECHNOLOGY, NUMERIC, STRUCTURED_IDENTIFIER"
             valid_relations_str = ""
             rules_text = ""
             if self.tenant_id:
@@ -226,7 +227,7 @@ class TripletExtractor:
             replacement = f"Valid entity types: {valid_types_str}{valid_relations_str}{rules_text}"
             
             prompt = TRIPLET_EXTRACTION_PROMPT.replace(
-                "Valid entity types: PERSON, ORGANIZATION, LOCATION, CONCEPT, EVENT, PRODUCT, TECHNOLOGY, NUMERIC",
+                "Valid entity types: PERSON, ORGANIZATION, LOCATION, CONCEPT, EVENT, PRODUCT, TECHNOLOGY, NUMERIC, STRUCTURED_IDENTIFIER",
                 replacement
             ).format(text=chunk_text[:2000])
 

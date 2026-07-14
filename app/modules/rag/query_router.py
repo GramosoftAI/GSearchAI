@@ -152,7 +152,7 @@ class QueryRouter:
             )
         }
 
-    async def route_query(self, query: str) -> RouteResult:
+    async def route_query(self, query: str, tenant_id: Optional[str] = None) -> RouteResult:
         """
         Main query routing entry point. Executes a multi-stage routing strategy.
         """
@@ -208,6 +208,25 @@ class QueryRouter:
                 )
                 self.cache.set(query_lower, res)
                 return res
+
+        # --- STAGE -0.5: IDENTIFIER MATCHING (Dynamic Graph-Backed) ---
+        if tenant_id:
+            try:
+                from app.modules.rag.identifier_resolver import IdentifierResolver
+                resolver = IdentifierResolver(tenant_id)
+                resolved_id = await resolver.resolve_identifier(query)
+                if resolved_id:
+                    logger.info(f" Router Stage -0.5: Dynamic Identifier Match -> {resolved_id}")
+                    return RouteResult(
+                        intent=SearchType.EXTRACTIVE, 
+                        confidence=1.0, 
+                        reason=f"Structured Identifier match: {resolved_id}", 
+                        rewritten={"rewritten_query": query},
+                        requested_entities=[resolved_id],
+                        requested_groups=[]
+                    )
+            except Exception as e:
+                logger.error(f"Identifier Resolver failed: {e}")
 
         # STAGE 3: DETERMINISTIC REGEX MATCHING (Zero-Latency Early Exit)
         for search_type, pattern in self.deterministic_patterns.items():

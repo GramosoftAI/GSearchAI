@@ -489,8 +489,46 @@ class RAGPipeline:
 
 
 
-        # STEP 0: ROUTE QUERY TO OPTIMAL SEARCH STRATEGY
-        route_result = await self.router.route_query(query)
+        # STEP 0: ROUTE QUERY TO OPTIMAL SEARCH STRATEGY (USING NEW ADAPTIVE PLANNER)
+        from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer
+        from app.modules.rag.orchestrator.planner import AdaptivePlanner
+        from app.modules.rag.orchestrator.aggregator import EvidenceAggregator
+        
+        analyzer = QueryAnalyzer()
+        analysis = await analyzer.analyze_query(query)
+        
+        planner = AdaptivePlanner()
+        plan = planner.create_plan(analysis, query)
+        
+        all_chunks = []
+        for task in plan.tasks:
+            if task.engine_name == "table":
+                from app.modules.rag.engines.table_engine import TableEngine
+                engine = TableEngine(self.tenant_id, self.neo4j_repo)
+                chunks = await engine.retrieve(task, kb_ids)
+                all_chunks.extend(chunks)
+            elif task.engine_name == "financial":
+                from app.modules.rag.engines.financial_engine import FinancialEngine
+                engine = FinancialEngine(self.tenant_id, self.neo4j_repo)
+                chunks = await engine.retrieve(task, kb_ids)
+                all_chunks.extend(chunks)
+                
+        if all_chunks:
+            aggregator = EvidenceAggregator()
+            final_chunks = aggregator.aggregate(all_chunks, plan.aggregator_strategy, query)
+            if final_chunks:
+                logger.info("Adaptive Orchestrator successfully retrieved and aggregated chunks. Returning early.")
+                return RAGContext(
+                    query=query,
+                    chunks=final_chunks,
+                    entity_mentions={},
+                    total_tokens=sum(len(c.text.split()) for c in final_chunks),
+                    triplet_context="",
+                    search_type=analysis.intent.name
+                )
+        
+        # Fallback to standard router
+        route_result = await self.router.route_query(query, tenant_id=str(self.tenant_id))
         search_type = route_result.intent
         rewritten_data = route_result.rewritten or {}
         extracted_keywords = rewritten_data.get("keywords", [])
@@ -724,6 +762,55 @@ class RAGPipeline:
 
 
 
+
+        # STAGE 0.7: GRAPH EXACT MATCHING & HIERARCHY TRAVERSAL
+        hierarchy_context = ""
+        if search_type in [SearchType.EXTRACTIVE, SearchType.CHUNK_SEARCH] and route_result and route_result.requested_entities:
+            logger.info("   -> Checking Neo4j Graph for Exact Matches and Hierarchy.")
+            try:
+                structured_ids = route_result.requested_entities
+                
+                for sid in structured_ids:
+                    # Query Neo4j for node and its subgraph (HAS_SECTION, HAS_TEXT, HAS_TABLE)
+                    cypher = """
+                    MATCH (root {tenant_id: $tenant_id, id: $sid})
+                    OPTIONAL MATCH path = (root)-[:HAS_SECTION|HAS_SUBSECTION|HAS_TEXT|HAS_TABLE|HAS_ROW|HAS_IDENTIFIER*0..3]->(leaf)
+                    RETURN root, collect(nodes(path)) as descendants
+                    """
+                    results = await self.neo4j_repo.execute_read(cypher, {"sid": sid})
+                    if results:
+                        for res in results:
+                            root_node = res.get("root", {})
+                            if root_node:
+                                hierarchy_context += f"\n--- Exact Match: {root_node.get('title', sid)} ---\n"
+                                hierarchy_context += f"Type: {root_node.get('type')}\n"
+                                if root_node.get('content'):
+                                    hierarchy_context += f"{root_node.get('content')}\n"
+                                    
+                            descendants = res.get("descendants", [])
+                            for path_nodes in descendants:
+                                if path_nodes:
+                                    for d in path_nodes:
+                                        if d.get("id") != root_node.get("id"):
+                                            d_type = d.get('type', '')
+                                            d_title = d.get('title', '')
+                                            d_content = d.get('content', '')
+                                            if d_title or d_content:
+                                                hierarchy_context += f"[{d_type}] {d_title}: {d_content}\n"
+                
+                if hierarchy_context:
+                    logger.info("   -> Exact match found in graph. Returning Graph Context directly.")
+                    return RAGContext(
+                        query=query,
+                        chunks=[],
+                        entity_mentions={},
+                        total_tokens=0,
+                        triplet_context=f"### Structural Graph Hierarchy\n\n{hierarchy_context}",
+                        search_type=search_type.name,
+                        authoritative_entities=authoritative_entities_list if 'authoritative_entities_list' in locals() else []
+                    )
+            except Exception as e:
+                logger.error(f"   -> Graph Exact Match failed: {e}")
 
         # Dynamically adjust retrieval parameters based on the chosen strategy
 

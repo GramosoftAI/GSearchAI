@@ -96,17 +96,21 @@ class SemanticChunker:
     """
     @staticmethod
     async def chunk(text: str, max_chunk_size: int = 2500, threshold: float = 0.75) -> List[str]:
-        # 1. Split into paragraphs
-        paragraphs = [p.strip() for p in re.split(r'\n\n+', text) if p.strip()]
+        from app.core.structural_parser import RegionDetector, RegionType
         
-        # If we have only 1 paragraph and it is larger than max_chunk_size, we need to split it by single newlines
-        if len(paragraphs) <= 1 and len(text) > max_chunk_size:
-            paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
-            
-        # If still only 1 (or any paragraph is larger than max_chunk_size), split further by sentences/characters
+        # 1. Parse into semantic regions
+        regions = RegionDetector.detect_regions(text)
+        
         final_paragraphs = []
-        for p in paragraphs:
-            if len(p) > max_chunk_size:
+        for region in regions:
+            p = region["content"]
+            if region["type"] == RegionType.TABLE:
+                if len(p) > max_chunk_size:
+                    table_chunks = TableChunker.chunk(p, max_chunk_size)
+                    final_paragraphs.extend(table_chunks)
+                else:
+                    final_paragraphs.append(p)
+            elif len(p) > max_chunk_size:
                 sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', p) if s.strip()]
                 for s in sentences:
                     if len(s) > max_chunk_size:
@@ -948,6 +952,26 @@ class PDFChunker:
         chunks = []
         position = 0
         
+        current_combined_text = ""
+        current_combined_metadata = None
+        
+        def flush_accumulator():
+            nonlocal current_combined_text, current_combined_metadata, chunks, position
+            if current_combined_text:
+                current_combined_metadata["position"] = position
+                chunks.append({
+                    "chunk_text": current_combined_text.strip(),
+                    "chunk_type": current_combined_metadata["chunk_type"],
+                    "source_type": "pdf",
+                    "position": position,
+                    "section": current_combined_metadata["section"],
+                    "sheet": None,
+                    "metadata": current_combined_metadata
+                })
+                position += 1
+                current_combined_text = ""
+                current_combined_metadata = None
+
         for sec in sections:
             sec_name = sec["name"]
             sec_project = sec.get("project_name")
@@ -970,25 +994,9 @@ class PDFChunker:
             if sec_name and sec_name.strip().endswith("?") and chunk_type_val == "section":
                 chunk_type_val = "faq"
                 
-            if len(sec_text) <= max_chunk_size:
-                chunks.append({
-                    "chunk_text": chunk_text,
-                    "chunk_type": chunk_type_val,
-                    "source_type": "pdf",
-                    "position": position,
-                    "section": sec_name,
-                    "sheet": None,
-                    "metadata": {
-                        "source_type": "pdf",
-                        "chunk_type": chunk_type_val,
-                        "section": sec_name,
-                        "project_name": sec_project,
-                        "heading_level": sec_level,
-                        "position": position
-                    }
-                })
-                position += 1
-            else:
+            # If the single section is already huge, flush accumulator and semantically chunk it
+            if len(sec_text) > max_chunk_size:
+                flush_accumulator()
                 # Semantic chunking ONLY inside large sections
                 semantic_subchunks = await SemanticChunker.chunk(sec_text, max_chunk_size=max_chunk_size)
                 for sc in semantic_subchunks:
@@ -1013,7 +1021,25 @@ class PDFChunker:
                         }
                     })
                     position += 1
-                        
+            else:
+                # Accumulate small sections
+                if len(current_combined_text) + len(chunk_text) > max_chunk_size and current_combined_text:
+                    flush_accumulator()
+                    
+                if not current_combined_metadata:
+                    current_combined_metadata = {
+                        "source_type": "pdf",
+                        "chunk_type": chunk_type_val,
+                        "section": sec_name,
+                        "project_name": sec_project,
+                        "heading_level": sec_level
+                    }
+                
+                current_combined_text += chunk_text + "\n\n"
+
+        # Flush any remaining text in accumulator
+        flush_accumulator()
+
         return chunks
 
 
@@ -1024,17 +1050,17 @@ class AdaptiveChunker:
     @staticmethod
     async def chunk(content: Any, source_type: str, metadata: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         source_type = source_type.lower().strip()
-        max_chunk_size = 2500
+        max_chunk_size = 4000  # Increased default chunk size
         
         # Adaptive chunk sizing based on text density
         if isinstance(content, str):
-            lines = [line.strip() for line in content.splitlines() if line.strip()]
+            lines = content.split('\n')
             if lines:
                 avg_words_per_line = sum(len(line.split()) for line in lines) / len(lines)
                 if avg_words_per_line > 12:
-                    max_chunk_size = 4000  # Dense text: use larger chunks to reduce LLM calls
+                    max_chunk_size = 6000  # Dense text: use larger chunks to reduce LLM calls
                 elif avg_words_per_line < 5:
-                    max_chunk_size = 1500  # Sparse text (TOC, lists): smaller chunks
+                    max_chunk_size = 2500  # Sparse text (TOC, lists): smaller chunks
                     
         if source_type in ["excel", "xlsx", "xls"]:
             if isinstance(content, pd.DataFrame):
