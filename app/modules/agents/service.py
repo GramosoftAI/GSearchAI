@@ -6,6 +6,8 @@ from typing import Optional, List
 import logging
 import uuid
 from datetime import datetime
+import asyncio
+from sqlalchemy.exc import IntegrityError
 
 from .models import Agent
 from .repository import AgentRepository
@@ -89,7 +91,43 @@ class AgentService:
         """
         agent_id = None
         try:
-            # ============= STEP 0: VALIDATION: Uniqueness per user =============
+            # ============= STEP 0.1: VALIDATION: Personality exists with retry =============
+            if request.personality_id:
+                from app.modules.personalities.models import Personality
+                personality_exists = None
+                
+                """
+                Retry once because personality creation may have committed
+                milliseconds after this request began.
+                
+                This is intended only to absorb short transaction visibility
+                races between sequential REST requests.
+                """
+                for attempt in range(2):
+                    personality_exists = await self.db.scalar(
+                        select(Personality.id).where(Personality.id == request.personality_id)
+                    )
+                    if personality_exists:
+                        break
+                    if attempt < 1:
+                        await asyncio.sleep(0.1)  # 100ms delay to allow commit propagation
+                
+                if not personality_exists:
+                    logger.warning(
+                        "⚠️ Personality missing while creating agent",
+                        extra={
+                            "personality_id": str(request.personality_id),
+                            "agent_name": request.name,
+                            "tenant_id": str(self.tenant_id),
+                            "user_id": user_id,
+                        },
+                    )
+                    return format_error(
+                        "Selected personality does not exist. It may have been deleted or not fully created.",
+                        meta={"status_code": 400}
+                    )
+
+            # ============= STEP 0.2: VALIDATION: Uniqueness per user =============
             existing = await self.repository.get_by_name_and_user(request.name, user_id)
             if existing:
                 logger.warning(f"⚠️ User {user_id} tried to create duplicate agent name: {request.name}")
@@ -100,20 +138,56 @@ class AgentService:
 
             # ============= STEP 1: POSTGRES INSERT (NOT COMMITTED) =============
             # Create agent in PostgreSQL but don't commit yet
-            pg_agent = await self.repository.create(
-                name=request.name,
-                user_id=user_id,
-                personality=request.personality,
-                personality_id=request.personality_id,
-                system_prompt=request.system_prompt,
-                agent_type=request.agent_type,
-                organization_name=request.organization_name,
-                contact_phone=request.contact_phone,
-                contact_email=request.contact_email,
-                website_url=request.website_url,
-                fallback_message_enabled=request.fallback_message_enabled,
-                brand_persona=request.brand_persona,
-            )
+            try:
+                pg_agent = await self.repository.create(
+                    name=request.name,
+                    user_id=user_id,
+                    personality=request.personality,
+                    personality_id=request.personality_id,
+                    system_prompt=request.system_prompt,
+                    agent_type=request.agent_type,
+                    organization_name=request.organization_name,
+                    contact_phone=request.contact_phone,
+                    contact_email=request.contact_email,
+                    website_url=request.website_url,
+                    fallback_message_enabled=request.fallback_message_enabled,
+                    brand_persona=request.brand_persona,
+                )
+            except IntegrityError as e:
+                # Catch TOCTOU issues where personality is deleted right after our check
+                # or if the repository flush() hits the constraint
+                await self.db.rollback()
+                
+                orig = getattr(e, "orig", None)
+                constraint = getattr(orig, "constraint_name", None)
+                if constraint is None:
+                    diag = getattr(orig, "diag", None)
+                    if diag:
+                        constraint = getattr(diag, "constraint_name", None)
+                
+                is_personality_fk = (constraint == "agents_personality_id_fkey")
+                
+                if not is_personality_fk and orig and type(orig).__name__ == "ForeignKeyViolationError":
+                    is_personality_fk = "agents_personality_id_fkey" in str(e)
+                elif not is_personality_fk:
+                    is_personality_fk = "agents_personality_id_fkey" in str(e)
+
+                if is_personality_fk:
+                    logger.exception(
+                        "FK violation creating agent",
+                        extra={
+                            "constraint": constraint or "agents_personality_id_fkey",
+                            "personality_id": str(request.personality_id),
+                            "agent_name": request.name,
+                            "tenant_id": str(self.tenant_id),
+                        }
+                    )
+                    return format_error(
+                        "Selected personality no longer exists or is unavailable.",
+                        meta={"status_code": 400}
+                    )
+                raise
+                
             agent_id = str(pg_agent.id)
             logger.info(f"✅ PostgreSQL: Created agent {agent_id}")
 

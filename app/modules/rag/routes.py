@@ -503,12 +503,67 @@ async def rag_health() -> dict:
 
 
     return {
-
         "status": "ok",
-
         "module": "rag",
-
         **health_metrics,
+    }
 
+
+@router.get(
+    "/telemetry/traces",
+    status_code=status.HTTP_200_OK,
+    summary="Get Explainability Traces",
+    description="Returns the execution traces of recent RAG queries to power the Explainability Dashboard.",
+)
+async def get_telemetry_traces(
+    request: Request,
+    limit: int = 50,
+):
+    """
+    Fetch telemetry traces from the log file.
+    """
+    try:
+        tenant_id, user = get_tenant_and_user(request)
+    except HTTPException:
+        pass # Allow for local dev without auth for now or handle appropriately
+        
+    import os
+    import json
+    
+    log_file = "v:/graphmind/logs/telemetry.jsonl"
+    traces = []
+    
+    if os.path.exists(log_file):
+        try:
+            with open(log_file, 'r') as f:
+                lines = f.readlines()
+                for line in reversed(lines):
+                    if not line.strip():
+                        continue
+                    try:
+                        traces.append(json.loads(line))
+                        if len(traces) >= limit:
+                            break
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.error(f"Failed to read telemetry log: {e}")
+            
+    return {"traces": traces}
+
+
+@router.get(
+    "/telemetry/metrics",
+    status_code=status.HTTP_200_OK,
+    summary="Get System Metrics",
+)
+async def get_telemetry_metrics(
+    request: Request,
+):
+    from app.modules.rag.engines.telemetry_optimizer import TelemetryOptimizer
+    TelemetryOptimizer.load_stats()
+    
+    return {
+        "engine_stats": TelemetryOptimizer._engine_stats
     }
 

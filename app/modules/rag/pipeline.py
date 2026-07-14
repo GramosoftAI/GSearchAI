@@ -128,6 +128,14 @@ class RetrievedChunk:
 
     source: Optional[str] = None  # Source of the chunk (e.g., filename, URL, database table)
     content_type: str = "original"
+    
+    # Provenance fields for Enterprise Retrieval Orchestrator
+    engine_name: Optional[str] = None
+    document: Optional[str] = None
+    page: Optional[int] = None
+    section: Optional[str] = None
+    ontology_node: Optional[str] = None
+    provenance_metadata: Optional[Dict] = None
 
 
 
@@ -484,35 +492,90 @@ class RAGPipeline:
 
 
         # STEP 0: ROUTE QUERY TO OPTIMAL SEARCH STRATEGY (USING NEW ADAPTIVE PLANNER)
+        import time
+        start_time = time.time()
+        
         from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer
         from app.modules.rag.orchestrator.planner import AdaptivePlanner
         from app.modules.rag.orchestrator.aggregator import EvidenceAggregator
+        from app.modules.rag.orchestrator.conflict_detector import ConflictDetector
+        from app.modules.rag.engines.registry import CapabilityRegistry
+        from app.modules.rag.telemetry import TelemetryLogger
+        
+        # Ensure engines are loaded to register them
+        import app.modules.rag.engines.financial_engine
+        import app.modules.rag.engines.table_engine
+        import app.modules.rag.engines.vector_engine
+        
+        from app.modules.rag.orchestrator.section_ranker import SectionRanker
         
         analyzer = QueryAnalyzer()
         analysis = await analyzer.analyze_query(query)
         
-        planner = AdaptivePlanner()
-        plan = planner.create_plan(analysis, query)
+        planner = AdaptivePlanner(self.neo4j_repo, self.tenant_id)
+        plan = await planner.create_plan(analysis, query)
         
+        planner_time = time.time() - start_time
+        engine_start = time.time()
+        
+        # --- PHASE 1: CANDIDATE SECTION GATHERING ---
+        candidate_sections = []
+        for task in plan.tasks:
+            engine_cls = CapabilityRegistry.get_engine_class(task.engine_name)
+            if engine_cls:
+                engine = engine_cls(self.tenant_id, self.neo4j_repo)
+                secs = await engine.get_candidate_sections(task, kb_ids)
+                candidate_sections.extend(secs)
+                
+        # --- PHASE 2: SECTION RANKING ---
+        ranker = SectionRanker()
+        ranked_sections = ranker.rank_sections(query, candidate_sections, top_k=5)
+        logger.info(f"SectionRanker selected {len(ranked_sections)} candidate sections out of {len(candidate_sections)}")
+        
+        # Group top sections by task
+        for task in plan.tasks:
+            task_sections = [s["section_id"] for s in ranked_sections if s.get("task_id") == getattr(task, "task_id", "")]
+            if task_sections:
+                setattr(task, "target_section_ids", task_sections)
+                
+        # --- PHASE 3: CHUNK RETRIEVAL ---
         all_chunks = []
         for task in plan.tasks:
-            if task.engine_name == "table":
-                from app.modules.rag.engines.table_engine import TableEngine
-                engine = TableEngine(self.tenant_id, self.neo4j_repo)
-                chunks = await engine.retrieve(task, kb_ids)
-                all_chunks.extend(chunks)
-            elif task.engine_name == "financial":
-                from app.modules.rag.engines.financial_engine import FinancialEngine
-                engine = FinancialEngine(self.tenant_id, self.neo4j_repo)
+            engine_cls = CapabilityRegistry.get_engine_class(task.engine_name)
+            if engine_cls:
+                engine = engine_cls(self.tenant_id, self.neo4j_repo)
                 chunks = await engine.retrieve(task, kb_ids)
                 all_chunks.extend(chunks)
                 
+        # COVERAGE VALIDATION LOOP
+        retrieved_nodes = {c.ontology_node for c in all_chunks if getattr(c, "ontology_node", None)}
+        missing_goals = set(plan.coverage_goals) - retrieved_nodes
+        
+        if missing_goals:
+            logger.warning(f"Coverage Validation failed. Missing goals: {missing_goals}. Triggering fallback.")
+            from app.modules.rag.engines.vector_engine import VectorEngine
+            vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo)
+            from app.modules.rag.orchestrator.planner import RetrievalTask
+            for missing in missing_goals:
+                fallback_task = RetrievalTask(
+                    engine_name="vector",
+                    query=query,
+                    metadata_filters=analysis.metadata,
+                    task_id=f"fallback_{missing}",
+                    target_section=missing
+                )
+                fb_chunks = await vector_fallback.retrieve(fallback_task, kb_ids)
+                all_chunks.extend(fb_chunks)
+                
+        engine_time = time.time() - engine_start
+                
         if all_chunks:
             aggregator = EvidenceAggregator()
-            final_chunks = aggregator.aggregate(all_chunks, plan.aggregator_strategy, query)
+            final_chunks = aggregator.aggregate(all_chunks, plan.aggregator_strategy, query, max_tokens=max_tokens)
             if final_chunks:
                 logger.info("Adaptive Orchestrator successfully retrieved and aggregated chunks. Returning early.")
-                return RAGContext(
+                
+                rag_context = RAGContext(
                     query=query,
                     chunks=final_chunks,
                     entity_mentions={},
@@ -520,6 +583,31 @@ class RAGPipeline:
                     triplet_context="",
                     search_type=analysis.intent.name
                 )
+                
+                # Pre-generation conflict detection
+                detector = ConflictDetector()
+                conflict_res = await detector.detect_conflicts(rag_context)
+                if conflict_res.get("conflict_found"):
+                    logger.warning(f"Conflict detected in evidence: {conflict_res.get('explanation')}")
+                    rag_context.triplet_context = f"### SYSTEM WARNING: CONFLICTING EVIDENCE DETECTED\n{conflict_res.get('explanation')}\nExplicitly address and resolve this conflict in your response based on the provided snippets."
+                    
+                # Calculate coverage score
+                final_retrieved_nodes = {c.ontology_node for c in final_chunks if getattr(c, "ontology_node", None)}
+                coverage_score = len(final_retrieved_nodes.intersection(set(plan.coverage_goals))) / max(len(plan.coverage_goals), 1)
+                
+                # Telemetry logging
+                TelemetryLogger.log_query(
+                    query=query,
+                    intent=analysis.intent.name,
+                    planner_latency=planner_time,
+                    engine_latency=engine_time,
+                    coverage_score=coverage_score,
+                    conflict_found=conflict_res.get("conflict_found", False),
+                    token_usage=rag_context.total_tokens,
+                    evidence_count=len(final_chunks)
+                )
+                    
+                return rag_context
         
         # Fallback to standard router
         route_result = await self.router.route_query(query, tenant_id=str(self.tenant_id))

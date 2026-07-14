@@ -262,7 +262,7 @@ class PDFExtractor:
                 
             try:
                 client = GdoczaiClient(api_key=api_key)
-                options = ConvertOptions(mode="chandra")
+                options = ConvertOptions(mode="accurate")
                 
                 max_retries = 3
                 last_err = None

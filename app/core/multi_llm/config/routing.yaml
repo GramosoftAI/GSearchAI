@@ -1,0 +1,104 @@
+llm:
+  pipeline:
+    - capability
+    - constraint
+    - circuit_breaker
+    - retry
+    - telemetry
+  routes:
+    user_query_response:
+      primary:
+        provider: deepinfra
+        model: qwen3-32b
+        constraints:
+          max_latency_ms: 5000
+          max_cost_per_1k_tokens: 0.002
+          require_json_mode: false
+          require_streaming: true
+      fallback:
+        - provider: ollama
+          model: qwen2.5:14b
+          constraints:
+            max_latency_ms: 8000
+        - provider: deepinfra
+          model: mistral-large
+
+    query_rewrite:
+      primary:
+        provider: ollama
+        model: llama3.1:8b
+      fallback:
+        - provider: deepinfra
+          model: mistral-small
+
+    default:
+      primary:
+        provider: ollama
+        model: llama3.1:8b
+
+    intent_detection:
+      primary:
+        provider: ollama
+        model: ${LLM_MODEL_INTENT_DETECTION}
+
+    query_classification:
+      primary:
+        provider: ollama
+        model: ${LLM_MODEL_QUERY_CLASSIFICATION}
+
+    planner:
+      primary:
+        provider: ollama
+        model: ${LLM_MODEL_PLANNER}
+
+    metadata_extraction:
+      primary:
+        provider: ollama
+        model: ${LLM_MODEL_METADATA_EXTRACTION}
+
+    json_repair:
+      primary:
+        provider: ollama
+        model: ${LLM_MODEL_JSON_REPAIR}
+
+    hallucination_validation:
+      primary:
+        provider: ollama
+        model: ${LLM_MODEL_HALLUCINATION_VALIDATION}
+
+    entity_extraction:
+      primary:
+        provider: ollama
+        model: ${LLM_MODEL_ENTITY_EXTRACTION}
+
+    relationship_extraction:
+      primary:
+        provider: ollama
+        model: ${LLM_MODEL_RELATIONSHIP_EXTRACTION}
+
+    ingestion_pipeline:
+      primary:
+        provider: ollama
+        model: ${LLM_MODEL_INGESTION_PIPELINE}
+
+    embeddings:
+      primary:
+        provider: ollama
+        model: ${LLM_MODEL_EMBEDDINGS}
+
+    final_answer_generation:
+      primary:
+        provider: deepinfra
+        model: ${LLM_MODEL_FINAL_ANSWER}
+
+  providers:
+    ollama:
+      base_url: ${OLLAMA_BASE_URL}
+      timeout_s: 60
+      max_retries: 2
+      keep_alive: "5m"
+    deepinfra:
+      base_url: https://api.deepinfra.com/v1/openai
+      api_key_env: DEEPINFRA_API_KEY
+      timeout_s: 30
+      max_retries: 3
