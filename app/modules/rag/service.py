@@ -420,9 +420,10 @@ The source citation MUST be strictly formatted as:
 
 [Source: <filename>]
 
+If the answer is derived from multiple files, output a source citation block for each file.
 Example:
 
-[Source: Intel_Q3_2023.pdf]
+[Source: Intel_Q3_2023.pdf] [Source: AMD_Q3_2023.pdf]
 
 Do NOT include:
 - Position numbers
@@ -623,7 +624,7 @@ If you'd like, I can also:
             if getattr(context, "authoritative_entities", None):
                 yield "\n**System Verified Data (100% Trust):**\n"
                 for ent in context.authoritative_entities:
-                    yield f"- **{ent['entity_type']}**: `{ent['value']}` (Source: {ent.get('source', 'document_entities')}, Page: {ent.get('page', 1)}, Confidence: {ent.get('confidence', 1.0)})\n"
+                    yield f"- **{ent['entity_type']}**: `{ent['value']}` (Page: {ent.get('page', 1)}, Confidence: {ent.get('confidence', 1.0)}) [Source: {ent.get('source', 'document_entities')}]\n"
                 yield "\n"
             yield context.triplet_context
             return
@@ -640,7 +641,7 @@ If you'd like, I can also:
         if getattr(context, "authoritative_entities", None):
             yield "\n**System Verified Data (100% Trust):**\n"
             for ent in context.authoritative_entities:
-                yield f"- **{ent['entity_type']}**: `{ent['value']}` (Source: {ent.get('source', 'document_entities')}, Page: {ent.get('page', 1)}, Confidence: {ent.get('confidence', 1.0)})\n"
+                yield f"- **{ent['entity_type']}**: `{ent['value']}` (Page: {ent.get('page', 1)}, Confidence: {ent.get('confidence', 1.0)}) [Source: {ent.get('source', 'document_entities')}]\n"
             yield "\n**AI Analysis (Hybrid Retrieval):**\n"
 
 
@@ -1026,9 +1027,10 @@ The source citation MUST be:
 
 [Source: <filename>]
 
+If the answer is derived from multiple files, output a source citation block for each file.
 Example:
 
-[Source: Intel_Q3_2023.pdf]
+[Source: Intel_Q3_2023.pdf] [Source: AMD_Q3_2023.pdf]
 
 Do NOT include:
 - Position numbers

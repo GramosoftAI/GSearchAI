@@ -678,7 +678,12 @@ class RAGPipeline:
                 
                 from sqlalchemy import text
                 kb_ids_formatted = "','".join(kb_ids)
-                stmt = text(f"SELECT DISTINCT entity_type, entity_value, page_number, entity_status FROM document_entities WHERE document_id IN ('{kb_ids_formatted}')")
+                stmt = text(
+                    f"SELECT DISTINCT de.entity_type, de.entity_value, de.page_number, de.entity_status, kb.name AS kb_name "
+                    f"FROM document_entities de "
+                    f"JOIN knowledge_bases kb ON de.document_id = kb.id "
+                    f"WHERE de.document_id IN ('{kb_ids_formatted}')"
+                )
                 
                 result = await self.db.execute(stmt)
                 db_entities = result.fetchall()
@@ -707,7 +712,7 @@ class RAGPipeline:
                         authoritative_entities_list.append({
                             "entity_type": row.entity_type,
                             "value": row.entity_value,
-                            "source": "document_entities",
+                            "source": row.kb_name,
                             "page": row.page_number,
                             "confidence": trust_score
                         })
@@ -2047,6 +2052,34 @@ Return ONLY JSON, no markdown formatting.
                 return f"Validation Error: Operation '{operation}' requires a target_field."
             if target_field not in dataset_schema:
                 return f"Validation Error: Field '{target_field}' does not exist in this dataset."
+            if dataset_schema[target_field] not in numeric_types:
+                # Dynamically check if the values in database are actually numeric
+                try:
+                    import re
+                    sample_query = "SELECT row_data->>:field as val FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) LIMIT 20;"
+                    sample_res = await self.db.execute(text(sample_query), {"kb_ids": kb_ids, "field": target_field})
+                    sample_vals = [r.val for r in sample_res.all() if r.val is not None and str(r.val).strip() != ""]
+                    if sample_vals:
+                        is_numeric = True
+                        for val in sample_vals:
+                            val_str = str(val).strip()
+                            if not val_str or val_str.lower() in ["na", "n/a", "none", "null", "-", ""]:
+                                continue
+                            if val_str.startswith("(") and val_str.endswith(")"):
+                                val_str = "-" + val_str[1:-1].strip()
+                            val_str = re.sub(r'[\$\€\£\₹]', '', val_str).strip()
+                            val_str = val_str.replace("%", "").strip()
+                            val_str = val_str.replace(",", "")
+                            try:
+                                float(val_str)
+                            except ValueError:
+                                is_numeric = False
+                                break
+                        if is_numeric:
+                            dataset_schema[target_field] = "float"
+                except Exception as e:
+                    logger.error(f"Dynamic numeric validation check failed: {e}")
+
             if dataset_schema[target_field] not in numeric_types:
                 return f"Validation Error: {operation} cannot be applied to string field '{target_field}'"
                 
