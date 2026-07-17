@@ -392,7 +392,6 @@ Query:
                 else:
                     cleaned = response.replace('```json', '').replace('```', '').strip()
             data = json.loads(cleaned)
->>>>>>> refactor/esdip-architecture
             
         except Exception as e:
             logger.error(f"Router Stage 4 failed: {e}. Falling back to default RAG routing.", exc_info=True)

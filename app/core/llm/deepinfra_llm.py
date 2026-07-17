@@ -220,11 +220,15 @@ class DeepInfraLLMClient:
         import os
         # RAG / Answer Generation Configuration (Cloud DeepInfra)
         self.deepinfra_api_key = getattr(settings, "deepinfra_api_key", "")
+        self.gateway_api_key = getattr(settings, 'llm_gateway_api_key', None) or os.environ.get("LLM_GATEWAY_API_KEY", "")
         self.deepinfra_base_url = f"{getattr(settings, 'deepinfra_api_url', 'https://api.deepinfra.com/v1/openai')}/chat/completions"
         self.deepinfra_model = getattr(settings, "deepinfra_llm_model", "Qwen/Qwen3.5-9B")
 
         # Ingestion / Extraction Configuration (Local Ollama Gateway)
-        self.gateway_api_key = os.environ.get("LLM_GATEWAY_API_KEY", "")
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+        self.gateway_api_key = os.environ.get("LLM_GATEWAY_API_KEY") or getattr(settings, 'llm_gateway_api_key', "")
         self.gateway_base_url = f"{getattr(settings, 'llm_base_url', 'http://103.191.132.28:7218')}/v1/chat/completions"
         self.gateway_model = "qwen2.5:14b"
 
@@ -377,9 +381,12 @@ class DeepInfraLLMClient:
         """
 
         headers = {
-            "Authorization": f"Bearer {self.gateway_api_key}",
             "Content-Type": "application/json",
         }
+        print(f"DEBUG KEY: {repr(self.gateway_api_key)}")
+        if self.gateway_api_key:
+            headers["Authorization"] = f"Bearer {self.gateway_api_key}"
+        print(f"DEBUG HEADERS: {headers}")
         
 
         payload = {
