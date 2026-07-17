@@ -49,4 +49,9 @@ class RelationshipEngine:
         for obj in context.business_object_store.get_all():
             for detector in self.detectors:
                 detector.detect(obj, context)
+                
+        from ..governance.state_machine import StateMachine
+        from ..domain.business_object import ObjectState
+        StateMachine.transition(context, ObjectState.NORMALIZED, ObjectState.RELATED)
+        
         return context

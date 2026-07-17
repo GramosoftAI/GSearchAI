@@ -86,7 +86,7 @@ QUERY:
 {query}
 """
         try:
-            response = await self.llm_client.generate(
+            response = await self.llm_client.generate_cloud(
                 prompt=prompt,
                 system_prompt="You are an expert financial query analyzer. Return only JSON.",
                 temperature=0.0,

@@ -33,4 +33,8 @@ class BusinessObjectEngine:
                     )
                     context.business_object_store.add(obj)
                     
+        from ..governance.state_machine import StateMachine
+        from ..domain.business_object import ObjectState
+        StateMachine.transition(context, ObjectState.DISCOVERED, ObjectState.NORMALIZED)
+                    
         return context

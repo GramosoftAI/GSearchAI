@@ -13,7 +13,7 @@ class ValidationPolicy:
 class PersistencePolicy:
     def evaluate(self, context: PipelineContext):
         for obj in context.business_object_store.get_all():
-            if obj.state == ObjectState.RELATED:
+            if obj.state == ObjectState.VALIDATED:
                 obj.state = ObjectState.READY
 
 class PolicyEngine:

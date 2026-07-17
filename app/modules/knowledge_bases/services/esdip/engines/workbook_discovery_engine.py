@@ -8,6 +8,35 @@ class WorkbookDiscoveryEngine:
     """Discovers raw sheets, reads formats, and detects tables via openpyxl."""
     def run(self, context: PipelineContext) -> PipelineContext:
         ext = context.filename.lower().split(".")[-1] if "." in context.filename else ""
+        if ext == "csv":
+            try:
+                import csv
+                text_content = context.file_bytes.decode('utf-8', errors='replace')
+                reader = csv.DictReader(io.StringIO(text_content))
+                raw_data = list(reader)
+                
+                workbook_domain = Workbook(
+                    filename=context.filename,
+                    file_size_bytes=len(context.file_bytes),
+                    sheets=[]
+                )
+                
+                if raw_data:
+                    table = LogicalTable(
+                        table_id="csv_tbl1",
+                        start_row=1,
+                        end_row=len(raw_data),
+                        raw_data=raw_data
+                    )
+                    sheet = Sheet(name="Sheet1", classification="Raw Data", tables=[table])
+                    workbook_domain.sheets.append(sheet)
+                    
+                context.workbook = workbook_domain
+                return context
+            except Exception as e:
+                context.add_error(f"CSV Parsing failed: {e}")
+                return context
+                
         if ext not in ["xlsx", "xlsm"]:
             context.add_warning("Not an openpyxl-compatible format. Fallback to basic processing needed.")
             return context

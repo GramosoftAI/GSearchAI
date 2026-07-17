@@ -249,7 +249,7 @@ Return ONLY valid JSON in this exact format, with no markdown formatting or back
 }}
 """
         try:
-            result = await self.llm_client.generate(
+            result = await self.llm_client.generate_cloud(
                 prompt=prompt,
                 system_prompt="You are a query rewriting engine. Return only JSON.",
                 temperature=0.0,
@@ -321,7 +321,7 @@ Query:
 """
 
         try:
-            response = await self.llm_client.generate(
+            response = await self.llm_client.generate_cloud(
                 prompt=prompt,
                 system_prompt="You are an enterprise RAG router. Return only JSON.",
                 temperature=0.0,

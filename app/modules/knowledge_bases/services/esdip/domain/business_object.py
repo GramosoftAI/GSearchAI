@@ -24,6 +24,7 @@ class BusinessObject:
     entity_type: str
     attributes: Dict[str, Any]
     provenance: Provenance
+    schema_snapshot_id: Optional[str] = None
     relationships: List[Relationship] = field(default_factory=list)
     versions: List[BusinessObjectVersion] = field(default_factory=list)
     state: ObjectState = ObjectState.DISCOVERED

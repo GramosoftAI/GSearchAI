@@ -12,5 +12,5 @@ class ValidationEngine:
                 context.add_warning(f"Quarantined {obj.id}: Empty attributes")
                 
         # Transition non-quarantined objects to VALIDATED
-        StateMachine.transition(context, ObjectState.NORMALIZED, ObjectState.VALIDATED)
+        StateMachine.transition(context, ObjectState.RELATED, ObjectState.VALIDATED)
         return context

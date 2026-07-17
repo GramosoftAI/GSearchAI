@@ -18,6 +18,7 @@ Phase 2 Step 4: Transforms Graph Intelligence into Production RAG
 
 
 
+import json
 import logging
 
 
@@ -363,7 +364,7 @@ class RAGPipeline:
 
 
 
-        top_k: int = 15,
+        top_k: int = 3,
 
 
 
@@ -2000,7 +2001,7 @@ Return ONLY valid JSON matching this schema exactly:
 Return ONLY JSON, no markdown formatting.
 """
 
-        generated_ast_str = await self.llm_client.generate(
+        generated_ast_str = await self.llm_client.generate_cloud(
             prompt=prompt,
             system_prompt="You are a Structured Query Planner. Return only JSON.",
             temperature=0.0,

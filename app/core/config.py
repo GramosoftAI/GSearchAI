@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
 
     postgres_db: str = "graphmind"
+    
+    # ============= LLM GATEWAY =============
+    llm_base_url: str = "http://103.191.132.28:7218"
 
 
 

@@ -1,6 +1,7 @@
 import uuid
 import logging
 from typing import List
+from dataclasses import asdict
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.knowledge_bases.models import DocumentChunk
 from app.core.embeddings import EmbeddingGenerator
@@ -34,7 +35,8 @@ class PostgresWriter:
                 "chunk_type": "business_object",
                 "object_id": obj.id,
                 "entity_type": obj.entity_type,
-                "provenance": obj.provenance,
+                "provenance": asdict(obj.provenance),
+                "schema_snapshot_id": obj.schema_snapshot_id,
                 "raw_data": obj.attributes
             })
 

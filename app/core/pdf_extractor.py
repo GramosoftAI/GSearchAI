@@ -208,6 +208,7 @@ class PDFExtractor:
             )
 
         # ============= FALLBACK: PDFPLUMBER + AI-OCR =============
+        fallback_error = None
         if settings.enable_pdf_fallback:
             try:
                 extracted_text = await PDFExtractor._extract_pdfplumber(
@@ -228,15 +229,20 @@ class PDFExtractor:
                         logger.warning(f"LLM text reconstruction to Markdown failed: {llm_err}. Returning raw plain text.")
                     
                     return ExtractedText(extracted_text, extracted_text, is_markdown=False)
+                else:
+                    fallback_error = "PDF contains no extractable text (likely a scanned image). OCR is required but Gdocz failed."
+                    logger.warning(f" pdfplumber extracted empty text for {filename}.")
             except Exception as e:
+                fallback_error = f"pdfplumber exception: {str(e)}"
                 logger.error(f" pdfplumber also failed for {filename}: {e}")
         else:
-            logger.info("PDF fallback is disabled by configuration settings.")
+            fallback_error = "PDF fallback is disabled by configuration settings."
+            logger.info(fallback_error)
 
         # ============= BOTH FAILED =============
         raise ValueError(
             f"Could not extract text from PDF: {filename}. "
-            f"Gdocz SDK failed and PDF fallback is disabled or failed."
+            f"Gdocz SDK failed. Fallback error: {fallback_error}"
         )
 
     # ========================================================================
@@ -316,9 +322,16 @@ class PDFExtractor:
                     os.remove(temp_path)
 
         loop = asyncio.get_event_loop()
-        raw_markdown = await loop.run_in_executor(
-            None, _sync_gdocz_convert, pdf_bytes, filename, settings.gdocz_api_key
-        )
+        try:
+            raw_markdown = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, _sync_gdocz_convert, pdf_bytes, filename, settings.gdocz_api_key
+                ),
+                timeout=60.0  # Strict 60s timeout to prevent 13+ min hangs!
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Gdocz SDK timed out after 60 seconds for {filename}")
+            raise RuntimeError("Gdocz extraction timed out")
 
         return raw_markdown
 

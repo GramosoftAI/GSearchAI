@@ -217,29 +217,25 @@ class DeepInfraLLMClient:
         Reads from settings.deepinfra_api_key (required)
 
         """
+        import os
+        # RAG / Answer Generation Configuration (Cloud DeepInfra)
+        self.deepinfra_api_key = getattr(settings, "deepinfra_api_key", "")
+        self.deepinfra_base_url = f"{getattr(settings, 'deepinfra_api_url', 'https://api.deepinfra.com/v1/openai')}/chat/completions"
+        self.deepinfra_model = getattr(settings, "deepinfra_llm_model", "Qwen/Qwen3.5-9B")
 
-        self.api_key = settings.deepinfra_api_key
+        # Ingestion / Extraction Configuration (Local Ollama Gateway)
+        self.gateway_api_key = os.environ.get("LLM_GATEWAY_API_KEY", "")
+        self.gateway_base_url = f"{getattr(settings, 'llm_base_url', 'http://103.191.132.28:7218')}/v1/chat/completions"
+        self.gateway_model = "qwen2.5:14b"
 
-        self.base_url = "https://api.deepinfra.com/v1/openai/chat/completions"
-
-        self.model = settings.deepinfra_llm_model
-
-        self.timeout = settings.ingestion_llm_timeout  # Request timeout from config
-
+        self.timeout = None  # Removed timeout limit for slow gateway responses
         self.max_retries = 3  # Number of retry attempts
-
         self.max_tokens = 4000  # Max output tokens (GUARD: prevent very long responses)
-
         self.max_answer_length = 2000  # Max chars in answer (latency + cost guard)
-
         self.temperature = 0.0  # Maximize consistency and minimize hallucinations for RAG and extraction tasks
 
-
-
         logger.info(
-
-            f" DeepInfra LLM Client initialized (model={self.model}, timeout={self.timeout}s, max_tokens={self.max_tokens}, prompt_version={PROMPT_VERSION})"
-
+            f" LLM Client init: RAG -> {self.deepinfra_model} (Cloud), Ingestion -> {self.gateway_model} (Gateway)"
         )
 
 
@@ -333,13 +329,9 @@ class DeepInfraLLMClient:
 
 
         async with _llm_semaphore:
-
             client = await self.get_client()
-
-            response = await client.post(self.base_url, headers=headers, json=payload)
-
+            response = await client.post(self.deepinfra_base_url, headers=headers, json=payload)
             response.raise_for_status()
-
             data = response.json()
 
             
@@ -385,54 +377,30 @@ class DeepInfraLLMClient:
         """
 
         headers = {
-
-            "Authorization": f"Bearer {self.api_key}",
-
+            "Authorization": f"Bearer {self.gateway_api_key}",
             "Content-Type": "application/json",
-
         }
-
         
-
         payload = {
-
-            "model": self.model,
-
+            "model": self.gateway_model,
             "messages": [
-
                 {"role": "system", "content": system_prompt},
-
                 {"role": "user", "content": prompt},
-
             ],
-
             "temperature": temperature if temperature is not None else self.temperature,
-
             "max_tokens": max_tokens or self.max_tokens,
-
             "enable_thinking": enable_thinking,
-
         }
-
         if not enable_thinking:
-
             payload["reasoning_effort"] = "none"
-
         
-
         # Retry logic (3 attempts with backoff)
-
         last_error = None
-
         for attempt in range(3):
-
             try:
-
                 client = await self.get_client()
-
                 async with _llm_semaphore:
-
-                    response = await client.post(self.base_url, headers=headers, json=payload, timeout=self.timeout)
+                    response = await client.post(self.gateway_base_url, headers=headers, json=payload, timeout=self.timeout)
 
                 response.raise_for_status()
 
@@ -458,7 +426,56 @@ class DeepInfraLLMClient:
         
 
         logger.error(f"generate() all 3 attempts failed. Last error: {last_error}")
+        raise last_error
 
+    async def generate_cloud(
+        self, 
+        prompt: str, 
+        system_prompt: str = "",
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        enable_thinking: Optional[bool] = False,
+    ) -> str:
+        """
+        Equivalent to generate() but explicitly routes to the cloud DeepInfra model 
+        (qwen3.5-9B) for faster processing (e.g. query routing, planning, answer generation).
+        Thinking is disabled by default to save tokens.
+        """
+        headers = {
+            "Authorization": f"Bearer {self.deepinfra_api_key}",
+            "Content-Type": "application/json",
+        }
+        
+        payload = {
+            "model": self.deepinfra_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": temperature if temperature is not None else self.temperature,
+            "max_tokens": max_tokens or self.max_tokens,
+            "enable_thinking": False,
+            "reasoning_effort": "none"
+        }
+        
+        last_error = None
+        for attempt in range(3):
+            try:
+                client = await self.get_client()
+                async with _llm_semaphore:
+                    response = await client.post(self.deepinfra_base_url, headers=headers, json=payload, timeout=self.timeout)
+                response.raise_for_status()
+                data = response.json()
+                content = data["choices"][0]["message"]["content"].strip()
+                return content
+            except Exception as e:
+                last_error = e
+                logger.warning(f"generate_cloud() attempt {attempt+1}/3 failed: {e}")
+                if attempt < 2:
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)
+        
+        logger.error(f"generate_cloud() all 3 attempts failed. Last error: {last_error}")
         raise last_error
 
     async def generate_with_usage(
@@ -473,12 +490,12 @@ class DeepInfraLLMClient:
         Similar to generate() but returns token usage alongside content.
         """
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {self.gateway_api_key}",
             "Content-Type": "application/json",
         }
         
         payload = {
-            "model": self.model,
+            "model": self.gateway_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
@@ -495,7 +512,7 @@ class DeepInfraLLMClient:
             try:
                 client = await self.get_client()
                 async with _llm_semaphore:
-                    response = await client.post(self.base_url, headers=headers, json=payload, timeout=self.timeout)
+                    response = await client.post(self.gateway_base_url, headers=headers, json=payload, timeout=self.timeout)
                 response.raise_for_status()
                 data = response.json()
                 content = data["choices"][0]["message"]["content"].strip()
@@ -550,103 +567,53 @@ class DeepInfraLLMClient:
         
 
         headers = {
-
-            "Authorization": f"Bearer {self.api_key}",
-
+            "Authorization": f"Bearer {self.deepinfra_api_key}",
             "Content-Type": "application/json",
-
         }
-
         
-
         # Build System Persona
-
         system_content = "You are a helpful knowledge base assistant."
-
         if agent_persona:
-
             name = agent_persona.get("name", "Assistant")
-
             personality = agent_persona.get("personality", "Friendly")
-
             prompt_custom = agent_persona.get("system_prompt", "")
-
             
-
             system_content = f"You are {name}. Your tone and personality is {personality}. "
-
             if prompt_custom:
-
                 system_content += f"\n\nInstructions: {prompt_custom}"
-
             
-
             # STRICT GROUNDING + NUMERIC PRESERVATION
-
             system_content += (
-
                 "\n\nCRITICAL INSTRUCTION: You must strictly respond ONLY using the provided knowledge base content. "
-
                 "Do not rely on your own pre-trained knowledge. Always include precise numeric values, years, percentages, "
-
                 "and symbols (like GPA scores, dates, or currency) explicitly mentioned in the context. "
-
                 "If the answer is not contained within the provided context, you MUST respond exactly with: "
-
                 "\"Im sorry, but the requested information is not available within my current knowledge base. "
-
                 "Please try a related query or provide additional context.\""
-
             )
-
         else:
-
             system_content = (
-
                 "You are a helpful knowledge base assistant. You must strictly respond ONLY using the provided context. "
-
                 "Preserve all numeric values, years, and specific details like GPA or percentages. "
-
                 "If the information is not available in the context, respond exactly with: "
-
                 "\"Im sorry, but the requested information is not available within my current knowledge base. "
-
                 "Please try a related query or provide additional context.\""
-
             )
-
-
 
         payload = {
-
-            "model": self.model,
-
+            "model": self.deepinfra_model,
             "messages": [
-
                 {"role": "system", "content": system_content},
-
                 {"role": "user", "content": prompt},
-
             ],
-
             "temperature": self.temperature,
-
             "max_tokens": self.max_tokens,
-
             "stream": True,
-
         }
-
-        if enable_thinking is not None:
-
-            payload["enable_thinking"] = enable_thinking
-
-            if enable_thinking is False:
-
-                payload["reasoning_effort"] = "none"
-
+        # Force thinking to false to save tokens for DeepInfra answer generation
+        payload["enable_thinking"] = False
+        payload["reasoning_effort"] = "none"
         
-
         think_state = 0
         think_buf = ""
         try:
@@ -656,9 +623,9 @@ class DeepInfraLLMClient:
             stream_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=30.0)
             
             start_time = time.time()
-            logger.info(f"LLM Stream Starting for {self.model} (read_timeout=None)")
+            logger.info(f"LLM Stream Starting for {self.deepinfra_model} (read_timeout=None)")
             
-            async with client.stream("POST", self.base_url, headers=headers, json=payload, timeout=stream_timeout) as response:
+            async with client.stream("POST", self.deepinfra_base_url, headers=headers, json=payload, timeout=stream_timeout) as response:
                 if response.status_code != 200:
                     logger.error(f"LLM API Error: {response.status_code}")
                     yield f"Error: LLM API returned {response.status_code}"
@@ -907,18 +874,15 @@ class DeepInfraLLMClient:
         # Prepare headers
 
         headers = {
-
-            "Authorization": f"Bearer {self.api_key}",
-
+            "Authorization": f"Bearer {self.deepinfra_api_key}",
             "Content-Type": "application/json",
-
         }
 
-
+        
 
         # Build System Persona
 
-        system_content = "You are a helpful knowledge base assistant. Provide clear, concise answers based on the provided context. Always cite relevant information from the context. Ensure all numeric values, years, and technical symbols are preserved."
+        system_content = "You are a helpful knowledge base assistant."
 
         if agent_persona:
 
@@ -938,13 +902,13 @@ class DeepInfraLLMClient:
 
             
 
-            # STRICT GROUNDING + NUMERIC PRESERVATION
-
             system_content += (
 
                 "\n\nCRITICAL INSTRUCTION: You must strictly respond ONLY using the provided knowledge base content. "
 
-                "Do not rely on your own pre-trained knowledge. Always include precise numeric values, years, GPA, and dates. "
+                "Do not rely on your own pre-trained knowledge. Always include precise numeric values, years, percentages, "
+
+                "and symbols (like GPA scores, dates, or currency) explicitly mentioned in the context. "
 
                 "If the answer is not contained within the provided context, you MUST respond exactly with: "
 
@@ -960,7 +924,7 @@ class DeepInfraLLMClient:
 
                 "You are a helpful knowledge base assistant. You must strictly respond ONLY using the provided context. "
 
-                "Preserve all numeric values, years, and symbols. "
+                "Preserve all numeric values, years, and specific details like GPA or percentages. "
 
                 "If the information is not available in the context, respond exactly with: "
 
@@ -972,29 +936,15 @@ class DeepInfraLLMClient:
 
 
 
-        # Prepare payload
-
         payload = {
 
-            "model": self.model,
+            "model": self.deepinfra_model,
 
             "messages": [
 
-                {
+                {"role": "system", "content": system_content},
 
-                    "role": "system",
-
-                    "content": system_content
-
-                },
-
-                {
-
-                    "role": "user",
-
-                    "content": prompt,
-
-                },
+                {"role": "user", "content": prompt},
 
             ],
 
@@ -1004,22 +954,12 @@ class DeepInfraLLMClient:
 
         }
 
-        if enable_thinking is not None:
-
-            payload["enable_thinking"] = enable_thinking
-
-            if enable_thinking is False:
-
-                payload["reasoning_effort"] = "none"
-
-
+        # Force thinking to false to save tokens for DeepInfra answer generation
+        payload["enable_thinking"] = False
+        payload["reasoning_effort"] = "none"
 
         # Rate limit guard (prevent API throttling)
-
         async with _llm_semaphore:
-
-            # Retry logic with exponential backoff
-
             last_error = None
 
             for attempt in range(self.max_retries):
@@ -1035,11 +975,8 @@ class DeepInfraLLMClient:
 
 
                     async with httpx.AsyncClient(timeout=self.timeout) as client:
-
                         response = await client.post(
-
-                            self.base_url, headers=headers, json=payload
-
+                            self.deepinfra_base_url, headers=headers, json=payload
                         )
 
 
