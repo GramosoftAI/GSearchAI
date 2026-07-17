@@ -69,6 +69,14 @@ class User(Base):
     def __repr__(self) -> str:
         return f"<User id={self.id} email={self.email} tenant_id={self.tenant_id}>"
 
+    @property
+    def username(self) -> str:
+        return self.email
+
+    @property
+    def role(self) -> str:
+        return "admin" if self.is_admin else "user"
+
 
 class Tenant(Base):
     """

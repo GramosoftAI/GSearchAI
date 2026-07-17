@@ -114,3 +114,28 @@ class CapacityProjection(BaseModel):
 
 class CapacityGovernanceResponse(BaseModel):
     projection: CapacityProjection
+
+
+from typing import Dict, Any
+
+
+class AppErrorLogSchema(BaseModel):
+    id: UUID
+    tenant_id: Optional[UUID] = None
+    user_id: Optional[UUID] = None
+    module: str
+    endpoint: Optional[str] = None
+    error_type: str
+    message: str
+    stack_trace: Optional[str] = None
+    request_metadata: Optional[Dict[str, Any]] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AppErrorLogsPaginatedResponse(BaseModel):
+    success: bool = True
+    data: List[AppErrorLogSchema]
+    meta: Dict[str, Any] = Field(default_factory=dict)

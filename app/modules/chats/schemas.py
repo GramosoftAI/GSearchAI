@@ -178,3 +178,64 @@ class ChatMessageFeedbackResponse(BaseModel):
     """Response schema for message feedback."""
     success: bool = Field(True, description="Indicates if the feedback was saved successfully")
     message: str = Field("Feedback saved successfully", description="Status message")
+
+
+# ============================================================================
+# ANALYTICS & DASHBOARD SCHEMAS
+# ============================================================================
+
+
+class FeedbackReasonSummary(BaseModel):
+    """Summary of a single feedback reason with count and percentage."""
+    feedback_type: str = Field(..., description="thumbs_up / thumbs_down")
+    reason: str = Field(..., description="The feedback reason comment")
+    count: int = Field(..., description="Number of occurrences")
+    percentage: float = Field(..., description="Percentage of total feedback")
+
+
+class FeedbackReasonsResponse(BaseModel):
+    """Response with list of feedback reasons."""
+    success: bool = Field(True)
+    data: List[FeedbackReasonSummary]
+    meta: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DrilldownFeedbackRecord(BaseModel):
+    """A detailed record of a chat feedback instance for administrative drill-down."""
+    time: str = Field(..., description="Timestamp of feedback or message creation")
+    user: Dict[str, Any] = Field(..., description="User details (id, email, names)")
+    tenant: Dict[str, Any] = Field(..., description="Tenant details (id, name)")
+    knowledge_base: List[Dict[str, Any]] = Field(..., description="KBs associated with agent/session")
+    feedback_type: str = Field(..., description="thumbs_up / thumbs_down")
+    feedback_reason: str = Field(..., description="The feedback reason")
+    question: Optional[str] = Field(None, description="The user's question before this reply")
+    ai_response: str = Field(..., description="The assistant's response")
+    rating: Optional[int] = Field(None, description="The rating score")
+    view: Dict[str, Any] = Field(..., description="Full context (session, message, chunks, metadata)")
+
+
+class DrilldownFeedbackResponse(BaseModel):
+    """Response with drill-down detailed feedback records."""
+    success: bool = Field(True)
+    data: List[DrilldownFeedbackRecord]
+    meta: Dict[str, Any] = Field(default_factory=dict)
+
+
+class FeedbackOverviewItem(BaseModel):
+    """Overall feedback statistics for a single type (thumbs_up/thumbs_down)."""
+    count: int = Field(..., description="Number of feedback items")
+    percentage: float = Field(..., description="Percentage of total feedback")
+
+
+class FeedbackOverviewData(BaseModel):
+    """Data payload for overall feedback statistics."""
+    positive: FeedbackOverviewItem = Field(..., description="Positive feedback (thumbs_up) statistics")
+    negative: FeedbackOverviewItem = Field(..., description="Negative feedback (thumbs_down) statistics")
+    total: int = Field(..., description="Total feedback count")
+
+
+class FeedbackOverviewResponse(BaseModel):
+    """Response containing overall feedback statistics."""
+    success: bool = Field(True)
+    data: FeedbackOverviewData
+    meta: Dict[str, Any] = Field(default_factory=dict)

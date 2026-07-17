@@ -17,6 +17,7 @@ from .schemas import (
     CapacityProjection
 )
 from .models import AnalyticsSummary, AnalyticsQueryLog
+from app.core.llm.deepinfra_llm import PRICE_PER_1M_INPUT_TOKENS, PRICE_PER_1M_OUTPUT_TOKENS
 
 class AnalyticsService:
     def __init__(self, repository: AnalyticsRepository):
@@ -100,10 +101,9 @@ class AnalyticsService:
     async def get_cost_governance(self) -> CostGovernanceResponse:
         data = await self.repo.get_cost_governance_data()
         
-        # DeepInfra Qwen3-32B estimated pricing
-        # $0.15 / 1M input, $0.60 / 1M output
-        inp_price_per_m = 0.15
-        out_price_per_m = 0.60
+        # DeepInfra LLM pricing constants
+        inp_price_per_m = PRICE_PER_1M_INPUT_TOKENS
+        out_price_per_m = PRICE_PER_1M_OUTPUT_TOKENS
         
         total_inp = sum(d["input_tokens"] for d in data["daily_tokens"])
         total_out = sum(d["output_tokens"] for d in data["daily_tokens"])

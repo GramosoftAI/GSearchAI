@@ -845,12 +845,15 @@ async def ingest_file(
 
                     raise HTTPException(status_code=status_code, detail=error_msg)
 
-                # Set file_hash on the KnowledgeBase
+                # Set file_hash and description on the KnowledgeBase
                 from sqlalchemy import update
+                method = getattr(document_text, "extraction_method", "gdocz")
+                display_method = "Gdocz" if method.lower() == "gdocz" else "pdfplumber"
+                kb_description = f"Automated PDF upload source ({display_method} extraction)"
                 await db.execute(
                     update(KnowledgeBase)
                     .where(KnowledgeBase.id == uuid.UUID(kb_id))
-                    .values(file_hash=file_hash)
+                    .values(file_hash=file_hash, description=kb_description)
                 )
                 await db.commit()
 

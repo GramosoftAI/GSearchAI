@@ -203,6 +203,8 @@ class AnalyticsRepository:
         return trends
 
     async def get_cost_governance_data(self) -> dict:
+        from ..chats.models import ChatMessage
+
         # Category breakdown
         cat_stmt = select(
             DocumentIngestionRun.document_category,
@@ -220,22 +222,82 @@ class AnalyticsRepository:
                 "input_tokens": inp,
                 "output_tokens": out
             })
+
+        # Fetch assistant messages to aggregate conversational RAG tokens
+        chat_stmt = select(
+            ChatMessage.created_at,
+            ChatMessage.message_metadata
+        ).where(
+            ChatMessage.tenant_id == self.tenant_id,
+            ChatMessage.role == "assistant"
+        )
+        
+        chat_res = await self.db.execute(chat_stmt)
+        
+        chat_inp = 0
+        chat_out = 0
+        chat_daily = {}
+        
+        for created_at, metadata in chat_res.all():
+            if not metadata or "stats" not in metadata:
+                continue
+            stats = metadata["stats"]
+            inp = int(stats.get("llm_input_tokens") or 0)
+            out = int(stats.get("llm_output_tokens") or 0)
             
-        # Daily token trends
+            chat_inp += inp
+            chat_out += out
+            
+            if created_at:
+                # If created_at is a datetime, format it. Otherwise if it's a string, use it directly or format.
+                if isinstance(created_at, str):
+                    dt = created_at[:10]
+                else:
+                    dt = created_at.strftime("%Y-%m-%d")
+                if dt not in chat_daily:
+                    chat_daily[dt] = {"inp": 0, "out": 0}
+                chat_daily[dt]["inp"] += inp
+                chat_daily[dt]["out"] += out
+
+        if chat_inp > 0 or chat_out > 0:
+            categories.append({
+                "document_category": "Conversational RAG",
+                "input_tokens": chat_inp,
+                "output_tokens": chat_out
+            })
+            
+        # Daily token trends from ingestion runs
         day_stmt = select(
-            func.to_char(DocumentIngestionRun.created_at, 'YYYY-MM-DD').label("date"),
+            func.to_char(DocumentIngestionRun.started_at, 'YYYY-MM-DD').label("date"),
             func.sum(DocumentIngestionRun.llm_input_tokens).label("inp"),
             func.sum(DocumentIngestionRun.llm_output_tokens).label("out")
         ).where(DocumentIngestionRun.tenant_id == self.tenant_id).group_by("date").order_by("date").limit(30)
         
         day_res = await self.db.execute(day_stmt)
-        daily_tokens = []
+        
+        daily_map = {}
         for row in day_res.all():
-            daily_tokens.append({
-                "date": row.date,
+            dt = row.date
+            daily_map[dt] = {
+                "date": dt,
                 "input_tokens": int(row.inp or 0),
                 "output_tokens": int(row.out or 0)
-            })
+            }
+
+        # Merge daily trends from chat messages
+        for dt, tokens in chat_daily.items():
+            if dt in daily_map:
+                daily_map[dt]["input_tokens"] += tokens["inp"]
+                daily_map[dt]["output_tokens"] += tokens["out"]
+            else:
+                daily_map[dt] = {
+                    "date": dt,
+                    "input_tokens": tokens["inp"],
+                    "output_tokens": tokens["out"]
+                }
+
+        # Sort combined daily trends by date
+        daily_tokens = sorted(daily_map.values(), key=lambda x: x["date"])[-30:]
             
         return {
             "categories": categories,

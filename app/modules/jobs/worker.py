@@ -191,7 +191,12 @@ async def run_pdf_ingestion_job(
 
             kb_service = KnowledgeBaseService(db, tenant_id)
             kb_name = f"Spreadsheet: {filename}" if is_spreadsheet else f"PDF: {filename}"
-            kb_description = f"Automated spreadsheet upload source (Table extraction)" if is_spreadsheet else f"Automated PDF upload source (Gdocz extraction)"
+            if is_spreadsheet:
+                kb_description = "Automated spreadsheet upload source (Table extraction)"
+            else:
+                method = getattr(document_text, "extraction_method", "gdocz")
+                display_method = "Gdocz" if method.lower() == "gdocz" else "pdfplumber"
+                kb_description = f"Automated PDF upload source ({display_method} extraction)"
             kb_source = "spreadsheet_upload" if is_spreadsheet else "pdf_upload"
 
             kb_request = KBCreate(

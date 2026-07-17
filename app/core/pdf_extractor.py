@@ -43,12 +43,13 @@ settings = get_settings()
 
 
 class ExtractedText(str):
-    def __new__(cls, clean_text: str, raw_content: str, is_html: bool = False, is_markdown: bool = False):
+    def __new__(cls, clean_text: str, raw_content: str, is_html: bool = False, is_markdown: bool = False, extraction_method: str = "gdocz"):
         obj = super().__new__(cls, clean_text)
         obj.raw_content = raw_content
         obj.raw_html = raw_content  # backward compatibility
         obj.is_html = is_html
         obj.is_markdown = is_markdown
+        obj.extraction_method = extraction_method
         return obj
 
 
@@ -191,7 +192,7 @@ class PDFExtractor:
                         f" Cleaned for RAG: {len(cleaned)} chars "
                         f"(from {len(raw_markdown_clean)} raw)"
                     )
-                    return ExtractedText(cleaned, raw_markdown_clean, is_markdown=True)
+                    return ExtractedText(cleaned, raw_markdown_clean, is_markdown=True, extraction_method="gdocz")
                 else:
                     logger.warning(
                         f" Gdocz returned empty result for {filename}. "
@@ -223,11 +224,11 @@ class PDFExtractor:
                         reconstructed_markdown = await PDFExtractor._reconstruct_text_to_markdown_with_llm(extracted_text)
                         cleaned = PDFExtractor._clean_markdown_for_rag(reconstructed_markdown)
                         logger.info("Successfully reconstructed pdfplumber plain text to Markdown via LLM")
-                        return ExtractedText(cleaned, reconstructed_markdown, is_markdown=True)
+                        return ExtractedText(cleaned, reconstructed_markdown, is_markdown=True, extraction_method="pdfplumber")
                     except Exception as llm_err:
                         logger.warning(f"LLM text reconstruction to Markdown failed: {llm_err}. Returning raw plain text.")
                     
-                    return ExtractedText(extracted_text, extracted_text, is_markdown=False)
+                    return ExtractedText(extracted_text, extracted_text, is_markdown=False, extraction_method="pdfplumber")
             except Exception as e:
                 logger.error(f" pdfplumber also failed for {filename}: {e}")
         else:
