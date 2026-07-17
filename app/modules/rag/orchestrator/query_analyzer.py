@@ -26,7 +26,7 @@ class QueryMetadata(BaseModel):
     year: Optional[str] = Field(None, description="E.g., 2023, 2024, FY23")
     company: Optional[str] = Field(None, description="Company name mentioned in query")
     document_type: Optional[str] = Field(None, description="E.g., 10-Q, 10-K, Earnings Call")
-    section: Optional[str] = Field(None, description="Specific document section, e.g., Note 1, MD&A, Risk Factors")
+    primary_topic: Optional[str] = Field(None, description="Primary domain topic (e.g., Accounting, Revenue, Tax)")
     keywords: List[str] = Field(default_factory=list, description="Extracted keywords for search")
 
 class AnalysisResult(BaseModel):
@@ -65,6 +65,7 @@ INTENTS:
 
 Extract metadata if explicitly mentioned or strongly implied. 
 If not present, use null.
+The `primary_topic` is the core domain concept (e.g., Accounting, Revenue, Expenses, Legal, Medical).
 
 Return ONLY valid JSON:
 {{
@@ -74,18 +75,18 @@ Return ONLY valid JSON:
     "year": "2023",
     "company": "NVIDIA",
     "document_type": "10-Q",
-    "section": "Note 1",
-    "keywords": ["revenue", "data center"]
+    "primary_topic": "Accounting",
+    "keywords": ["accounting", "changes", "estimate"]
   }},
   "confidence": 0.95,
-  "reasoning": "User is asking for a proportion which requires calculating Data Center Revenue / Total Revenue"
+  "reasoning": "Query asks for accounting changes, which requires finding related accounting data."
 }}
 
 QUERY:
 {query}
 """
         try:
-            response = await self.llm_client.generate(
+            response = await self.llm_client.generate_cloud(
                 prompt=prompt,
                 system_prompt="You are an expert financial query analyzer. Return only JSON.",
                 temperature=0.0,
@@ -119,7 +120,7 @@ QUERY:
                 year=metadata_dict.get("year"),
                 company=metadata_dict.get("company"),
                 document_type=metadata_dict.get("document_type"),
-                section=metadata_dict.get("section"),
+                primary_topic=metadata_dict.get("primary_topic"),
                 keywords=metadata_dict.get("keywords", [])
             )
             

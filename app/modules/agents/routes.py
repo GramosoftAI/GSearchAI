@@ -1104,9 +1104,11 @@ async def instant_ingest_pdf(
             if not agent_result.get("success"):
                 raise HTTPException(status_code=404, detail="Agent not found")
                 
-            # 2. Create Job in DB
+        # 2. Create Job in DB
             job_service = JobService(db, tenant_id)
-            job_create = JobCreate(job_type="pdf_ingestion", file_name=filename)
+            is_spreadsheet = filename.lower().endswith(('.csv', '.xls', '.xlsx'))
+            job_type = "excel_ingestion" if is_spreadsheet else "pdf_ingestion"
+            job_create = JobCreate(job_type=job_type, file_name=filename)
             job_result = await job_service.create_job(user_id, job_create)
             
             if not job_result.get("success"):
@@ -1114,19 +1116,31 @@ async def instant_ingest_pdf(
                 
             job_id = str(job_result["data"]["job"].id)
             
-        # 3. Launch ingestion as an independent async task (not via background_tasks
-        # which runs AFTER the response and can block the event loop for other requests)
+        # 3. Launch ingestion as an independent async task
         import asyncio
-        asyncio.create_task(
-            run_pdf_ingestion_job(
-                tenant_id=str(tenant_id),
-                user_id=str(user_id),
-                agent_id=str(agent_id),
-                job_id=job_id,
-                filename=filename,
-                content=content
+        if is_spreadsheet:
+            from app.modules.jobs.worker import run_excel_ingestion_job
+            asyncio.create_task(
+                run_excel_ingestion_job(
+                    tenant_id=str(tenant_id),
+                    user_id=str(user_id),
+                    agent_id=str(agent_id),
+                    job_id=job_id,
+                    filename=filename,
+                    content=content
+                )
             )
-        )
+        else:
+            asyncio.create_task(
+                run_pdf_ingestion_job(
+                    tenant_id=str(tenant_id),
+                    user_id=str(user_id),
+                    agent_id=str(agent_id),
+                    job_id=job_id,
+                    filename=filename,
+                    content=content
+                )
+            )
 
         return {
             "success": True,
