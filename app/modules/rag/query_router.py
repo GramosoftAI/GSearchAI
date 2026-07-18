@@ -464,7 +464,7 @@ Return ONLY valid JSON in this exact structure with no markdown formatting, no b
   "rewritten_query": "average revenue calculation"
 }}
 """
-        response = await self.llm_client.generate(
+        response = await self.llm_client.generate_cloud(
             prompt=prompt,
             system_prompt=system_prompt,
             temperature=0.0,
