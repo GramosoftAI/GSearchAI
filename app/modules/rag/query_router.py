@@ -263,13 +263,135 @@ class QueryRouter:
                             route_result.requested_entities.extend(ENTITY_GROUPS[group])
                             logger.debug(f"Router expanded group '{group}' to: {ENTITY_GROUPS[group]}")
                 except Exception as e:
-                    logger.warning(f"Failed to expand entity groups: {e}")
+                    logger.warning(f" Failed to expand entity groups: {e}")
             
+            # Deduplicate entities
             route_result.requested_entities = list(set(route_result.requested_entities))
             route_result.latency_ms = (time.perf_counter() - start_time) * 1000
             
             self.cache.set(query_lower, route_result)
             return route_result
+        except Exception as e:
+            logger.warning(f" Router Stage failed: {e}. Falling back to default.")
+            
+        # Default fallback
+        return RouteResult(intent=SearchType.GRAPH_COMPLETION, confidence=0.5, reason="Default fallback", rewritten=query)
+
+    async def rewrite_query(self, query: str) -> dict:
+        """
+        Extracts keywords, entities, and intent for better downstream retrieval.
+        """
+        prompt = f"""
+Rewrite this query for RAG retrieval.
+Extract:
+- entities
+- dates
+- intent
+- keywords
+
+Query:
+{query}
+
+Return ONLY valid JSON in this exact format, with no markdown formatting or backticks:
+{{
+ "keywords": ["keyword1"],
+ "entities": ["entity1"],
+ "date_filter": "yesterday",
+ "intent": "find information"
+}}
+"""
+        try:
+            result = await self.llm_client.generate_cloud(
+                prompt=prompt,
+                system_prompt="You are a query rewriting engine. Return only JSON.",
+                temperature=0.0,
+                max_tokens=1024,
+                enable_thinking=False
+            )
+            # Clean up markdown if present
+            import re
+            json_match = re.search(r'```json\s*(\{.*?\})\s*```', result, re.DOTALL)
+            if json_match:
+                cleaned = json_match.group(1)
+            else:
+                start_idx = result.find('{')
+                end_idx = result.rfind('}')
+                if start_idx != -1 and end_idx != -1:
+                    cleaned = result[start_idx:end_idx+1]
+                else:
+                    cleaned = result.replace('```json', '').replace('```', '').strip()
+            return json.loads(cleaned)
+        except Exception as e:
+            logger.warning(f"Failed to rewrite query: {e}")
+            return {"keywords": [], "entities": [], "date_filter": "", "intent": ""}
+
+    async def _llm_classify(self, query: str, rewritten: dict) -> RouteResult:
+        """
+        Use LLM to determine the user's intent for complex queries.
+        """
+        prompt = f"""
+You are an enterprise RAG router.
+Analyze:
+1. What does user want?
+2. Which data source is required?
+3. Is reasoning needed?
+
+Choose exactly one of the following intents:
+- EMAIL_ANALYSIS: needs gmail/outlook data
+- RECENT_EMAILS: queries asking for recent or latest emails specifically
+- DOCUMENT_QA: Questions about documents
+- DATA_ANALYSIS: Analysis of data/numbers
+- SUMMARIZATION: Requesting summaries
+- SUPPORT_INTENT: Requests requiring human assistance
+- ORGANIZATION_SPECIFIC: Questions about the organization
+- KNOWLEDGE_BASE: Document specific questions
+- GENERAL_KNOWLEDGE: Questions unrelated to the organization
+- CHUNK_SEARCH: Direct fact lookup
+- GRAPH_SUMMARY: Requests for overviews
+- CHAIN_OF_THOUGHT: Complex reasoning
+- MEMORY_ONLY: Personal history/preferences
+- ENTITY_CONNECTION: Relationship between two things
+- SOCIAL: Greetings, thanks, or small talk
+- TABLE_ANALYTICS: Database-style filtering or aggregations on structured tabular data (COUNT, AVG, MIN, MAX, GROUP BY, SORT, highest, lowest)
+- EXTRACTIVE: Strict exact value retrieval without generation (e.g., "Give me the GSTIN", "What is the invoice number and engine number")
+- GRAPH_COMPLETION: General default.
+
+If the intent is EXTRACTIVE, you MUST also provide a list of exactly which entities the user is requesting in snake_case (e.g. ["engine_number", "gstin"]).
+If the user is asking for a semantic group of fields instead of individual fields (e.g. "vehicle details", "customer information", "delivery details"), you MUST output them in `requested_groups` in snake_case (e.g. ["vehicle_details"]).
+
+Return ONLY valid JSON in this exact format, with no markdown formatting or backticks:
+{{
+ "intent": "EXTRACTIVE",
+ "confidence": 0.95,
+ "reason": "User wants exact identifiers",
+ "requested_entities": ["engine_number", "registration_number"],
+ "requested_groups": ["vehicle_details"]
+}}
+
+Query:
+{query}
+"""
+
+        try:
+            response = await self.llm_client.generate_cloud(
+                prompt=prompt,
+                system_prompt="You are an enterprise RAG router. Return only JSON.",
+                temperature=0.0,
+                max_tokens=1024,
+                enable_thinking=False
+            )
+            import re
+            json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
+            if json_match:
+                cleaned = json_match.group(1)
+            else:
+                start_idx = response.find('{')
+                end_idx = response.rfind('}')
+                if start_idx != -1 and end_idx != -1:
+                    cleaned = response[start_idx:end_idx+1]
+                else:
+                    cleaned = response.replace('```json', '').replace('```', '').strip()
+            data = json.loads(cleaned)
             
         except Exception as e:
             logger.error(f"Router Stage 4 failed: {e}. Falling back to default RAG routing.", exc_info=True)
@@ -342,7 +464,7 @@ Return ONLY valid JSON in this exact structure with no markdown formatting, no b
   "rewritten_query": "average revenue calculation"
 }}
 """
-        response = await self.llm_client.generate(
+        response = await self.llm_client.generate_cloud(
             prompt=prompt,
             system_prompt=system_prompt,
             temperature=0.0,

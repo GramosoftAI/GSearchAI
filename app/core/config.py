@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
 
     postgres_db: str = "graphmind"
+    
+    # ============= LLM GATEWAY =============
+    llm_base_url: str
 
 
 
@@ -219,6 +222,8 @@ class Settings(BaseSettings):
     deepinfra_api_url: str = "https://api.deepinfra.com/v1/openai"
     
     deepinfra_llm_model: str = "Qwen/Qwen2.5-7B-Instruct"
+
+    llm_gateway_api_key: Optional[str] = None
 
     gdocz_api_key: Optional[str] = None  # For PDF  Markdown extraction (primary)
 

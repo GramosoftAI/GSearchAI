@@ -48,7 +48,7 @@ BEHAVIOR CONTRACT:
             llm_client = await get_llm_client()
             logger.debug(f"Rewriting query via Qwen-2.5-72B-Instruct: '{query}'")
             
-            enhanced_query = await llm_client.generate(
+            enhanced_query = await llm_client.generate_cloud(
                 prompt=stripped_query,
                 system_prompt=self.system_prompt,
                 temperature=0.1,  # Low temperature for strict adherence

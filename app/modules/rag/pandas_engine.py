@@ -94,7 +94,7 @@ Notes:
 """
 
         try:
-            ast_response = await self.llm_client.generate(
+            ast_response = await self.llm_client.generate_cloud(
                 prompt=prompt,
                 system_prompt="You are a Pandas JSON AST generator. Return only JSON.",
                 temperature=0.0,
