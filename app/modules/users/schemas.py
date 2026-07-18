@@ -13,6 +13,7 @@ class UserResponse(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     is_active: bool
+    is_admin: Optional[bool] = None
     role: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -27,3 +28,5 @@ class UserUpdate(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     role: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None

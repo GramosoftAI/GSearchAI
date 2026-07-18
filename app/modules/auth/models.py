@@ -77,6 +77,10 @@ class User(Base):
     def role(self) -> str:
         return "admin" if self.is_admin else "user"
 
+    @role.setter
+    def role(self, value: str):
+        self.is_admin = (value == "admin")
+
 
 class Tenant(Base):
     """
