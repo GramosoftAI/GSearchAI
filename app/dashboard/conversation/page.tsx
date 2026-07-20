@@ -345,16 +345,17 @@ async function getCleanTextContent(kb_id: string): Promise<string> {
   return "";
 }
 
-function getFileName(sourceUrlOrName: string): string {
+function getFileName(sourceUrlOrName: string | any): string {
+  if (!sourceUrlOrName) return "";
   try {
-    let name = sourceUrlOrName;
-    if (sourceUrlOrName.startsWith("http://") || sourceUrlOrName.startsWith("https://")) {
-      const url = new URL(sourceUrlOrName);
+    let name = String(sourceUrlOrName);
+    if (name.startsWith("http://") || name.startsWith("https://")) {
+      const url = new URL(name);
       const pathname = url.pathname;
-      name = pathname.substring(pathname.lastIndexOf('/') + 1) || sourceUrlOrName;
+      name = pathname.substring(pathname.lastIndexOf('/') + 1) || name;
     } else {
-      const cleanPath = sourceUrlOrName.replace(/\\/g, '/');
-      name = cleanPath.substring(cleanPath.lastIndexOf('/') + 1) || sourceUrlOrName;
+      const cleanPath = name.replace(/\\/g, '/');
+      name = cleanPath.substring(cleanPath.lastIndexOf('/') + 1) || name;
     }
 
     const positionIndex = name.toLowerCase().indexOf("position");
@@ -367,7 +368,7 @@ function getFileName(sourceUrlOrName: string): string {
     }
     return name.trim();
   } catch {
-    return sourceUrlOrName;
+    return typeof sourceUrlOrName === 'string' ? sourceUrlOrName : "";
   }
 }
 
@@ -1171,7 +1172,9 @@ export default function ChatPlaygroundPage() {
           if (wsSourcesRef.current.length > 0) {
             // Filter wsSourcesRef: keep it if the AI mentioned the filename ANYWHERE, or if it matched the extraction
             const matchedSources = wsSourcesRef.current.filter(src => {
+              if (!src.source) return false;
               const srcName = getFileName(src.source).toLowerCase();
+              if (!srcName) return false;
               const inText = accumulated.toLowerCase().includes(srcName);
               const inCitations = citedFilenames.some(cf => srcName.includes(cf) || cf.includes(srcName));
               return inText || inCitations;
