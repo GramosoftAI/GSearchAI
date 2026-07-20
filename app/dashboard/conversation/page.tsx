@@ -1096,12 +1096,15 @@ export default function ChatPlaygroundPage() {
 
     setWsStatus("connecting");
 
-    const defaultWsHost = API_BASE_URL
-      .replace(/^http/, "ws")
-      .split("/api/v1")[0];
+    // Professionally construct the WS base URL to inherit the API path (e.g., /api/v1)
+    let wsBaseUrl = API_BASE_URL.replace(/^http/, "ws");
+    if (process.env.NEXT_PUBLIC_WS_URL) {
+      const cleanWsHost = process.env.NEXT_PUBLIC_WS_URL.replace(/\/$/, "");
+      const apiPathSuffix = API_BASE_URL.replace(/^https?:\/\/[^\/]+/, "");
+      wsBaseUrl = `${cleanWsHost}${apiPathSuffix}`;
+    }
 
-    const wsHost = process.env.NEXT_PUBLIC_WS_URL || defaultWsHost;
-    const wsUrl = `${wsHost}/rag/ws/${agent.id}?token=${getCookie(AUTH_COOKIE_KEY)}`;
+    const wsUrl = `${wsBaseUrl}/rag/ws/${agent.id}?token=${getCookie(AUTH_COOKIE_KEY)}`;
 
     const socket = new WebSocket(wsUrl);
     ws.current = socket;
