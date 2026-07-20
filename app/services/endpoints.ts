@@ -65,6 +65,10 @@ export const endpoints = {
     url: "/analytics/dashboard",
     method: methods.get,
   },
+  FEEDBACK_REASONS: {
+    url: "/analytics/feedback-reasons",
+    method: methods.get,
+  },
   GET_AGENTS_BY_USER: {
     url: "/agents/by-user",
     method: methods.get,
@@ -88,9 +92,19 @@ export const endpoints = {
   GET_AGENT_BY_ID: {
     url: "/personalities",
     method: methods.get
+  },
+  GET_USERS: {
+    url: "/users",
+    method: methods.get,
+  },
+  UPDATE_USER: {
+    url: "/users",
+    method: methods.put,
+  },
+  DELETE_USER: {
+    url: "/users",
+    method: methods.delete,
   }
-
-
 } as const;
 
 export type endpointsType = keyof typeof endpoints;

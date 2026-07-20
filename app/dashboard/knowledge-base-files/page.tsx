@@ -194,7 +194,7 @@ export default function KnowledgeBaseFilesPage() {
 
   // Filters State
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [dateRange, setDateRange] = useState<[string, string] | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
 
   // Pagination State
@@ -213,6 +213,9 @@ export default function KnowledgeBaseFilesPage() {
   const [previewUrl, setPreviewUrl] = useState<string>("");
   const [parsedText, setParsedText] = useState<string>("");
   const [previewType, setPreviewType] = useState<string>("other");
+  const [spreadsheetData, setSpreadsheetData] = useState<{ [sheetName: string]: string[][] } | null>(null);
+  const [spreadsheetSheets, setSpreadsheetSheets] = useState<string[]>([]);
+  const [activeSheet, setActiveSheet] = useState<string>("");
 
   const [request, , loading] = useAxios({
     endpoint: "GET_USER_KBS",
@@ -224,8 +227,9 @@ export default function KnowledgeBaseFilesPage() {
 
     let path = `/${activeUserId}?limit=${limit}&offset=${offset}`;
 
-    if (selectedDate) {
-      path += `&date=${selectedDate}`;
+    if (dateRange) {
+      path += `&start_date=${dateRange[0]}&end_date=${dateRange[1]}`;
+      path += `&date=${dateRange[0]}`; // For backwards compatibility
     }
     if (selectedAgent) {
       path += `&agent_id=${selectedAgent}`;
@@ -247,7 +251,7 @@ export default function KnowledgeBaseFilesPage() {
     } catch (err) {
       console.error("Failed to fetch knowledge base files:", err);
     }
-  }, [activeUserId, limit, offset, selectedDate, selectedAgent, searchQuery, request]);
+  }, [activeUserId, limit, offset, dateRange, selectedAgent, searchQuery, request]);
 
   // Debounce API calls for search query, and trigger on other filter updates immediately
   useEffect(() => {
@@ -261,8 +265,12 @@ export default function KnowledgeBaseFilesPage() {
     return () => clearTimeout(delayDebounceFn);
   }, [fetchKbs, searchQuery]);
 
-  const handleDateChange = (date: any, dateString: string | string[] | null) => {
-    setSelectedDate(dateString ? (Array.isArray(dateString) ? dateString[0] : dateString) : null);
+  const handleDateRangeChange = (dates: any, dateStrings: [string, string]) => {
+    if (dates && dateStrings[0] && dateStrings[1]) {
+      setDateRange(dateStrings);
+    } else {
+      setDateRange(null);
+    }
     setOffset(0);
   };
 
@@ -273,7 +281,7 @@ export default function KnowledgeBaseFilesPage() {
 
   const handleReset = () => {
     setSearchQuery("");
-    setSelectedDate(null);
+    setDateRange(null);
     setSelectedAgent(null);
     setOffset(0);
   };
@@ -322,11 +330,43 @@ export default function KnowledgeBaseFilesPage() {
             nameStr.endsWith(".jpeg") ||
             nameStr.endsWith(".webp") ||
             nameStr.endsWith(".gif");
+          const isCSV = contentType.includes("csv") || nameStr.endsWith(".csv");
+          const isExcel =
+            contentType.includes("excel") ||
+            contentType.includes("spreadsheet") ||
+            contentType.includes("vnd.ms-excel") ||
+            contentType.includes("vnd.openxmlformats-officedocument.spreadsheetml.sheet") ||
+            nameStr.endsWith(".xls") ||
+            nameStr.endsWith(".xlsx");
 
           if (isPDF) {
             setPreviewType("pdf");
           } else if (isImage) {
             setPreviewType("image");
+          } else if (isCSV || isExcel) {
+            try {
+              const arrayBuffer = await blob.arrayBuffer();
+              const XLSX = await import("xlsx");
+              const workbook = XLSX.read(arrayBuffer, { type: "array" });
+
+              const sheetsData: { [sheetName: string]: string[][] } = {};
+              workbook.SheetNames.forEach((sheetName) => {
+                const worksheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+                sheetsData[sheetName] = jsonData.map((row: any) =>
+                  Array.isArray(row)
+                    ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+                    : []
+                );
+              });
+              setSpreadsheetData(sheetsData);
+              setSpreadsheetSheets(workbook.SheetNames);
+              setActiveSheet(workbook.SheetNames[0] || "");
+              setPreviewType("excel");
+            } catch (err) {
+              console.error("Failed to parse spreadsheet:", err);
+              setPreviewType("other");
+            }
           } else {
             setPreviewType("other");
           }
@@ -376,6 +416,9 @@ export default function KnowledgeBaseFilesPage() {
     setPreviewUrl("");
     setParsedText("");
     setPreviewItem(null);
+    setSpreadsheetData(null);
+    setSpreadsheetSheets([]);
+    setActiveSheet("");
   };
 
   // Perform client-side filter on top of server data as fallback search
@@ -391,9 +434,12 @@ export default function KnowledgeBaseFilesPage() {
       title: "File Name",
       dataIndex: "name",
       key: "name",
-      render: (text: string) => (
-        <Text className="font-semibold text-[var(--app-text)]">{text || "Unnamed File"}</Text>
-      ),
+      render: (text: string) => {
+        const cleaned = text ? text.replace(/^(pdf|spreadsheet|text|url|file|csv|excel):\s*/i, "") : "Unnamed File";
+        return (
+          <Text className="font-semibold text-[var(--app-text)]">{cleaned}</Text>
+        );
+      },
     },
     {
       title: "Agent",
@@ -409,48 +455,12 @@ export default function KnowledgeBaseFilesPage() {
       },
     },
     {
-      title: "Status",
-      key: "status",
-      render: (_: any, record: any) => {
-        const job = record?.processing_jobs;
-        if (!job) {
-          return <Tag color="default">Ready</Tag>;
-        }
-
-        const status = job.status ? job.status.toLowerCase() : "";
-        if (status === "completed") {
-          return <Tag color="success">Completed</Tag>;
-        } else if (status === "failed" || status === "error") {
-          return (
-            <Tooltip title={job.error_message || "Processing failed"}>
-              <Tag color="error">Failed</Tag>
-            </Tooltip>
-          );
-        } else if (status === "processing" || status === "pending" || (job.progress < 100 && job.progress !== null)) {
-          return (
-            <Space direction="vertical" size={2} className="w-full">
-              <Tag color="processing" className="m-0">
-                Extracting ({job.progress ?? 0}%)
-              </Tag>
-              {job.current_step && (
-                <Text type="secondary" style={{ fontSize: "10px" }} className="block truncate max-w-[120px]">
-                  {job.current_step}
-                </Text>
-              )}
-            </Space>
-          );
-        }
-
-        return <Tag color="processing">{job.status || "Processing"}</Tag>;
-      },
-    },
-    {
       title: "Created At",
       dataIndex: "created_at",
       key: "created_at",
       render: (date: string) => (
         <Text className="text-[var(--app-text-soft)]">
-          {date ? dayjs(date).format("YYYY-MM-DD HH:mm:ss") : "N/A"}
+          {date ? dayjs(date).format("DD MMM YYYY hh:mm A") : "N/A"}
         </Text>
       ),
     },
@@ -534,13 +544,13 @@ export default function KnowledgeBaseFilesPage() {
             <Col xs={24} sm={6}>
               <Flex vertical gap={8}>
                 <Text className="text-xs font-bold text-[var(--app-text-soft)] uppercase tracking-wider">
-                  Filter by Date
+                  Filter by Date Range
                 </Text>
-                <DatePicker
+                <DatePicker.RangePicker
                   size="large"
                   className="w-full"
-                  value={selectedDate ? dayjs(selectedDate) : null}
-                  onChange={handleDateChange}
+                  value={dateRange ? [dayjs(dateRange[0]), dayjs(dateRange[1])] : null}
+                  onChange={handleDateRangeChange}
                 />
               </Flex>
             </Col>
@@ -574,7 +584,7 @@ export default function KnowledgeBaseFilesPage() {
                 type="default"
                 className="w-full"
                 onClick={handleReset}
-                disabled={!selectedDate && !selectedAgent && !searchQuery}
+                disabled={!dateRange && !selectedAgent && !searchQuery}
               >
                 Clear Filters
               </Button>
@@ -586,7 +596,7 @@ export default function KnowledgeBaseFilesPage() {
         <Card className="bg-[var(--app-surface)] border-[var(--app-border)] shadow-sm rounded-2xl overflow-hidden">
           <Table
             columns={columns}
-            dataSource={filteredKbs}
+            dataSource={kbs}
             rowKey="id"
             loading={loading}
             pagination={paginationConfig}
@@ -599,7 +609,7 @@ export default function KnowledgeBaseFilesPage() {
       <Modal
         title={
           <span className="font-extrabold text-lg text-[var(--app-text)] truncate block" style={{ maxWidth: "85%" }}>
-            {previewItem?.name || "Document Preview"}
+            {previewItem?.name ? previewItem.name.replace(/^(pdf|spreadsheet|text|url|file|csv|excel):\s*/i, "") : "Document Preview"}
           </span>
         }
         open={previewOpen}
@@ -646,6 +656,16 @@ export default function KnowledgeBaseFilesPage() {
           <div className="flex-1 w-full bg-[var(--app-surface)] rounded-xl border border-[var(--app-border)]/40 overflow-hidden relative shadow-sm h-full">
             {previewTab === "parsed" ? (
               <div className="w-full h-full overflow-auto p-6">
+                {previewItem?.created_at && (
+                  <div className="mb-4 pb-4 border-b border-[var(--app-border)]/40 flex items-center justify-between flex-wrap gap-2 text-xs text-[var(--app-text-soft)] font-medium">
+                    <span>
+                      Agent: <strong className="text-[var(--app-text)]">{agents.find((a: any) => a.id === previewItem.agent_id)?.name || previewItem.agent_id || "N/A"}</strong>
+                    </span>
+                    <span>
+                      Extracted: <strong className="text-[var(--app-text)]">{dayjs(previewItem.created_at).format("DD MMM YYYY hh:mm A")}</strong>
+                    </span>
+                  </div>
+                )}
                 <div
                   className="prose dark:prose-invert max-w-none text-[var(--app-text)]"
                   dangerouslySetInnerHTML={{
@@ -672,6 +692,56 @@ export default function KnowledgeBaseFilesPage() {
                     height="100%"
                     style={{ border: "none" }}
                   />
+                ) : previewType === "excel" && spreadsheetData && activeSheet ? (
+                  <div className="w-full h-full flex flex-col overflow-hidden">
+                    {/* Sheet Tabs */}
+                    {spreadsheetSheets.length > 1 && (
+                      <div className="flex gap-2 p-3 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 select-none">
+                        {spreadsheetSheets.map((sheet) => (
+                          <button
+                            key={sheet}
+                            onClick={() => setActiveSheet(sheet)}
+                            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all \${
+                              activeSheet === sheet
+                                ? "bg-[#0fb5a1] text-white border-[#0fb5a1]"
+                                : "bg-[var(--app-surface)] text-[var(--app-text-soft)] border-[var(--app-border)] hover:bg-[var(--app-hover)]"
+                            }`}
+                          >
+                            {sheet}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {/* Sheet Table */}
+                    <div className="flex-1 overflow-auto p-4">
+                      <table className="w-full border-collapse bg-[var(--app-surface)] text-xs text-[var(--app-text)] border border-[var(--app-border)]">
+                        <thead>
+                          <tr className="bg-[var(--app-surface-muted)]">
+                            <th className="border border-[var(--app-border)] p-2 text-center font-bold w-10 bg-[var(--app-surface-muted)] text-[var(--app-text-soft)]">#</th>
+                            {spreadsheetData[activeSheet]?.[0]?.map((colHeader, idx) => (
+                              <th key={idx} className="border border-[var(--app-border)] p-2 text-left font-bold bg-[var(--app-surface-muted)] text-[var(--app-text-soft)]">
+                                {colHeader || `Column \${idx + 1}`}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {spreadsheetData[activeSheet]?.slice(1).map((row, rIdx) => (
+                            <tr key={rIdx} className="hover:bg-[var(--app-hover)]">
+                              <td className="border border-[var(--app-border)] p-2 text-center text-[var(--app-text-soft)] font-medium bg-[var(--app-surface-muted)]/30">
+                                {rIdx + 1}
+                              </td>
+                              {row.map((cell, cIdx) => (
+                                <td key={cIdx} className="border border-[var(--app-border)] p-2 text-left">
+                                  {cell}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 ) : previewUrl ? (
                   <iframe
                     src={previewUrl}
@@ -706,6 +776,7 @@ export default function KnowledgeBaseFilesPage() {
           font-size: 13px !important;
           text-transform: uppercase !important;
           letter-spacing: 0.05em !important;
+          padding: 16px 24px !important;
         }
         .custom-table :global(.ant-table-tbody > tr > td) {
           border-bottom: 1px solid var(--app-border) !important;

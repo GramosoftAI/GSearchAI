@@ -1,6 +1,6 @@
 "use client";
 
-import { menuItems } from "./Sidebar";
+import { menuItems, adminMenuItems } from "./Sidebar";
 import { Avatar, Button } from "antd";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -8,6 +8,7 @@ import { deleteCookie } from "../../config/cookies";
 import { Dropdown } from "antd";
 import type { MenuProps } from "antd";
 import { MenuOutlined } from "@ant-design/icons";
+import { useStore } from "../../hooks/useStore";
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -17,6 +18,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [userName, setUserName] = useState("User");
+  const { isAdminMode, setIsAdminMode } = useStore();
 
   useEffect(() => {
     const storedName = localStorage.getItem("userName");
@@ -35,7 +37,10 @@ export default function Header({ onMenuClick }: HeaderProps) {
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
 
-  const currentPage = menuItems.find(item => item.path === pathname)?.label || "Dashboard";
+  const currentPage = [
+    ...menuItems,
+    ...adminMenuItems
+  ].find(item => item.path === pathname)?.label || "Dashboard";
 
 
 
@@ -101,7 +106,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
 
           <div className="flex flex-col">
             {(width > 568) && <div className="flex items-center gap-2 text-[var(--app-text-muted)] font-black text-[10px] uppercase tracking-[0.2em]">
-              Workspace / {currentPage}
+              {isAdminMode ? "Admin Portal" : "Workspace"} / {currentPage}
             </div>}
             {(width > 568) && <h2 className="text-[var(--app-text)] font-black text-xl md:text-2xl tracking-tighter leading-none mt-1">
               {currentPage}
@@ -109,8 +114,36 @@ export default function Header({ onMenuClick }: HeaderProps) {
           </div>
         </div>
 
-        {/* RIGHT SIDE: Profile Card with Integrated Logout Button */}
-        <div className="flex items-center shrink-0 select-none">
+        {/* RIGHT SIDE: Profile Card with Integrated Logout Button & Exit Admin */}
+        <div className="flex items-center gap-4 shrink-0 select-none">
+          {isAdminMode && (
+            <Button
+              onClick={() => {
+                setIsAdminMode(false);
+                router.push("/dashboard/bots");
+              }}
+              danger
+              style={{
+                height: "46px",
+                padding: "0 18px",
+                borderRadius: "12px",
+                fontWeight: 700,
+                fontSize: "14px",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                borderWidth: "1.5px"
+              }}
+              className="hover:scale-[1.02] active:scale-[0.98] transition-all select-none"
+            >
+              {/* Exit Icon matching third image */}
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
+              </svg>
+              <span>Exit Admin</span>
+            </Button>
+          )}
+
           <Dropdown
             menu={{ items: profileDropdownItems }}
             trigger={['click']}

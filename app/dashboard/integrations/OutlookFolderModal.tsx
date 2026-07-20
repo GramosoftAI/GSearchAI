@@ -273,8 +273,8 @@ export default function OutlookFolderModal({
         {/* Header */}
         <div className="ol-header">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M21 5.5V18.5C21 19.88 19.88 21 18.5 21H5.5C4.12 21 3 19.88 3 18.5V5.5C3 4.12 4.12 3 5.5 3H18.5C19.88 3 21 4.12 21 5.5Z" fill="#0078D4"/>
-            <path d="M18.5 4.5L12 9.5L5.5 4.5V6L12 11.5L18.5 6V4.5Z" fill="white"/>
+            <path d="M21 5.5V18.5C21 19.88 19.88 21 18.5 21H5.5C4.12 21 3 19.88 3 18.5V5.5C3 4.12 4.12 3 5.5 3H18.5C19.88 3 21 4.12 21 5.5Z" fill="#0078D4" />
+            <path d="M18.5 4.5L12 9.5L5.5 4.5V6L12 11.5L18.5 6V4.5Z" fill="white" />
           </svg>
           <span className="ol-header-title">Outlook Integration Setup ({agentName})</span>
         </div>

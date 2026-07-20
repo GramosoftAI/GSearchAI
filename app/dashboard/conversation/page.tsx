@@ -27,6 +27,8 @@ import { useSession } from "next-auth/react";
 import { getCookie } from "../../config/cookies";
 import { AUTH_COOKIE_KEY, API_BASE_URL } from "../../config/config";
 import AgentList from "../../components/ui/AgentList";
+import OnboardingTour from "../../components/ui/OnboardingTour";
+import type { TourStep } from "../../components/ui/OnboardingTour";
 import useAxios from "../../hooks/useAxios";
 import { useStore } from "../../hooks/useStore";
 import type { Agent } from "../../components/ui/type";
@@ -463,8 +465,8 @@ const renderBoldText = (text: string, key: any, isUser: boolean) => {
     <span key={key}>
       {subparts.map((subpart, subIndex) => {
         const isBold = (subpart.startsWith("**") || subpart.startsWith("*")) &&
-                       (subpart.endsWith("**") || subpart.endsWith("*")) &&
-                       subpart !== "*" && subpart !== "**";
+          (subpart.endsWith("**") || subpart.endsWith("*")) &&
+          subpart !== "*" && subpart !== "**";
         if (isBold) {
           const content = subpart.replace(/^(\*\*|\*)/, "").replace(/(\*\*|\*)$/, "");
           return (
@@ -551,16 +553,16 @@ const parseBlocks = (content: string): Block[] => {
         blocks.push({ type: 'text', lines: [...currentLines] });
         currentLines = [];
       }
-      
+
       const lang = trimmed.slice(3).trim();
       const codeLines: string[] = [];
       i++; // move past the opening ```
-      
+
       while (i < lines.length && !lines[i].trim().startsWith('```')) {
         codeLines.push(lines[i]);
         i++;
       }
-      
+
       blocks.push({
         type: 'code',
         codeData: {
@@ -568,7 +570,7 @@ const parseBlocks = (content: string): Block[] => {
           code: codeLines.join('\n')
         }
       });
-      
+
       i++; // move past the closing ```
       continue;
     }
@@ -653,9 +655,8 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
                   return (
                     <th
                       key={idx}
-                      className={`px-4 py-3 text-[10px] font-black uppercase tracking-wider ${
-                        isUser ? "text-white/90" : "text-[var(--app-text-soft)]"
-                      }`}
+                      className={`px-4 py-3 text-[10px] font-black uppercase tracking-wider ${isUser ? "text-white/90" : "text-[var(--app-text-soft)]"
+                        }`}
                       style={{ textAlign: align as any }}
                     >
                       {renderTextWithLinks(header, isUser)}
@@ -673,9 +674,8 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
                     return (
                       <td
                         key={colIdx}
-                        className={`px-4 py-3 text-xs leading-relaxed ${
-                          isUser ? "text-white" : "text-[var(--app-text)]"
-                        }`}
+                        className={`px-4 py-3 text-xs leading-relaxed ${isUser ? "text-white" : "text-[var(--app-text)]"
+                          }`}
                         style={{ textAlign: align as any }}
                       >
                         {renderTextWithLinks(cellValue, isUser)}
@@ -830,6 +830,65 @@ export default function ChatPlaygroundPage() {
   const setBotsCache = useStore((state) => state.setBotsCache);
   const [input, setInput] = useState("");
   const [streamingText, setStreamingText] = useState("");
+
+  // ─── Onboarding Tour States ────────────────────────────────────────────────
+  const [tourActive, setTourActive] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
+
+  const tourSteps: TourStep[] = [
+    {
+      targetId: "tour-agent-select",
+      title: "Select an Agent 🤖",
+      content: "First, select an Agent node from this dropdown to load the agent's database and activate the chat.",
+      placement: "above",
+    },
+    {
+      targetId: "tour-sidebar-connection-status",
+      title: "Check Connection Status 🔗",
+      content: "Look at the connection status in the sidebar. When it shows 'LINK STABILIZED' in green, your session is synced and ready.",
+      placement: "right",
+    },
+    {
+      targetId: "tour-chat-input-card",
+      title: "Continue Chatting 💬",
+      content: "Type your query inside the text box and press Enter or click the Send button to start conversation with the selected agent.",
+      placement: "above",
+    },
+  ];
+
+  const restartTour = () => {
+    setTourStep(0);
+    setTourActive(true);
+  };
+
+  const handleTourClose = () => {
+    setTourActive(false);
+    localStorage.setItem("grag_onboarding_completed", "true");
+  };
+
+  useEffect(() => {
+    const isCompleted = localStorage.getItem("grag_onboarding_completed");
+    if (!isCompleted) {
+      const timer = setTimeout(() => {
+        setTourActive(true);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
+  useEffect(() => {
+    // If the tour is active, we are on Step 1, and agent gets selected, auto-advance to Step 2
+    if (tourActive && tourStep === 0 && agent?.id) {
+      setTourStep(1);
+    }
+    // If the tour is active and we are on Step 2, ensure sidebar is open to show the connection indicator
+    if (tourActive && tourStep === 1) {
+      setDesktopSidebarOpen(true);
+      if (!screen.md) {
+        setMobileSidebarOpen(true);
+      }
+    }
+  }, [agent?.id, tourActive, tourStep, screen.md]);
   const [isTyping, setIsTyping] = useState(false);
   const [wsStatus, setWsStatus] = useState<"connecting" | "open" | "closed" | "error">("closed");
   const [getAgents] = useAxios<AgentListResponse>({ endpoint: "GETAGENTLIST", hideErrorMsg: true });
@@ -1041,7 +1100,7 @@ export default function ChatPlaygroundPage() {
       .split("/api/v1")[0];
 
     const wsHost = process.env.NEXT_PUBLIC_WS_URL || defaultWsHost;
-    const wsUrl = `${wsHost}/api/v1/rag/ws/${agent.id}?token=${getCookie(AUTH_COOKIE_KEY)}`;
+    const wsUrl = `${wsHost}/rag/ws/${agent.id}?token=${getCookie(AUTH_COOKIE_KEY)}`;
 
     const socket = new WebSocket(wsUrl);
     ws.current = socket;
@@ -1590,7 +1649,18 @@ export default function ChatPlaygroundPage() {
       const urlMatch = rawSrc.match(/(https?:\/\/[^\s]+)/i);
       const openUrl = urlMatch ? urlMatch[1] : (rawSrc.startsWith('http') ? rawSrc : `https://${rawSrc}`);
       window.open(openUrl, '_blank', 'noopener,noreferrer');
-    } else if (kbId) {
+      return;
+    }
+
+    // Open a blank tab synchronously to prevent popups from being blocked after async calls
+    const newWindow = window.open('', '_blank');
+    if (!newWindow) {
+      message.error('Popup blocked. Please allow popups for this site.');
+      return;
+    }
+    newWindow.document.write('<p style="font-family:-apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; padding: 24px; color: #4b5563;">Loading preview...</p>');
+
+    if (kbId) {
       try {
         const blobUrl = await getFilePreview(kbId);
         const filename = getFileName(src.source);
@@ -1611,23 +1681,23 @@ export default function ChatPlaygroundPage() {
 
         if (isPdf || isImage || isTxt) {
           const viewBlobUrl = URL.createObjectURL(blob);
-          const newWindow = window.open('', '_blank');
-          if (newWindow) {
-            newWindow.document.title = filename || 'Source Preview';
-            newWindow.document.body.style.margin = '0';
-            newWindow.document.body.style.padding = '0';
-            newWindow.document.body.style.height = '100vh';
-            newWindow.document.body.style.overflow = 'hidden';
 
-            const iframe = newWindow.document.createElement('iframe');
-            iframe.src = viewBlobUrl;
-            iframe.style.width = '100%';
-            iframe.style.height = '100%';
-            iframe.style.border = 'none';
-            newWindow.document.body.appendChild(iframe);
-          } else {
-            message.error('Popup blocked. Please allow popups for this site.');
-          }
+          newWindow.document.open();
+          newWindow.document.write('');
+          newWindow.document.close();
+
+          newWindow.document.title = filename || 'Source Preview';
+          newWindow.document.body.style.margin = '0';
+          newWindow.document.body.style.padding = '0';
+          newWindow.document.body.style.height = '100vh';
+          newWindow.document.body.style.overflow = 'hidden';
+
+          const iframe = newWindow.document.createElement('iframe');
+          iframe.src = viewBlobUrl;
+          iframe.style.width = '100%';
+          iframe.style.height = '100%';
+          iframe.style.border = 'none';
+          newWindow.document.body.appendChild(iframe);
         } else if (isCSV || isExcel) {
           // Parse spreadsheet array buffer using xlsx
           const arrayBuffer = await blob.arrayBuffer();
@@ -1645,217 +1715,214 @@ export default function ChatPlaygroundPage() {
             );
           });
           const sheetNames = workbook.SheetNames;
-
           const viewBlobUrl = URL.createObjectURL(blob);
-          const newWindow = window.open('', '_blank');
-          if (newWindow) {
-            newWindow.document.write(`
-              <!DOCTYPE html>
-              <html>
-              <head>
-                <meta charset="utf-8">
-                <title>${filename || 'Spreadsheet Preview'}</title>
-                <style>
-                  body {
-                    margin: 0;
-                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                    background: #f9fafb;
-                    color: #374151;
-                    display: flex;
-                    flex-direction: column;
-                    height: 100vh;
-                  }
-                  header {
-                    background: #ffffff;
-                    border-bottom: 1px solid #e5e7eb;
-                    padding: 16px 24px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    flex-shrink: 0;
-                  }
-                  h1 {
-                    margin: 0;
-                    font-size: 18px;
-                    font-weight: 600;
-                    color: #111827;
-                  }
-                  .tabs-container {
-                    background: #f3f4f6;
-                    border-bottom: 1px solid #e5e7eb;
-                    padding: 8px 16px;
-                    display: flex;
-                    gap: 8px;
-                    overflow-x: auto;
-                    flex-shrink: 0;
-                  }
-                  .tab-btn {
-                    background: #ffffff;
-                    border: 1px solid #d1d5db;
-                    border-radius: 6px;
-                    padding: 6px 12px;
-                    font-size: 13px;
-                    font-weight: 500;
-                    cursor: pointer;
-                    color: #4b5563;
-                    white-space: nowrap;
-                    transition: all 0.2s;
-                  }
-                  .tab-btn:hover {
-                    background: #f9fafb;
-                    color: #111827;
-                  }
-                  .tab-btn.active {
-                    background: #0fb5a1;
-                    color: #ffffff;
-                    border-color: #0fb5a1;
-                  }
-                  .table-wrapper {
-                    flex-grow: 1;
-                    overflow: auto;
-                    padding: 16px;
-                  }
-                  table {
-                    border-collapse: collapse;
-                    width: 100%;
-                    background: #ffffff;
-                    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-                    border-radius: 8px;
-                    overflow: hidden;
-                    font-size: 13px;
-                  }
-                  th, td {
-                    border: 1px solid #e5e7eb;
-                    padding: 10px 14px;
-                    text-align: left;
-                  }
-                  th {
-                    background: #f9fafb;
-                    font-weight: 600;
-                    color: #374151;
-                    position: sticky;
-                    top: 0;
-                    z-index: 10;
-                  }
-                  tr:nth-child(even) {
-                    background: #f9fafb;
-                  }
-                  tr:hover {
-                    background: #f3f4f6;
-                  }
-                </style>
-              </head>
-              <body>
-                <header>
-                  <h1>${filename}</h1>
-                  <button id="download-btn" style="background: #0fb5a1; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px;">
-                    <svg stroke="currentColor" fill="none" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                    Download File
-                  </button>
-                </header>
-                <div class="tabs-container" id="tabs"></div>
-                <div class="table-wrapper">
-                  <table id="sheet-table"></table>
-                </div>
-                <script>
-                  const sheetsData = ${JSON.stringify(sheetsData)};
-                  const sheetNames = ${JSON.stringify(sheetNames)};
-                  
-                  function renderSheet(sheetName) {
-                    const rows = sheetsData[sheetName] || [];
-                    const table = document.getElementById('sheet-table');
-                    table.innerHTML = '';
-                    
-                    if (rows.length === 0) {
-                      table.innerHTML = '<tr><td style="text-align:center; padding: 20px; color: #9ca3af;">Empty Sheet</td></tr>';
-                      return;
-                    }
-                    
-                    // Render headers
-                    const headerRow = rows[0];
-                    const thead = document.createElement('thead');
-                    const trHead = document.createElement('tr');
-                    
-                    // Let's draw row index as column 0
-                    const thIdx = document.createElement('th');
-                    thIdx.innerText = '#';
-                    thIdx.style.width = '40px';
-                    thIdx.style.textAlign = 'center';
-                    trHead.appendChild(thIdx);
 
-                    headerRow.forEach((cellText, idx) => {
-                      const th = document.createElement('th');
-                      th.innerText = cellText || ('Column ' + (idx + 1));
-                      trHead.appendChild(th);
+          newWindow.document.open();
+          newWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <title>\${filename || 'Spreadsheet Preview'}</title>
+              <style>
+                body {
+                  margin: 0;
+                  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                  background: #f9fafb;
+                  color: #374151;
+                  display: flex;
+                  flex-direction: column;
+                  height: 100vh;
+                }
+                header {
+                  background: #ffffff;
+                  border-bottom: 1px solid #e5e7eb;
+                  padding: 16px 24px;
+                  display: flex;
+                  align-items: center;
+                  justify-content: space-between;
+                  flex-shrink: 0;
+                }
+                h1 {
+                  margin: 0;
+                  font-size: 18px;
+                  font-weight: 600;
+                  color: #111827;
+                }
+                .tabs-container {
+                  background: #f3f4f6;
+                  border-bottom: 1px solid #e5e7eb;
+                  padding: 8px 16px;
+                  display: flex;
+                  gap: 8px;
+                  overflow-x: auto;
+                  flex-shrink: 0;
+                }
+                .tab-btn {
+                  background: #ffffff;
+                  border: 1px solid #d1d5db;
+                  border-radius: 6px;
+                  padding: 6px 12px;
+                  font-size: 13px;
+                  font-weight: 500;
+                  cursor: pointer;
+                  color: #4b5563;
+                  white-space: nowrap;
+                  transition: all 0.2s;
+                }
+                .tab-btn:hover {
+                  background: #f9fafb;
+                  color: #111827;
+                }
+                .tab-btn.active {
+                  background: #0fb5a1;
+                  color: #ffffff;
+                  border-color: #0fb5a1;
+                }
+                .table-wrapper {
+                  flex-grow: 1;
+                  overflow: auto;
+                  padding: 16px;
+                }
+                table {
+                  border-collapse: collapse;
+                  width: 100%;
+                  background: #ffffff;
+                  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                  border-radius: 8px;
+                  overflow: hidden;
+                  font-size: 13px;
+                }
+                th, td {
+                  border: 1px solid #e5e7eb;
+                  padding: 10px 14px;
+                  text-align: left;
+                }
+                th {
+                  background: #f9fafb;
+                  font-weight: 600;
+                  color: #374151;
+                  position: sticky;
+                  top: 0;
+                  z-index: 10;
+                }
+                tr:nth-child(even) {
+                  background: #f9fafb;
+                }
+                tr:hover {
+                  background: #f3f4f6;
+                }
+              </style>
+            </head>
+            <body>
+              <header>
+                <h1>\${filename}</h1>
+                <button id="download-btn" style="background: #0fb5a1; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                  <svg stroke="currentColor" fill="none" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  Download File
+                </button>
+              </header>
+              <div class="tabs-container" id="tabs"></div>
+              <div class="table-wrapper">
+                <table id="sheet-table"></table>
+              </div>
+              <script>
+                const sheetsData = \${JSON.stringify(sheetsData)};
+                const sheetNames = \${JSON.stringify(sheetNames)};
+                
+                function renderSheet(sheetName) {
+                  const rows = sheetsData[sheetName] || [];
+                  const table = document.getElementById('sheet-table');
+                  table.innerHTML = '';
+                  
+                  if (rows.length === 0) {
+                    table.innerHTML = '<tr><td style="text-align:center; padding: 20px; color: #9ca3af;">Empty Sheet</td></tr>';
+                    return;
+                  }
+                  
+                  // Render headers
+                  const headerRow = rows[0];
+                  const thead = document.createElement('thead');
+                  const trHead = document.createElement('tr');
+                  
+                  // Let's draw row index as column 0
+                  const thIdx = document.createElement('th');
+                  thIdx.innerText = '#';
+                  thIdx.style.width = '40px';
+                  thIdx.style.textAlign = 'center';
+                  trHead.appendChild(thIdx);
+
+                  headerRow.forEach((cellText, idx) => {
+                    const th = document.createElement('th');
+                    th.innerText = cellText || ('Column ' + (idx + 1));
+                    trHead.appendChild(th);
+                  });
+                  thead.appendChild(trHead);
+                  table.appendChild(thead);
+                  
+                  // Render rows
+                  const tbody = document.createElement('tbody');
+                  for (let r = 1; r < rows.length; r++) {
+                    const rowData = rows[r];
+                    const tr = document.createElement('tr');
+                    
+                    const tdIdx = document.createElement('td');
+                    tdIdx.innerText = r;
+                    tdIdx.style.textAlign = 'center';
+                    tdIdx.style.background = '#f9fafb';
+                    tdIdx.style.color = '#9ca3af';
+                    tdIdx.style.fontWeight = 'bold';
+                    tr.appendChild(tdIdx);
+
+                    headerRow.forEach((_, colIdx) => {
+                      const td = document.createElement('td');
+                      td.innerText = rowData[colIdx] !== undefined ? rowData[colIdx] : '';
+                      tr.appendChild(td);
                     });
-                    thead.appendChild(trHead);
-                    table.appendChild(thead);
-                    
-                    // Render rows
-                    const tbody = document.createElement('tbody');
-                    for (let r = 1; r < rows.length; r++) {
-                      const rowData = rows[r];
-                      const tr = document.createElement('tr');
-                      
-                      const tdIdx = document.createElement('td');
-                      tdIdx.innerText = r;
-                      tdIdx.style.textAlign = 'center';
-                      tdIdx.style.background = '#f9fafb';
-                      tdIdx.style.color = '#9ca3af';
-                      tdIdx.style.fontWeight = 'bold';
-                      tr.appendChild(tdIdx);
+                    tbody.appendChild(tr);
+                  }
+                  table.appendChild(tbody);
+                }
+                
+                // Render tabs
+                const tabsContainer = document.getElementById('tabs');
+                if (sheetNames.length > 1) {
+                  sheetNames.forEach((name, idx) => {
+                    const btn = document.createElement('button');
+                    btn.className = 'tab-btn' + (idx === 0 ? ' active' : '');
+                    btn.innerText = name;
+                    btn.onclick = () => {
+                      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                      btn.classList.add('active');
+                      renderSheet(name);
+                    };
+                    tabsContainer.appendChild(btn);
+                  });
+                } else {
+                  tabsContainer.style.display = 'none';
+                }
+                
+                // Initial render
+                if (sheetNames.length > 0) {
+                  renderSheet(sheetNames[0]);
+                }
 
-                      headerRow.forEach((_, colIdx) => {
-                        const td = document.createElement('td');
-                        td.innerText = rowData[colIdx] !== undefined ? rowData[colIdx] : '';
-                        tr.appendChild(td);
-                      });
-                      tbody.appendChild(tr);
-                    }
-                    table.appendChild(tbody);
-                  }
-                  
-                  // Render tabs
-                  const tabsContainer = document.getElementById('tabs');
-                  if (sheetNames.length > 1) {
-                    sheetNames.forEach((name, idx) => {
-                      const btn = document.createElement('button');
-                      btn.className = 'tab-btn' + (idx === 0 ? ' active' : '');
-                      btn.innerText = name;
-                      btn.onclick = () => {
-                        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-                        btn.classList.add('active');
-                        renderSheet(name);
-                      };
-                      tabsContainer.appendChild(btn);
-                    });
-                  } else {
-                    tabsContainer.style.display = 'none';
-                  }
-                  
-                  // Initial render
-                  if (sheetNames.length > 0) {
-                    renderSheet(sheetNames[0]);
-                  }
-
-                  document.getElementById('download-btn').onclick = () => {
-                    const link = document.createElement('a');
-                    link.href = '${viewBlobUrl}';
-                    link.download = '${filename}';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                  };
-                </script>
-              </body>
-              </html>
-            `);
-            newWindow.document.close();
-          } else {
-            message.error('Popup blocked. Please allow popups for this site.');
-          }
+                document.getElementById('download-btn').onclick = () => {
+                  const link = document.createElement('a');
+                  link.href = '\${viewBlobUrl}';
+                  link.download = '\${filename}';
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                };
+              </script>
+            </body>
+            </html>
+          `);
+          newWindow.document.close();
         } else {
           // fallback direct download
+          newWindow.close();
           const link = document.createElement('a');
           link.href = blobUrl;
           link.download = filename;
@@ -1865,51 +1932,52 @@ export default function ChatPlaygroundPage() {
         }
       } catch (err) {
         console.error(err);
+        newWindow.close();
         message.error('Unable to open file preview');
       }
     } else {
       // Text citation / other fallback
       const filename = getFileName(src.source);
       const citationText = src.text || src.source || 'No citation text available.';
-      const newWindow = window.open('', '_blank');
-      if (newWindow) {
-        newWindow.document.title = filename || 'Source Text Citation';
-        newWindow.document.body.style.margin = '0';
-        newWindow.document.body.style.padding = '24px';
-        newWindow.document.body.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-        newWindow.document.body.style.background = '#f9fafb';
-        newWindow.document.body.style.color = '#111827';
-        newWindow.document.body.style.lineHeight = '1.6';
 
-        const container = newWindow.document.createElement('div');
-        container.style.maxWidth = '800px';
-        container.style.margin = '40px auto';
-        container.style.background = '#ffffff';
-        container.style.padding = '32px';
-        container.style.borderRadius = '12px';
-        container.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06)';
-        container.style.border = '1px solid #e5e7eb';
+      newWindow.document.open();
+      newWindow.document.write('');
+      newWindow.document.close();
 
-        const heading = newWindow.document.createElement('h2');
-        heading.innerText = `Citation: ${filename}`;
-        heading.style.marginTop = '0';
-        heading.style.borderBottom = '2px solid #0fb5a1';
-        heading.style.paddingBottom = '12px';
-        heading.style.color = '#1f2937';
-        container.appendChild(heading);
+      newWindow.document.title = filename || 'Source Text Citation';
+      newWindow.document.body.style.margin = '0';
+      newWindow.document.body.style.padding = '24px';
+      newWindow.document.body.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      newWindow.document.body.style.background = '#f9fafb';
+      newWindow.document.body.style.color = '#111827';
+      newWindow.document.body.style.lineHeight = '1.6';
 
-        const contentParagraph = newWindow.document.createElement('p');
-        contentParagraph.innerText = citationText;
-        contentParagraph.style.whiteSpace = 'pre-wrap';
-        contentParagraph.style.fontSize = '15px';
-        contentParagraph.style.color = '#374151';
-        contentParagraph.style.marginTop = '20px';
-        container.appendChild(contentParagraph);
+      const container = newWindow.document.createElement('div');
+      container.style.maxWidth = '800px';
+      container.style.margin = '40px auto';
+      container.style.background = '#ffffff';
+      container.style.padding = '32px';
+      container.style.borderRadius = '12px';
+      container.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06)';
+      container.style.border = '1px solid #e5e7eb';
 
-        newWindow.document.body.appendChild(container);
-      } else {
-        message.error('Popup blocked. Please allow popups for this site.');
-      }
+      const heading = newWindow.document.createElement('h2');
+      heading.innerText = `Citation: \${filename}`;
+      heading.style.marginTop = '0';
+      heading.style.borderBottom = '2px solid #0fb5a1';
+      heading.style.paddingBottom = '12px';
+      heading.style.color = '#1f2937';
+      container.appendChild(heading);
+
+      const contentParagraph = newWindow.document.createElement('p');
+      contentParagraph.innerText = citationText;
+      contentParagraph.style.whiteSpace = 'pre-wrap';
+      contentParagraph.style.fontSize = '15px';
+      contentParagraph.style.color = '#374151';
+      contentParagraph.style.marginTop = '20px';
+      container.appendChild(contentParagraph);
+
+      newWindow.document.body.appendChild(container);
     }
   };
   const handleEditMessage = (index: number, content: string) => {
@@ -2227,7 +2295,7 @@ export default function ChatPlaygroundPage() {
     return (
       <div className="w-full h-full flex flex-col bg-[var(--app-surface-muted)]/80 backdrop-blur-md overflow-hidden">
         {/* Syncing Status Switch on the top-left of the sidebar */}
-        <div className="p-4 border-b border-[var(--app-border)]/40 flex items-center justify-between shrink-0 select-none bg-[var(--app-surface-muted)]">
+        <div id="tour-sidebar-connection-status" className="p-4 border-b border-[var(--app-border)]/40 flex items-center justify-between shrink-0 select-none bg-[var(--app-surface-muted)]">
           <Flex align="center" gap={6} className="min-w-0">
             <span className={`w-2 h-2 rounded-full shrink-0 ${wsStatus === "open" ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
             <span className="text-[10px] font-black uppercase tracking-wider text-[var(--app-text-soft)] truncate">
@@ -2379,7 +2447,7 @@ export default function ChatPlaygroundPage() {
                 className="hover:bg-[var(--app-hover)] !rounded-xl w-9 h-9 flex items-center justify-center transition-colors"
               />
 
-              <Flex align="center" gap={8} className="select-none ml-1 shrink-0">
+              <Flex id="tour-top-header-info" align="center" gap={8} className="select-none ml-1 shrink-0">
                 <span className="font-extrabold text-sm tracking-tight text-[var(--app-text)] hidden xs:inline shrink-0">
                   AI Assist
                 </span>
@@ -2391,8 +2459,18 @@ export default function ChatPlaygroundPage() {
               </Flex>
             </Flex>
 
-            {/* Right side: Show Sources Switch */}
-            <Flex align="center" gap={8} className="shrink-0 select-none">
+            {/* Right side: Guide Button & Show Sources Switch */}
+            <Flex align="center" gap={12} className="shrink-0 select-none">
+              <Button
+                type="text"
+                size="small"
+                onClick={restartTour}
+                className="hover:bg-[var(--app-hover)] !rounded-lg px-2 py-1 flex items-center gap-1.5 transition-all border border-[var(--app-border)] text-[11px] font-bold text-[var(--app-text-soft)] cursor-pointer bg-[var(--app-surface)] h-7 shadow-sm"
+              >
+                <LuSparkles className="text-[#0fb5a1]" size={11} />
+                <span>Show Guide</span>
+              </Button>
+
               <span className="text-xs font-semibold text-[var(--app-text-soft)]">
                 Show Sources
               </span>
@@ -2513,7 +2591,7 @@ export default function ChatPlaygroundPage() {
                                     className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0"
                                   >
                                     {/* <LuBookOpen size={16} strokeWidth={2} /> */}
-                                    <SiCrowdsource/>
+                                    <SiCrowdsource />
                                     <span>Source</span>
                                   </button>
                                 ) : (
@@ -2716,7 +2794,7 @@ export default function ChatPlaygroundPage() {
           </div>
 
           {/* Large Unified Input Card with dynamic purple borders */}
-          <div className="bg-white dark:bg-[#0b0f19] border-2 border-purple-500/30 dark:border-purple-500/25 rounded-3xl p-3 shadow-lg transition-all focus-within:border-purple-500/70 focus-within:ring-4 focus-within:ring-purple-500/5 flex flex-col gap-2">
+          <div id="tour-chat-input-card" className="bg-white dark:bg-[#0b0f19] border-2 border-purple-500/30 dark:border-purple-500/25 rounded-3xl p-3 shadow-lg transition-all focus-within:border-purple-500/70 focus-within:ring-4 focus-within:ring-purple-500/5 flex flex-col gap-2">
 
             {/* Real-time Dynamic Upload Preview Attachment Frame */}
             {attachedFile && (
@@ -2796,7 +2874,7 @@ export default function ChatPlaygroundPage() {
                     }}
                     trigger={["click"]}
                   >
-                    <button className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#ffffff] hover:bg-gray-100 dark:bg-[#12352f]/30 dark:hover:bg-[#12352f]/50 border border-[#0fb5a1]/30 dark:border-[#34d399]/40 rounded-full text-xs font-black text-[#0fb5a1] dark:text-[#34d399] cursor-pointer select-none transition-all outline-none focus:outline-none ml-1 animate-in fade-in duration-200 shadow-sm">
+                    <button id="tour-agent-select" className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#ffffff] hover:bg-gray-100 dark:bg-[#12352f]/30 dark:hover:bg-[#12352f]/50 border border-[#0fb5a1]/30 dark:border-[#34d399]/40 rounded-full text-xs font-black text-[#0fb5a1] dark:text-[#34d399] cursor-pointer select-none transition-all outline-none focus:outline-none ml-1 animate-in fade-in duration-200 shadow-sm">
                       <div className="w-5 h-5 rounded-full bg-[#e3f7f3] dark:bg-[#12352f] flex items-center justify-center text-[#0fb5a1] dark:text-[#34d399] shrink-0">
                         <LuBot size={11} className="text-[#0fb5a1] dark:text-[#34d399]" />
                       </div>
@@ -2816,11 +2894,10 @@ export default function ChatPlaygroundPage() {
                   <button
                     onClick={handleSend}
                     disabled={!agent || (!input.trim() && !attachedFile) || wsStatus !== "open"}
-                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer border-none outline-none ${
-                      (!agent || (!input.trim() && !attachedFile) || wsStatus !== "open")
+                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer border-none outline-none ${(!agent || (!input.trim() && !attachedFile) || wsStatus !== "open")
                         ? "bg-gray-200 dark:bg-gray-800 text-[var(--app-text-soft)] opacity-40 cursor-not-allowed"
                         : "bg-[#0fb5a1] text-white hover:bg-[#0da18f] hover:opacity-90 active:scale-95"
-                    }`}
+                      }`}
                   >
                     <LuArrowRight size={16} strokeWidth={2.5} />
                   </button>
@@ -3086,7 +3163,7 @@ export default function ChatPlaygroundPage() {
           ) : (
             <Flex vertical align="center" justify="center" className="h-full opacity-40">
               {/* <LuBookOpen size={48} className="text-[#0fb5a1] mb-3" /> */}
-              <SiCrowdsource  />
+              <SiCrowdsource />
               <Text className="font-bold text-xs uppercase tracking-widest text-[var(--app-text-muted)]">
                 Select a document to preview
               </Text>
@@ -3147,6 +3224,14 @@ export default function ChatPlaygroundPage() {
           )}
         </div>
       </Modal>
+
+      <OnboardingTour
+        steps={tourSteps}
+        activeStep={tourStep}
+        isActive={tourActive}
+        onStepChange={(stepIndex) => setTourStep(stepIndex)}
+        onClose={handleTourClose}
+      />
 
       <style jsx global>{`
         .custom-scrollbar::-webkit-scrollbar {

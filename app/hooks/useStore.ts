@@ -22,6 +22,8 @@ type StoreType = {
     setBotsCache: (list: Agent[]) => void;
     activeJobs: ActiveJob[];
     setActiveJobs: (jobs: ActiveJob[] | ((prev: ActiveJob[]) => ActiveJob[])) => void;
+    isAdminMode: boolean;
+    setIsAdminMode: (mode: boolean) => void;
 }
 
 export const useStore =create<StoreType>((set,get)=>({
@@ -47,4 +49,8 @@ export const useStore =create<StoreType>((set,get)=>({
             set({ activeJobs: jobs });
         }
     },
+    isAdminMode: false,
+    setIsAdminMode(mode) {
+        set({ isAdminMode: mode });
+    }
 }))

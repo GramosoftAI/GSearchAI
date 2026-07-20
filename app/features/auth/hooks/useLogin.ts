@@ -37,6 +37,7 @@ export function useLogin() {
 
           if (user) {
             localStorage.setItem("userName", `${user.first_name} ${user.last_name}`);
+            localStorage.setItem("isAdmin", String(user.is_admin ?? false));
             router.push(routes.dashboard);
           }
 

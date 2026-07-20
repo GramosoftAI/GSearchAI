@@ -4,6 +4,8 @@ import { useState,useEffect } from "react";
 import Sidebar from "../components/layout/Sidebar";
 import Header from "../components/layout/Header";
 import { Drawer } from "antd";
+import { useStore } from "../hooks/useStore";
+import { usePathname } from "next/navigation";
 
 export default function DashboardLayout({
   children,
@@ -14,6 +16,16 @@ export default function DashboardLayout({
   const [collapsed, setCollapsed] = useState(true);
   const [width, setWidth] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { isAdminMode, setIsAdminMode } = useStore();
+  const pathname = usePathname();
+
+  useEffect(() => {
+    if (pathname.startsWith("/dashboard/admin")) {
+      setIsAdminMode(true);
+    } else {
+      setIsAdminMode(false);
+    }
+  }, [pathname, setIsAdminMode]);
 
   useEffect(() => {
     const handleResize = () => {

@@ -7,7 +7,7 @@ import {
 import {
   PlusOutlined, RobotOutlined, MessageOutlined, ThunderboltOutlined,
   EditOutlined, DeleteOutlined, SettingOutlined, CalendarOutlined,
-  CheckCircleOutlined, ClockCircleOutlined, InfoCircleOutlined, SearchOutlined
+  CheckCircleOutlined, ClockCircleOutlined, InfoCircleOutlined, SearchOutlined, IdcardOutlined, CheckOutlined
 } from "@ant-design/icons";
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
@@ -146,7 +146,7 @@ export default function BotsPage() {
   const [createAgent, getcreateAgent, creating] = useAxios({ endpoint: "CREATEAGENT", showSuccessMsg: true });
   const [updateAgent, , updating] = useAxios({ endpoint: "UPDATEAGENT", showSuccessMsg: true });
   const [deleteAgent, deleteRes, deleting] = useAxios({ endpoint: "DELETEAGENT", showSuccessMsg: true });
-  const [agentgetidlist,res2] = useAxios({ endpoint: "GET_AGENT_BY_ID", hideErrorMsg: true });
+  const [agentgetidlist, res2] = useAxios({ endpoint: "GET_AGENT_BY_ID", hideErrorMsg: true });
 
   const setAgentList = useStore((state) => state.setAgentList);
   const setBotsCache = useStore((state) => state.setBotsCache);
@@ -183,13 +183,13 @@ export default function BotsPage() {
     return "Professional";
   };
 
-//   useEffect(() => {
-//   if (res2?.data?.personalities) {
-//     form.setFieldsValue({
-//       personality: "Formal"
-//     });
-//   }
-// }, [res2]);
+  //   useEffect(() => {
+  //   if (res2?.data?.personalities) {
+  //     form.setFieldsValue({
+  //       personality: "Formal"
+  //     });
+  //   }
+  // }, [res2]);
 
   const handleAgentClick = async (agent: any) => {
     setCheckingKb(true);
@@ -256,9 +256,12 @@ export default function BotsPage() {
 
   const handleCreate = async (values: any) => {
     console.log(values)
-    await createAgent({ data: {
-      personality_id: res2?.data?.personalities?.find((x: any) => x.name === values.personality)?.id,
-      ...values }});
+    await createAgent({
+      data: {
+        personality_id: res2?.data?.personalities?.find((x: any) => x.name === values.personality)?.id,
+        ...values
+      }
+    });
     await getAgents(undefined, (payload) => {
       const agentsList = payload?.data?.agents ?? [];
       setAgentresponse(agentsList)
@@ -377,8 +380,8 @@ export default function BotsPage() {
             label={<Text className="font-black text-[10px] uppercase tracking-widest text-[var(--app-text-soft)]">Personality Type</Text>}
           >
             <Select
-            
-             className="h-14 custom-select" placeholder="Select personality"
+
+              className="h-14 custom-select" placeholder="Select personality"
               options={res2?.data?.personalities}
               fieldNames={{ label: "name", value: "name" }}
             />
@@ -428,62 +431,71 @@ export default function BotsPage() {
         onCancel={() => setIsDetailsModalOpen(false)}
         footer={null}
         centered
-        styles={{ body: { borderRadius: 32, padding: 32, background: 'var(--app-surface)' } }}
+        styles={{ body: { borderRadius: 32, padding: "24px 20px", background: 'var(--app-surface)' } }}
       >
-        <div className="mt-6 space-y-8">
-          <div className="flex items-center justify-between p-6 bg-[var(--app-surface-muted)] rounded-2xl border border-[var(--app-border)]">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
-                <CheckCircleOutlined />
-              </div>
-              <Text className="font-black uppercase tracking-widest text-[10px] text-[var(--app-text-soft)]">Deployment Status</Text>
-            </div>
-            <Badge status="processing" color="#10b981" text={<Text className="font-black text-[#10b981] uppercase tracking-widest text-[10px] ml-2">Active & Ready</Text>} />
+        <div className="mt-6 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-[var(--app-surface-muted)] rounded-2xl border border-[var(--app-border)] gap-2.5 sm:gap-4">
+            <Flex align="center" gap={8} className="text-emerald-500 shrink-0">
+              <CheckCircleOutlined />
+              <Text className="font-extrabold uppercase tracking-wider text-[9.5px] text-[var(--app-text-soft)] whitespace-nowrap">Deployment Status</Text>
+            </Flex>
+            <span className="shrink-0 whitespace-nowrap sm:ml-auto pl-5 sm:pl-0 leading-none">
+              <Badge status="processing" color="#10b981" text={<Text className="font-extrabold text-[#10b981] uppercase tracking-wider text-[9.5px] ml-1.5">Active & Ready</Text>} />
+            </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-6">
-            <div className="p-6 bg-[var(--app-surface-muted)] rounded-2xl border border-[var(--app-border)]">
-              <Flex vertical gap={8}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+            <div className="p-4 bg-[var(--app-surface-muted)] rounded-2xl border border-[var(--app-border)]">
+              <Flex vertical gap={6}>
                 <Flex align="center" gap={8} className="text-[#0fb5a1]">
                   <CalendarOutlined />
-                  <Text className="font-black uppercase tracking-widest text-[10px] text-[var(--app-text-soft)]">Genesis Date</Text>
+                  <Text className="font-extrabold uppercase tracking-wider text-[9.5px] text-[var(--app-text-soft)]">Genesis Date</Text>
                 </Flex>
-                <Text className="font-bold text-sm text-[var(--app-text)]">{formatDate(selectedAgent?.created_at)}</Text>
+                <Text className="font-bold text-xs sm:text-sm text-[var(--app-text)]">{formatDate(selectedAgent?.created_at)}</Text>
               </Flex>
             </div>
-            <div className="p-6 bg-[var(--app-surface-muted)] rounded-2xl border border-[var(--app-border)]">
-              <Flex vertical gap={8}>
+            <div className="p-4 bg-[var(--app-surface-muted)] rounded-2xl border border-[var(--app-border)]">
+              <Flex vertical gap={6}>
                 <Flex align="center" gap={8} className="text-[#0fb5a1]">
                   <ClockCircleOutlined />
-                  <Text className="font-black uppercase tracking-widest text-[10px] text-[var(--app-text-soft)]">Last Synced</Text>
+                  <Text className="font-extrabold uppercase tracking-wider text-[9.5px] text-[var(--app-text-soft)]">Last Synced</Text>
                 </Flex>
-                <Text className="font-bold text-sm text-[var(--app-text)]">{formatDate(selectedAgent?.updated_at)}</Text>
+                <Text className="font-bold text-xs sm:text-sm text-[var(--app-text)]">{formatDate(selectedAgent?.updated_at)}</Text>
               </Flex>
             </div>
           </div>
 
-          <div className="p-6 bg-[var(--app-surface-muted)] rounded-2xl border border-[var(--app-border)]">
-            <Flex vertical gap={12}>
-              <Text className="font-black uppercase tracking-widest text-[10px] text-[var(--app-text-soft)]">Internal Identifiers</Text>
-              <div className="flex items-center justify-between">
-                <Text className="text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-widest">ID</Text>
-                <Text className="text-[10px] font-bold text-[var(--app-text)] font-mono">{selectedAgent?.id}</Text>
+          <div className="p-4 bg-[var(--app-surface-muted)] rounded-2xl border border-[var(--app-border)]">
+            <Flex vertical gap={16}>
+              {/* Header with Icon */}
+              <Flex align="center" gap={8} className="text-[#0fb5a1]">
+                <IdcardOutlined className="text-xs" />
+                <Text className="font-extrabold uppercase tracking-wider text-[9.5px] text-[var(--app-text-soft)]">Internal Identifiers</Text>
+              </Flex>
+              
+              {/* ID Section */}
+              <div className="flex flex-col gap-2 px-4 py-3.5 bg-[var(--app-surface)] rounded-xl border border-[var(--app-border)]/40 relative">
+                <Text className="text-[9px] font-black text-[var(--app-text-soft)] uppercase tracking-wider leading-none m-0">Agent ID</Text>
+                <Text 
+                  copyable={selectedAgent?.id ? { text: selectedAgent.id, tooltips: ["Copy ID", "Copied!"] } : false} 
+                  className="text-xs font-semibold text-[var(--app-text)] font-mono select-all break-all m-0 pr-8 block leading-relaxed mt-1"
+                >
+                  {selectedAgent?.id}
+                </Text>
               </div>
-              <div className="flex items-center justify-between">
-                <Text className="text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-widest">Tenant ID</Text>
-                <Text className="text-[10px] font-bold text-[var(--app-text)] font-mono">{selectedAgent?.tenant_id ?? 0}</Text>
+
+              {/* Tenant ID Section */}
+              <div className="flex flex-col gap-2 px-4 py-3.5 bg-[var(--app-surface)] rounded-xl border border-[var(--app-border)]/40 relative">
+                <Text className="text-[9px] font-black text-[var(--app-text-soft)] uppercase tracking-wider leading-none m-0">Tenant ID</Text>
+                <Text 
+                  copyable={selectedAgent?.tenant_id ? { text: String(selectedAgent.tenant_id), tooltips: ["Copy Tenant ID", "Copied!"] } : false} 
+                  className="text-xs font-semibold text-[var(--app-text)] font-mono select-all break-all m-0 pr-8 block leading-relaxed mt-1"
+                >
+                  {selectedAgent?.tenant_id ?? 0}
+                </Text>
               </div>
             </Flex>
           </div>
-
-          <Button
-            type="primary"
-            block
-            onClick={() => setIsDetailsModalOpen(false)}
-            className="h-14 !rounded-2xl !bg-[#0fb5a1] !border-none !font-black !uppercase !tracking-widest"
-          >
-            Acknowledged
-          </Button>
         </div>
       </Modal>
 
@@ -565,8 +577,8 @@ export default function BotsPage() {
             label={<Text className="font-black text-[10px] uppercase tracking-widest text-[var(--app-text-soft)]">Agent Personality</Text>}
           >
             <Select
-             
-            className="h-14 custom-select" placeholder="Select personality"
+
+              className="h-14 custom-select" placeholder="Select personality"
               options={res2?.data?.personalities}
               fieldNames={{ label: "name", value: "name" }}
             />
@@ -652,9 +664,9 @@ export default function BotsPage() {
                 </div>
                 {/* Deploy Button Column */}
                 <div className="w-full sm:w-auto sm:shrink-0 min-w-[140px]">
-                  <Button 
-                    type="primary" 
-                    size="large" 
+                  <Button
+                    type="primary"
+                    size="large"
                     icon={<PlusOutlined />}
                     onClick={() => setIsModalOpen(true)}
                     className="!h-14 w-full !px-5 !rounded-2xl !bg-[#0fb5a1] !border-none !font-black !uppercase !tracking-widest shadow-xl shadow-teal-900/10 hover:!scale-105 transition-all flex items-center justify-center gap-1.5"

@@ -48,7 +48,7 @@ const renderBoldText = (text: string, key: any, isUser: boolean) => {
   );
 };
 
-const renderTextWithLinks = (text: string, isUser: boolean) => {
+const renderTextWithLinks = (text: string, isUser: boolean, themeColor: string = "#0fb5a1") => {
   if (!text) return null;
   const urlRegex = /(https?:\/\/[^\s]+)/gi;
   const parts = text.split(urlRegex);
@@ -64,7 +64,7 @@ const renderTextWithLinks = (text: string, isUser: boolean) => {
             textDecoration: "underline",
             wordBreak: "break-all",
             fontWeight: "bold",
-            color: "#0fb5a1"
+            color: themeColor
           }}
         >
           {part}
@@ -205,7 +205,7 @@ const parseBlocks = (content: string): Block[] => {
   return blocks;
 };
 
-const renderFormattedContent = (content: string, isUser: boolean) => {
+const renderFormattedContent = (content: string, isUser: boolean, themeColor: string = "#0fb5a1") => {
   const blocks = parseBlocks(content);
   if (blocks.length === 0) return null;
 
@@ -244,7 +244,7 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
                         borderBottom: "1px solid #e4e4e7"
                       }}
                     >
-                      {renderTextWithLinks(header, isUser)}
+                      {renderTextWithLinks(header, isUser, themeColor)}
                     </th>
                   );
                 })}
@@ -268,7 +268,7 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
                           color: "#3f3f46"
                         }}
                       >
-                        {renderTextWithLinks(cellValue, isUser)}
+                        {renderTextWithLinks(cellValue, isUser, themeColor)}
                       </td>
                     );
                   })}
@@ -335,12 +335,12 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
           const restText = match[2];
           return (
             <div key={`${bIdx}-${index}`} style={{ marginBottom: "8px", marginTop: "8px" }}>
-              <div style={{ fontWeight: "800", fontSize: "14px", color: "#0fb5a1" }}>
+              <div style={{ fontWeight: "800", fontSize: "14px", color: themeColor }}>
                 {headingText}
               </div>
               {restText && (
                 <div style={{ fontSize: "13px", marginTop: "4px", lineHeight: "1.45" }}>
-                  {renderTextWithLinks(restText, isUser)}
+                  {renderTextWithLinks(restText, isUser, themeColor)}
                 </div>
               )}
             </div>
@@ -351,7 +351,7 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
         if (match) {
           const headingText = match[1];
           return (
-            <div key={`${bIdx}-${index}`} style={{ fontWeight: "800", fontSize: "14px", color: "#0fb5a1", marginBottom: "8px", marginTop: "8px" }}>
+            <div key={`${bIdx}-${index}`} style={{ fontWeight: "800", fontSize: "14px", color: themeColor, marginBottom: "8px", marginTop: "8px" }}>
               {headingText}
             </div>
           );
@@ -363,7 +363,7 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
             <div key={`${bIdx}-${index}`} style={{ display: "flex", alignItems: "flex-start", gap: "8px", paddingLeft: "8px", margin: "4px 0" }}>
               <span style={{ flexShrink: 0, color: "#71717a" }}>•</span>
               <span style={{ flex: 1, fontSize: "13px", lineHeight: "1.45" }}>
-                {renderTextWithLinks(bulletMatch[2], isUser)}
+                {renderTextWithLinks(bulletMatch[2], isUser, themeColor)}
               </span>
             </div>
           );
@@ -376,7 +376,7 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
             <div key={`${bIdx}-${index}`} style={{ display: "flex", alignItems: "flex-start", gap: "8px", paddingLeft: "8px", margin: "4px 0" }}>
               <span style={{ flexShrink: 0, fontWeight: "bold", fontSize: "13px", color: "#71717a" }}>{prefix}</span>
               <span style={{ flex: 1, fontSize: "13px", lineHeight: "1.45" }}>
-                {renderTextWithLinks(numberMatch[2], isUser)}
+                {renderTextWithLinks(numberMatch[2], isUser, themeColor)}
               </span>
             </div>
           );
@@ -384,7 +384,7 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
 
         return (
           <div key={`${bIdx}-${index}`} style={{ minHeight: "1.25rem", lineHeight: "1.45", fontSize: "13px", margin: "2px 0" }}>
-            {renderTextWithLinks(line, isUser)}
+            {renderTextWithLinks(line, isUser, themeColor)}
           </div>
         );
       });
@@ -398,6 +398,7 @@ export default function WidgetPage() {
   const searchParams = useSearchParams();
   const agentId = searchParams.get("agentId");
   const tenantId = searchParams.get("tenantId");
+  const themeColor = searchParams.get("themeColor") || "#0fb5a1";
   const bufferRef = useRef("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -407,6 +408,11 @@ export default function WidgetPage() {
   const ws = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
+  const initialQuerySentRef = useRef(false);
+  const handleClose = () => {
+    window.parent.postMessage({ type: "close-chat" }, "*");
+  };
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
@@ -415,11 +421,20 @@ export default function WidgetPage() {
     if (!agentId) return;
 
     setWsStatus("connecting");
-    const wsUrl = `${process.env.NEXT_PUBLIC_WS_URL}/api/v1/embed/chats/${agentId}/ws?tenant_id=${tenantId}`;
+    const wsUrl = `${process.env.NEXT_PUBLIC_WS_URL}/embed/chats/${agentId}/ws?tenant_id=${tenantId}`;
     const socket = new WebSocket(wsUrl);
     ws.current = socket;
 
-    socket.onopen = () => setWsStatus("open");
+    socket.onopen = () => {
+      setWsStatus("open");
+      const initialQuery = searchParams.get("q");
+      if (initialQuery && !initialQuerySentRef.current) {
+        initialQuerySentRef.current = true;
+        setMessages((prev) => [...prev, { role: "user", content: initialQuery }]);
+        setIsTyping(true);
+        socket.send(JSON.stringify({ message: initialQuery }));
+      }
+    };
 
     socket.onmessage = (event) => {
       try {
@@ -465,7 +480,7 @@ export default function WidgetPage() {
 
     socket.onclose = () => { setWsStatus("closed"); setIsTyping(false); };
     socket.onerror = () => { setWsStatus("error"); setIsTyping(false); };
-  }, [agentId, tenantId]);
+  }, [agentId, tenantId, searchParams]);
 
   useEffect(() => {
     connectWs();
@@ -567,7 +582,7 @@ export default function WidgetPage() {
             {/* <span style={{ cursor: "pointer", color: "#737373", fontSize: "16px" }}>⟨</span> */}
             
             <div style={{
-              width: "36px", height: "36px", background: "#000000", borderRadius: "10px",
+              width: "36px", height: "36px", background: themeColor, borderRadius: "10px",
               display: "flex", alignItems: "center", justifyContent: "center", color: "#ffffff"
             }}>
               <FaBrain size={20} />
@@ -584,10 +599,9 @@ export default function WidgetPage() {
             </div>
           </div>
 
-          {/* Clean Close UI Button */}
-          {/* <div style={{ display: "flex", alignItems: "center", paddingRight: "4px" }}>
-            <div className="close-btn" onClick={handleClose} />
-          </div> */}
+           <div style={{ display: "flex", alignItems: "center", paddingRight: "4px" }}>
+            <div className="close-btn" onClick={handleClose} title="Close chat" />
+          </div>
         </div>
 
         {/* Chat Feed */}
@@ -633,7 +647,7 @@ export default function WidgetPage() {
                     wordBreak: "break-word",
                   }}
                 >
-                  {renderFormattedContent(msg.content, isUser)}
+                  {renderFormattedContent(msg.content, isUser, themeColor)}
                 </div>
               </div>
             );
@@ -685,7 +699,7 @@ export default function WidgetPage() {
               style={{
                 width: "34px",
                 height: "34px",
-                background: input.trim() ? "#0066cc" : "#e4e4e7",
+                background: input.trim() ? themeColor : "#e4e4e7",
                 color: input.trim() ? "#ffffff" : "#a3a3a3",
                 border: "none",
                 borderRadius: "50%",

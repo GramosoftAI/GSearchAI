@@ -12,6 +12,7 @@ import { getCookie } from "../config/cookies";
 import { toast } from "react-hot-toast";
 import {useRouter} from "next/navigation"
 import { endpoints, type endpointsType, type endpointType } from "../services/endpoints";
+import { inc, dec } from "../config/loader";
 // import { endpoints } from "./endpoints";
 // import type { endpointType, endpointsType } from "./endpoints";
 
@@ -123,6 +124,7 @@ export default function useAxios<T = any, R = any>({
       controller.current = new AbortController();
 
       setLoading(true);
+      inc();
 
 
       const token = getCookie("AUTH_TOKEN");
@@ -291,6 +293,7 @@ export default function useAxios<T = any, R = any>({
       /* -------------------------------------------------------------------------- */
 
       setLoading(false);
+      dec();
     }
     }, [baseURL, hideErrorMsg, initialData, method, payload, router, showSuccessMsg, successCb, errorCb, successMsg, successStatusCode, url, withCredentials]);
 

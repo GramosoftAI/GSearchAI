@@ -8,7 +8,7 @@ import useAxios from '../../hooks/useAxios'
 import type { Agent } from "../../components/ui/type";
 import { useStore } from "../../hooks/useStore";
 import { useRouter } from 'next/navigation'
-import { Empty} from "antd";
+import { Empty } from "antd";
 import { FileTextOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import Loader from '@/app/components/provider/Loder';
@@ -156,9 +156,9 @@ function parsePythonDict(str: string): any {
 
 function cleanExtractedText(raw: string): string {
   if (!raw) return "";
-  
+
   let processed = raw.trim();
-  
+
   if (processed.startsWith("{") && processed.endsWith("}")) {
     try {
       const parsed = JSON.parse(processed);
@@ -200,13 +200,13 @@ export default function KnowledgeBasePage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const setAgentList = useStore((state) => state.setAgentList);
   const setBotsCache = useStore((state) => state.setBotsCache);
-  const [request,,loading] = useAxios<unknown, Record<string, unknown> | FormData>({ endpoint: "KNOWLEDGEBASE",showSuccessMsg: true })
+  const [request, , loading] = useAxios<unknown, Record<string, unknown> | FormData>({ endpoint: "KNOWLEDGEBASE", showSuccessMsg: true })
   const [getAgents] = useAxios<AgentListResponse>({ endpoint: "GETAGENTLIST" });
-  const[agentlist,agentlistres] = useAxios<any>({endpoint:"GET_LIST"})
+  const [agentlist, agentlistres] = useAxios<any>({ endpoint: "GET_LIST" })
 
   const activeJobs = useStore((state) => state.activeJobs);
   const setActiveJobs = useStore((state) => state.setActiveJobs);
-  
+
   const activeJobsRef = useRef(activeJobs);
   useEffect(() => {
     activeJobsRef.current = activeJobs;
@@ -216,7 +216,7 @@ export default function KnowledgeBasePage() {
     if (activeJobs.length === 0) return;
 
     const token = getCookie("AUTH_TOKEN");
-    
+
     const interval = setInterval(async () => {
       const currentJobs = activeJobsRef.current;
       for (const job of currentJobs) {
@@ -231,20 +231,20 @@ export default function KnowledgeBasePage() {
               Authorization: `Bearer ${token}`
             }
           });
-          
+
           if (!res.ok) {
             console.error(`Error polling job ${job.id}:`, res.status);
             continue;
           }
-          
+
           const data = await res.json();
           const jobObj = data?.job || data?.data?.job || data?.result?.job || data?.data || data?.result || data;
 
           const rawStatus = jobObj?.status || "";
           const status = rawStatus.toLowerCase();
-          
+
           let rawProgress = jobObj?.progress ?? jobObj?.process ?? jobObj?.percentage ?? jobObj?.percent ?? 0;
-          
+
           if (rawProgress && typeof rawProgress === 'object') {
             const obj = rawProgress as any;
             rawProgress = obj.progress ?? obj.process ?? obj.percentage ?? obj.percent ?? obj.value ?? obj.current ?? 0;
@@ -253,7 +253,7 @@ export default function KnowledgeBasePage() {
           if (typeof rawProgress === 'string') {
             rawProgress = parseFloat(rawProgress.replace(/[^0-9.]/g, '')) || 0;
           }
-          
+
           if (rawProgress > 0 && rawProgress <= 1.0) {
             rawProgress = rawProgress * 100;
           }
@@ -278,7 +278,7 @@ export default function KnowledgeBasePage() {
 
           if (status === 'finished' || status === 'completed' || status === 'success' || progress >= 100) {
             toast.success(`Ingestion completed for: ${job.name}`);
-            
+
             setTimeout(() => {
               setActiveJobs(prev => prev.filter(j => j.id !== job.id));
             }, 3000);
@@ -290,7 +290,7 @@ export default function KnowledgeBasePage() {
             }
           } else if (status === 'failed' || status === 'error') {
             toast.error(`Ingestion failed for: ${job.name}`);
-            
+
             setTimeout(() => {
               setActiveJobs(prev => prev.filter(j => j.id !== job.id));
             }, 5000);
@@ -354,7 +354,7 @@ export default function KnowledgeBasePage() {
     if (isUrl) {
       setPreviewLoading(false);
       setPreviewTab('parsed');
-      
+
       const rawSource = item.name || item.source || "";
       let extractedUrl = "";
       const urlMatch = rawSource.match(/(https?:\/\/[^\s]+)/i);
@@ -456,13 +456,13 @@ export default function KnowledgeBasePage() {
           const data = await res.json();
           const rawText = data.content || data.text || (typeof data === "string" ? data : "");
           const cleanedText = cleanExtractedText(rawText);
-          
+
           if (cleanedText) {
             const isHtml = /<[a-z][\s\S]*>/i.test(cleanedText);
-            const htmlContent = isHtml 
-              ? cleanedText 
+            const htmlContent = isHtml
+              ? cleanedText
               : (typeof marked === 'function' ? (marked as any)(cleanedText) : (marked as any).parse(cleanedText));
-            
+
             const styledHtml = `
               <!DOCTYPE html>
               <html>
@@ -718,689 +718,691 @@ export default function KnowledgeBasePage() {
 
   return (
     <>
-   {loading && <Loader />}  
-    <div className="w-full min-h-screen p-4 sm:p-6 md:p-10" style={{ background: 'transparent' }}>
-      <Flex vertical gap={24}>
-        
-        {/* Header Section */}
-        <Row justify="space-between" align="middle" gutter={[16, 16]}>
-          <Col xs={24} md={16}>
-            <Title level={1} style={{ color: 'var(--app-text)', margin: 0, fontSize: 'calc(1.8rem + 1vw)', fontWeight: 700 }}>
-              Knowledge Base
-            </Title>
-            <Text style={{ color: 'var(--app-text-muted)', fontSize: 16, marginTop: 4, display: 'block' }}>
-              Upload and manage data sources for your artificial intelligence bots
-            </Text>
-          </Col>
-          <Col xs={24} md={8}>
-            {/* Handled dynamic alignment cleanly using Tailwind layout utilities instead of strict props */}
-            <div className="flex flex-wrap items-center gap-3 justify-start md:justify-end">
-              
-              <Button
-                style={{ 
-                  border: '1px solid var(--app-border)', 
-                  color: 'var(--app-text-muted)', 
-                  background: 'var(--app-surface)', 
-                  borderRadius: 8,
-                  height: 33
-                }}
-                onClick={() => router.push("/dashboard/graph")}
-              >
-                View Graph
-              </Button>
-            </div>
-          </Col>
-        </Row>
+      {loading && <Loader />}
+      <div className="w-full min-h-screen p-4 sm:p-6 md:p-10" style={{ background: 'transparent' }}>
+        <Flex vertical gap={24}>
 
-        {/* Dynamic Context Banner */}
-        <div 
-          style={{ 
-            background: 'var(--app-surface)', 
-            border: '1px solid var(--app-border)', 
-            borderRadius: 12, 
-            padding: '16px 20px',
-            transition: 'all 0.3s ease'
-          }}
-        >
-          <Flex align="center" gap={16} wrap>
-            <div style={{ 
-              width: 42, 
-              height: 42, 
-              background: 'var(--app-active-bg)', 
-              border: '1px solid var(--app-border)', 
-              borderRadius: 10, 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center', 
-              flexShrink: 0 
-            }}>
-              <FileText size={18} color="var(--app-primary)" />
-            </div>
-            <div className='flex gap-2'>
-              <Text style={{ color: 'var(--app-text-muted)', fontSize: 16, display: 'block' }}>
-                Adding sources to:{' '}
-                <span style={{ color: agent?.name ? 'var(--app-primary)' : 'var(--app-text-soft)', fontWeight: 600 }}>
-                  {/* {agent?.name ?? 'No Agent Selected'} */}
-                </span>
+          {/* Header Section */}
+          <Row justify="space-between" align="middle" gutter={[16, 16]}>
+            <Col xs={24} md={16}>
+              <Title level={1} style={{ color: 'var(--app-text)', margin: 0, fontSize: 'calc(1.8rem + 1vw)', fontWeight: 700 }}>
+                Knowledge Base
+              </Title>
+              <Text style={{ color: 'var(--app-text-muted)', fontSize: 16, marginTop: 4, display: 'block' }}>
+                Upload and manage data sources for your artificial intelligence bots
               </Text>
-              {/* <Text style={{ color: 'var(--app-text-soft)', fontSize: 13, marginTop: 2, display: 'block' }}>
+            </Col>
+            <Col xs={24} md={8}>
+              {/* Handled dynamic alignment cleanly using Tailwind layout utilities instead of strict props */}
+              <div className="flex flex-wrap items-center gap-3 justify-start md:justify-end">
+
+                <Button
+                  style={{
+                    border: '1px solid var(--app-border)',
+                    color: 'var(--app-text-muted)',
+                    background: 'var(--app-surface)',
+                    borderRadius: 8,
+                    height: 33
+                  }}
+                  onClick={() => router.push("/dashboard/graph")}
+                >
+                  View Graph
+                </Button>
+              </div>
+            </Col>
+          </Row>
+
+          {/* Dynamic Context Banner */}
+          <div
+            style={{
+              background: 'var(--app-surface)',
+              border: '1px solid var(--app-border)',
+              borderRadius: 12,
+              padding: '16px 20px',
+              transition: 'all 0.3s ease'
+            }}
+          >
+            <Flex align="center" gap={16} wrap>
+              <div style={{
+                width: 42,
+                height: 42,
+                background: 'var(--app-active-bg)',
+                border: '1px solid var(--app-border)',
+                borderRadius: 10,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}>
+                <FileText size={18} color="var(--app-primary)" />
+              </div>
+              <div className='flex gap-2'>
+                <Text style={{ color: 'var(--app-text-muted)', fontSize: 16, display: 'block' }}>
+                  Adding sources to:{' '}
+                  <span style={{ color: agent?.name ? 'var(--app-primary)' : 'var(--app-text-soft)', fontWeight: 600 }}>
+                    {/* {agent?.name ?? 'No Agent Selected'} */}
+                  </span>
+                </Text>
+                {/* <Text style={{ color: 'var(--app-text-soft)', fontSize: 13, marginTop: 2, display: 'block' }}>
                 0 sources loaded
               </Text> */}
-              <AgentList
-              
-                selectedId={agent?.id}
-                onChange={(id: string, name: string) => { console.log("selected agent", id);
-                setAgent({ id, name });agentlist({path : `/agents/${id}?limit=50&offset=0`})}}
-              />
-            </div>
-          </Flex>
-        </div>
+                <AgentList
 
-        {/* Input Sandbox Container */}
-        <Card 
-          bordered 
-          style={{ 
-            background: 'var(--app-surface)', 
-            borderColor: 'var(--app-border)', 
-            borderRadius: 12 
-          }}
-          styles={{ body: { padding: '24px' } }}
-        >
-          <Flex vertical gap={20}>
-            {/* Native Tab Alternative via AntD Segmented */}
-            <div className="w-full overflow-x-auto no-scrollbar pb-1">
-          <Segmented
-            options={tabs}
-            value={activeTab}
-            onChange={(value) => setActiveTab(value as 'url' | 'pdf' | 'text')}
+                  selectedId={agent?.id}
+                  onChange={(id: string, name: string) => {
+                    console.log("selected agent", id);
+                    setAgent({ id, name }); agentlist({ path: `/agents/${id}?limit=50&offset=0` })
+                  }}
+                />
+              </div>
+            </Flex>
+          </div>
+
+          {/* Input Sandbox Container */}
+          <Card
+            bordered
             style={{
-              background: 'var(--app-surface-muted)',
-              border: '1px solid var(--app-border)',
-              padding: 4,
-              borderRadius: 8,
-              whiteSpace: 'nowrap', // 👈 Prevents text from breaking into lines
+              background: 'var(--app-surface)',
+              borderColor: 'var(--app-border)',
+              borderRadius: 12
             }}
-          />
-        </div>
+            styles={{ body: { padding: '24px' } }}
+          >
+            <Flex vertical gap={20}>
+              {/* Native Tab Alternative via AntD Segmented */}
+              <div className="w-full overflow-x-auto no-scrollbar pb-1">
+                <Segmented
+                  options={tabs}
+                  value={activeTab}
+                  onChange={(value) => setActiveTab(value as 'url' | 'pdf' | 'text')}
+                  style={{
+                    background: 'var(--app-surface-muted)',
+                    border: '1px solid var(--app-border)',
+                    padding: 4,
+                    borderRadius: 8,
+                    whiteSpace: 'nowrap', // 👈 Prevents text from breaking into lines
+                  }}
+                />
+              </div>
 
-            {/* Dynamic Content Views */}
-            <div className="w-full mt-2">
-              {/* URL Capture Area */}
-              {activeTab === 'url' && (
-                /* Swapped "width" property out for Tailwind "w-full" assignment */
-                <Row gutter={[12, 12]} className="w-full">
-                  <Col xs={24} sm={18} md={20}>
-                    <input
-                      type="text"
-                      value={url}
-                      onChange={(e) => setUrl(e.target.value)}
-                      placeholder="https://docs.example.com"
-                      style={{ 
-                        width: '100%',
-                        background: 'var(--app-surface-muted)', 
-                        border: '1px solid var(--app-border)', 
-                        color: 'var(--app-text)', 
-                        fontSize: 15, 
-                        padding: '10px 14px', 
-                        borderRadius: 8, 
-                        outline: 'none',
-                        height: 42
-                      }}
-                    />
-                  </Col>
-                  <Col xs={24} sm={6} md={4}>
-                    <Button
-                      type="primary"
-                      icon={<Upload size={15} />}
-                      onClick={handleSubmit}
-                      style={{ 
-                        background: 'var(--app-primary)', 
-                        color: 'var(--app-on-primary)', 
-                        fontWeight: 600, 
-                        borderRadius: 8, 
-                        height: 42,
-                        width: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 6,
-                        border: 'none'
-                      }}
-                    >
-                      <span className="inline sm:hidden md:hidden lg:inline">Crawl</span>
-                    </Button>
-                  </Col>
-                </Row>
-              )}
+              {/* Dynamic Content Views */}
+              <div className="w-full mt-2">
+                {/* URL Capture Area */}
+                {activeTab === 'url' && (
+                  /* Swapped "width" property out for Tailwind "w-full" assignment */
+                  <Row gutter={[12, 12]} className="w-full">
+                    <Col xs={24} sm={18} md={20}>
+                      <input
+                        type="text"
+                        value={url}
+                        onChange={(e) => setUrl(e.target.value)}
+                        placeholder="https://docs.example.com"
+                        style={{
+                          width: '100%',
+                          background: 'var(--app-surface-muted)',
+                          border: '1px solid var(--app-border)',
+                          color: 'var(--app-text)',
+                          fontSize: 15,
+                          padding: '10px 14px',
+                          borderRadius: 8,
+                          outline: 'none',
+                          height: 42
+                        }}
+                      />
+                    </Col>
+                    <Col xs={24} sm={6} md={4}>
+                      <Button
+                        type="primary"
+                        icon={<Upload size={15} />}
+                        onClick={handleSubmit}
+                        style={{
+                          background: 'var(--app-primary)',
+                          color: 'var(--app-on-primary)',
+                          fontWeight: 600,
+                          borderRadius: 8,
+                          height: 42,
+                          width: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 6,
+                          border: 'none'
+                        }}
+                      >
+                        <span className="inline sm:hidden md:hidden lg:inline">Crawl</span>
+                      </Button>
+                    </Col>
+                  </Row>
+                )}
 
-              {/* PDF Document Processor */}
-              {activeTab === 'pdf' && (
-                <Flex vertical gap={16}>
-                  {selectedFile ? (
-                    <div 
-                      style={{ 
-                        border: '1px solid var(--app-border)', 
-                        borderRadius: 8, 
-                        padding: '14px 18px', 
-                        background: 'var(--app-surface-muted)' 
-                      }}
-                    >
-                      <Flex align="center" justify="space-between" wrap gap={12}>
-                        <Flex align="center" gap={12}>
-                          <FileText size={18} color="var(--app-primary)" />
-                          <div>
-                            <Text style={{ color: 'var(--app-text)', fontSize: 15, display: 'block', fontWeight: 500 }}>
-                              {selectedFile.name}
-                            </Text>
-                            <Text style={{ color: 'var(--app-text-soft)', fontSize: 13 }}>
-                              {(selectedFile.size / 1024).toFixed(1)} KB
-                            </Text>
-                          </div>
+                {/* PDF Document Processor */}
+                {activeTab === 'pdf' && (
+                  <Flex vertical gap={16}>
+                    {selectedFile ? (
+                      <div
+                        style={{
+                          border: '1px solid var(--app-border)',
+                          borderRadius: 8,
+                          padding: '14px 18px',
+                          background: 'var(--app-surface-muted)'
+                        }}
+                      >
+                        <Flex align="center" justify="space-between" wrap gap={12}>
+                          <Flex align="center" gap={12}>
+                            <FileText size={18} color="var(--app-primary)" />
+                            <div>
+                              <Text style={{ color: 'var(--app-text)', fontSize: 15, display: 'block', fontWeight: 500 }}>
+                                {selectedFile.name}
+                              </Text>
+                              <Text style={{ color: 'var(--app-text-soft)', fontSize: 13 }}>
+                                {(selectedFile.size / 1024).toFixed(1)} KB
+                              </Text>
+                            </div>
+                          </Flex>
+                          <Button
+                            type="text"
+                            icon={<X size={16} />}
+                            onClick={() => setSelectedFile(null)}
+                            style={{ color: 'var(--app-text-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                          />
                         </Flex>
-                        <Button 
-                          type="text"
-                          icon={<X size={16} />} 
-                          onClick={() => setSelectedFile(null)} 
-                          style={{ color: 'var(--app-text-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                        />
-                      </Flex>
-                    </div>
-                  ) : (
-                    <div
-                      style={{ 
-                        border: '2px dashed var(--app-border)', 
-                        borderRadius: 8, 
-                        padding: '40px 20px', 
-                        display: 'flex', 
-                        flexDirection: 'column', 
-                        alignItems: 'center', 
-                        justifyContent: 'center', 
-                        gap: 12, 
-                        cursor: 'pointer', 
-                        background: 'transparent',
-                        transition: 'border-color 0.2s ease'
-                      }}
-                      onClick={() => document.getElementById('pdf-input')?.click()}
-                      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const file = e.dataTransfer.files?.[0];
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          border: '2px dashed var(--app-border)',
+                          borderRadius: 8,
+                          padding: '40px 20px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 12,
+                          cursor: 'pointer',
+                          background: 'transparent',
+                          transition: 'border-color 0.2s ease'
+                        }}
+                        onClick={() => document.getElementById('pdf-input')?.click()}
+                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const file = e.dataTransfer.files?.[0];
+                          if (!file) return;
+                          if (!validateFileType(file)) {
+                            toast.error(`Unsupported file type "${getFileExtension(file.name)}". Only PDF, Excel, CSV, and Images are allowed.`);
+                            return;
+                          }
+                          setSelectedFile(file);
+                        }}
+                        className="hover:border-[var(--app-primary)]"
+                      >
+                        <Upload size={32} color="var(--app-primary)" />
+                        <Text style={{ color: 'var(--app-text-muted)', fontSize: 15, textAlign: 'center' }}>
+                          Click or drag to upload PDF, Excel, CSV, or Image
+                        </Text>
+                        <Text style={{ color: 'var(--app-text-soft)', fontSize: 11, textAlign: 'center' }}>
+                          Supported: .pdf · .xls · .xlsx · .csv · .png · .jpg · .jpeg · .gif · .webp
+                        </Text>
+                      </div>
+                    )}
+
+                    <input
+                      id="pdf-input"
+                      type="file"
+                      accept=".pdf,.csv,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp"
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
                         if (!file) return;
                         if (!validateFileType(file)) {
                           toast.error(`Unsupported file type "${getFileExtension(file.name)}". Only PDF, Excel, CSV, and Images are allowed.`);
+                          e.target.value = '';
                           return;
                         }
                         setSelectedFile(file);
                       }}
-                      className="hover:border-[var(--app-primary)]"
+                    />
+
+                    <Button
+                      type="primary"
+                      icon={<Upload size={15} />}
+                      onClick={handleSubmit}
+                      disabled={!selectedFile}
+                      style={{
+                        background: 'var(--app-primary)',
+                        color: 'var(--app-on-primary)',
+                        fontWeight: 600,
+                        borderRadius: 8,
+                        height: 42,
+                        padding: '0 24px',
+                        width: 'fit-content',
+                        border: 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6
+                      }}
                     >
-                      <Upload size={32} color="var(--app-primary)" />
-                      <Text style={{ color: 'var(--app-text-muted)', fontSize: 15, textAlign: 'center' }}>
-                        Click or drag to upload PDF, Excel, CSV, or Image
-                      </Text>
-                      <Text style={{ color: 'var(--app-text-soft)', fontSize: 11, textAlign: 'center' }}>
-                        Supported: .pdf · .xls · .xlsx · .csv · .png · .jpg · .jpeg · .gif · .webp
-                      </Text>
-                    </div>
-                  )}
+                      Upload
+                    </Button>
+                  </Flex>
+                )}
 
-                  <input
-                    id="pdf-input"
-                    type="file"
-                    accept=".pdf,.csv,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp"
-                    style={{ display: 'none' }}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      if (!validateFileType(file)) {
-                        toast.error(`Unsupported file type "${getFileExtension(file.name)}". Only PDF, Excel, CSV, and Images are allowed.`);
-                        e.target.value = '';
-                        return;
-                      }
-                      setSelectedFile(file);
-                    }}
-                  />
-
-                  <Button
-                    type="primary"
-                    icon={<Upload size={15} />}
-                    onClick={handleSubmit}
-                    disabled={!selectedFile}
-                    style={{ 
-                      background: 'var(--app-primary)'  , 
-                      color: 'var(--app-on-primary)' , 
-                      fontWeight: 600, 
-                      borderRadius: 8, 
-                      height: 42,
-                      padding: '0 24px',
-                      width: 'fit-content',
-                      border: 'none',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6
-                    }}
-                  >
-                    Upload 
-                  </Button>
-                </Flex>
-              )}
-
-              {/* Raw Text Input Processor */}
-              {activeTab === 'text' && (
-                <Flex vertical gap={16}>
-                  <TextArea
-                    value={textContent}
-                    onChange={(e) => setTextContent(e.target.value)}
-                    placeholder="Paste structural or raw text updates directly into this workspace..."
-                    rows={6}
-                    style={{ 
-                      background: 'var(--app-surface-muted)', 
-                      border: '1px solid var(--app-border)', 
-                      color: 'var(--app-text)', 
-                      fontSize: 15, 
-                      borderRadius: 8, 
-                      padding: '12px',
-                      resize: 'vertical' 
-                    }}
-                  />
-                  <Button
-                    type="primary"
-                    icon={<Upload size={15} />}
-                    onClick={handleSubmit}
-                    style={{ 
-                      background: 'var(--app-primary)', 
-                      color: 'var(--app-on-primary)', 
-                      fontWeight: 600, 
-                      borderRadius: 8, 
-                      height: 42,
-                      padding: '0 24px',
-                      width: 'fit-content',
-                      border: 'none',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6
-                    }}
-                  >
-                    Process
-                  </Button>
-                </Flex>
-              )}
-            </div>
-          </Flex>
-        </Card>
-
-        {/* Ingestion Progress Panel */}
-        {activeJobs.length > 0 && (
-          <Card
-            bordered
-            style={{
-              background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01))',
-              borderColor: 'var(--app-border)',
-              borderRadius: 12,
-              backdropFilter: 'blur(10px)',
-              boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.1)'
-            }}
-            styles={{ body: { padding: '20px' } }}
-          >
-            <Flex vertical gap={16}>
-              <div className="flex items-center justify-between">
-                <Flex align="center" gap={8}>
-                  <Spin size="small" />
-                  <Text strong style={{ color: 'var(--app-text)', fontSize: 16 }}>
-                    {activeJobs.map((job) => job.current_step || 'Ingesting Data Sources...').join(', ')}
-                  </Text>
-                </Flex>
-                <Text style={{ color: 'var(--app-text-muted)', fontSize: 12 }}>
-                  Start At : {activeJobs.map((job) => job.started_at ? dayjs(job.started_at).format('DD-MM-YYYY HH:mm:ss') : 'Pending').join(', ')}
-                </Text>
-              </div>
-
-              <div className="grid gap-4">
-                {activeJobs.map((job) => (
-                  <div 
-                    key={job.id} 
-                    style={{ 
-                      background: 'rgba(255, 255, 255, 0.02)',
-                      border: '1px solid rgba(255, 255, 255, 0.05)',
-                      borderRadius: 8,
-                      padding: '12px 16px'
-                    }}
-                  >
-                    <Flex vertical gap={8}>
-                      <Flex align="center" justify="space-between" wrap gap={8}>
-                        <Flex align="center" gap={8} className="min-w-0 flex-1">
-                          {job.type === 'url' && <Globe size={16} color="var(--app-primary)" />}
-                          {job.type === 'pdf' && <FileText size={16} color="var(--app-primary)" />}
-                          {job.type === 'text' && <Type size={16} color="var(--app-primary)" />}
-                          <Text strong className="truncate text-sm text-[var(--app-text)] flex-1">
-                            {job.name}
-                          </Text>
-                        </Flex>
-                        <Flex align="center" gap={8} className="shrink-0">
-                          <span 
-                            style={{ 
-                              fontSize: 11, 
-                              fontWeight: 600,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.05em',
-                              padding: '2px 8px',
-                              borderRadius: 12,
-                              background: job.status === 'completed' || job.status === 'success' || job.status === 'finished'
-                                ? 'rgba(34, 197, 94, 0.15)' 
-                                : (job.status === 'failed' || job.status === 'error' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(59, 130, 246, 0.15)'),
-                              color: job.status === 'completed' || job.status === 'success' || job.status === 'finished'
-                                ? '#4ade80' 
-                                : (job.status === 'failed' || job.status === 'error' ? '#f87171' : '#60a5fa')
-                            }}
-                          >
-                            {job.status}
-                          </span>
-                          <Text style={{ color: 'var(--app-text-muted)', fontSize: 13, fontWeight: 600 }}>
-                            {job.progress}%
-                          </Text>
-                        </Flex>
-                      </Flex>
-
-                      <Progress 
-                        percent={job.progress} 
-                        status={
-                          job.status === 'failed' || job.status === 'error' 
-                            ? 'exception' 
-                            : (job.status === 'completed' || job.status === 'success' || job.status === 'finished' ? 'success' : 'active')
-                        }
-                        strokeColor={
-                          job.status === 'failed' || job.status === 'error'
-                            ? '#f87171'
-                            : (job.status === 'completed' || job.status === 'success' || job.status === 'finished' ? '#4ade80' : 'var(--app-primary)')
-                        }
-                        showInfo={false}
-                        size="small"
-                      />
-
-                      {job.timeRemaining && (
-                        <Text style={{ color: 'var(--app-text-soft)', fontSize: 11 }}>
-                          Estimated time remaining: {job.timeRemaining}
-                        </Text>
-                      )}
-                    </Flex>
-                  </div>
-                ))}
+                {/* Raw Text Input Processor */}
+                {activeTab === 'text' && (
+                  <Flex vertical gap={16}>
+                    <TextArea
+                      value={textContent}
+                      onChange={(e) => setTextContent(e.target.value)}
+                      placeholder="Paste structural or raw text updates directly into this workspace..."
+                      rows={6}
+                      style={{
+                        background: 'var(--app-surface-muted)',
+                        border: '1px solid var(--app-border)',
+                        color: 'var(--app-text)',
+                        fontSize: 15,
+                        borderRadius: 8,
+                        padding: '12px',
+                        resize: 'vertical'
+                      }}
+                    />
+                    <Button
+                      type="primary"
+                      icon={<Upload size={15} />}
+                      onClick={handleSubmit}
+                      style={{
+                        background: 'var(--app-primary)',
+                        color: 'var(--app-on-primary)',
+                        fontWeight: 600,
+                        borderRadius: 8,
+                        height: 42,
+                        padding: '0 24px',
+                        width: 'fit-content',
+                        border: 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6
+                      }}
+                    >
+                      Process
+                    </Button>
+                  </Flex>
+                )}
               </div>
             </Flex>
           </Card>
-        )}
-        {/* Data Sources Overview Table Section */}
-        <Card 
-          bordered 
-          style={{ 
-            background: 'var(--app-surface)', 
-            borderColor: 'var(--app-border)', 
-            borderRadius: 12,
-            overflow: 'hidden'
-          }}
-          styles={{ body: { padding: 0 } }}
-        >
-          <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--app-border)' }}>
-            <Text strong style={{ color: 'var(--app-text)', fontSize: 16 }}>
-              Data Sources
-            </Text>
-          </div>
-          {/* <div style={{ padding: '60px 20px', textAlign: 'center' }}>
+
+          {/* Ingestion Progress Panel */}
+          {activeJobs.length > 0 && (
+            <Card
+              bordered
+              style={{
+                background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01))',
+                borderColor: 'var(--app-border)',
+                borderRadius: 12,
+                backdropFilter: 'blur(10px)',
+                boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.1)'
+              }}
+              styles={{ body: { padding: '20px' } }}
+            >
+              <Flex vertical gap={16}>
+                <div className="flex items-center justify-between">
+                  <Flex align="center" gap={8}>
+                    <Spin size="small" />
+                    <Text strong style={{ color: 'var(--app-text)', fontSize: 16 }}>
+                      {activeJobs.map((job) => job.current_step || 'Ingesting Data Sources...').join(', ')}
+                    </Text>
+                  </Flex>
+                  <Text style={{ color: 'var(--app-text-muted)', fontSize: 12 }}>
+                    Start At : {activeJobs.map((job) => job.started_at ? dayjs(job.started_at).format('DD-MM-YYYY HH:mm:ss') : 'Pending').join(', ')}
+                  </Text>
+                </div>
+
+                <div className="grid gap-4">
+                  {activeJobs.map((job) => (
+                    <div
+                      key={job.id}
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.02)',
+                        border: '1px solid rgba(255, 255, 255, 0.05)',
+                        borderRadius: 8,
+                        padding: '12px 16px'
+                      }}
+                    >
+                      <Flex vertical gap={8}>
+                        <Flex align="center" justify="space-between" wrap gap={8}>
+                          <Flex align="center" gap={8} className="min-w-0 flex-1">
+                            {job.type === 'url' && <Globe size={16} color="var(--app-primary)" />}
+                            {job.type === 'pdf' && <FileText size={16} color="var(--app-primary)" />}
+                            {job.type === 'text' && <Type size={16} color="var(--app-primary)" />}
+                            <Text strong className="truncate text-sm text-[var(--app-text)] flex-1">
+                              {job.name}
+                            </Text>
+                          </Flex>
+                          <Flex align="center" gap={8} className="shrink-0">
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 600,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.05em',
+                                padding: '2px 8px',
+                                borderRadius: 12,
+                                background: job.status === 'completed' || job.status === 'success' || job.status === 'finished'
+                                  ? 'rgba(34, 197, 94, 0.15)'
+                                  : (job.status === 'failed' || job.status === 'error' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(59, 130, 246, 0.15)'),
+                                color: job.status === 'completed' || job.status === 'success' || job.status === 'finished'
+                                  ? '#4ade80'
+                                  : (job.status === 'failed' || job.status === 'error' ? '#f87171' : '#60a5fa')
+                              }}
+                            >
+                              {job.status}
+                            </span>
+                            <Text style={{ color: 'var(--app-text-muted)', fontSize: 13, fontWeight: 600 }}>
+                              {job.progress}%
+                            </Text>
+                          </Flex>
+                        </Flex>
+
+                        <Progress
+                          percent={job.progress}
+                          status={
+                            job.status === 'failed' || job.status === 'error'
+                              ? 'exception'
+                              : (job.status === 'completed' || job.status === 'success' || job.status === 'finished' ? 'success' : 'active')
+                          }
+                          strokeColor={
+                            job.status === 'failed' || job.status === 'error'
+                              ? '#f87171'
+                              : (job.status === 'completed' || job.status === 'success' || job.status === 'finished' ? '#4ade80' : 'var(--app-primary)')
+                          }
+                          showInfo={false}
+                          size="small"
+                        />
+
+                        {job.timeRemaining && (
+                          <Text style={{ color: 'var(--app-text-soft)', fontSize: 11 }}>
+                            Estimated time remaining: {job.timeRemaining}
+                          </Text>
+                        )}
+                      </Flex>
+                    </div>
+                  ))}
+                </div>
+              </Flex>
+            </Card>
+          )}
+          {/* Data Sources Overview Table Section */}
+          <Card
+            bordered
+            style={{
+              background: 'var(--app-surface)',
+              borderColor: 'var(--app-border)',
+              borderRadius: 12,
+              overflow: 'hidden'
+            }}
+            styles={{ body: { padding: 0 } }}
+          >
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--app-border)' }}>
+              <Text strong style={{ color: 'var(--app-text)', fontSize: 16 }}>
+                Data Sources
+              </Text>
+            </div>
+            {/* <div style={{ padding: '60px 20px', textAlign: 'center' }}>
             <Text style={{ color: 'var(--app-text-muted)', fontSize: 15, display: 'block', maxWidth: 400, margin: '0 auto' }}>
               No alternative data streams mounted to this configuration yet. Try submitting context details above.
             </Text>
           </div> */}
-          
-          <div className="grid gap-3">
-            {
-            !sourcesList?.length &&
+
+            <div className="grid gap-3">
+              {
+                !sourcesList?.length &&
                 <Card>
                   <Empty description="No Knowledge Base Found" />
                 </Card>
-            }
-          {sourcesList.map((item : any, index : any) => (
-            <Card
-              key={index}
+              }
+              {sourcesList.map((item: any, index: any) => (
+                <Card
+                  key={index}
+                  size="small"
+                  className="shadow-sm hover:shadow-md transition-all"
+                >
+                  <div className="flex items-start gap-3 justify-between">
+                    <div className="flex items-start gap-3 flex-1 min-w-0">
+                      <FileTextOutlined
+                        style={{ fontSize: 20 }}
+                        className="text-blue-500 mt-1"
+                      />
+
+                      <div className="flex-1 min-w-0">
+                        <Text strong className="block break-words text-[var(--app-text)]">
+                          {item.name || item.source}
+                        </Text>
+
+                        <div className="flex items-center gap-3 mt-1 flex-wrap">
+                          <Text type="secondary" style={{ fontSize: '11px', display: 'inline-block' }}>
+                            {dayjs(item.created_at).format(
+                              "DD MMM YYYY hh:mm A"
+                            )}
+                          </Text>
+                          {item?.processing_jobs?.time_taken && (
+                            <span
+                              style={{
+                                fontSize: '10px',
+                                fontWeight: 700,
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                background: 'rgba(15, 181, 161, 0.12)',
+                                color: '#0fb5a1',
+                                border: '1px solid rgba(15, 181, 161, 0.2)',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              <Clock size={10} strokeWidth={3} />
+                              {item?.processing_jobs?.time_taken}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="shrink-0 ml-3 flex gap-2">
+                      <Button
+                        type="primary"
+                        size="middle"
+                        onClick={() => handleOpenPreview(item)}
+                        style={{ borderRadius: 6, fontSize: 12, background: "#0fb5a1", borderColor: "#0fb5a1" }}
+                      >
+                        Open
+                      </Button>
+                      <Button
+                        type="primary"
+                        danger
+                        size="middle"
+                        onClick={() => handleDeleteSource(item)}
+                        style={{ borderRadius: 6, fontSize: 12 }}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </Card>
+
+        </Flex>
+      </div>
+
+      <Modal
+        title={
+          <div className="py-1">
+            <span className="font-extrabold text-base text-[var(--app-text)] truncate block" style={{ maxWidth: '85%' }}>
+              {previewItem?.name || previewItem?.source || "Document Preview"}
+            </span>
+          </div>
+        }
+        open={previewVisible}
+        onCancel={() => {
+          setPreviewVisible(false);
+          if (previewUrl && previewUrl.startsWith("blob:")) {
+            URL.revokeObjectURL(previewUrl);
+          }
+          setPreviewUrl("");
+          setParsedText("");
+          setParsedUrl("");
+          setPreviewItem(null);
+        }}
+        footer={null}
+        width={1200}
+        style={{ top: 20 }}
+        styles={{
+          body: { padding: "20px 12px 12px 12px", height: "85vh", display: "flex", flexDirection: "column", background: "var(--app-surface-muted)", gap: 12 }
+        }}
+      >
+        {modalTabs.length > 1 && !previewLoading && (
+          <div className="mt-3 flex bg-[var(--app-surface)] p-1.5 rounded-xl border border-[var(--app-border)]/40 self-start shrink-0 select-none">
+            <Segmented
+              options={modalTabs}
+              value={previewTab}
+              onChange={(val) => setPreviewTab(val as 'original' | 'parsed')}
               size="small"
-              className="shadow-sm hover:shadow-md transition-all"
-            >
-              <div className="flex items-start gap-3 justify-between">
-                <div className="flex items-start gap-3 flex-1 min-w-0">
-                  <FileTextOutlined
-                    style={{ fontSize: 20 }}
-                    className="text-blue-500 mt-1"
-                  />
+            />
+          </div>
+        )}
 
-                  <div className="flex-1 min-w-0">
-                    <Text strong className="block break-words text-[var(--app-text)]">
-                      {item.name || item.source}
-                    </Text>
+        {previewLoading ? (
+          <Flex vertical align="center" justify="center" gap={12} className="h-full my-auto">
+            <Spin size="large" />
+            <Text className="text-xs text-[var(--app-text-soft)] font-semibold">
+              Loading preview content...
+            </Text>
+          </Flex>
+        ) : (
+          <div className="flex-1 w-full bg-[var(--app-surface)] rounded-xl border border-[var(--app-border)]/40 overflow-hidden relative shadow-sm h-full">
+            {previewTab === 'parsed' ? (
+              <div className="w-full h-full overflow-hidden">
+                {parsedUrl ? (
+                  <Flex gap={2} className="h-full" style={{ height: "100%" }}>
+                    <div className="w-full h-full overflow-hidden">
+                      <iframe
+                        src={previewUrl ? `${previewUrl}#navpanes=0` : ""}
+                        width="100%"
+                        height="100%"
+                        style={{ border: "none" }}
+                      />
+                    </div>
+                    <Divider type='vertical' style={{ height: '100%', margin: 0 }} />
+                    <div className="w-full h-full overflow-hidden">
+                      <iframe
+                        src={parsedUrl}
+                        width="100%"
+                        height="100%"
+                        style={{ border: "none" }}
+                      />
+                    </div>
+                  </Flex>
+                ) : (
+                  <div className="w-full h-full overflow-auto extracted-html-container">
+                    <div
+                      className="markdown-content text-[var(--app-text)]"
+                      dangerouslySetInnerHTML={{
+                        __html: parsedText
+                          ? (typeof marked === 'function' ? (marked as any)(parsedText) : (marked as any).parse(parsedText))
+                          : "<p style='color: var(--app-text-muted)'>No extracted text content available.</p>"
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="w-full h-full flex flex-col justify-start overflow-hidden">
+                {previewType === "image" && previewUrl ? (
+                  <div className="w-full h-full flex items-center justify-center p-4 bg-neutral-900/5 overflow-auto">
+                    <img
+                      src={previewUrl}
+                      alt={previewItem?.name || "Preview"}
+                      style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: "8px" }}
+                    />
+                  </div>
+                ) : (previewType === "excel" || previewType === "csv") && excelSheetNames.length > 0 ? (
+                  <div className="w-full h-full flex flex-col overflow-hidden bg-[var(--app-surface)]">
+                    {/* Excel Multi-sheet Switcher */}
+                    {previewType === "excel" && excelSheetNames.length > 1 && (
+                      <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
+                        {excelSheetNames.map(sheetName => {
+                          const isActive = activeExcelSheet === sheetName;
+                          return (
+                            <button
+                              key={sheetName}
+                              onClick={() => setActiveExcelSheet(sheetName)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
+                                ? "bg-[#0fb5a1] text-white shadow-sm"
+                                : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
+                                }`}
+                            >
+                              {sheetName}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
 
-                    <div className="flex items-center gap-3 mt-1 flex-wrap">
-                      <Text type="secondary" style={{ fontSize: '11px', display: 'inline-block' }}>
-                        {dayjs(item.created_at).format(
-                          "DD MMM YYYY hh:mm A"
-                        )}
-                      </Text>
-                      {item?.processing_jobs?.time_taken && (
-                        <span 
-                          style={{ 
-                            fontSize: '10px', 
-                            fontWeight: 700,
-                            padding: '2px 6px',
-                            borderRadius: '4px',
-                            background: 'rgba(15, 181, 161, 0.12)', 
-                            color: '#0fb5a1',
-                            border: '1px solid rgba(15, 181, 161, 0.2)',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            whiteSpace: 'nowrap'
-                          }}
-                        >
-                          <Clock size={10} strokeWidth={3} />
-                          {item?.processing_jobs?.time_taken}
-                        </span>
+                    {/* Spreadsheet Grid */}
+                    <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
+                      {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
+                        <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
+                          <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
+                            <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
+                              <tr>
+                                {excelSheets[activeExcelSheet][0].map((cell, idx) => (
+                                  <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
+                                    {cell || `Column ${idx + 1}`}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
+                              {excelSheets[activeExcelSheet].slice(1).map((row, rowIdx) => (
+                                <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
+                                  {excelSheets[activeExcelSheet][0].map((_, colIdx) => (
+                                    <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
+                                      {row[colIdx] || ""}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <Flex vertical align="center" justify="center" className="py-20 text-[var(--app-text-soft)] h-full">
+                          <FileText size={32} className="mb-2 opacity-55" />
+                          <span className="text-xs">No data in this sheet</span>
+                        </Flex>
                       )}
                     </div>
                   </div>
-                </div>
-
-                <div className="shrink-0 ml-3 flex gap-2">
-                  <Button
-                    type="primary"
-                    size="middle"
-                    onClick={() => handleOpenPreview(item)}
-                    style={{ borderRadius: 6, fontSize: 12, background: "#0fb5a1", borderColor: "#0fb5a1" }}
-                  >
-                    Open
-                  </Button>
-                  <Button
-                    type="primary"
-                    danger
-                    size="middle"
-                    onClick={() => handleDeleteSource(item)}
-                    style={{ borderRadius: 6, fontSize: 12 }}
-                  >
-                    Delete
-                  </Button>
-                </div>
+                ) : previewUrl ? (
+                  <iframe
+                    src={`${previewUrl}#navpanes=0`}
+                    width="100%"
+                    height="100%"
+                    style={{ border: "none" }}
+                  />
+                ) : (
+                  <Flex vertical align="center" justify="center" className="h-full text-neutral-400">
+                    <span className="text-xs">Preview URL not available</span>
+                  </Flex>
+                )}
               </div>
-            </Card>
-          ))}
-        </div>
-            </Card>
-
-      </Flex>
-    </div>
-
-    <Modal
-      title={
-        <div className="py-1">
-          <span className="font-extrabold text-base text-[var(--app-text)] truncate block" style={{ maxWidth: '85%' }}>
-            {previewItem?.name || previewItem?.source || "Document Preview"}
-          </span>
-        </div>
-      }
-      open={previewVisible}
-      onCancel={() => {
-        setPreviewVisible(false);
-        if (previewUrl && previewUrl.startsWith("blob:")) {
-          URL.revokeObjectURL(previewUrl);
-        }
-        setPreviewUrl("");
-        setParsedText("");
-        setParsedUrl("");
-        setPreviewItem(null);
-      }}
-      footer={null}
-      width={1200}
-      style={{ top: 20 }}
-      styles={{
-        body: { padding: "20px 12px 12px 12px", height: "85vh", display: "flex", flexDirection: "column", background: "var(--app-surface-muted)", gap: 12 }
-      }}
-    >
-      {modalTabs.length > 1 && !previewLoading && (
-        <div className="mt-3 flex bg-[var(--app-surface)] p-1.5 rounded-xl border border-[var(--app-border)]/40 self-start shrink-0 select-none">
-          <Segmented
-            options={modalTabs}
-            value={previewTab}
-            onChange={(val) => setPreviewTab(val as 'original' | 'parsed')}
-            size="small"
-          />
-        </div>
-      )}
-
-      {previewLoading ? (
-        <Flex vertical align="center" justify="center" gap={12} className="h-full my-auto">
-          <Spin size="large" />
-          <Text className="text-xs text-[var(--app-text-soft)] font-semibold">
-            Loading preview content...
-          </Text>
-        </Flex>
-      ) : (
-        <div className="flex-1 w-full bg-[var(--app-surface)] rounded-xl border border-[var(--app-border)]/40 overflow-hidden relative shadow-sm h-full">
-          {previewTab === 'parsed' ? (
-            <div className="w-full h-full overflow-hidden">
-              {parsedUrl ? (
-                <Flex gap={2} className="h-full" style={{ height: "100%" }}>
-                  <div className="w-full h-full overflow-hidden">
-                    <iframe
-                      src={previewUrl ? `${previewUrl}#navpanes=0` : ""}
-                      width="100%"
-                      height="100%"
-                      style={{ border: "none" }}
-                    />
-                  </div>
-                  <Divider type='vertical' style={{ height: '100%', margin: 0 }}/>
-                  <div className="w-full h-full overflow-hidden">
-                    <iframe
-                      src={parsedUrl}
-                      width="100%"
-                      height="100%"
-                      style={{ border: "none" }}
-                    />
-                  </div>
-                </Flex>
-              ) : (
-                <div className="w-full h-full overflow-auto extracted-html-container">
-                  <div
-                    className="markdown-content text-[var(--app-text)]"
-                    dangerouslySetInnerHTML={{
-                      __html: parsedText
-                        ? (typeof marked === 'function' ? (marked as any)(parsedText) : (marked as any).parse(parsedText))
-                        : "<p style='color: var(--app-text-muted)'>No extracted text content available.</p>"
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="w-full h-full flex flex-col justify-start overflow-hidden">
-              {previewType === "image" && previewUrl ? (
-                <div className="w-full h-full flex items-center justify-center p-4 bg-neutral-900/5 overflow-auto">
-                  <img
-                    src={previewUrl}
-                    alt={previewItem?.name || "Preview"}
-                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: "8px" }}
-                  />
-                </div>
-              ) : (previewType === "excel" || previewType === "csv") && excelSheetNames.length > 0 ? (
-                <div className="w-full h-full flex flex-col overflow-hidden bg-[var(--app-surface)]">
-                  {/* Excel Multi-sheet Switcher */}
-                  {previewType === "excel" && excelSheetNames.length > 1 && (
-                    <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
-                      {excelSheetNames.map(sheetName => {
-                        const isActive = activeExcelSheet === sheetName;
-                        return (
-                          <button
-                            key={sheetName}
-                            onClick={() => setActiveExcelSheet(sheetName)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
-                                ? "bg-[#0fb5a1] text-white shadow-sm"
-                                : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
-                              }`}
-                          >
-                            {sheetName}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Spreadsheet Grid */}
-                  <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
-                    {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
-                      <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
-                        <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
-                          <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
-                            <tr>
-                              {excelSheets[activeExcelSheet][0].map((cell, idx) => (
-                                <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
-                                  {cell || `Column ${idx + 1}`}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
-                            {excelSheets[activeExcelSheet].slice(1).map((row, rowIdx) => (
-                              <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
-                                {excelSheets[activeExcelSheet][0].map((_, colIdx) => (
-                                  <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
-                                    {row[colIdx] || ""}
-                                  </td>
-                                ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <Flex vertical align="center" justify="center" className="py-20 text-[var(--app-text-soft)] h-full">
-                        <FileText size={32} className="mb-2 opacity-55" />
-                        <span className="text-xs">No data in this sheet</span>
-                      </Flex>
-                    )}
-                  </div>
-                </div>
-              ) : previewUrl ? (
-                <iframe
-                  src={`${previewUrl}#navpanes=0`}
-                  width="100%"
-                  height="100%"
-                  style={{ border: "none" }}
-                />
-              ) : (
-                <Flex vertical align="center" justify="center" className="h-full text-neutral-400">
-                  <span className="text-xs">Preview URL not available</span>
-                </Flex>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </Modal>
+            )}
+          </div>
+        )}
+      </Modal>
     </>
   )
 }

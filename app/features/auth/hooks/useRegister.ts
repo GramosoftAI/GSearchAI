@@ -1,6 +1,6 @@
 "use client";
 
-import { useState,useRef } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { setCookie } from "../../../config/cookies";
 import { AUTH_COOKIE_KEY } from "../../../config/config";
@@ -16,7 +16,7 @@ interface ExtendedRegisterValues extends RegisterFormValues {
 
 export function useRegister() {
   const router = useRouter();
-  
+
   const setUserId = useStore((s) => s.setUserId);
   const [otp, setOtp] = useState<string[]>(new Array(6).fill(""));
   const [error, setError] = useState<string | null>(null);
@@ -24,10 +24,10 @@ export function useRegister() {
   const [showOtpScreen, setShowOtpScreen] = useState(false);
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const inputRefs = useRef<HTMLInputElement[]>([]);
-  const [request] = useRegisterApi(setOtp,inputRefs);
-  
+  const [request] = useRegisterApi(setOtp, inputRefs);
 
-  async function sendOtp(email: string , firstname : string,tentantName : string ,password : string,onErrorCallback?: () => void, ) {
+
+  async function sendOtp(email: string, firstname: string, tentantName: string, password: string, onErrorCallback?: () => void,) {
     setError(null);
     setIsSendingOtp(true);
 
@@ -37,17 +37,17 @@ export function useRegister() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email: email.trim(),first_name :firstname,tenant_name : tentantName,password:password}),
+        body: JSON.stringify({ email: email.trim(), first_name: firstname, tenant_name: tentantName, password: password }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
         throw new Error(data?.message || "Failed to send OTP code...............");
-        
-       
+
+
       }
-      else{
+      else {
         toast.success(data?.meta?.message)
       }
 
@@ -78,9 +78,8 @@ export function useRegister() {
           },
         },
         (res: any) => {
-          console.log("fsahhfggggggggggggggggggggggssssssssssssssssssss",res)
-          if(res?.status === 400)
-          {
+          console.log("fsahhfggggggggggggggggggggggssssssssssssssssssss", res)
+          if (res?.status === 400) {
             console.log("lllllllllllllllllllll")
             setOtp(new Array(6).fill(""));
           }
@@ -117,16 +116,16 @@ export function useRegister() {
     }
   }
 
-  return { 
-    register, 
+  return {
+    register,
     sendOtp,
-    error, 
+    error,
     setError,
-    isSubmitting, 
+    isSubmitting,
     isSendingOtp,
     showOtpScreen,
     setShowOtpScreen,
-    otp, 
+    otp,
     setOtp,
     inputRefs
   };
