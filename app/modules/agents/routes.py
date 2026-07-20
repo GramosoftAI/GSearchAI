@@ -1034,8 +1034,16 @@ async def instant_ingest_pdf(
 
         # Check database for duplicate hash
         async with AsyncSessionLocal() as db:
-            from sqlalchemy import select
+            from sqlalchemy import select, or_
             from app.modules.knowledge_bases.models import KnowledgeBase
+            from ...core.s3 import S3StorageService
+            
+            s3_service = S3StorageService()
+            s3_url = s3_service.get_s3_url(str(tenant_id), filename)
+            is_spreadsheet = filename.lower().endswith(('.csv', '.xls', '.xlsx'))
+            kb_name = f"Spreadsheet: {filename}" if is_spreadsheet else f"PDF: {filename}"
+
+            # 1. Check for exact duplicate content first
             stmt = select(KnowledgeBase).where(
                 KnowledgeBase.tenant_id == uuid.UUID(tenant_id),
                 KnowledgeBase.file_hash == file_hash,
@@ -1049,6 +1057,23 @@ async def instant_ingest_pdf(
                     status_code=400,
                     detail="File already uploaded. Duplicates are not allowed."
                 )
+
+            # 2. Check for same filename/s3_url but different hash (modified content)
+            stmt_modified = select(KnowledgeBase).where(
+                KnowledgeBase.tenant_id == uuid.UUID(tenant_id),
+                KnowledgeBase.is_active == True,
+                or_(
+                    KnowledgeBase.s3_path == s3_url,
+                    KnowledgeBase.name == kb_name
+                )
+            )
+            res_modified = await db.execute(stmt_modified)
+            existing_kb_modified = res_modified.scalars().first()
+            if existing_kb_modified:
+                logger.info(f"Modified file upload detected for {filename}. Deleting old KB {existing_kb_modified.id} before re-ingestion.")
+                from app.modules.knowledge_bases.service import KnowledgeBaseService
+                kb_service = KnowledgeBaseService(db, tenant_id)
+                await kb_service.delete_kb(str(existing_kb_modified.id), user_id=user_id)
 
         # ----------------------------------------------------
         # S3 STORAGE & DUPLICATE PREVENTION
@@ -1079,9 +1104,11 @@ async def instant_ingest_pdf(
             if not agent_result.get("success"):
                 raise HTTPException(status_code=404, detail="Agent not found")
                 
-            # 2. Create Job in DB
+        # 2. Create Job in DB
             job_service = JobService(db, tenant_id)
-            job_create = JobCreate(job_type="pdf_ingestion", file_name=filename)
+            is_spreadsheet = filename.lower().endswith(('.csv', '.xls', '.xlsx'))
+            job_type = "excel_ingestion" if is_spreadsheet else "pdf_ingestion"
+            job_create = JobCreate(job_type=job_type, file_name=filename)
             job_result = await job_service.create_job(user_id, job_create)
             
             if not job_result.get("success"):
@@ -1089,19 +1116,31 @@ async def instant_ingest_pdf(
                 
             job_id = str(job_result["data"]["job"].id)
             
-        # 3. Launch ingestion as an independent async task (not via background_tasks
-        # which runs AFTER the response and can block the event loop for other requests)
+        # 3. Launch ingestion as an independent async task
         import asyncio
-        asyncio.create_task(
-            run_pdf_ingestion_job(
-                tenant_id=str(tenant_id),
-                user_id=str(user_id),
-                agent_id=str(agent_id),
-                job_id=job_id,
-                filename=filename,
-                content=content
+        if is_spreadsheet:
+            from app.modules.jobs.worker import run_excel_ingestion_job
+            asyncio.create_task(
+                run_excel_ingestion_job(
+                    tenant_id=str(tenant_id),
+                    user_id=str(user_id),
+                    agent_id=str(agent_id),
+                    job_id=job_id,
+                    filename=filename,
+                    content=content
+                )
             )
-        )
+        else:
+            asyncio.create_task(
+                run_pdf_ingestion_job(
+                    tenant_id=str(tenant_id),
+                    user_id=str(user_id),
+                    agent_id=str(agent_id),
+                    job_id=job_id,
+                    filename=filename,
+                    content=content
+                )
+            )
 
         return {
             "success": True,
@@ -1215,19 +1254,32 @@ async def instant_ingest_text(
 
 
             # 4. Ingest
-
-            ingest_result = await kb_service.ingest_document(kb_id, document_text)
+            try:
+                ingest_result = await kb_service.ingest_document(kb_id, document_text)
+                if not ingest_result.get("success"):
+                    try:
+                        logger.info(f"Instant Ingest Text failed. Cleaning up KnowledgeBase {kb_id}.")
+                        await kb_service.delete_kb(kb_id, user_id=user_id)
+                    except Exception as cleanup_err:
+                        logger.error(f"Failed to clean up KnowledgeBase {kb_id} after text ingestion failure: {cleanup_err}")
+                    error_msg = ingest_result.get("error", "Unknown error")
+                    status_code = ingest_result.get("status_code", 400)
+                    raise HTTPException(status_code=status_code, detail=error_msg)
+            except Exception as ingest_err:
+                if isinstance(ingest_err, HTTPException):
+                    raise
+                try:
+                    logger.info(f"Instant Ingest Text encountered error. Cleaning up KnowledgeBase {kb_id}.")
+                    await kb_service.delete_kb(kb_id, user_id=user_id)
+                except Exception as cleanup_err:
+                    logger.error(f"Failed to clean up KnowledgeBase {kb_id} after text ingestion error: {cleanup_err}")
+                raise ingest_err
 
             # Add agent name to response
-
             agent_name = agent_result["data"]["agent"]["name"]
-
             ingest_result["data"]["agent_name"] = agent_name
-
             ingest_result["meta"]["message"] = f"Text knowledge stored to agent: {agent_name}"
-
             
-
             return ingest_result
 
 
@@ -1397,23 +1449,32 @@ async def instant_ingest_url(
 
 
             # 4. Ingest
-
-            # 4. Ingest
-
-            ingest_result = await kb_service.ingest_document(kb_id, document_text)
-
-            
+            try:
+                ingest_result = await kb_service.ingest_document(kb_id, document_text)
+                if not ingest_result.get("success"):
+                    try:
+                        logger.info(f"Instant Ingest URL failed. Cleaning up KnowledgeBase {kb_id}.")
+                        await kb_service.delete_kb(kb_id, user_id=user_id)
+                    except Exception as cleanup_err:
+                        logger.error(f"Failed to clean up KnowledgeBase {kb_id} after URL ingestion failure: {cleanup_err}")
+                    error_msg = ingest_result.get("error", "Unknown error")
+                    status_code = ingest_result.get("status_code", 400)
+                    raise HTTPException(status_code=status_code, detail=error_msg)
+            except Exception as ingest_err:
+                if isinstance(ingest_err, HTTPException):
+                    raise
+                try:
+                    logger.info(f"Instant Ingest URL encountered error. Cleaning up KnowledgeBase {kb_id}.")
+                    await kb_service.delete_kb(kb_id, user_id=user_id)
+                except Exception as cleanup_err:
+                    logger.error(f"Failed to clean up KnowledgeBase {kb_id} after URL ingestion error: {cleanup_err}")
+                raise ingest_err
 
             # Add agent name to response
-
             agent_name = agent_result["data"]["agent"]["name"]
-
             ingest_result["data"]["agent_name"] = agent_name
-
             ingest_result["meta"]["message"] = f"Web content from {url_data.url} stored to agent: {agent_name}"
-
             
-
             return ingest_result
 
 

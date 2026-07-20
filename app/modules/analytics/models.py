@@ -99,3 +99,46 @@ class AnalyticsQueryLog(Base):
         Index("ix_query_logs_tenant_id", "tenant_id"),
         Index("ix_query_logs_session_id", "session_id"),
     )
+
+
+class AppErrorLog(Base):
+    """Application and pipeline error logs for diagnostics."""
+    __tablename__ = "app_error_logs"
+
+    id = Column(
+        SQLAlchemyUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        index=True,
+        nullable=False,
+    )
+
+    tenant_id = Column(
+        SQLAlchemyUUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    user_id = Column(
+        SQLAlchemyUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    module = Column(String(100), nullable=False, index=True)      # e.g., "RAG", "Ingestion", "Auth", "API"
+    endpoint = Column(String(255), nullable=True)                  # e.g., "/api/v1/chats/message"
+    error_type = Column(String(100), nullable=False, index=True)   # e.g., "ValueError", "NameError"
+    message = Column(Text, nullable=False)
+    stack_trace = Column(Text, nullable=True)
+    
+    from sqlalchemy.dialects.postgresql import JSONB
+    request_metadata = Column(JSONB, nullable=True)
+
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_app_error_logs_tenant_id", "tenant_id"),
+        Index("ix_app_error_logs_created_at", "created_at"),
+    )

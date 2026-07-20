@@ -15,6 +15,7 @@ from app.modules.knowledge_bases.schemas import KBCreate
 from app.core.pdf_extractor import PDFExtractor
 from app.core.excel_extractor import ExcelExtractor
 from app.core.llm.deepinfra_llm import DeepInfraLLMClient
+from app.modules.knowledge_bases.services.excel_ingestion_service import ExcelIngestionService
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ async def run_pdf_ingestion_job(
     Background task for extracting and ingesting a PDF.
     Updates the ProcessingJob table with progress.
     """
+    kb_id = None
     try:
         # Calculate file hash
         import hashlib
@@ -73,8 +75,8 @@ async def run_pdf_ingestion_job(
             
             job_service = JobService(db, tenant_id)
             
-            # Check database for duplicate hash
-            from sqlalchemy import select
+            # Check database for duplicate hash or duplicate filename with modified content
+            from sqlalchemy import select, or_
             from app.modules.knowledge_bases.models import KnowledgeBase
             import uuid
             
@@ -95,6 +97,28 @@ async def run_pdf_ingestion_job(
                     kb_id=str(existing_kb.id)
                 )
                 return
+
+            # Check if there is an existing active KB with same name or s3_path (modified content)
+            from app.core.s3 import S3StorageService
+            s3_service = S3StorageService()
+            s3_url = s3_service.get_s3_url(str(tenant_id), filename)
+            is_spreadsheet = filename.lower().endswith(('.csv', '.xls', '.xlsx'))
+            kb_name = f"Spreadsheet: {filename}" if is_spreadsheet else f"PDF: {filename}"
+
+            stmt_modified = select(KnowledgeBase).where(
+                KnowledgeBase.tenant_id == uuid.UUID(tenant_id),
+                KnowledgeBase.is_active == True,
+                or_(
+                    KnowledgeBase.s3_path == s3_url,
+                    KnowledgeBase.name == kb_name
+                )
+            )
+            res_modified = await db.execute(stmt_modified)
+            existing_kb_modified = res_modified.scalars().first()
+            if existing_kb_modified:
+                logger.info(f"Job {job_id}: Modified file upload detected for {filename}. Deleting old KB {existing_kb_modified.id} before re-ingestion.")
+                kb_service = KnowledgeBaseService(db, tenant_id)
+                await kb_service.delete_kb(str(existing_kb_modified.id), user_id=user_id)
 
             is_spreadsheet = filename.lower().endswith(('.csv', '.xls', '.xlsx'))
             
@@ -168,7 +192,12 @@ async def run_pdf_ingestion_job(
 
             kb_service = KnowledgeBaseService(db, tenant_id)
             kb_name = f"Spreadsheet: {filename}" if is_spreadsheet else f"PDF: {filename}"
-            kb_description = f"Automated spreadsheet upload source (Table extraction)" if is_spreadsheet else f"Automated PDF upload source (Gdocz extraction)"
+            if is_spreadsheet:
+                kb_description = "Automated spreadsheet upload source (Table extraction)"
+            else:
+                method = getattr(document_text, "extraction_method", "gdocz")
+                display_method = "Gdocz" if method.lower() == "gdocz" else "pdfplumber"
+                kb_description = f"Automated PDF upload source ({display_method} extraction)"
             kb_source = "spreadsheet_upload" if is_spreadsheet else "pdf_upload"
 
             kb_request = KBCreate(
@@ -237,6 +266,11 @@ async def run_pdf_ingestion_job(
             if not ingest_result.get("success"):
                 error_msg = ingest_result.get("error", "Unknown ingestion error")
                 await job_service.update_job_progress(job_id, status="failed", progress=80, current_step="Generating Embeddings", error_message=error_msg)
+                try:
+                    logger.info(f"Job {job_id}: Ingestion failed. Cleaning up KnowledgeBase {kb_id}.")
+                    await kb_service.delete_kb(kb_id, user_id=user_id)
+                except Exception as cleanup_err:
+                    logger.error(f"Job {job_id}: Failed to clean up KnowledgeBase {kb_id} after ingestion failure: {cleanup_err}")
                 return
                 
             # Success!
@@ -245,6 +279,119 @@ async def run_pdf_ingestion_job(
 
     except Exception as e:
         logger.error(f"Job {job_id}: Unexpected error: {e}", exc_info=True)
+        try:
+            async with AsyncSessionLocal() as db:
+                await db.execute(
+                    text("SELECT set_config('app.current_tenant', :tenant_id, false)"),
+                    {"tenant_id": str(tenant_id)}
+                )
+                job_service = JobService(db, tenant_id)
+                await job_service.update_job_progress(job_id, status="failed", error_message=f"Internal Server Error: {str(e)}")
+                if kb_id:
+                    try:
+                        logger.info(f"Job {job_id}: Ingestion failed due to unexpected error. Cleaning up KnowledgeBase {kb_id}.")
+                        kb_service = KnowledgeBaseService(db, tenant_id)
+                        await kb_service.delete_kb(kb_id, user_id=user_id)
+                    except Exception as cleanup_err:
+                        logger.error(f"Job {job_id}: Failed to clean up KnowledgeBase {kb_id} after unexpected error: {cleanup_err}")
+        except Exception as rollback_err:
+            logger.error(f"Job {job_id}: Failed to update job status on error: {rollback_err}")
+
+
+async def run_excel_ingestion_job(
+    tenant_id: str,
+    user_id: str,
+    agent_id: str,
+    job_id: str,
+    filename: str,
+    content: bytes
+):
+    """
+    Background task for extracting and ingesting an Excel/CSV file using ESDIP v3.
+    """
+    try:
+        import hashlib
+        file_hash = hashlib.sha256(content).hexdigest()
+
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                text("SELECT set_config('app.current_tenant', :tenant_id, false)"),
+                {"tenant_id": str(tenant_id)}
+            )
+            
+            job_service = JobService(db, tenant_id)
+            kb_service = KnowledgeBaseService(db, tenant_id)
+            
+            from sqlalchemy import select
+            from app.modules.knowledge_bases.models import KnowledgeBase
+            import uuid
+            
+            stmt = select(KnowledgeBase).where(
+                KnowledgeBase.tenant_id == uuid.UUID(tenant_id),
+                KnowledgeBase.file_hash == file_hash,
+                KnowledgeBase.is_active == True
+            )
+            res = await db.execute(stmt)
+            existing_kb = res.scalars().first()
+            
+            if existing_kb:
+                logger.info(f"Job {job_id}: Duplicate file hash {file_hash} detected. Skipping processing.")
+                await job_service.update_job_progress(
+                    job_id, status="completed", progress=100, current_step="Complete", kb_id=str(existing_kb.id)
+                )
+                return
+
+            await job_service.update_job_progress(job_id, status="processing", progress=5, current_step="Starting ESDIP Ingestion")
+            
+            # Step 1: Create KB Entry First
+            from app.core.s3 import S3StorageService
+            s3_service = S3StorageService()
+            s3_url = s3_service.get_s3_url(str(tenant_id), filename)
+
+            kb_request = KBCreate(
+                name=f"Spreadsheet: {filename}",
+                description="Automated spreadsheet upload (ESDIP Extracted)",
+                agent_id=uuid.UUID(agent_id),
+                source="spreadsheet_upload",
+                document_type="STRUCTURED_DATA",
+                s3_path=s3_url,
+                file_hash=file_hash
+            )
+            
+            kb_result = await kb_service.create_knowledge_base(user_id, kb_request)
+            if not kb_result.get("success"):
+                await job_service.update_job_progress(job_id, status="failed", progress=10, current_step="Creating Knowledge Base", error_message="Failed to create Knowledge Base tracking row in database.")
+                return
+                
+            kb_id = str(kb_result["data"]["kb"].id)
+            await job_service.update_job_progress(job_id, status="processing", progress=20, current_step="Knowledge Base Created", kb_id=kb_id)
+            
+            # Step 2: Run ESDIP Service
+            logger.info(f"Job {job_id}: Invoking ExcelIngestionService for KB {kb_id}")
+            await job_service.update_job_progress(job_id, status="processing", progress=50, current_step="Running ESDIP Inference")
+            
+            ingestion_service = ExcelIngestionService(db, tenant_id)
+            
+            result = await ingestion_service.ingest_file(
+                kb_id=kb_id,
+                file_bytes=content,
+                filename=filename,
+                mime_type=None,
+                source=s3_url
+            )
+            
+            if not result.get("success"):
+                await job_service.update_job_progress(job_id, status="failed", progress=80, current_step="ESDIP Failure", error_message=result.get("error", "Unknown ingestion error"))
+                return
+                
+            await db.commit()
+                
+            # Success!
+            await job_service.update_job_progress(job_id, status="completed", progress=100, current_step="Complete")
+            logger.info(f"Job {job_id}: ESDIP successfully completed!")
+
+    except Exception as e:
+        logger.error(f"Job {job_id}: Unexpected error in Excel job: {e}", exc_info=True)
         try:
             async with AsyncSessionLocal() as db:
                 await db.execute(

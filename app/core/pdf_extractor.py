@@ -43,12 +43,13 @@ settings = get_settings()
 
 
 class ExtractedText(str):
-    def __new__(cls, clean_text: str, raw_content: str, is_html: bool = False, is_markdown: bool = False):
+    def __new__(cls, clean_text: str, raw_content: str, is_html: bool = False, is_markdown: bool = False, extraction_method: str = "gdocz"):
         obj = super().__new__(cls, clean_text)
         obj.raw_content = raw_content
         obj.raw_html = raw_content  # backward compatibility
         obj.is_html = is_html
         obj.is_markdown = is_markdown
+        obj.extraction_method = extraction_method
         return obj
 
 
@@ -191,7 +192,7 @@ class PDFExtractor:
                         f" Cleaned for RAG: {len(cleaned)} chars "
                         f"(from {len(raw_markdown_clean)} raw)"
                     )
-                    return ExtractedText(cleaned, raw_markdown_clean, is_markdown=True)
+                    return ExtractedText(cleaned, raw_markdown_clean, is_markdown=True, extraction_method="gdocz")
                 else:
                     logger.warning(
                         f" Gdocz returned empty result for {filename}. "
@@ -208,6 +209,7 @@ class PDFExtractor:
             )
 
         # ============= FALLBACK: PDFPLUMBER + AI-OCR =============
+        fallback_error = None
         if settings.enable_pdf_fallback:
             try:
                 extracted_text = await PDFExtractor._extract_pdfplumber(
@@ -223,20 +225,25 @@ class PDFExtractor:
                         reconstructed_markdown = await PDFExtractor._reconstruct_text_to_markdown_with_llm(extracted_text)
                         cleaned = PDFExtractor._clean_markdown_for_rag(reconstructed_markdown)
                         logger.info("Successfully reconstructed pdfplumber plain text to Markdown via LLM")
-                        return ExtractedText(cleaned, reconstructed_markdown, is_markdown=True)
+                        return ExtractedText(cleaned, reconstructed_markdown, is_markdown=True, extraction_method="pdfplumber")
                     except Exception as llm_err:
                         logger.warning(f"LLM text reconstruction to Markdown failed: {llm_err}. Returning raw plain text.")
                     
-                    return ExtractedText(extracted_text, extracted_text, is_markdown=False)
+                    return ExtractedText(extracted_text, extracted_text, is_markdown=False, extraction_method="pdfplumber")
+                else:
+                    fallback_error = "PDF contains no extractable text (likely a scanned image). OCR is required but Gdocz failed."
+                    logger.warning(f" pdfplumber extracted empty text for {filename}.")
             except Exception as e:
+                fallback_error = f"pdfplumber exception: {str(e)}"
                 logger.error(f" pdfplumber also failed for {filename}: {e}")
         else:
-            logger.info("PDF fallback is disabled by configuration settings.")
+            fallback_error = "PDF fallback is disabled by configuration settings."
+            logger.info(fallback_error)
 
         # ============= BOTH FAILED =============
         raise ValueError(
             f"Could not extract text from PDF: {filename}. "
-            f"Gdocz SDK failed and PDF fallback is disabled or failed."
+            f"Gdocz SDK failed. Fallback error: {fallback_error}"
         )
 
     # ========================================================================
@@ -262,7 +269,7 @@ class PDFExtractor:
                 
             try:
                 client = GdoczaiClient(api_key=api_key)
-                options = ConvertOptions(mode="chandra")
+                options = ConvertOptions(mode="accurate")
                 
                 max_retries = 3
                 last_err = None
@@ -316,9 +323,16 @@ class PDFExtractor:
                     os.remove(temp_path)
 
         loop = asyncio.get_event_loop()
-        raw_markdown = await loop.run_in_executor(
-            None, _sync_gdocz_convert, pdf_bytes, filename, settings.gdocz_api_key
-        )
+        try:
+            raw_markdown = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, _sync_gdocz_convert, pdf_bytes, filename, settings.gdocz_api_key
+                ),
+                timeout=60.0  # Strict 60s timeout to prevent 13+ min hangs!
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Gdocz SDK timed out after 60 seconds for {filename}")
+            raise RuntimeError("Gdocz extraction timed out")
 
         return raw_markdown
 

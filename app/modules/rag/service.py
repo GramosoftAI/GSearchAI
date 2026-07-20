@@ -47,6 +47,30 @@ from ...core.embeddings import EmbeddingGenerator
 from ...core.llm.deepinfra_llm import DeepInfraLLMClient, LLMResponse
 
 from ...core.billing.utils import is_billing_enabled
+import os
+from urllib.parse import urlparse
+
+def clean_source_name(source: str) -> str:
+    if not source:
+        return "Unknown Source"
+    # If it starts with PDF: or Doc: etc.
+    if ":" in source and not source.startswith("http"):
+        parts = source.split(":", 1)
+        source = parts[1].strip()
+    
+    # Try parsing as URL
+    try:
+        parsed = urlparse(source)
+        if parsed.scheme and parsed.netloc:
+            # It's a URL, get the last path component
+            path_part = os.path.basename(parsed.path)
+            if path_part:
+                return path_part
+    except Exception:
+        pass
+        
+    # Fallback to standard basename
+    return os.path.basename(source)
 
 
 
@@ -354,6 +378,12 @@ Do not resolve it yourself.
   "I couldn't find it."
 - If only part of the answer exists, answer only that part.
 - Mention the relevant source at the end.
+- Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives (such as "key transaction drivers" or "financial health") unless the user explicitly requested that analysis.
+- Be concise. Focus strictly on direct answers and avoid filler or conversational fluff.
+- TRANSACTION CLASSIFICATION: Categorize transactions strictly:
+  * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
+  * Debit (Withdrawal/Outgoing/Payment): ATM withdrawals, payments to merchants, fees, taxes, outgoing transfers.
+  * Double-check that you do not call a debit a credit or vice versa. For example, if a transaction is a payment to a jeweler (e.g., G R THANGAMALIGAI), do NOT classify it as a credit/deposit; it is a debit/withdrawal.
 
 ==================================================
 FORMATTING RULES
@@ -420,9 +450,10 @@ The source citation MUST be strictly formatted as:
 
 [Source: <filename>]
 
+If the answer is derived from multiple files, output a source citation block for each file.
 Example:
 
-[Source: Intel_Q3_2023.pdf]
+[Source: Intel_Q3_2023.pdf] [Source: AMD_Q3_2023.pdf]
 
 Do NOT include:
 - Position numbers
@@ -621,9 +652,10 @@ If you'd like, I can also:
             logger.info(f"Bypassing LLM stream for {context.search_type} mode.")
             # Yield any structured data if available
             if getattr(context, "authoritative_entities", None):
-                yield "\n**System Verified Data (100% Trust):**\n"
                 for ent in context.authoritative_entities:
-                    yield f"- **{ent['entity_type']}**: `{ent['value']}` (Source: {ent.get('source', 'document_entities')}, Page: {ent.get('page', 1)}, Confidence: {ent.get('confidence', 1.0)})\n"
+                    clean_name = ent['entity_type'].replace('_', ' ').title()
+                    clean_src = clean_source_name(ent.get('source', 'document_entities'))
+                    yield f"**{clean_name}:** {ent['value']} (Page {ent.get('page', 1)}) [Source: {clean_src}]\n"
                 yield "\n"
             yield context.triplet_context
             return
@@ -635,13 +667,6 @@ If you'd like, I can also:
             yield "Im sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
 
             return
-
-        # System-Level Value Injection
-        if getattr(context, "authoritative_entities", None):
-            yield "\n**System Verified Data (100% Trust):**\n"
-            for ent in context.authoritative_entities:
-                yield f"- **{ent['entity_type']}**: `{ent['value']}` (Source: {ent.get('source', 'document_entities')}, Page: {ent.get('page', 1)}, Confidence: {ent.get('confidence', 1.0)})\n"
-            yield "\n**AI Analysis (Hybrid Retrieval):**\n"
 
 
 
@@ -945,6 +970,12 @@ CORE RULES
   "I couldn't find it."
 - If only part of the answer exists, answer only that part.
 - Keep responses clear, accurate, and well-structured.
+- Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives (such as "key transaction drivers" or "financial health") unless the user explicitly requested that analysis.
+- Be concise. Focus strictly on direct answers and avoid filler or conversational fluff.
+- TRANSACTION CLASSIFICATION: Categorize transactions strictly:
+  * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
+  * Debit (Withdrawal/Outgoing/Payment): ATM withdrawals, payments to merchants, fees, taxes, outgoing transfers.
+  * Double-check that you do not call a debit a credit or vice versa. For example, if a transaction is a payment to a jeweler (e.g., G R THANGAMALIGAI), do NOT classify it as a credit/deposit; it is a debit/withdrawal.
 
 ==================================================
 FORMATTING RULES
@@ -1026,9 +1057,10 @@ The source citation MUST be:
 
 [Source: <filename>]
 
+If the answer is derived from multiple files, output a source citation block for each file.
 Example:
 
-[Source: Intel_Q3_2023.pdf]
+[Source: Intel_Q3_2023.pdf] [Source: AMD_Q3_2023.pdf]
 
 Do NOT include:
 - Position numbers
@@ -1321,6 +1353,8 @@ If you'd like, I can also:
                     "total_tokens": 0,
                     "entity_count": 0,
                     "llm_tokens": 0,
+                    "llm_input_tokens": 0,
+                    "llm_output_tokens": 0,
                     "llm_source": "SupportFallback",
                     "search_strategy": "SUPPORT_INTENT",
                 },
@@ -1349,6 +1383,8 @@ If you'd like, I can also:
                     "total_tokens": 0,
                     "entity_count": 0,
                     "llm_tokens": 0,
+                    "llm_input_tokens": 0,
+                    "llm_output_tokens": 0,
                     "llm_source": "DirectExtraction",
                     "search_strategy": context.search_type,
                 },
@@ -1401,6 +1437,8 @@ If you'd like, I can also:
                     "total_tokens": 0,
                     "entity_count": 0,
                     "llm_tokens": 0,
+                    "llm_input_tokens": 0,
+                    "llm_output_tokens": 0,
                     "llm_source": "Fallback",
                     "search_strategy": context.search_type if context else "DEFAULT",
                 },
@@ -1541,21 +1579,15 @@ If you'd like, I can also:
             },
 
             "stats": {
-
                 "total_chunks": len(context.chunks),
-
                 "total_tokens": int(context.total_tokens),
-
                 "entity_count": len(context.entity_mentions),
-
                 "llm_tokens": llm_response.total_tokens,
-
+                "llm_input_tokens": llm_response.prompt_tokens,
+                "llm_output_tokens": llm_response.completion_tokens,
                 "llm_source": llm_response.source,
-
                 "llm_prompt_version": llm_response.prompt_version,
-
                 "search_strategy": context.search_type,
-
             },
 
             "confidence": confidence,
@@ -1845,7 +1877,7 @@ If you'd like, I can also:
         # Add chunks with position and source
 
         for i, chunk in enumerate(context.chunks, 1):
-            source_info = chunk.source if chunk.source else "Unknown Source"
+            source_info = clean_source_name(chunk.source) if chunk.source else "Unknown Source"
             context_text += f"\n[Chunk {i}/{len(context.chunks)} - Source: {source_info} - Position {chunk.position}]"
 
             context_text += f"\nScore: {chunk.hybrid_score:.3f} (Semantic: {chunk.embedding_similarity:.3f}, Graph: {chunk.graph_score:.3f})"
@@ -1873,11 +1905,11 @@ If you'd like, I can also:
             context_text += f"\n[KNOWLEDGE GRAPH RELATIONSHIPS]:\n{context.triplet_context}\n"
 
         if getattr(context, "authoritative_entities", None):
-            context_text += "\n" + "=" * 60 + "\n[SYSTEM INSTRUCTION: ALREADY VERIFIED DATA]\n"
-            context_text += "The system has already verified and securely injected the following fields into the final response.\n"
-            context_text += "DO NOT include these fields in your generation. ONLY answer for the REMAINING missing fields.\n"
+            context_text += "\n" + "=" * 60 + "\n[VERIFIED DATA ENTITIES (HIGH TRUST)]\n"
+            context_text += "The following entities are verified from the document/database. Use these values to answer the user's query if they are relevant:\n"
             for ent in context.authoritative_entities:
-                context_text += f"- {ent['entity_type']}\n"
+                clean_src = clean_source_name(ent.get('source', 'document_entities'))
+                context_text += f"- {ent['entity_type']}: {ent['value']} (Page: {ent.get('page', 1)}, Source: {clean_src})\n"
             context_text += "=" * 60 + "\n"
 
         if context.personal_memories:

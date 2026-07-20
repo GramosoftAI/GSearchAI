@@ -219,3 +219,7 @@ tests/
 test_*.py
 *_test.py
 *cleanup*
+
+# Local environment / runner exclusions
+appDataDir/
+.pytest_cache/

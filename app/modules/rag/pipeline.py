@@ -18,6 +18,7 @@ Phase 2 Step 4: Transforms Graph Intelligence into Production RAG
 
 
 
+import json
 import logging
 
 
@@ -128,6 +129,14 @@ class RetrievedChunk:
 
     source: Optional[str] = None  # Source of the chunk (e.g., filename, URL, database table)
     content_type: str = "original"
+    
+    # Provenance fields for Enterprise Retrieval Orchestrator
+    engine_name: Optional[str] = None
+    document: Optional[str] = None
+    page: Optional[int] = None
+    section: Optional[str] = None
+    ontology_node: Optional[str] = None
+    provenance_metadata: Optional[Dict] = None
 
 
 
@@ -195,6 +204,12 @@ class RAGContext:
 
 
 
+
+import time
+
+# Module-level TTL cache for KB noisy words
+_KB_NOISY_WORDS_CACHE = {}  # kb_id -> {"data": noisy_words_list, "expiry": timestamp}
+KB_NOISY_WORDS_CACHE_TTL = 300  # 5 minutes
 
 class RAGPipeline:
 
@@ -355,7 +370,7 @@ class RAGPipeline:
 
 
 
-        top_k: int = 15,
+        top_k: int = 3,
 
 
 
@@ -484,35 +499,90 @@ class RAGPipeline:
 
 
         # STEP 0: ROUTE QUERY TO OPTIMAL SEARCH STRATEGY (USING NEW ADAPTIVE PLANNER)
+        import time
+        start_time = time.time()
+        
         from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer
         from app.modules.rag.orchestrator.planner import AdaptivePlanner
         from app.modules.rag.orchestrator.aggregator import EvidenceAggregator
+        from app.modules.rag.orchestrator.conflict_detector import ConflictDetector
+        from app.modules.rag.engines.registry import CapabilityRegistry
+        from app.modules.rag.telemetry import TelemetryLogger
+        
+        # Ensure engines are loaded to register them
+        import app.modules.rag.engines.financial_engine
+        import app.modules.rag.engines.table_engine
+        import app.modules.rag.engines.vector_engine
+        
+        from app.modules.rag.orchestrator.section_ranker import SectionRanker
         
         analyzer = QueryAnalyzer()
         analysis = await analyzer.analyze_query(query)
         
-        planner = AdaptivePlanner()
-        plan = planner.create_plan(analysis, query)
+        planner = AdaptivePlanner(self.neo4j_repo, self.tenant_id)
+        plan = await planner.create_plan(analysis, query)
         
+        planner_time = time.time() - start_time
+        engine_start = time.time()
+        
+        # --- PHASE 1: CANDIDATE SECTION GATHERING ---
+        candidate_sections = []
+        for task in plan.tasks:
+            engine_cls = CapabilityRegistry.get_engine_class(task.engine_name)
+            if engine_cls:
+                engine = engine_cls(self.tenant_id, self.neo4j_repo)
+                secs = await engine.get_candidate_sections(task, kb_ids)
+                candidate_sections.extend(secs)
+                
+        # --- PHASE 2: SECTION RANKING ---
+        ranker = SectionRanker()
+        ranked_sections = ranker.rank_sections(query, candidate_sections, top_k=5)
+        logger.info(f"SectionRanker selected {len(ranked_sections)} candidate sections out of {len(candidate_sections)}")
+        
+        # Group top sections by task
+        for task in plan.tasks:
+            task_sections = [s["section_id"] for s in ranked_sections if s.get("task_id") == getattr(task, "task_id", "")]
+            if task_sections:
+                setattr(task, "target_section_ids", task_sections)
+                
+        # --- PHASE 3: CHUNK RETRIEVAL ---
         all_chunks = []
         for task in plan.tasks:
-            if task.engine_name == "table":
-                from app.modules.rag.engines.table_engine import TableEngine
-                engine = TableEngine(self.tenant_id, self.neo4j_repo)
-                chunks = await engine.retrieve(task, kb_ids)
-                all_chunks.extend(chunks)
-            elif task.engine_name == "financial":
-                from app.modules.rag.engines.financial_engine import FinancialEngine
-                engine = FinancialEngine(self.tenant_id, self.neo4j_repo)
+            engine_cls = CapabilityRegistry.get_engine_class(task.engine_name)
+            if engine_cls:
+                engine = engine_cls(self.tenant_id, self.neo4j_repo)
                 chunks = await engine.retrieve(task, kb_ids)
                 all_chunks.extend(chunks)
                 
+        # COVERAGE VALIDATION LOOP
+        retrieved_nodes = {c.ontology_node for c in all_chunks if getattr(c, "ontology_node", None)}
+        missing_goals = set(plan.coverage_goals) - retrieved_nodes
+        
+        if missing_goals:
+            logger.warning(f"Coverage Validation failed. Missing goals: {missing_goals}. Triggering fallback.")
+            from app.modules.rag.engines.vector_engine import VectorEngine
+            vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo)
+            from app.modules.rag.orchestrator.planner import RetrievalTask
+            for missing in missing_goals:
+                fallback_task = RetrievalTask(
+                    engine_name="vector",
+                    query=query,
+                    metadata_filters=analysis.metadata,
+                    task_id=f"fallback_{missing}",
+                    target_section=missing
+                )
+                fb_chunks = await vector_fallback.retrieve(fallback_task, kb_ids)
+                all_chunks.extend(fb_chunks)
+                
+        engine_time = time.time() - engine_start
+                
         if all_chunks:
             aggregator = EvidenceAggregator()
-            final_chunks = aggregator.aggregate(all_chunks, plan.aggregator_strategy, query)
+            final_chunks = aggregator.aggregate(all_chunks, plan.aggregator_strategy, query, max_tokens=max_tokens)
             if final_chunks:
                 logger.info("Adaptive Orchestrator successfully retrieved and aggregated chunks. Returning early.")
-                return RAGContext(
+                
+                rag_context = RAGContext(
                     query=query,
                     chunks=final_chunks,
                     entity_mentions={},
@@ -520,6 +590,31 @@ class RAGPipeline:
                     triplet_context="",
                     search_type=analysis.intent.name
                 )
+                
+                # Pre-generation conflict detection
+                detector = ConflictDetector()
+                conflict_res = await detector.detect_conflicts(rag_context)
+                if conflict_res.get("conflict_found"):
+                    logger.warning(f"Conflict detected in evidence: {conflict_res.get('explanation')}")
+                    rag_context.triplet_context = f"### SYSTEM WARNING: CONFLICTING EVIDENCE DETECTED\n{conflict_res.get('explanation')}\nExplicitly address and resolve this conflict in your response based on the provided snippets."
+                    
+                # Calculate coverage score
+                final_retrieved_nodes = {c.ontology_node for c in final_chunks if getattr(c, "ontology_node", None)}
+                coverage_score = len(final_retrieved_nodes.intersection(set(plan.coverage_goals))) / max(len(plan.coverage_goals), 1)
+                
+                # Telemetry logging
+                TelemetryLogger.log_query(
+                    query=query,
+                    intent=analysis.intent.name,
+                    planner_latency=planner_time,
+                    engine_latency=engine_time,
+                    coverage_score=coverage_score,
+                    conflict_found=conflict_res.get("conflict_found", False),
+                    token_usage=rag_context.total_tokens,
+                    evidence_count=len(final_chunks)
+                )
+                    
+                return rag_context
         
         # Fallback to standard router
         route_result = await self.router.route_query(query, tenant_id=str(self.tenant_id))
@@ -533,18 +628,100 @@ class RAGPipeline:
                     cleaned = "".join(c for c in word if c.isalnum() or c in "-.")
                     if cleaned:
                         split_keywords.append(cleaned)
-            # Filter out domain-specific noise words (case-insensitive)
-            NOISY_WORDS = {
-                "apple", "aapl", "company", "corporation", "inc", "quarter", "quarters",
-                "period", "periods", "months", "ended", "report", "reports", "form",
-                "10-q", "10-k", "disclose", "disclosed", "disclosures", "financial",
-                "performance", "statement", "statements", "sheet", "sheets", "item", "items"
-            }
-            split_keywords = [
-                k for k in split_keywords
-                if k.lower() not in NOISY_WORDS
+            # Fetch dynamic noisy words from database (with caching)
+            noisy_words_scores = {}
+            now_time = time.time()
+            kbs_to_fetch = []
+            
+            for kbid in kb_ids:
+                if kbid in _KB_NOISY_WORDS_CACHE:
+                    cached = _KB_NOISY_WORDS_CACHE[kbid]
+                    if now_time < cached["expiry"]:
+                        for word_data in cached["data"]:
+                            word = word_data["word"]
+                            score = word_data["score"]
+                            noisy_words_scores[word] = max(noisy_words_scores.get(word, 0.0), score)
+                        continue
+                kbs_to_fetch.append(kbid)
+                
+            if kbs_to_fetch and self.db:
+                try:
+                    from sqlalchemy import select
+                    from app.modules.knowledge_bases.models import KnowledgeBase
+                    
+                    stmt = select(KnowledgeBase.id, KnowledgeBase.noisy_words).where(
+                        KnowledgeBase.id.in_(kbs_to_fetch),
+                        KnowledgeBase.tenant_id == self.tenant_id
+                    )
+                    res = await self.db.execute(stmt)
+                    rows = res.fetchall()
+                    
+                    for kb_id_val, noisy_words_val in rows:
+                        kb_id_str = str(kb_id_val)
+                        words_list = noisy_words_val or []
+                        _KB_NOISY_WORDS_CACHE[kb_id_str] = {
+                            "data": words_list,
+                            "expiry": now_time + KB_NOISY_WORDS_CACHE_TTL
+                        }
+                        for word_data in words_list:
+                            word = word_data["word"]
+                            score = word_data["score"]
+                            noisy_words_scores[word] = max(noisy_words_scores.get(word, 0.0), score)
+                except Exception as db_err:
+                    logger.error(f"Error fetching noisy words for KBs {kbs_to_fetch}: {db_err}")
+            
+            # Fail-safe static fallback if no dynamic noisy words are computed/available yet
+            if not noisy_words_scores:
+                noisy_words_scores = {
+                    "report": 0.99, "reports": 0.99,
+                    "financial": 0.98,
+                    "company": 0.97, "corporation": 0.97, "inc": 0.97,
+                    "statement": 0.91, "statements": 0.91,
+                    "sheet": 0.91, "sheets": 0.91,
+                    "annual": 0.83,
+                    "quarter": 0.80, "quarters": 0.80,
+                    "period": 0.75, "periods": 0.75,
+                    "months": 0.70,
+                    "ended": 0.65,
+                    "form": 0.60,
+                    "10-q": 0.55, "10-k": 0.55,
+                    "disclose": 0.50, "disclosed": 0.50, "disclosures": 0.50,
+                    "performance": 0.45,
+                    "item": 0.40, "items": 0.40,
+                    "apple": 0.30, "aapl": 0.30
+                }
+
+            # 1. ENTITY PROTECTION: Extract all entities from the route result to protect them
+            entities_to_protect = set()
+            for entity in (rewritten_data.get("entities", []) + getattr(route_result, "requested_entities", [])):
+                for part in str(entity).split():
+                    cleaned_part = "".join(c for c in part if c.isalnum() or c in "-.").lower()
+                    if cleaned_part:
+                        entities_to_protect.add(cleaned_part)
+
+            # 2. NOISY WORD CANDIDATE DETECTION & SCORES COLLECTION
+            noisy_candidates = []
+            for idx, k in enumerate(split_keywords):
+                k_lower = k.lower()
+                # Keyword is a noise candidate ONLY if it exists in score map and is NOT protected as an entity
+                if k_lower in noisy_words_scores and k_lower not in entities_to_protect:
+                    noisy_candidates.append((idx, k_lower, noisy_words_scores[k_lower]))
+
+            # 3. TOP-3 NOISY-WORD REMOVAL: Rank candidates by noise score and remove top 3
+            # Sort by score in descending order (highest noise first)
+            noisy_candidates.sort(key=lambda x: x[2], reverse=True)
+            to_remove_indices = {candidate[0] for candidate in noisy_candidates[:3]}
+
+            filtered_keywords = [
+                k for idx, k in enumerate(split_keywords)
+                if idx not in to_remove_indices
             ]
-            extracted_keywords = list(dict.fromkeys(split_keywords))
+
+            # 4. FAIL-SAFE FALLBACK: If the list is empty after filtering, restore original keywords
+            if not filtered_keywords:
+                filtered_keywords = split_keywords
+
+            extracted_keywords = list(dict.fromkeys(filtered_keywords))
         
         logger.info(f" Query Router selected strategy: {search_type.name} (Confidence: {route_result.confidence})")
         if extracted_keywords:
@@ -590,7 +767,12 @@ class RAGPipeline:
                 
                 from sqlalchemy import text
                 kb_ids_formatted = "','".join(kb_ids)
-                stmt = text(f"SELECT DISTINCT entity_type, entity_value, page_number, entity_status FROM document_entities WHERE document_id IN ('{kb_ids_formatted}')")
+                stmt = text(
+                    f"SELECT DISTINCT de.entity_type, de.entity_value, de.page_number, de.entity_status, kb.name AS kb_name "
+                    f"FROM document_entities de "
+                    f"JOIN knowledge_bases kb ON de.document_id = kb.id "
+                    f"WHERE de.document_id IN ('{kb_ids_formatted}')"
+                )
                 
                 result = await self.db.execute(stmt)
                 db_entities = result.fetchall()
@@ -619,7 +801,7 @@ class RAGPipeline:
                         authoritative_entities_list.append({
                             "entity_type": row.entity_type,
                             "value": row.entity_value,
-                            "source": "document_entities",
+                            "source": row.kb_name,
                             "page": row.page_number,
                             "confidence": trust_score
                         })
@@ -1912,7 +2094,7 @@ Return ONLY valid JSON matching this schema exactly:
 Return ONLY JSON, no markdown formatting.
 """
 
-        generated_ast_str = await self.llm_client.generate(
+        generated_ast_str = await self.llm_client.generate_cloud(
             prompt=prompt,
             system_prompt="You are a Structured Query Planner. Return only JSON.",
             temperature=0.0,
@@ -1959,6 +2141,34 @@ Return ONLY JSON, no markdown formatting.
                 return f"Validation Error: Operation '{operation}' requires a target_field."
             if target_field not in dataset_schema:
                 return f"Validation Error: Field '{target_field}' does not exist in this dataset."
+            if dataset_schema[target_field] not in numeric_types:
+                # Dynamically check if the values in database are actually numeric
+                try:
+                    import re
+                    sample_query = "SELECT row_data->>:field as val FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) LIMIT 20;"
+                    sample_res = await self.db.execute(text(sample_query), {"kb_ids": kb_ids, "field": target_field})
+                    sample_vals = [r.val for r in sample_res.all() if r.val is not None and str(r.val).strip() != ""]
+                    if sample_vals:
+                        is_numeric = True
+                        for val in sample_vals:
+                            val_str = str(val).strip()
+                            if not val_str or val_str.lower() in ["na", "n/a", "none", "null", "-", ""]:
+                                continue
+                            if val_str.startswith("(") and val_str.endswith(")"):
+                                val_str = "-" + val_str[1:-1].strip()
+                            val_str = re.sub(r'[\$\€\£\₹]', '', val_str).strip()
+                            val_str = val_str.replace("%", "").strip()
+                            val_str = val_str.replace(",", "")
+                            try:
+                                float(val_str)
+                            except ValueError:
+                                is_numeric = False
+                                break
+                        if is_numeric:
+                            dataset_schema[target_field] = "float"
+                except Exception as e:
+                    logger.error(f"Dynamic numeric validation check failed: {e}")
+
             if dataset_schema[target_field] not in numeric_types:
                 return f"Validation Error: {operation} cannot be applied to string field '{target_field}'"
                 

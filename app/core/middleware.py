@@ -167,6 +167,33 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
                 extra={"request_id": request_id},
             )
 
+            try:
+                import traceback
+                import asyncio
+                from app.core.error_logger import log_error_to_db
+                
+                tenant_id = getattr(request.state, "tenant_id", None)
+                user_id = getattr(request.state, "user_id", None)
+                stack_trace = traceback.format_exc()
+                
+                asyncio.create_task(
+                    log_error_to_db(
+                        module="API",
+                        message=str(exc),
+                        error_type=type(exc).__name__,
+                        stack_trace=stack_trace,
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        endpoint=request.url.path,
+                        request_metadata={
+                            "method": request.method,
+                            "request_id": request_id
+                        }
+                    )
+                )
+            except Exception as log_err:
+                logger.error(f"Failed to dispatch error logger background task: {log_err}")
+
             return JSONResponse(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 content={

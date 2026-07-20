@@ -342,7 +342,10 @@ async function getCleanTextContent(kb_id: string): Promise<string> {
   return "";
 }
 
-function getFileName(sourceUrlOrName: string): string {
+function getFileName(sourceUrlOrName: string | null | undefined): string {
+  if (!sourceUrlOrName || typeof sourceUrlOrName !== "string") {
+    return "";
+  }
   try {
     if (sourceUrlOrName.startsWith("http://") || sourceUrlOrName.startsWith("https://")) {
       const url = new URL(sourceUrlOrName);
@@ -356,9 +359,8 @@ function getFileName(sourceUrlOrName: string): string {
   }
 }
 
-// Classify a source by its extension / URL pattern
-// If the source object has a kb_id it's always a downloadable file (clickable)
-function getSourceType(source: string, kb_id?: string): 'url' | 'pdf' | 'excel' | 'csv' | 'image' | 'text' {
+function getSourceType(source: string | null | undefined, kb_id?: string): 'url' | 'pdf' | 'excel' | 'csv' | 'image' | 'text' {
+  if (!source || typeof source !== 'string') return 'text';
   const s = source.toLowerCase();
   if (s.startsWith('http://') || s.startsWith('https://') || s.includes('www.')) return 'url';
   if (s.endsWith('.pdf')) return 'pdf';

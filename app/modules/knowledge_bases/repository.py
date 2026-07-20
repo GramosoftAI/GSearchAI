@@ -396,6 +396,71 @@ class KnowledgeBaseRepository(BaseRepository):
 
         return kbs, total
 
+    async def list_by_user(
+        self,
+        user_id: str,
+        date: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[List[KnowledgeBase], int]:
+        """
+        List all KBs for a specific user (within tenant) with optional filters.
+        """
+        try:
+            user_uuid = uuid.UUID(user_id)
+        except ValueError:
+            raise ValueError(f"Invalid user_id format: '{user_id}'. Must be a valid UUID.")
+
+        from datetime import datetime, time
+        from sqlalchemy import and_
+
+        filters = [
+            KnowledgeBase.tenant_id == self.tenant_id,
+            KnowledgeBase.user_id == user_uuid,
+            KnowledgeBase.is_active == True
+        ]
+
+        if agent_id:
+            try:
+                agent_uuid = uuid.UUID(agent_id)
+                filters.append(KnowledgeBase.agent_id == agent_uuid)
+            except ValueError:
+                raise ValueError(f"Invalid agent_id format: '{agent_id}'. Must be a valid UUID.")
+
+        if date:
+            try:
+                parsed_date = datetime.strptime(date, "%Y-%m-%d").date()
+                start_dt = datetime.combine(parsed_date, time.min)
+                end_dt = datetime.combine(parsed_date, time.max)
+                filters.append(KnowledgeBase.created_at >= start_dt)
+                filters.append(KnowledgeBase.created_at <= end_dt)
+            except ValueError as e:
+                logger.error(f"Invalid date format for filtering: {date}. Expected YYYY-MM-DD. Error: {e}")
+                raise ValueError("Invalid date format. Expected YYYY-MM-DD.")
+
+        # Get count
+        count_result = await self.db.execute(
+            select(KnowledgeBase).where(and_(*filters))
+        )
+        total = len(count_result.all())
+
+        # Get paginated results
+        result = await self.db.execute(
+            select(KnowledgeBase)
+            .where(and_(*filters))
+            .order_by(KnowledgeBase.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        kbs = result.scalars().all()
+
+        logger.info(
+            f"Listed {len(kbs)} KBs for user {user_id} (total: {total}, agent_id: {agent_id}, date: {date})"
+        )
+        return kbs, total
+
+
 
 
 

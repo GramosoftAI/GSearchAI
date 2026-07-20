@@ -1,0 +1,14 @@
+deepinfra:
+  qwen3-32b:
+    prompt: 0.18
+    completion: 0.18
+  mistral-large:
+    prompt: 0.6
+    completion: 1.8
+ollama:
+  qwen2.5:14b:
+    prompt: 0.0
+    completion: 0.0
+  llama3.1:8b:
+    prompt: 0.0
+    completion: 0.0
