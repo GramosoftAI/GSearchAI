@@ -41,15 +41,39 @@ from .config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+_DOCLING_CONVERTER = None
+import threading
+
+_DOCLING_INIT_LOCK = threading.Lock()
+
+def get_docling_converter():
+    global _DOCLING_CONVERTER
+    if _DOCLING_CONVERTER is None:
+        with _DOCLING_INIT_LOCK:
+            if _DOCLING_CONVERTER is None:
+                try:
+                    import time
+                    t0 = time.perf_counter()
+                    logger.info(" [Timing] Initializing Docling DocumentConverter (Singleton)...")
+                    from docling.document_converter import DocumentConverter
+                    _DOCLING_CONVERTER = DocumentConverter()
+                    t1 = time.perf_counter()
+                    logger.info(f" [Timing] Docling DocumentConverter initialized in {t1 - t0:.2f}s")
+                except ImportError:
+                    pass
+    return _DOCLING_CONVERTER
+
 
 class ExtractedText(str):
-    def __new__(cls, clean_text: str, raw_content: str, is_html: bool = False, is_markdown: bool = False, extraction_method: str = "gdocz"):
+    def __new__(cls, clean_text: str, raw_content: str = None, is_html: bool = False, is_markdown: bool = False, extraction_method: str = "gdocz", extraction_incomplete: bool = False, failed_pages: list = None):
         obj = super().__new__(cls, clean_text)
-        obj.raw_content = raw_content
-        obj.raw_html = raw_content  # backward compatibility
+        obj.raw_content = raw_content if raw_content is not None else clean_text
+        obj.raw_html = obj.raw_content  # backward compatibility
         obj.is_html = is_html
         obj.is_markdown = is_markdown
         obj.extraction_method = extraction_method
+        obj.extraction_incomplete = extraction_incomplete
+        obj.failed_pages = failed_pages or []
         return obj
 
 
@@ -271,18 +295,20 @@ class PDFExtractor:
                 client = GdoczaiClient(api_key=api_key)
                 options = ConvertOptions(mode="accurate")
                 
-                max_retries = 3
+                max_retries = 2
                 last_err = None
                 result = None
                 
                 for attempt in range(max_retries):
+                    start_t = time.time()
                     try:
                         logger.info(f"Calling Gdocz SDK convert (attempt {attempt + 1}/{max_retries})")
                         result = client.convert(temp_path, options=options)
                         break
                     except Exception as e:
                         last_err = e
-                        logger.warning(f"Gdocz attempt {attempt + 1} failed: {e}")
+                        elapsed = time.time() - start_t
+                        logger.warning(f"Gdocz attempt {attempt + 1} failed after {elapsed:.2f}s: {e}")
                         if attempt < max_retries - 1:
                             time.sleep(2 ** attempt)
                 else:
@@ -341,6 +367,115 @@ class PDFExtractor:
     # ========================================================================
 
     @staticmethod
+    def _is_monetary(text: str) -> bool:
+        if not text:
+            return False
+        text = str(text).strip()
+        if any(c in text for c in "$€£¥₹"):
+            return True
+        import re
+        if re.search(r'\.\d{2}\b', text):
+            return True
+        return False
+
+    @staticmethod
+    def validate_table_arithmetic(table) -> bool:
+        """Hybrid heuristic: check for Total/Subtotal/Tax keywords, else generic validation."""
+        if not table or len(table) < 3:
+            return True  # Too small to validate
+        
+        def parse_num(val):
+            if not val: return None
+            s = str(val).replace(',', '').strip()
+            s = s.replace('$', '').replace('€', '').replace('£', '')
+            try: return float(s)
+            except ValueError: return None
+        
+        # Look for subtotal, tax, total keywords
+        subtotal_row, tax_row, total_row = None, None, None
+        for i, row in enumerate(table[-5:]):  # Usually at the bottom
+            i = len(table) - 5 + i if len(table) > 5 else i
+            row_text = " ".join([str(c).lower() for c in row if c]).strip()
+            if "subtotal" in row_text or "sub-total" in row_text: subtotal_row = i
+            elif "tax" in row_text or "vat" in row_text or "gst" in row_text: tax_row = i
+            elif "total" in row_text and "subtotal" not in row_text: total_row = i
+
+        num_cols = len(table[0])
+        
+        # If we have keyword rows, do anchored validation
+        if total_row is not None and (subtotal_row is not None or tax_row is not None):
+            for col_idx in range(num_cols):
+                # Only check columns that contain monetary patterns in the total row
+                tot_str = table[total_row][col_idx] if total_row is not None and col_idx < len(table[total_row]) else ""
+                if not PDFExtractor._is_monetary(tot_str):
+                    continue
+
+                sub_val = parse_num(table[subtotal_row][col_idx]) if subtotal_row is not None and col_idx < len(table[subtotal_row]) else 0.0
+                tax_val = parse_num(table[tax_row][col_idx]) if tax_row is not None and col_idx < len(table[tax_row]) else 0.0
+                tot_val = parse_num(tot_str)
+                
+                if tot_val is not None and (sub_val or tax_val):
+                    calc_tot = (sub_val or 0.0) + (tax_val or 0.0)
+                    if abs(calc_tot - tot_val) > 0.05:
+                        return False
+            return True
+
+        if total_row is not None:
+            # Only line items and a total
+            for col_idx in range(num_cols):
+                tot_str = table[total_row][col_idx] if col_idx < len(table[total_row]) else ""
+                if not PDFExtractor._is_monetary(tot_str):
+                    continue
+                    
+                numbers = []
+                for i in range(total_row):
+                    if col_idx < len(table[i]):
+                        numbers.append(parse_num(table[i][col_idx]))
+                valid_nums = [v for v in numbers if v is not None]
+                tot_val = parse_num(tot_str)
+                
+                if tot_val is not None and len(valid_nums) > 0:
+                    if abs(sum(valid_nums) - tot_val) > 0.05:
+                        return False
+            return True
+            
+        # Generic fallback
+        for col_idx in range(num_cols):
+                
+            col_vals = []
+            for row in table:
+                if col_idx < len(row):
+                    col_vals.append(parse_num(row[col_idx]))
+                else:
+                    col_vals.append(None)
+            
+            numbers = [v for v in col_vals if v is not None]
+            if len(numbers) > 2 and col_vals[-1] is not None:
+                last_val_str = table[-1][col_idx] if col_idx < len(table[-1]) else ""
+                if PDFExtractor._is_monetary(last_val_str):
+                    if abs(sum(numbers[:-1]) - col_vals[-1]) > 0.01:
+                        return False
+        return True
+
+    @staticmethod
+    def tables_look_well_formed(tables) -> bool:
+        if not tables:
+            return True
+        for table in tables:
+            if len(table) < 2:
+                continue
+            col_counts = [len(row) for row in table if row]
+            if len(set(col_counts)) > 2:
+                return False
+            empty_cells = sum(1 for row in table for cell in row if not cell or str(cell).strip() == "")
+            total_cells = sum(len(row) for row in table)
+            if total_cells > 0 and (empty_cells / total_cells) > 0.5:
+                return False
+            if not PDFExtractor.validate_table_arithmetic(table):
+                return False
+        return True
+
+    @staticmethod
     async def _extract_pdfplumber(
         pdf_bytes: bytes,
         filename: str,
@@ -348,68 +483,123 @@ class PDFExtractor:
         agent_id: Optional[str] = None,
     ) -> str:
         """
-        Fallback extraction using pdfplumber with AI-OCR for scanned pages.
-
-        Args:
-            pdf_bytes: Raw PDF bytes
-            filename: Original filename
-            tenant_id: For AI-OCR billing
-            agent_id: For AI-OCR billing
-
-        Returns:
-            Extracted text string
+        Fallback extraction using pdfplumber + Docling (Dynamic Duo).
+        Routes clean digital pages to pdfplumber, and scanned/complex pages to Docling.
         """
-        try:
-            import pdfplumber
-        except ImportError:
-            raise ImportError(
-                "pdfplumber is not installed. "
-                "Run: pip install pdfplumber"
+        def _sync_extract() -> str:
+            import time
+            start_time_total = time.perf_counter()
+            try:
+                import pdfplumber
+            except ImportError:
+                raise ImportError("pdfplumber is not installed. Run: pip install pdfplumber")
+
+            import pypdfium2 as pdfium
+            import tempfile
+            import os
+            import uuid
+
+            def table_to_markdown(table) -> str:
+                if not table: return ""
+                md = ""
+                for i, row in enumerate(table):
+                    clean_row = [str(cell).replace('\n', ' ').replace('|', '\\|') if cell else "" for cell in row]
+                    md += "| " + " | ".join(clean_row) + " |\n"
+                    if i == 0:
+                        md += "| " + " | ".join(["---"] * len(clean_row)) + " |\n"
+                return md + "\n"
+
+            docling_pages = []
+            page_contents = {}
+            total_pages = 0
+
+            with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                total_pages = len(pdf.pages)
+                for page_idx, page in enumerate(pdf.pages):
+                    text = page.extract_text() or ""
+                    
+                    if len(text.strip()) < 20:
+                        logger.info(f"Empty/scanned page {page.page_number} in {filename}. Routing to Docling.")
+                        docling_pages.append(page_idx)
+                        continue
+
+                    tables = page.extract_tables()
+                    if tables and not PDFExtractor.tables_look_well_formed(tables):
+                        logger.info(f"Complex/borderless tables on page {page.page_number} in {filename}. Routing to Docling.")
+                        docling_pages.append(page_idx)
+                        continue
+
+                    logger.info(f"Clean digital page {page.page_number} in {filename}. Using pdfplumber.")
+                    page_text = text + "\n\n"
+                    if tables:
+                        for table in tables:
+                            page_text += table_to_markdown(table)
+                    page_contents[page_idx] = page_text
+
+            time_after_pdfplumber = time.perf_counter()
+            logger.info(f" [Timing] pdfplumber pass completed in {time_after_pdfplumber - start_time_total:.2f}s for {total_pages} pages")
+
+            failed_pages = []
+            if docling_pages:
+                converter = get_docling_converter()
+                if converter is None:
+                    logger.error("Docling not installed. Cannot process scanned pages.")
+                    for p in docling_pages:
+                        page_contents[p] = ""
+                        failed_pages.append(p)
+                else:
+                    pdf_doc = pdfium.PdfDocument(pdf_bytes)
+                    new_pdf = pdfium.PdfDocument.new()
+                    new_pdf.import_pages(pdf_doc, docling_pages)
+                    
+                    temp_path = os.path.join(tempfile.gettempdir(), f"batch_docling_{uuid.uuid4()}_{filename}")
+                    new_pdf.save(temp_path)
+                    
+                    try:
+                        logger.info(f"Running Docling for {len(docling_pages)} escalated pages...")
+                        t0_docling = time.perf_counter()
+                        res = converter.convert(temp_path)
+                        t1_docling = time.perf_counter()
+                        logger.info(f" [Timing] Docling .convert() finished in {t1_docling - t0_docling:.2f}s")
+                        
+                        # Docling pages are 1-indexed. We map them back exactly to their original page_idx.
+                        for docling_page_idx, original_page_idx in enumerate(docling_pages):
+                            doc_page_no = docling_page_idx + 1
+                            try:
+                                docling_md = res.document.export_to_markdown(page_no=doc_page_no)
+                                page_contents[original_page_idx] = docling_md + "\n\n"
+                            except Exception as e:
+                                logger.error(f"Failed to export page {doc_page_no} (original page {original_page_idx+1}) to markdown: {e}")
+                                page_contents[original_page_idx] = ""
+                                failed_pages.append(original_page_idx)
+                    except Exception as e:
+                        logger.error(f"Docling batch extraction failed: {e}", exc_info=True)
+                        for p in docling_pages:
+                            page_contents[p] = ""
+                            failed_pages.append(p)
+                    finally:
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+
+            document_text = ""
+            for i in range(total_pages):
+                if i in page_contents:
+                    document_text += page_contents[i]
+
+            total_elapsed = time.perf_counter() - start_time_total
+            logger.info(f" [Timing] Total fallback extraction (pdfplumber + Docling) completed in {total_elapsed:.2f}s for {filename}")
+
+            return ExtractedText(
+                clean_text=document_text, 
+                raw_content=document_text, 
+                is_markdown=True, 
+                extraction_method="pdfplumber",
+                extraction_incomplete=len(failed_pages) > 0, 
+                failed_pages=failed_pages
             )
 
-        document_text = ""
-
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text()
-                if text:
-                    document_text += text + "\n\n"
-                else:
-                    # OCR FALLBACK: Page is likely a scan/image
-                    logger.info(
-                        f" Empty page {page.page_number} in {filename}. "
-                        f"Attempting AI-OCR..."
-                    )
-                    try:
-                        from .llm.deepinfra_llm import get_llm_client
-
-                        img = page.to_image(resolution=300).original
-                        img_byte_arr = io.BytesIO()
-                        img.save(img_byte_arr, format="JPEG")
-                        img_bytes = img_byte_arr.getvalue()
-
-                        llm = await get_llm_client()
-                        ocr_text = await llm.vision_ocr(
-                            img_bytes,
-                            tenant_id=tenant_id,
-                            agent_id=agent_id,
-                        )
-
-                        if ocr_text:
-                            document_text += (
-                                f"[OCR Page {page.page_number}]:\n"
-                                f"{ocr_text}\n\n"
-                            )
-                            logger.info(
-                                f" AI-OCR success for page {page.page_number}"
-                            )
-                    except Exception as ocr_err:
-                        logger.error(
-                            f" AI-OCR failed for page {page.page_number}: {ocr_err}"
-                        )
-                        # Continue  other pages may have text
-
-        return document_text
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _sync_extract)
 
     # ========================================================================
     # MARKDOWN CLEANING (GraphRAG-Friendly)
