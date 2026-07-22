@@ -409,9 +409,50 @@ export default function WidgetPage() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const initialQuerySentRef = useRef(false);
+  const pendingQueryRef = useRef("");
+
   const handleClose = () => {
     window.parent.postMessage({ type: "close-chat" }, "*");
   };
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === "send-query") {
+        const query = event.data.query;
+        if (query) {
+          bufferRef.current = "";
+          setMessages((prev) => [...prev, { role: "user", content: query }]);
+          setIsTyping(true);
+          if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+            ws.current.send(JSON.stringify({ message: query }));
+          } else {
+            pendingQueryRef.current = query;
+          }
+        }
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.classList.add("widget-page");
+      const style = document.createElement("style");
+      style.id = "force-transparent-bg";
+      style.innerHTML = `
+        html, body, #__next, [class^="ant-"], .ant-app, .ant-layout {
+          background: transparent !important;
+          background-color: transparent !important;
+        }
+      `;
+      document.head.appendChild(style);
+      return () => {
+        document.documentElement.classList.remove("widget-page");
+        document.getElementById("force-transparent-bg")?.remove();
+      };
+    }
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -420,13 +461,22 @@ export default function WidgetPage() {
   const connectWs = useCallback(() => {
     if (!agentId) return;
 
-    setWsStatus("connecting");
-    const wsUrl = `${process.env.NEXT_PUBLIC_WS_URL}/embed/chats/${agentId}/ws?tenant_id=${tenantId}`;
+    const wsHost = (process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:4915").replace(/\/$/, "");
+    const wsBaseUrl = wsHost.includes("/api/v1") ? wsHost : `${wsHost}/api/v1`;
+    const wsUrl = `${wsBaseUrl}/embed/chats/${agentId}/ws?tenant_id=${tenantId}`;
     const socket = new WebSocket(wsUrl);
     ws.current = socket;
 
     socket.onopen = () => {
       setWsStatus("open");
+      const pendingQuery = pendingQueryRef.current;
+      if (pendingQuery) {
+        pendingQueryRef.current = "";
+        initialQuerySentRef.current = true;
+        socket.send(JSON.stringify({ message: pendingQuery }));
+        return;
+      }
+
       const initialQuery = searchParams.get("q");
       if (initialQuery && !initialQuerySentRef.current) {
         initialQuerySentRef.current = true;
@@ -447,20 +497,32 @@ export default function WidgetPage() {
         }
 
         if (data.type === "content" && data.delta) {
+          if (data.delta.includes("LLM streaming failed") || data.delta.startsWith("Error:")) {
+            setIsTyping(false);
+            const friendlyError = "Sorry, I am having trouble connecting to the AI model right now. Please try again in a moment.";
+            setMessages((prev) => {
+              const lastMsg = prev[prev.length - 1];
+              if (lastMsg && lastMsg.role === "assistant") {
+                return [...prev.slice(0, -1), { ...lastMsg, content: friendlyError }];
+              }
+              return [...prev, { role: "assistant", content: friendlyError }];
+            });
+            return;
+          }
+
           bufferRef.current += data.delta;
-          console.log("DELTA:", JSON.stringify(data.delta))
-           const cleanedText = bufferRef.current
-          .replace(/<think>[\s\S]*?<\/think>/g, "")
-          .replace(/\[Source:[^\]]+\]/g, "")
-          .replace(/\(Source:[^)]+\)/g, "")
-          .trim();
+          const cleanedText = bufferRef.current
+            .replace(/<think>[\s\S]*?<\/think>/g, "")
+            .replace(/\[Source:[^\]]+\]/g, "")
+            .replace(/\(Source:[^)]+\)/g, "")
+            .trim();
           setIsTyping(false);
           setMessages((prev) => {
             const lastMsg = prev[prev.length - 1];
             if (lastMsg && lastMsg.role === "assistant") {
               return [
                 ...prev.slice(0, -1),
-                { ...lastMsg, content:cleanedText },
+                { ...lastMsg, content: cleanedText },
               ];
             } else {
               return [...prev, { role: "assistant", content: cleanedText }];
@@ -497,26 +559,56 @@ export default function WidgetPage() {
     setInput("");
   };
 
-
   return (
     <div
       style={{
         margin: 0,
-        padding: 0,
+        padding: "8px",
         height: "100vh",
         width: "100%",
         display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
+        flexDirection: "column",
         background: "transparent", 
         fontFamily: CHAT_FONT_FAMILY,
         color: "#222",
+        boxSizing: "border-box",
+        overflow: "hidden",
       }}
     >
       <style>{`
+        :root, :root[data-theme], :root[data-theme="dark"], :root[data-theme="light"] {
+          --background: transparent !important;
+        }
+        html, body, body > div, body > div > div, #__next, #__next > div,
+        div[data-nextjs-scroll-focus-boundary] {
+          background: transparent !important;
+          background-color: transparent !important;
+        }
+        [class*="ant-"] {
+          background: transparent !important;
+          background-color: transparent !important;
+        }
         @keyframes pulse {
           0%, 100% { opacity: 0.3; transform: scale(0.8); }
           50% { opacity: 1; transform: scale(1.2); }
+        }
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes borderShift {
+          0% { background-position: 0% 50%; }
+          100% { background-position: 100% 50%; }
+        }
+        .widget-send-btn {
+          width: 36px;
+          height: 36px;
+        }
+        @media (max-width: 640px) {
+          .widget-send-btn {
+            width: 30px !important;
+            height: 30px !important;
+          }
         }
         .typing-dot {
           width: 6px;
@@ -554,17 +646,18 @@ export default function WidgetPage() {
         .close-btn::after { transform: rotate(-45deg); }
       `}</style>
 
+      {/* Main Chat Feed Box (White Card) */}
       <div
         style={{
-          width: "100%",
-          height: "100%",
+          flex: 1,
           display: "flex",
           flexDirection: "column",
           background: "#ffffff",
           borderRadius: "24px", 
-          boxShadow: "0 12px 40px rgba(0,0,0,0.12)",
+          // boxShadow: "0 2px 8px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.08), 0 20px 48px rgba(0,0,0,0.06)",
           overflow: "hidden",
-          border: "1px solid #e5e5e5"
+          border: "1px solid rgba(0,0,0,0.07)",
+          marginBottom: "12px",
         }}
       >
         {/* Header */}
@@ -579,7 +672,6 @@ export default function WidgetPage() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            {/* <span style={{ cursor: "pointer", color: "#737373", fontSize: "16px" }}>⟨</span> */}
             
             <div style={{
               width: "36px", height: "36px", background: themeColor, borderRadius: "10px",
@@ -667,60 +759,111 @@ export default function WidgetPage() {
           
           <div ref={messagesEndRef} />
         </div>
+      </div>
 
-        {/* Input Bar */}
+      {/* Input Bar */}
+      <div
+        style={{
+          padding: "2px",
+          borderRadius: "24px",
+          background: `linear-gradient(90deg, ${themeColor}, ${themeColor}ee, #ffffff, ${themeColor}ee, ${themeColor})`,
+          backgroundSize: "300% 100%",
+          animation: "borderShift 3s ease infinite",
+          boxShadow: isTyping ? `0 4px 18px ${themeColor}40` : `0 2px 12px ${themeColor}30`,
+          flexShrink: 0,
+        }}
+      >
+        {/* Inner Input Wrapper */}
         <div
           style={{
-            padding: "16px 20px 20px 20px",
+            display: "flex",
+            alignItems: "center",
             background: "#ffffff",
-            borderTop: "1px solid #f0f0f0",
+            borderRadius: "22px",
+            padding: "4px 6px 4px 16px",
+            gap: "10px",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", background: "#f4f4f5", borderRadius: "24px", padding: "4px 6px 4px 16px" }}>
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
-              placeholder="Ask a question..."
-              style={{
-                flex: 1,
-                padding: "10px 0",
-                background: "transparent",
-                border: "none",
-                color: "#18181b",
-                fontSize: "14px",
-                outline: "none",
-              }}
-            />
-            
-            <button
-              onClick={handleSend}
-              disabled={!input.trim()}
-              style={{
-                width: "34px",
-                height: "34px",
-                background: input.trim() ? themeColor : "#e4e4e7",
-                color: input.trim() ? "#ffffff" : "#a3a3a3",
-                border: "none",
+          {/* Left Clock/History Icon */}
+          <span style={{ display: "flex", alignItems: "center", color: "#71717a", cursor: "default" }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </span>
+
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !isTyping) handleSend(); }}
+            placeholder={isTyping ? "Generating response..." : "Ask a question..."}
+            disabled={isTyping}
+            style={{
+              flex: 1,
+              padding: "8px 0",
+              background: "transparent",
+              border: "none",
+              color: isTyping ? "#71717a" : "#18181b",
+              fontSize: "14px",
+              outline: "none",
+              cursor: isTyping ? "not-allowed" : "text",
+            }}
+          />
+          
+          <button
+            onClick={handleSend}
+            disabled={!input.trim() || isTyping}
+            className="widget-send-btn"
+            style={{
+              background: (input.trim() && !isTyping) ? themeColor : "#e4e4e7",
+              color: (input.trim() && !isTyping) ? "#ffffff" : "#a3a3a3",
+              border: "none",
+              borderRadius: "50%", // Circular button shape as requested
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: (input.trim() && !isTyping) ? "pointer" : "default",
+              transition: "background 0.2s, transform 0.1s active",
+              padding: 0,
+            }}
+          >
+            {isTyping ? (
+              <span style={{
+                width: "12px",
+                height: "12px",
+                border: "2px solid #a3a3a3",
+                borderTop: "2px solid transparent",
                 borderRadius: "50%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: input.trim() ? "pointer" : "default",
-                fontSize: "14px",
-                fontWeight: "bold",
-                transition: "background 0.2s"
-              }}
-            >
-              ↑
-            </button>
-          </div>
+                animation: "spin 1s linear infinite",
+                display: "inline-block"
+              }} />
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="19" x2="12" y2="5"/>
+                <polyline points="5 12 12 5 19 12"/>
+              </svg>
+            )}
+          </button>
         </div>
+      </div>
+
+      {/* Powered by Gramosoft */}
+      <div
+        style={{
+          textAlign: "center",
+          marginTop: "6px",
+          fontSize: "11px",
+          color: "#71717a",
+          fontWeight: 400,
+          letterSpacing: "0.2px",
+          userSelect: "none",
+        }}
+      >
+        Powered by <span style={{ fontWeight: 600, color: "#52525b" }}>Gramosoft</span>
       </div>
     </div>
   );
 }
-
 
 // "use client";
 

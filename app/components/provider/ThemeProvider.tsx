@@ -20,14 +20,14 @@ function resolveInitialTheme(): ThemeMode {
   if (typeof window === "undefined") return "light";
   const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
   if (stored === "light" || stored === "dark") return stored;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return "light";
 }
 
 export default function ThemeProvider({ children }: { children: ReactNode }) {
   const [mode, setModeState] = useState<ThemeMode>(() => resolveInitialTheme());
   const pathname = usePathname();
 
-  const isDashboardRoute = pathname?.startsWith("/dashboard") || pathname?.startsWith("/widget");
+  const isDashboardRoute = pathname?.startsWith("/dashboard");
   const activeMode = isDashboardRoute ? mode : "light";
 
   useEffect(() => {

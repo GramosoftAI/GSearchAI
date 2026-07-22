@@ -188,4 +188,43 @@ body {
   color: rgba(168, 85, 247, 0.8) !important;
 }
 
+/* Force transparent background inside iframe widget page */
+html.widget-page,
+html.widget-page body,
+html.widget-page body > div,
+html.widget-page .ant-app,
+html.widget-page .ant-layout {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+/* Single Month Calendar Popup for RangePicker */
+.single-month-rangepicker .ant-picker-panels > *:nth-child(2) {
+  display: none !important;
+}
+.single-month-rangepicker .ant-picker-panels > *:first-child .ant-picker-header-next-btn,
+.single-month-rangepicker .ant-picker-panels > *:first-child .ant-picker-header-super-next-btn {
+  visibility: visible !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.single-month-rangepicker .ant-picker-panels > *:first-child .ant-picker-header-next-btn .ant-picker-icon,
+.single-month-rangepicker .ant-picker-panels > *:first-child .ant-picker-header-next-btn span,
+.single-month-rangepicker .ant-picker-panels > *:first-child .ant-picker-header-super-next-btn .ant-picker-icon,
+.single-month-rangepicker .ant-picker-panels > *:first-child .ant-picker-header-super-next-btn span {
+  transform: rotate(135deg) !important;
+}
+
+/* Ant Design Dropdown Trigger styling to remove unwanted white rectangle artifacts */
+.ant-dropdown-trigger,
+span.ant-dropdown-trigger {
+  background: transparent !important;
+  background-color: transparent !important;
+  border-radius: 9999px !important;
+  box-shadow: none !important;
+}
+
+
 

@@ -69,6 +69,10 @@ export const endpoints = {
     url: "/analytics/feedback-reasons",
     method: methods.get,
   },
+  FEEDBACK_MESSAGES: {
+    url: "/analytics/feedback-messages",
+    method: methods.get,
+  },
   GET_AGENTS_BY_USER: {
     url: "/agents/by-user",
     method: methods.get,

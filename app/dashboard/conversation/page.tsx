@@ -51,6 +51,10 @@ type SourceMetadata = {
   s3_path?: string;
   parsed_path?: string;
   text?: string;
+  name?: string;
+  file_name?: string;
+  title?: string;
+  url?: string;
 };
 
 type Message = {
@@ -868,13 +872,7 @@ export default function ChatPlaygroundPage() {
   };
 
   useEffect(() => {
-    const isCompleted = localStorage.getItem("grag_onboarding_completed");
-    if (!isCompleted) {
-      const timer = setTimeout(() => {
-        setTourActive(true);
-      }, 1000);
-      return () => clearTimeout(timer);
-    }
+    // Onboarding tour auto-trigger disabled per user request
   }, []);
 
   useEffect(() => {
@@ -1097,11 +1095,15 @@ export default function ChatPlaygroundPage() {
     setWsStatus("connecting");
 
     // Professionally construct the WS base URL to inherit the API path (e.g., /api/v1)
-    let wsBaseUrl = API_BASE_URL.replace(/^http/, "ws");
+    let wsBaseUrl = API_BASE_URL.replace(/^http/, "ws").replace(/\/$/, "");
     if (process.env.NEXT_PUBLIC_WS_URL) {
       const cleanWsHost = process.env.NEXT_PUBLIC_WS_URL.replace(/\/$/, "");
-      const apiPathSuffix = API_BASE_URL.replace(/^https?:\/\/[^\/]+/, "");
-      wsBaseUrl = `${cleanWsHost}${apiPathSuffix}`;
+      if (cleanWsHost.includes("/api/v1")) {
+        wsBaseUrl = cleanWsHost;
+      } else {
+        const apiPathSuffix = API_BASE_URL.replace(/^https?:\/\/[^\/]+/, "");
+        wsBaseUrl = `${cleanWsHost}${apiPathSuffix}`;
+      }
     }
 
     const wsUrl = `${wsBaseUrl}/rag/ws/${agent.id}?token=${getCookie(AUTH_COOKIE_KEY)}`;
@@ -1670,20 +1672,21 @@ export default function ChatPlaygroundPage() {
       try {
         const blobUrl = await getFilePreview(kbId);
         const filename = getFileName(src.source);
-        const nameLower = filename.toLowerCase();
+        const fullSourceStr = `${src.source || ''} ${src.name || ''} ${src.file_name || ''} ${src.title || ''} ${src.s3_path || ''} ${src.url || ''} ${filename}`.toLowerCase();
 
         // 1. Fetch blob to determine content type and parse binary spreadsheets
         const blobRes = await fetch(blobUrl);
         const blob = await blobRes.blob();
         const contentType = blob.type.toLowerCase();
 
-        const isPdf = contentType.includes('pdf') || nameLower.endsWith('.pdf');
-        const isImage = contentType.includes('image/') || nameLower.endsWith('.png') || nameLower.endsWith('.jpg') || nameLower.endsWith('.jpeg') || nameLower.endsWith('.webp') || nameLower.endsWith('.gif');
-        const isTxt = contentType.includes('text/plain') || nameLower.endsWith('.txt');
-        const isCSV = contentType.includes('csv') || nameLower.endsWith('.csv');
+        const isPdf = contentType.includes('pdf') || fullSourceStr.includes('.pdf');
+        const isImage = contentType.includes('image/') || fullSourceStr.includes('.png') || fullSourceStr.includes('.jpg') || fullSourceStr.includes('.jpeg') || fullSourceStr.includes('.webp') || fullSourceStr.includes('.gif');
+        const isTxt = contentType.includes('text/plain') || fullSourceStr.includes('.txt');
+        const isCSV = contentType.includes('csv') || fullSourceStr.includes('.csv') || fullSourceStr.includes('csv:');
         const isExcel = contentType.includes('excel') || contentType.includes('spreadsheet') ||
           contentType.includes('vnd.ms-excel') || contentType.includes('vnd.openxmlformats-officedocument.spreadsheetml.sheet') ||
-          nameLower.endsWith('.xls') || nameLower.endsWith('.xlsx');
+          contentType.includes('octet-stream') || contentType.includes('zip') ||
+          fullSourceStr.includes('.xls') || fullSourceStr.includes('.xlsx') || fullSourceStr.includes('excel:') || fullSourceStr.includes('spreadsheet:');
 
         if (isPdf || isImage || isTxt) {
           const viewBlobUrl = URL.createObjectURL(blob);
@@ -1706,9 +1709,10 @@ export default function ChatPlaygroundPage() {
           newWindow.document.body.appendChild(iframe);
         } else if (isCSV || isExcel) {
           // Parse spreadsheet array buffer using xlsx
-          const arrayBuffer = await blob.arrayBuffer();
-          const XLSX = await import("xlsx");
-          const workbook = XLSX.read(arrayBuffer, { type: "array" });
+          try {
+            const arrayBuffer = await blob.arrayBuffer();
+            const XLSX = await import("xlsx");
+            const workbook = XLSX.read(arrayBuffer, { type: "array" });
 
           const sheetsData: { [sheetName: string]: string[][] } = {};
           workbook.SheetNames.forEach((sheetName) => {
@@ -1729,7 +1733,7 @@ export default function ChatPlaygroundPage() {
             <html>
             <head>
               <meta charset="utf-8">
-              <title>\${filename || 'Spreadsheet Preview'}</title>
+              <title>${filename || 'Spreadsheet Preview'}</title>
               <style>
                 body {
                   margin: 0;
@@ -1822,7 +1826,7 @@ export default function ChatPlaygroundPage() {
             </head>
             <body>
               <header>
-                <h1>\${filename}</h1>
+                <h1>${filename}</h1>
                 <button id="download-btn" style="background: #0fb5a1; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px;">
                   <svg stroke="currentColor" fill="none" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                   Download File
@@ -1833,8 +1837,8 @@ export default function ChatPlaygroundPage() {
                 <table id="sheet-table"></table>
               </div>
               <script>
-                const sheetsData = \${JSON.stringify(sheetsData)};
-                const sheetNames = \${JSON.stringify(sheetNames)};
+                const sheetsData = ${JSON.stringify(sheetsData)};
+                const sheetNames = ${JSON.stringify(sheetNames)};
                 
                 function renderSheet(sheetName) {
                   const rows = sheetsData[sheetName] || [];
@@ -1915,8 +1919,8 @@ export default function ChatPlaygroundPage() {
 
                 document.getElementById('download-btn').onclick = () => {
                   const link = document.createElement('a');
-                  link.href = '\${viewBlobUrl}';
-                  link.download = '\${filename}';
+                  link.href = "${viewBlobUrl}";
+                  link.download = "${filename}";
                   document.body.appendChild(link);
                   link.click();
                   document.body.removeChild(link);
@@ -1926,15 +1930,16 @@ export default function ChatPlaygroundPage() {
             </html>
           `);
           newWindow.document.close();
-        } else {
-          // fallback direct download
-          newWindow.close();
-          const link = document.createElement('a');
-          link.href = blobUrl;
-          link.download = filename;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
+          } catch (xlsxErr) {
+            console.warn("Spreadsheet parsing failed, downloading:", xlsxErr);
+            newWindow.close();
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+          }
         }
       } catch (err) {
         console.error(err);
@@ -2215,18 +2220,20 @@ export default function ChatPlaygroundPage() {
       setSourcesDrawerPreviewUrl(blobUrl);
 
       const name = getFileName(source.source).toLowerCase();
+      const fullSourceStr = `${source.source || ''} ${source.name || ''} ${source.file_name || ''} ${source.title || ''} ${source.s3_path || ''} ${name}`.toLowerCase();
 
       // Fetch blob to determine content type and parse binary spreadsheets
       const blobRes = await fetch(blobUrl);
       const blob = await blobRes.blob();
       const contentType = blob.type.toLowerCase();
 
-      const isPDF = contentType.includes("pdf") || name.endsWith(".pdf");
-      const isImage = contentType.includes("image/") || name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".webp") || name.endsWith(".gif");
-      const isCSV = contentType.includes("csv") || name.endsWith(".csv");
+      const isPDF = contentType.includes("pdf") || fullSourceStr.includes(".pdf");
+      const isImage = contentType.includes("image/") || fullSourceStr.includes(".png") || fullSourceStr.includes(".jpg") || fullSourceStr.includes(".jpeg") || fullSourceStr.includes(".webp") || fullSourceStr.includes(".gif");
+      const isCSV = contentType.includes("csv") || fullSourceStr.includes(".csv") || fullSourceStr.includes("csv:");
       const isExcel = contentType.includes("excel") || contentType.includes("spreadsheet") ||
         contentType.includes("vnd.ms-excel") || contentType.includes("vnd.openxmlformats-officedocument.spreadsheetml.sheet") ||
-        name.endsWith(".xls") || name.endsWith(".xlsx");
+        contentType.includes("octet-stream") || contentType.includes("zip") ||
+        fullSourceStr.includes(".xls") || fullSourceStr.includes(".xlsx") || fullSourceStr.includes("excel:") || fullSourceStr.includes("spreadsheet:");
 
       if (isPDF) {
         setSourcesDrawerPreviewType("pdf");
@@ -2799,8 +2806,8 @@ export default function ChatPlaygroundPage() {
             </div>
           </div>
 
-          {/* Large Unified Input Card with dynamic purple borders */}
-          <div id="tour-chat-input-card" className="bg-white dark:bg-[#0b0f19] border-2 border-purple-500/30 dark:border-purple-500/25 rounded-3xl p-3 shadow-lg transition-all focus-within:border-purple-500/70 focus-within:ring-4 focus-within:ring-purple-500/5 flex flex-col gap-2">
+          {/* Large Unified Input Card with dynamic theme color borders */}
+          <div id="tour-chat-input-card" className="bg-white dark:bg-[#0b0f19] border-2 border-[#0fb5a1]/30 dark:border-[#0fb5a1]/40 rounded-3xl p-3 shadow-lg transition-all focus-within:border-[#0fb5a1] focus-within:ring-4 focus-within:ring-[#0fb5a1]/10 flex flex-col gap-2 overflow-hidden">
 
             {/* Real-time Dynamic Upload Preview Attachment Frame */}
             {attachedFile && (
@@ -2880,15 +2887,17 @@ export default function ChatPlaygroundPage() {
                     }}
                     trigger={["click"]}
                   >
-                    <button id="tour-agent-select" className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#ffffff] hover:bg-gray-100 dark:bg-[#12352f]/30 dark:hover:bg-[#12352f]/50 border border-[#0fb5a1]/30 dark:border-[#34d399]/40 rounded-full text-xs font-black text-[#0fb5a1] dark:text-[#34d399] cursor-pointer select-none transition-all outline-none focus:outline-none ml-1 animate-in fade-in duration-200 shadow-sm">
-                      <div className="w-5 h-5 rounded-full bg-[#e3f7f3] dark:bg-[#12352f] flex items-center justify-center text-[#0fb5a1] dark:text-[#34d399] shrink-0">
-                        <LuBot size={11} className="text-[#0fb5a1] dark:text-[#34d399]" />
-                      </div>
-                      <span className="truncate max-w-[120px] text-[#0fb5a1] dark:text-[#34d399] font-black">
-                        {agent ? agent.name : "Select Agent"}
-                      </span>
-                      <span className="text-[9px] opacity-100 ml-0.5 text-[#0fb5a1] dark:text-[#34d399] font-black">▼</span>
-                    </button>
+                    <div className="inline-flex bg-transparent rounded-full overflow-hidden">
+                      <button id="tour-agent-select" className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#0fb5a1]/15 hover:bg-[#0fb5a1]/25 dark:bg-[#0fb5a1]/25 dark:hover:bg-[#0fb5a1]/35 border-2 border-[#0fb5a1] dark:border-[#34d399] rounded-full text-xs font-black text-[#0fb5a1] dark:text-[#34d399] cursor-pointer select-none transition-all outline-none focus:outline-none ml-1 animate-in fade-in duration-200 shadow-sm">
+                        <div className="w-5 h-5 rounded-full bg-[#e3f7f3] dark:bg-[#12352f] flex items-center justify-center text-[#0fb5a1] dark:text-[#34d399] shrink-0">
+                          <LuBot size={11} className="text-[#0fb5a1] dark:text-[#34d399]" />
+                        </div>
+                        <span className="truncate max-w-[120px] text-[#0fb5a1] dark:text-[#34d399] font-black">
+                          {agent ? agent.name : "Select Agent"}
+                        </span>
+                        <span className="text-[9px] opacity-100 ml-0.5 text-[#0fb5a1] dark:text-[#34d399] font-black">▼</span>
+                      </button>
+                    </div>
                   </Dropdown>
                 )}
               </Flex>

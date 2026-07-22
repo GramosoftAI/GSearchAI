@@ -10,7 +10,10 @@ export const GithubStarsProvider = ({ children }: { children: React.ReactNode })
   useEffect(() => {
     const fetchStars = () => {
       fetch("https://api.github.com/repos/GramosoftAI/GSearchAI")
-        .then((res) => res.json())
+        .then((res) => {
+          if (!res.ok) return null;
+          return res.json();
+        })
         .then((data) => {
           if (data && typeof data.stargazers_count === "number") {
             const count = data.stargazers_count;
@@ -21,7 +24,7 @@ export const GithubStarsProvider = ({ children }: { children: React.ReactNode })
             }
           }
         })
-        .catch((err) => console.error("Error fetching github stars:", err));
+        .catch(() => {});
     };
 
     // Fetch immediately on load

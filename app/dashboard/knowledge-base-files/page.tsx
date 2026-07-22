@@ -227,9 +227,8 @@ export default function KnowledgeBaseFilesPage() {
 
     let path = `/${activeUserId}?limit=${limit}&offset=${offset}`;
 
-    if (dateRange) {
+    if (dateRange && dateRange[0] && dateRange[1]) {
       path += `&start_date=${dateRange[0]}&end_date=${dateRange[1]}`;
-      path += `&date=${dateRange[0]}`; // For backwards compatibility
     }
     if (selectedAgent) {
       path += `&agent_id=${selectedAgent}`;
@@ -238,11 +237,8 @@ export default function KnowledgeBaseFilesPage() {
       path += `&search=${encodeURIComponent(searchQuery)}`;
     }
 
-    console.log("Requesting GET_USER_KBS with path:", path);
-
     try {
       await request({ path }, (res) => {
-        console.log("GET_USER_KBS response received:", res);
         const kbsList = res?.data?.kbs ?? [];
         const totalCount = res?.data?.total ?? 0;
         setKbs(kbsList);
@@ -251,7 +247,8 @@ export default function KnowledgeBaseFilesPage() {
     } catch (err) {
       console.error("Failed to fetch knowledge base files:", err);
     }
-  }, [activeUserId, limit, offset, dateRange, selectedAgent, searchQuery, request]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeUserId, limit, offset, dateRange, selectedAgent, searchQuery]);
 
   // Debounce API calls for search query, and trigger on other filter updates immediately
   useEffect(() => {
@@ -267,7 +264,7 @@ export default function KnowledgeBaseFilesPage() {
 
   const handleDateRangeChange = (dates: any, dateStrings: [string, string]) => {
     if (dates && dateStrings[0] && dateStrings[1]) {
-      setDateRange(dateStrings);
+      setDateRange([dateStrings[0], dateStrings[1]]);
     } else {
       setDateRange(null);
     }
@@ -421,12 +418,28 @@ export default function KnowledgeBaseFilesPage() {
     setActiveSheet("");
   };
 
-  // Perform client-side filter on top of server data as fallback search
+  // Perform client-side filter on top of server data
   const filteredKbs = kbs.filter((kb) => {
-    const q = searchQuery.toLowerCase();
-    if (!q) return true;
-    const nameStr = (kb.name || kb.source || "").toLowerCase();
-    return nameStr.includes(q);
+    // 1. Search filter
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const nameStr = (kb.name || kb.source || "").toLowerCase();
+      if (!nameStr.includes(q)) return false;
+    }
+
+    // 2. Date range filter (inclusive check)
+    if (dateRange && dateRange[0] && dateRange[1]) {
+      if (kb.created_at) {
+        const itemDate = dayjs(kb.created_at);
+        const start = dayjs(dateRange[0]).startOf("day");
+        const end = dayjs(dateRange[1]).endOf("day");
+        if (itemDate.isBefore(start) || itemDate.isAfter(end)) {
+          return false;
+        }
+      }
+    }
+
+    return true;
   });
 
   const columns = [
@@ -549,8 +562,11 @@ export default function KnowledgeBaseFilesPage() {
                 <DatePicker.RangePicker
                   size="large"
                   className="w-full"
+                  popupClassName="single-month-rangepicker"
                   value={dateRange ? [dayjs(dateRange[0]), dayjs(dateRange[1])] : null}
                   onChange={handleDateRangeChange}
+                  format="YYYY-MM-DD"
+                  allowClear
                 />
               </Flex>
             </Col>
@@ -596,7 +612,7 @@ export default function KnowledgeBaseFilesPage() {
         <Card className="bg-[var(--app-surface)] border-[var(--app-border)] shadow-sm rounded-2xl overflow-hidden">
           <Table
             columns={columns}
-            dataSource={kbs}
+            dataSource={filteredKbs}
             rowKey="id"
             loading={loading}
             pagination={paginationConfig}

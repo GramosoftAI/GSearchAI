@@ -594,10 +594,10 @@ export default function EmbedScriptSection() {
                   >
                     {/* Glowing outline wrapper focused/hovered with theme color */}
                     <div
-                      className="p-[1.5px] rounded-[24px] transition-all duration-300 shadow-md"
+                      className="p-[1.5px] rounded-[24px] transition-all duration-300 shadow-md sandbox-glow-container"
                       style={{ background: isDarkTheme ? "#334155" : "#cbd5e1" }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = draftThemeColor; e.currentTarget.style.boxShadow = `0 4px 16px ${draftThemeColor}40`; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = isDarkTheme ? "#334155" : "#cbd5e1"; e.currentTarget.style.boxShadow = "none"; }}
+                      onFocus={(e) => e.currentTarget.classList.add("active-focus")}
+                      onBlur={(e) => e.currentTarget.classList.remove("active-focus")}
                     >
                       <div
                         style={{
@@ -798,13 +798,26 @@ export default function EmbedScriptSection() {
           </div></div>
       </Modal>
       <style jsx global>{`
+        @keyframes borderShift {
+          0% { background-position: 0% 50%; }
+          100% { background-position: 100% 50%; }
+        }
+        .sandbox-glow-container {
+          transition: background 0.3s ease, box-shadow 0.3s ease;
+        }
+        .sandbox-glow-container:hover, .sandbox-glow-container.active-focus {
+          background: linear-gradient(90deg, ${draftThemeColor}, #ff8c00, #ff0080, ${draftThemeColor}) !important;
+          background-size: 300% 100% !important;
+          animation: borderShift 4s linear infinite !important;
+          box-shadow: 0 4px 20px ${draftThemeColor}50 !important;
+        }
         .custom-widget-modal .ant-modal-content {
           border-radius: 28px !important;
           padding: 24px 32px !important;
           box-shadow: 0 24px 50px rgba(0,0,0,0.2) !important;
           background: #ffffff !important;
         }
-          .dark .custom-widget-modal .ant-modal-content {
+        .dark .custom-widget-modal .ant-modal-content {
           background: #151b26 !important;
           border: 1px solid #1f293d !important;
         }
