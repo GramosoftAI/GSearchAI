@@ -848,8 +848,12 @@ export default function WidgetPage() {
       </div>
 
       {/* Powered by Gramosoft */}
-      <div
+      <a
+        href="https://gramosoft.tech/"
+        target="_blank"
+        rel="noopener noreferrer"
         style={{
+          display: "block",
           textAlign: "center",
           marginTop: "6px",
           fontSize: "11px",
@@ -857,10 +861,12 @@ export default function WidgetPage() {
           fontWeight: 400,
           letterSpacing: "0.2px",
           userSelect: "none",
+          textDecoration: "none",
+          cursor: "pointer",
         }}
       >
         Powered by <span style={{ fontWeight: 600, color: "#52525b" }}>Gramosoft</span>
-      </div>
+      </a>
     </div>
   );
 }

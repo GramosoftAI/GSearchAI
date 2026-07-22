@@ -362,12 +362,18 @@
     };
 
     // Powered by Gramosoft label
-    const poweredBy = document.createElement("div");
+    const poweredBy = document.createElement("a");
+    poweredBy.href = "https://gramosoft.tech/";
+    poweredBy.target = "_blank";
+    poweredBy.rel = "noopener noreferrer";
+    poweredBy.style.display = "block";
     poweredBy.style.textAlign = "center";
     poweredBy.style.marginTop = "6px";
     poweredBy.style.fontSize = "11px";
     poweredBy.style.color = "#a1a1aa";
     poweredBy.style.userSelect = "none";
+    poweredBy.style.textDecoration = "none";
+    poweredBy.style.cursor = "pointer";
     poweredBy.innerHTML = `Powered by <span style="font-weight: 600; color: #71717a;">Gramosoft</span>`;
 
     // Assemble and render elements
