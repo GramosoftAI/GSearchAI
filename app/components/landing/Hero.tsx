@@ -173,7 +173,7 @@ export default function Hero() {
           </Button>
         </Space>
 
-        <div className="gs-ratings">
+        {/* <div className="gs-ratings">
           <span className="r">
             <Text strong style={{ color: "var(--ink)" }}>G2</Text>{" "}
             <span className="stars" style={{ color: "var(--gold)" }}>★★★★★</span>{" "}
@@ -184,7 +184,7 @@ export default function Hero() {
             <span className="stars" style={{ color: "var(--gold)" }}>★★★★★</span>{" "}
             <Text style={{ color: "var(--muted)", fontSize: 14, fontWeight: 600 }}>5.0</Text>
           </span>
-        </div>
+        </div> */}
 
         <div className="gs-gradient-stage" aria-hidden="true">
           <div className="gs-search-card">
