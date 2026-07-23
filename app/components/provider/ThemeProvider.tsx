@@ -12,14 +12,14 @@ type ThemeContextValue = {
   setMode: (mode: ThemeMode) => void;
 };
 
-const THEME_STORAGE_KEY = "app-theme-mode";
+const THEME_STORAGE_KEY = "app_theme_preference";
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 function resolveInitialTheme(): ThemeMode {
   if (typeof window === "undefined") return "light";
   const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-  if (stored === "light" || stored === "dark") return stored;
+  if (stored === "dark") return "dark";
   return "light";
 }
 

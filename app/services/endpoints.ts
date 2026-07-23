@@ -108,6 +108,10 @@ export const endpoints = {
   DELETE_USER: {
     url: "/users",
     method: methods.delete,
+  },
+  USER_COSTS: {
+    url: "/analytics/governance/costs/users",
+    method: methods.get,
   }
 } as const;
 

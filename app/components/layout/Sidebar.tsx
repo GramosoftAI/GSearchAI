@@ -36,7 +36,7 @@ export const adminMenuItems = [
   { label: "Overview", icon: Home, path: "/dashboard/admin/overview" },
   { label: "User Management", icon: Users, path: "/dashboard/admin/users" },
   { label: "Feedback", icon: ThumbsUp, path: "/dashboard/admin/feedback" },
-  { label: "Plans & Billing", icon: CreditCard, path: "/dashboard/admin/billing" },
+  { label: "Token Usage & Costs", icon: CreditCard, path: "/dashboard/admin/billing" },
   { label: "Global Settings", icon: Settings, path: "/dashboard/admin/settings" },
   { label: "Custom Requests", icon: DollarSign, path: "/dashboard/admin/requests" },
   { label: "Error Logs", icon: AlertCircle, path: "/dashboard/admin/logs" },

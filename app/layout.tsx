@@ -106,13 +106,11 @@ export default function RootLayout({
             __html: `
               (function() {
                 try {
-                  const stored = localStorage.getItem('app-theme-mode');
+                  const stored = localStorage.getItem('app_theme_preference');
                   const isDashboard = window.location.pathname.startsWith('/dashboard') || window.location.pathname.startsWith('/widget');
                   let theme = 'light';
-                  if (isDashboard) {
-                    if (stored === 'light' || stored === 'dark') {
-                      theme = stored;
-                    }
+                  if (isDashboard && stored === 'dark') {
+                    theme = 'dark';
                   }
                   document.documentElement.setAttribute('data-theme', theme);
                   document.documentElement.style.colorScheme = theme;
