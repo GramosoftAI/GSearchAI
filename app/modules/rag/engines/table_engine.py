@@ -30,9 +30,10 @@ class TableEngine(BaseEngine):
     def domain(cls) -> List[str]:
         return ["*"] # Supports all domains
 
-    def __init__(self, tenant_id: str, neo4j_repo: Neo4jRepository):
+    def __init__(self, tenant_id: str, neo4j_repo: Neo4jRepository, db: Any = None):
         self.tenant_id = tenant_id
         self.neo4j_repo = neo4j_repo
+        self.db = db
         
     async def get_candidate_sections(self, task: Any, kb_ids: List[str]) -> List[Dict[str, Any]]:
         cypher = """

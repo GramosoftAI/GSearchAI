@@ -10,7 +10,7 @@ Phase 2 Step 4: Transforms retrieved context into generated answers
 
 import logging
 
-from typing import Optional
+from typing import Optional, Callable
 
 from uuid import UUID
 
@@ -227,21 +227,15 @@ class RAGService:
 
 
     async def stream_rag_answer(
-
         self,
-
         query: str,
-
         agent_id: str,
-
         kb_id: str | list[str],
-
         user_id: Optional[str] = None,
-
+        session_id: Optional[str] = None,
         top_k: int = 15,
-
         max_depth: int = 2,
-
+        on_usage_callback: Optional[Callable[[dict], None]] = None,
     ):
 
         """
@@ -684,16 +678,18 @@ If you'd like, I can also:
 
         
 
+        token_usage = {}
+        def handle_usage(usage_dict):
+            token_usage.update(usage_dict)
+            if on_usage_callback:
+                on_usage_callback(usage_dict)
+
         async for chunk in self.llm_client.stream_answer(
-
             query, 
-
             formatted_context, 
-
             agent_persona=agent_persona,
-
             enable_thinking=False,
-
+            on_usage_callback=handle_usage,
         ):
 
             full_answer.append(chunk)
@@ -712,7 +708,13 @@ If you'd like, I can also:
 
         status = ResponseStatus.SUCCESS if context.chunks else ResponseStatus.UNANSWERED
 
-        
+        llm_input_tokens = token_usage.get("prompt_tokens", 0)
+        llm_output_tokens = token_usage.get("completion_tokens", 0)
+        embedding_tokens = getattr(context, "query_embedding_tokens", 0) or max(1, len(query) // 4)
+
+        llm_cost_usd = (llm_input_tokens / 1000000.0) * 0.10 + (llm_output_tokens / 1000000.0) * 0.15
+        embedding_cost_usd = (embedding_tokens / 1000000.0) * 0.01
+        total_cost_usd = llm_cost_usd + embedding_cost_usd
 
         try:
 
@@ -726,7 +728,23 @@ If you'd like, I can also:
 
                 "confidence_score": confidence,
 
-                "latency_ms": latency_ms
+                "latency_ms": latency_ms,
+
+                "session_id": UUID(session_id) if session_id else None,
+
+                "user_id": UUID(user_id) if user_id else None,
+
+                "llm_input_tokens": llm_input_tokens,
+
+                "llm_output_tokens": llm_output_tokens,
+
+                "embedding_tokens": embedding_tokens,
+
+                "llm_cost_usd": llm_cost_usd,
+
+                "embedding_cost_usd": embedding_cost_usd,
+
+                "total_cost_usd": total_cost_usd
 
             })
 

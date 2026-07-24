@@ -86,10 +86,23 @@ class AnalyticsQueryLog(Base):
         nullable=True,
     )
 
+    user_id = Column(
+        SQLAlchemyUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     query = Column(Text, nullable=False)
     response_status = Column(Enum(ResponseStatus), default=ResponseStatus.SUCCESS, nullable=False)
     confidence_score = Column(Float, default=0.0, nullable=False)
     latency_ms = Column(Float, default=0.0, nullable=False)
+    
+    llm_input_tokens = Column(Integer, default=0, nullable=False)
+    llm_output_tokens = Column(Integer, default=0, nullable=False)
+    embedding_tokens = Column(Integer, default=0, nullable=False)
+    llm_cost_usd = Column(Float, default=0.0, nullable=False)
+    embedding_cost_usd = Column(Float, default=0.0, nullable=False)
+    total_cost_usd = Column(Float, default=0.0, nullable=False)
 
     created_at = Column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

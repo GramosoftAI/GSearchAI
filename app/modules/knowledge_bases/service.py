@@ -632,7 +632,9 @@ class KnowledgeBaseService:
 
             # 3. GENERATE EMBEDDINGS (Optimized Batching)
             t_embed_start = _time.time()
-            embeddings = await EmbeddingGenerator.generate_embeddings_batch(chunks)
+            embeddings, emb_tokens = await EmbeddingGenerator.generate_embeddings_batch_with_usage(chunks)
+            audit_run.embedding_tokens = emb_tokens
+            audit_run.embedding_cost_usd = (emb_tokens / 1000000.0) * 0.01
             # Yield control back to event loop so server stays responsive
             await asyncio.sleep(0)
 
@@ -1314,14 +1316,22 @@ class KnowledgeBaseService:
 
             await self.db.commit()
 
+            # Trigger graph cleanup asynchronously in the background
+            async def run_cleanup_async(tenant_id_str: str):
+                try:
+                    logger.info(f"Background graph cleanup started for tenant {tenant_id_str}...")
+                    from ...core.graph_cleanup import GraphCleanupService
+                    cleanup_service = GraphCleanupService(tenant_id=tenant_id_str)
+                    stats = await cleanup_service.cleanup_graph()
+                    logger.info(f"Background graph cleanup completed for tenant {tenant_id_str}: {stats}")
+                except Exception as cleanup_err:
+                    logger.error(f"Background graph cleanup failed for tenant {tenant_id_str}: {cleanup_err}", exc_info=True)
 
+            asyncio.create_task(run_cleanup_async(str(self.tenant_id)))
 
             return format_success(
-
                 result["data"],
-
                 meta={"message": f"Successfully ingested structured file '{filename}' into KB"}
-
             )
 
 

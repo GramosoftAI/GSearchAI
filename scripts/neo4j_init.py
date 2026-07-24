@@ -155,10 +155,11 @@ class Neo4jSchemaInitializer:
             #   - "Apple Inc" and "apple inc" are same entity (normalized)
             #   - "APPLE INC" is also same entity
             # Without this constraint, graph quality degrades (multiple node copies)
-            """
-            CREATE CONSTRAINT entity_unique_per_tenant IF NOT EXISTS
-            FOR (e:Entity) REQUIRE (e.tenant_id, e.normalized_name) IS UNIQUE
-            """,
+            # SKIPPED: Dropped to allow background cleanup service to normalize nodes with the same normalized name before merging.
+            # """
+            # CREATE CONSTRAINT entity_unique_per_tenant IF NOT EXISTS
+            # FOR (e:Entity) REQUIRE (e.tenant_id, e.normalized_name) IS UNIQUE
+            # """,
             # ========== TRIPLET ENTITY CONSTRAINTS ==========
             # CRITICAL: Prevents duplicate triplet entities
             """

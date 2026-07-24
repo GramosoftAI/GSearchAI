@@ -221,7 +221,13 @@ class QueryRouter:
                         intent=SearchType.EXTRACTIVE, 
                         confidence=1.0, 
                         reason=f"Structured Identifier match: {resolved_id}", 
-                        rewritten={"rewritten_query": query},
+                        rewritten={
+                            "keywords": [resolved_id],
+                            "entities": [resolved_id],
+                            "date_filter": "",
+                            "intent": "EXTRACTIVE",
+                            "rewritten_query": query
+                        },
                         requested_entities=[resolved_id],
                         requested_groups=[]
                     )
@@ -275,7 +281,18 @@ class QueryRouter:
             logger.warning(f" Router Stage failed: {e}. Falling back to default.")
             
         # Default fallback
-        return RouteResult(intent=SearchType.GRAPH_COMPLETION, confidence=0.5, reason="Default fallback", rewritten=query)
+        return RouteResult(
+            intent=SearchType.GRAPH_COMPLETION,
+            confidence=0.5,
+            reason="Default fallback",
+            rewritten={
+                "keywords": query_strip.split(),
+                "entities": [],
+                "date_filter": "",
+                "intent": "GRAPH_COMPLETION",
+                "rewritten_query": query_strip
+            }
+        )
 
     async def rewrite_query(self, query: str) -> dict:
         """

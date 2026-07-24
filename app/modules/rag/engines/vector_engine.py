@@ -30,14 +30,15 @@ class VectorEngine(BaseEngine):
     def domain(cls) -> List[str]:
         return ["*"]
         
-    def __init__(self, tenant_id: str, neo4j_repo: Neo4jRepository):
+    def __init__(self, tenant_id: str, neo4j_repo: Neo4jRepository, db: Any = None):
         self.tenant_id = tenant_id
         self.neo4j_repo = neo4j_repo
+        self.db = db
         
     async def get_candidate_sections(self, task: Any, kb_ids: List[str]) -> List[Dict[str, Any]]:
         keywords = task.metadata_filters.keywords if task.metadata_filters else []
         if not keywords:
-            keywords = [task.query.split()[0]]
+            keywords = [task.query.split()[0]] if task.query else []
             
         cypher = """
         MATCH (kb:KnowledgeBase)-[:HAS_DOCUMENT]->(doc)-[:HAS_SECTION*0..2]->(sec)-[:HAS_TEXT]->(c:Chunk)
@@ -67,17 +68,81 @@ class VectorEngine(BaseEngine):
 
     async def retrieve(self, task: Any, kb_ids: List[str]) -> List[RetrievedChunk]:
         """
-        Simulated vector retrieval using graph node matching for the prototype.
-        In production, this would call vector index.
+        Retrieves chunks using PostgreSQL pgvector when db session is available.
+        Otherwise, falls back to simulated vector retrieval using Cypher.
         """
-        logger.info(f"VectorEngine executing task: {task.task_id} as fallback")
+        logger.info(f"VectorEngine executing task: {task.task_id}")
         
         target_section_ids = getattr(task, "target_section_ids", [])
-        
         keywords = task.metadata_filters.keywords if task.metadata_filters else []
         if not keywords:
-            keywords = [task.query.split()[0]]
-            
+            keywords = [task.query.split()[0]] if task.query else []
+
+        if self.db:
+            try:
+                from sqlalchemy import select, and_
+                from app.modules.knowledge_bases.models import DocumentChunk
+                from uuid import UUID
+                from app.core.embeddings import EmbeddingGenerator
+                import json
+                
+                query_embedding, _ = await EmbeddingGenerator.generate_embedding_with_usage(task.query)
+                
+                # Query using pgvector cosine_distance operator
+                stmt = (
+                    select(
+                        DocumentChunk.id,
+                        DocumentChunk.text,
+                        DocumentChunk.chunk_index,
+                        DocumentChunk.kb_id,
+                        DocumentChunk.metadata_json,
+                        (1.0 - DocumentChunk.embedding.cosine_distance(query_embedding)).label("similarity")
+                    )
+                    .where(
+                        and_(
+                            DocumentChunk.tenant_id == UUID(str(self.tenant_id)),
+                            DocumentChunk.kb_id.in_([UUID(str(kb_id)) for kb_id in kb_ids])
+                        )
+                    )
+                    .order_by(DocumentChunk.embedding.cosine_distance(query_embedding).asc())
+                    .limit(10)
+                )
+                
+                result = await self.db.execute(stmt)
+                rows = result.fetchall()
+                
+                chunks = []
+                for idx, row in enumerate(rows):
+                    similarity = float(row.similarity) if row.similarity is not None else 0.8
+                    chunk_text = row.text or ""
+                    if row.metadata_json:
+                        row_id_attr = f' row_id="{row.metadata_json.get("row_id")}"' if row.metadata_json.get("row_id") else ""
+                        chunk_text += f"\n<ROW_DATA{row_id_attr}>\n{json.dumps(row.metadata_json, indent=2)}\n</ROW_DATA>"
+                        
+                    section_title = row.metadata_json.get("section") if row.metadata_json else None
+                    if not section_title:
+                        section_title = getattr(task, "target_section", "Unknown")
+                        
+                    chunks.append(RetrievedChunk(
+                        chunk_id=str(row.id),
+                        text=chunk_text,
+                        kb_id=str(row.kb_id),
+                        position=row.chunk_index,
+                        embedding_similarity=similarity,
+                        graph_score=0.1,
+                        hybrid_score=similarity,
+                        reason="VECTOR_ENGINE_PGVECTOR",
+                        source=f"Section: {section_title}",
+                        engine_name="vector",
+                        section=section_title,
+                        ontology_node=getattr(task, "target_section", "Unknown")
+                    ))
+                logger.info(f"VectorEngine (pgvector) retrieved {len(chunks)} chunks")
+                return chunks
+            except Exception as e:
+                logger.error(f"VectorEngine pgvector retrieval failed: {e}. Falling back to Cypher.")
+
+        # Cypher fallback
         cypher = """
         MATCH (kb:KnowledgeBase)-[:HAS_DOCUMENT]->(doc)-[:HAS_SECTION*0..2]->(sec)
         WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
@@ -118,5 +183,5 @@ class VectorEngine(BaseEngine):
                     ))
             return chunks
         except Exception as e:
-            logger.error(f"VectorEngine failed: {e}")
+            logger.error(f"VectorEngine Cypher fallback failed: {e}")
             return []

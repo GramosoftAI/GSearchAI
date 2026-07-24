@@ -4,10 +4,12 @@ Analytics Repository - Database abstraction for analytics entities.
 
 from typing import List, Optional, Tuple
 from uuid import UUID
+from datetime import datetime
 from sqlalchemy import select, func, update, delete, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from .models import AnalyticsSummary, AnalyticsQueryLog, ResponseStatus
-from ..knowledge_bases.models import DocumentIngestionRun
+from ..knowledge_bases.models import DocumentIngestionRun, KnowledgeBase
+from ..auth.models import User
 
 class AnalyticsRepository:
     def __init__(self, db: AsyncSession, tenant_id: UUID):
@@ -202,77 +204,94 @@ class AnalyticsRepository:
             })
         return trends
 
-    async def get_cost_governance_data(self) -> dict:
-        from ..chats.models import ChatMessage
-
-        # Category breakdown
+    async def get_cost_governance_data(
+        self,
+        user_id: Optional[UUID] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> dict:
+        # Category breakdown for Ingestions
         cat_stmt = select(
             DocumentIngestionRun.document_category,
             func.sum(DocumentIngestionRun.llm_input_tokens).label("inp"),
-            func.sum(DocumentIngestionRun.llm_output_tokens).label("out")
-        ).where(DocumentIngestionRun.tenant_id == self.tenant_id).group_by(DocumentIngestionRun.document_category)
+            func.sum(DocumentIngestionRun.llm_output_tokens).label("out"),
+            func.sum(DocumentIngestionRun.embedding_tokens).label("emb"),
+            func.sum(DocumentIngestionRun.embedding_cost_usd).label("emb_cost")
+        ).where(DocumentIngestionRun.tenant_id == self.tenant_id)
         
+        if user_id:
+            cat_stmt = cat_stmt.join(KnowledgeBase, DocumentIngestionRun.document_id == KnowledgeBase.id).where(KnowledgeBase.user_id == user_id)
+        if start_date:
+            cat_stmt = cat_stmt.where(DocumentIngestionRun.started_at >= start_date)
+        if end_date:
+            cat_stmt = cat_stmt.where(DocumentIngestionRun.started_at <= end_date)
+            
+        cat_stmt = cat_stmt.group_by(DocumentIngestionRun.document_category)
         cat_res = await self.db.execute(cat_stmt)
+        
         categories = []
         for row in cat_res.all():
             inp = int(row.inp or 0)
             out = int(row.out or 0)
+            emb = int(row.emb or 0)
+            emb_cost = float(row.emb_cost or 0.0)
             categories.append({
                 "document_category": row.document_category,
                 "input_tokens": inp,
-                "output_tokens": out
+                "output_tokens": out,
+                "embedding_tokens": emb,
+                "embedding_cost_usd": emb_cost
             })
 
-        # Fetch assistant messages to aggregate conversational RAG tokens
+        # Fetch chat/RAG queries to aggregate conversational RAG tokens
         chat_stmt = select(
-            ChatMessage.created_at,
-            ChatMessage.message_metadata
-        ).where(
-            ChatMessage.tenant_id == self.tenant_id,
-            ChatMessage.role == "assistant"
-        )
+            func.sum(AnalyticsQueryLog.llm_input_tokens).label("inp"),
+            func.sum(AnalyticsQueryLog.llm_output_tokens).label("out"),
+            func.sum(AnalyticsQueryLog.embedding_tokens).label("emb"),
+            func.sum(AnalyticsQueryLog.embedding_cost_usd).label("emb_cost")
+        ).where(AnalyticsQueryLog.tenant_id == self.tenant_id)
         
+        if user_id:
+            chat_stmt = chat_stmt.where(AnalyticsQueryLog.user_id == user_id)
+        if start_date:
+            chat_stmt = chat_stmt.where(AnalyticsQueryLog.created_at >= start_date)
+        if end_date:
+            chat_stmt = chat_stmt.where(AnalyticsQueryLog.created_at <= end_date)
+            
         chat_res = await self.db.execute(chat_stmt)
+        chat_row = chat_res.first()
         
-        chat_inp = 0
-        chat_out = 0
-        chat_daily = {}
+        chat_inp = int(chat_row.inp or 0) if chat_row else 0
+        chat_out = int(chat_row.out or 0) if chat_row else 0
+        chat_emb = int(chat_row.emb or 0) if chat_row else 0
+        chat_emb_cost = float(chat_row.emb_cost or 0.0) if chat_row else 0.0
         
-        for created_at, metadata in chat_res.all():
-            if not metadata or "stats" not in metadata:
-                continue
-            stats = metadata["stats"]
-            inp = int(stats.get("llm_input_tokens") or 0)
-            out = int(stats.get("llm_output_tokens") or 0)
-            
-            chat_inp += inp
-            chat_out += out
-            
-            if created_at:
-                # If created_at is a datetime, format it. Otherwise if it's a string, use it directly or format.
-                if isinstance(created_at, str):
-                    dt = created_at[:10]
-                else:
-                    dt = created_at.strftime("%Y-%m-%d")
-                if dt not in chat_daily:
-                    chat_daily[dt] = {"inp": 0, "out": 0}
-                chat_daily[dt]["inp"] += inp
-                chat_daily[dt]["out"] += out
-
-        if chat_inp > 0 or chat_out > 0:
+        if chat_inp > 0 or chat_out > 0 or chat_emb > 0:
             categories.append({
                 "document_category": "Conversational RAG",
                 "input_tokens": chat_inp,
-                "output_tokens": chat_out
+                "output_tokens": chat_out,
+                "embedding_tokens": chat_emb,
+                "embedding_cost_usd": chat_emb_cost
             })
             
         # Daily token trends from ingestion runs
         day_stmt = select(
             func.to_char(DocumentIngestionRun.started_at, 'YYYY-MM-DD').label("date"),
             func.sum(DocumentIngestionRun.llm_input_tokens).label("inp"),
-            func.sum(DocumentIngestionRun.llm_output_tokens).label("out")
-        ).where(DocumentIngestionRun.tenant_id == self.tenant_id).group_by("date").order_by("date").limit(30)
+            func.sum(DocumentIngestionRun.llm_output_tokens).label("out"),
+            func.sum(DocumentIngestionRun.embedding_tokens).label("emb"),
+            func.sum(DocumentIngestionRun.embedding_cost_usd).label("emb_cost")
+        ).where(DocumentIngestionRun.tenant_id == self.tenant_id)
         
+        if user_id:
+            day_stmt = day_stmt.join(KnowledgeBase, DocumentIngestionRun.document_id == KnowledgeBase.id).where(KnowledgeBase.user_id == user_id)
+        if start_date:
+            day_stmt = day_stmt.where(DocumentIngestionRun.started_at >= start_date)
+        if end_date:
+            day_stmt = day_stmt.where(DocumentIngestionRun.started_at <= end_date)
+            
+        day_stmt = day_stmt.group_by("date").order_by("date")
         day_res = await self.db.execute(day_stmt)
         
         daily_map = {}
@@ -281,28 +300,158 @@ class AnalyticsRepository:
             daily_map[dt] = {
                 "date": dt,
                 "input_tokens": int(row.inp or 0),
-                "output_tokens": int(row.out or 0)
+                "output_tokens": int(row.out or 0),
+                "embedding_tokens": int(row.emb or 0),
+                "embedding_cost_usd": float(row.emb_cost or 0.0)
             }
 
-        # Merge daily trends from chat messages
-        for dt, tokens in chat_daily.items():
+        # Daily token trends from chat queries
+        chat_day_stmt = select(
+            func.to_char(AnalyticsQueryLog.created_at, 'YYYY-MM-DD').label("date"),
+            func.sum(AnalyticsQueryLog.llm_input_tokens).label("inp"),
+            func.sum(AnalyticsQueryLog.llm_output_tokens).label("out"),
+            func.sum(AnalyticsQueryLog.embedding_tokens).label("emb"),
+            func.sum(AnalyticsQueryLog.embedding_cost_usd).label("emb_cost")
+        ).where(AnalyticsQueryLog.tenant_id == self.tenant_id)
+        
+        if user_id:
+            chat_day_stmt = chat_day_stmt.where(AnalyticsQueryLog.user_id == user_id)
+        if start_date:
+            chat_day_stmt = chat_day_stmt.where(AnalyticsQueryLog.created_at >= start_date)
+        if end_date:
+            chat_day_stmt = chat_day_stmt.where(AnalyticsQueryLog.created_at <= end_date)
+            
+        chat_day_stmt = chat_day_stmt.group_by("date").order_by("date")
+        chat_day_res = await self.db.execute(chat_day_stmt)
+        
+        for row in chat_day_res.all():
+            dt = row.date
+            inp = int(row.inp or 0)
+            out = int(row.out or 0)
+            emb = int(row.emb or 0)
+            emb_cost = float(row.emb_cost or 0.0)
+            
             if dt in daily_map:
-                daily_map[dt]["input_tokens"] += tokens["inp"]
-                daily_map[dt]["output_tokens"] += tokens["out"]
+                daily_map[dt]["input_tokens"] += inp
+                daily_map[dt]["output_tokens"] += out
+                if "embedding_tokens" in daily_map[dt]:
+                    daily_map[dt]["embedding_tokens"] += emb
+                    daily_map[dt]["embedding_cost_usd"] += emb_cost
+                else:
+                    daily_map[dt]["embedding_tokens"] = emb
+                    daily_map[dt]["embedding_cost_usd"] = emb_cost
             else:
                 daily_map[dt] = {
                     "date": dt,
-                    "input_tokens": tokens["inp"],
-                    "output_tokens": tokens["out"]
+                    "input_tokens": inp,
+                    "output_tokens": out,
+                    "embedding_tokens": emb,
+                    "embedding_cost_usd": emb_cost
                 }
 
         # Sort combined daily trends by date
-        daily_tokens = sorted(daily_map.values(), key=lambda x: x["date"])[-30:]
+        daily_tokens = sorted(daily_map.values(), key=lambda x: x["date"])
             
         return {
             "categories": categories,
             "daily_tokens": daily_tokens
         }
+
+    async def get_user_cost_governance(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> list:
+        # Ingestion costs per user
+        ingest_stmt = select(
+            User.id.label("user_id"),
+            User.email.label("user_email"),
+            func.sum(DocumentIngestionRun.llm_input_tokens).label("ingest_inp"),
+            func.sum(DocumentIngestionRun.llm_output_tokens).label("ingest_out"),
+            func.sum(DocumentIngestionRun.embedding_tokens).label("ingest_emb"),
+            func.sum(DocumentIngestionRun.embedding_cost_usd).label("ingest_emb_cost")
+        ).select_from(User).join(
+            KnowledgeBase, KnowledgeBase.user_id == User.id
+        ).join(
+            DocumentIngestionRun, DocumentIngestionRun.document_id == KnowledgeBase.id
+        ).where(
+            User.tenant_id == self.tenant_id
+        )
+        if start_date:
+            ingest_stmt = ingest_stmt.where(DocumentIngestionRun.started_at >= start_date)
+        if end_date:
+            ingest_stmt = ingest_stmt.where(DocumentIngestionRun.started_at <= end_date)
+        ingest_stmt = ingest_stmt.group_by(User.id, User.email)
+        
+        ingest_res = await self.db.execute(ingest_stmt)
+
+        # Chat/RAG costs per user
+        chat_stmt = select(
+            User.id.label("user_id"),
+            User.email.label("user_email"),
+            func.sum(AnalyticsQueryLog.llm_input_tokens).label("chat_inp"),
+            func.sum(AnalyticsQueryLog.llm_output_tokens).label("chat_out"),
+            func.sum(AnalyticsQueryLog.embedding_tokens).label("chat_emb"),
+            func.sum(AnalyticsQueryLog.embedding_cost_usd).label("chat_emb_cost")
+        ).select_from(User).join(
+            AnalyticsQueryLog, AnalyticsQueryLog.user_id == User.id
+        ).where(
+            User.tenant_id == self.tenant_id
+        )
+        if start_date:
+            chat_stmt = chat_stmt.where(AnalyticsQueryLog.created_at >= start_date)
+        if end_date:
+            chat_stmt = chat_stmt.where(AnalyticsQueryLog.created_at <= end_date)
+        chat_stmt = chat_stmt.group_by(User.id, User.email)
+        
+        chat_res = await self.db.execute(chat_stmt)
+
+        user_costs = {}
+        def get_user_entry(uid, email):
+            if uid not in user_costs:
+                user_costs[uid] = {
+                    "user_id": uid,
+                    "user_email": email,
+                    "total_tokens": 0,
+                    "total_cost_usd": 0.0
+                }
+            return user_costs[uid]
+            
+        inp_price_per_m = 0.10
+        out_price_per_m = 0.15
+        
+        for row in ingest_res.all():
+            uid = row.user_id
+            email = row.user_email
+            inp = int(row.ingest_inp or 0)
+            out = int(row.ingest_out or 0)
+            emb = int(row.ingest_emb or 0)
+            emb_cost = float(row.ingest_emb_cost or 0.0)
+            
+            entry = get_user_entry(uid, email)
+            entry["total_tokens"] += inp + out + emb
+            entry["total_cost_usd"] += (inp / 1_000_000 * inp_price_per_m) + \
+                                       (out / 1_000_000 * out_price_per_m) + \
+                                       emb_cost
+                                       
+        for row in chat_res.all():
+            uid = row.user_id
+            email = row.user_email
+            inp = int(row.chat_inp or 0)
+            out = int(row.chat_out or 0)
+            emb = int(row.chat_emb or 0)
+            emb_cost = float(row.chat_emb_cost or 0.0)
+            
+            entry = get_user_entry(uid, email)
+            entry["total_tokens"] += inp + out + emb
+            entry["total_cost_usd"] += (inp / 1_000_000 * inp_price_per_m) + \
+                                       (out / 1_000_000 * out_price_per_m) + \
+                                       emb_cost
+                                       
+        for entry in user_costs.values():
+            entry["total_cost_usd"] = round(entry["total_cost_usd"], 4)
+            
+        return list(user_costs.values())
 
     async def get_capacity_planning_data(self) -> dict:
         stmt = select(

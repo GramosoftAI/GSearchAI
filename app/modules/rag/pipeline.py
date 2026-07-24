@@ -194,6 +194,8 @@ class RAGContext:
     personal_memories: List[str] = None # Phase 5: Personal user context (Mem0)
     
     authoritative_entities: List[Dict] = None # Phase 6: System-Level Value Injection (Highest Trust)
+    
+    query_embedding_tokens: int = 0
 
 
 
@@ -324,6 +326,7 @@ class RAGPipeline:
 
 
         self.db = db
+        self._kb_metadata = {}
 
 
 
@@ -492,6 +495,24 @@ class RAGPipeline:
 
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
 
+        # Populate KB metadata (names, total chunks)
+        if self.db:
+            try:
+                from app.modules.knowledge_bases.models import KnowledgeBase
+                from sqlalchemy import select
+                from uuid import UUID
+                stmt = select(KnowledgeBase.id, KnowledgeBase.name, KnowledgeBase.total_chunks).where(
+                    KnowledgeBase.id.in_([UUID(kbid) if isinstance(kbid, str) else kbid for kbid in kb_ids])
+                )
+                res = await self.db.execute(stmt)
+                for row in res.all():
+                    self._kb_metadata[str(row.id)] = {
+                        "name": row.name,
+                        "total_chunks": row.total_chunks
+                    }
+            except Exception as e:
+                logger.error(f"Error prefetching KB metadata: {e}")
+
 
 
 
@@ -530,7 +551,7 @@ class RAGPipeline:
         for task in plan.tasks:
             engine_cls = CapabilityRegistry.get_engine_class(task.engine_name)
             if engine_cls:
-                engine = engine_cls(self.tenant_id, self.neo4j_repo)
+                engine = engine_cls(self.tenant_id, self.neo4j_repo, db=self.db)
                 secs = await engine.get_candidate_sections(task, kb_ids)
                 candidate_sections.extend(secs)
                 
@@ -550,7 +571,7 @@ class RAGPipeline:
         for task in plan.tasks:
             engine_cls = CapabilityRegistry.get_engine_class(task.engine_name)
             if engine_cls:
-                engine = engine_cls(self.tenant_id, self.neo4j_repo)
+                engine = engine_cls(self.tenant_id, self.neo4j_repo, db=self.db)
                 chunks = await engine.retrieve(task, kb_ids)
                 all_chunks.extend(chunks)
                 
@@ -561,7 +582,7 @@ class RAGPipeline:
         if missing_goals:
             logger.warning(f"Coverage Validation failed. Missing goals: {missing_goals}. Triggering fallback.")
             from app.modules.rag.engines.vector_engine import VectorEngine
-            vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo)
+            vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo, db=self.db)
             from app.modules.rag.orchestrator.planner import RetrievalTask
             for missing in missing_goals:
                 fallback_task = RetrievalTask(
@@ -736,7 +757,7 @@ class RAGPipeline:
             logger.info("   -> Intercepting query for SQL Table Analytics engine!")
             try:
                 table_results = await self._execute_table_analytics(query, kb_ids)
-                if table_results:
+                if table_results and "validation error" not in table_results.lower():
                     return RAGContext(
                         query=query,
                         chunks=[],
@@ -746,7 +767,7 @@ class RAGPipeline:
                         search_type=search_type.name
                     )
                 else:
-                    logger.warning("   -> SQL Table Analytics returned no results. Falling back to vector search.")
+                    logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to vector search.")
                     search_type = SearchType.CHUNK_SEARCH
             except Exception as e:
                 logger.error(f"   -> SQL Table Analytics failed: {e}. Falling back to vector search.", exc_info=True)
@@ -1062,7 +1083,7 @@ class RAGPipeline:
 
 
 
-        query_embedding = await EmbeddingGenerator.generate_embedding(query)
+        query_embedding, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(query)
 
 
 
@@ -1688,9 +1709,9 @@ class RAGPipeline:
 
             authoritative_entities=authoritative_entities_list if 'authoritative_entities_list' in locals() else None,
 
-            personal_memories=personal_memories
+            personal_memories=personal_memories,
 
-
+            query_embedding_tokens=emb_tokens
 
         )
 
@@ -1967,7 +1988,7 @@ class RAGPipeline:
 
         # (If not CSV, fallback to standard SQL generation)
         if not dataset_schema:
-            sample_query = "SELECT row_data FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) LIMIT 10;"
+            sample_query = "SELECT row_data FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) LIMIT 300;"
             result = await self.db.execute(text(sample_query), {"kb_ids": kb_ids})
             rows = result.scalars().all()
             if rows:
@@ -1990,17 +2011,19 @@ class RAGPipeline:
                         continue
                         
                     # 2. Check numeric, currency, and percentage
-                    is_numeric_candidate = True
                     has_currency_symbols = False
                     has_percentage_symbols = False
                     is_integer_all = True
                     cleaned_values = []
+                    non_empty_count = 0
+                    numeric_count = 0
                     
                     for val in vals:
                         val_str = str(val).strip()
                         if not val_str or val_str.lower() in ["na", "n/a", "none", "null", "-", ""]:
                             continue
                             
+                        non_empty_count += 1
                         is_neg = False
                         if val_str.startswith("(") and val_str.endswith(")"):
                             is_neg = True
@@ -2032,12 +2055,13 @@ class RAGPipeline:
                         try:
                             num_val = float(val_str)
                             cleaned_values.append(num_val)
+                            numeric_count += 1
                             if not num_val.is_integer():
                                 is_integer_all = False
                         except ValueError:
-                            is_numeric_candidate = False
-                            break
+                            pass
                             
+                    is_numeric_candidate = (non_empty_count > 0 and (numeric_count / non_empty_count) >= 0.5)
                     if is_numeric_candidate and cleaned_values:
                         if has_currency_symbols:
                             dataset_schema[k] = "currency"
@@ -2149,11 +2173,13 @@ Return ONLY JSON, no markdown formatting.
                     sample_res = await self.db.execute(text(sample_query), {"kb_ids": kb_ids, "field": target_field})
                     sample_vals = [r.val for r in sample_res.all() if r.val is not None and str(r.val).strip() != ""]
                     if sample_vals:
-                        is_numeric = True
+                        non_empty_count = 0
+                        numeric_count = 0
                         for val in sample_vals:
                             val_str = str(val).strip()
                             if not val_str or val_str.lower() in ["na", "n/a", "none", "null", "-", ""]:
                                 continue
+                            non_empty_count += 1
                             if val_str.startswith("(") and val_str.endswith(")"):
                                 val_str = "-" + val_str[1:-1].strip()
                             val_str = re.sub(r'[\$\€\£\₹]', '', val_str).strip()
@@ -2161,10 +2187,10 @@ Return ONLY JSON, no markdown formatting.
                             val_str = val_str.replace(",", "")
                             try:
                                 float(val_str)
+                                numeric_count += 1
                             except ValueError:
-                                is_numeric = False
-                                break
-                        if is_numeric:
+                                pass
+                        if non_empty_count > 0 and (numeric_count / non_empty_count) >= 0.5:
                             dataset_schema[target_field] = "float"
                 except Exception as e:
                     logger.error(f"Dynamic numeric validation check failed: {e}")
@@ -2754,8 +2780,8 @@ Return ONLY JSON, no markdown formatting.
         
         # Pre-rank: count keyword hits per (kb_id, page_number, table_index) to prioritise most-relevant tables
         # Cap results at MAX_TABLES_PER_KB per source document and MAX_TOTAL_TABLES total
-        MAX_TABLES_PER_KB = 2
-        MAX_TOTAL_TABLES = 6
+        MAX_TABLES_PER_KB = 5
+        MAX_TOTAL_TABLES = 10
         
         # Count hits per table group for ranking (prioritizing unique keyword hits, then total keyword occurrences)
         max_clauses = " + ".join(
@@ -2784,7 +2810,7 @@ Return ONLY JSON, no markdown formatting.
             # Limit per KB, cap total
             tables_per_kb: dict = {}
             matched_tables = []
-            min_hits_threshold = 2 if len(search_keywords) >= 3 else 1
+            min_hits_threshold = 1
             for row in all_ranked_tables:
                 if row.unique_hits < min_hits_threshold:
                     continue
@@ -2858,12 +2884,13 @@ Return ONLY JSON, no markdown formatting.
                     chunk_id=f"table-{kb_id}-{page}-{table_idx}",
                     text=f"### Table from {source_str} (Page {page}, Table {table_idx}):\n\n{table_md}",
                     kb_id=str(kb_id),
-                    position=0,
+                    position=page * 100 + table_idx,
                     embedding_similarity=sim_score,
                     graph_score=1.0,
                     hybrid_score=tbl_hybrid_score,
                     reason="TABLE_RECONSTRUCTED",
-                    source=kb_name
+                    source=kb_name,
+                    page=page
                 ))
                 
             return chunks
@@ -3582,19 +3609,48 @@ Return ONLY JSON, no markdown formatting.
 
                     # Heuristic: chunks from the same knowledge base (source document) are only redundant if they are close in position
                     if chunk.kb_id and selected_chunk.kb_id and chunk.kb_id == selected_chunk.kb_id:
-                        pos_diff = abs(chunk.position - selected_chunk.position)
-                        if pos_diff < 3:
-                            max_similarity_to_selected = max(
-                                max_similarity_to_selected, 0.85
-                            )
+                        # Check if this KB has small total_chunks
+                        kb_meta = getattr(self, "_kb_metadata", {}).get(str(chunk.kb_id), {})
+                        total_chunks = kb_meta.get("total_chunks", 0)
+                        
+                        # Also check if it's a syllabus / curriculum / small document based on source filename
+                        is_small_doc = False
+                        if total_chunks > 0 and total_chunks <= 15:
+                            is_small_doc = True
                         else:
-                            # Chunks from different parts of the same document are not redundant
+                            src_name = (chunk.source or "").lower()
+                            if "syllabus" in src_name or "curriculum" in src_name:
+                                is_small_doc = True
+
+                        if chunk.reason == "TABLE_RECONSTRUCTED" or selected_chunk.reason == "TABLE_RECONSTRUCTED":
                             max_similarity_to_selected = max(
                                 max_similarity_to_selected, 0.3
                             )
+                        elif is_small_doc:
+                            # Lower the proximity penalty for small documents / syllabus
+                            pos_diff = abs(chunk.position - selected_chunk.position)
+                            if pos_diff < 3:
+                                max_similarity_to_selected = max(
+                                    max_similarity_to_selected, 0.3
+                                )
+                            else:
+                                max_similarity_to_selected = max(
+                                    max_similarity_to_selected, 0.15
+                                )
+                        else:
+                            pos_diff = abs(chunk.position - selected_chunk.position)
+                            if pos_diff < 3:
+                                max_similarity_to_selected = max(
+                                    max_similarity_to_selected, 0.85
+                                )
+                            else:
+                                # Chunks from different parts of the same document are not redundant
+                                max_similarity_to_selected = max(
+                                    max_similarity_to_selected, 0.3
+                                )
                         
                         # If they also have the same non-seed reason, add a bit more similarity
-                        if chunk.reason == selected_chunk.reason and chunk.reason != "Seed chunk (semantic similarity)":
+                        if chunk.reason == selected_chunk.reason and chunk.reason not in ["Seed chunk (semantic similarity)", "TABLE_RECONSTRUCTED"]:
                             max_similarity_to_selected = max(
                                 max_similarity_to_selected, 0.5
                             )

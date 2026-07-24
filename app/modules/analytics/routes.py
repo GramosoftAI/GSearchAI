@@ -26,7 +26,8 @@ from .schemas import (
     OperationalTrendResponse,
     CostGovernanceResponse,
     CapacityGovernanceResponse,
-    AppErrorLogsPaginatedResponse
+    AppErrorLogsPaginatedResponse,
+    UserCostItem
 )
 from .repository import AnalyticsRepository
 from .service import AnalyticsService
@@ -121,10 +122,22 @@ async def get_operational_trends(
 
 @router.get("/governance/costs", response_model=CostGovernanceResponse)
 async def get_cost_governance(
+    user_id: Optional[UUID] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     service: AnalyticsService = Depends(get_analytics_service)
 ):
     """Get LLM token consumption and estimated costs."""
-    return await service.get_cost_governance()
+    return await service.get_cost_governance(user_id=user_id, start_date=start_date, end_date=end_date)
+
+@router.get("/governance/costs/users", response_model=List[UserCostItem])
+async def get_user_cost_governance(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    service: AnalyticsService = Depends(get_analytics_service)
+):
+    """Get DeepInfra LLM cost and token consumption breakdown per user."""
+    return await service.get_user_cost_governance(start_date=start_date, end_date=end_date)
 
 @router.get("/governance/capacity", response_model=CapacityGovernanceResponse)
 async def get_capacity_governance(

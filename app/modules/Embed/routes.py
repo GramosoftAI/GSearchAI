@@ -18,7 +18,7 @@ from ..chats.service import ChatService
 from ..chats.knowledge_service import ChatKnowledgeService
 from ..agents.repository import AgentRepository
 from ..auth.models import User
-from ...core.database import AsyncSessionLocal, get_db_public
+from ...core.database import AsyncSessionLocal, get_db_public, get_db_with_tenant
 from ...utils.formatters import format_success, format_error
 from sqlalchemy import select, text
 
@@ -332,7 +332,7 @@ async def websocket_chat_endpoint(
                 continue
                 
             # 2. Process within isolated RLS DB session
-            async with AsyncSessionLocal() as db:
+            async with get_db_with_tenant(tenant_id) as db:
                 # A. Enforce multi-tenancy security
                 valid = await verify_agent_belongs_to_tenant(db, tenant_id, agent_id)
                 if not valid:

@@ -480,6 +480,8 @@ class DocumentIngestionRun(Base):
     llm_calls = Column(Integer, nullable=False, default=0)
     llm_input_tokens = Column(Integer, nullable=False, default=0)
     llm_output_tokens = Column(Integer, nullable=False, default=0)
+    embedding_tokens = Column(Integer, nullable=False, default=0)
+    embedding_cost_usd = Column(Float, nullable=False, default=0.0)
     
     # Advanced Telemetry
     extraction_duration_ms = Column(Integer, nullable=False, default=0)

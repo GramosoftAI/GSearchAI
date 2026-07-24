@@ -99,6 +99,8 @@ class DailyTokenItem(BaseModel):
 class CostGovernanceResponse(BaseModel):
     total_tokens_30d: int
     total_cost_usd_30d: float
+    total_tokens: Optional[int] = None
+    total_cost_usd: Optional[float] = None
     category_breakdown: List[CostCategoryItem]
     daily_tokens: List[DailyTokenItem]
 
@@ -139,3 +141,10 @@ class AppErrorLogsPaginatedResponse(BaseModel):
     success: bool = True
     data: List[AppErrorLogSchema]
     meta: Dict[str, Any] = Field(default_factory=dict)
+
+
+class UserCostItem(BaseModel):
+    user_id: UUID
+    user_email: str
+    total_tokens: int
+    total_cost_usd: float

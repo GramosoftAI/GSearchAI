@@ -46,36 +46,23 @@ import base64
 
 import json
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 
 from dataclasses import dataclass
-
-
 
 from ..config import get_settings
 
 from ..billing.utils import is_billing_enabled
 
-
-
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
-
-
 # Prompt versioning (for A/B testing and rollout tracking)
-
 PROMPT_VERSION = "v1"
 
-
-
 # DeepInfra pricing (as of 2026)
-
-# Qwen-2.5-72b-instruct: ~$0.05 / 1M input tokens, ~$0.15 / 1M output tokens
-
-PRICE_PER_1M_INPUT_TOKENS = 0.05
-
+PRICE_PER_1M_INPUT_TOKENS = 0.10
 PRICE_PER_1M_OUTPUT_TOKENS = 0.15
 
 
@@ -230,7 +217,7 @@ class DeepInfraLLMClient:
         load_dotenv()
         self.gateway_api_key = os.environ.get("LLM_GATEWAY_API_KEY") or getattr(settings, 'llm_gateway_api_key', "")
         self.gateway_base_url = f"{getattr(settings, 'llm_base_url', 'http://103.191.132.28:7218')}/v1/chat/completions"
-        self.gateway_model = "qwen2.5:14b"
+        self.gateway_model = os.environ.get("LLM_GATEWAY_MODEL") or getattr(settings, "llm_gateway_model", "qwen2.5:3b")
 
         self.timeout = None  # Removed timeout limit for slow gateway responses
         self.max_retries = 3  # Number of retry attempts
@@ -547,34 +534,20 @@ class DeepInfraLLMClient:
 
 
     async def stream_answer(
-
         self,
-
         query: str,
-
         context: str,
-
         tenant_id: Optional[str] = None,
-
         agent_id: Optional[str] = None,
-
         agent_persona: Optional[dict] = None,
-
         enable_thinking: Optional[bool] = None,
-
+        on_usage_callback: Optional[Callable[[dict], None]] = None,
     ):
-
         """
-
         Stream structured answer from query + context.
-
         Yields text chunks as they arrive from the API.
-
         """
-
         prompt = self._build_prompt(query, context)
-
-        
 
         headers = {
             "Authorization": f"Bearer {self.deepinfra_api_key}",
@@ -619,6 +592,7 @@ class DeepInfraLLMClient:
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         # Force thinking to false to save tokens for DeepInfra answer generation
         payload["enable_thinking"] = False
@@ -628,8 +602,6 @@ class DeepInfraLLMClient:
         think_buf = ""
         try:
             client = await self.get_client()
-            # PROD-GRADE STREAMING TIMEOUT: read=None is crucial for SSE/WebSockets
-            # so the connection doesn't drop while the LLM is "thinking".
             stream_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=30.0)
             
             start_time = time.time()
@@ -642,68 +614,67 @@ class DeepInfraLLMClient:
                     return
                     
                 async for line in response.aiter_lines():
-
-                        if not line or line.strip() == "":
-
-                            continue
-
+                    if not line or line.strip() == "":
+                        continue
+                        
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            break
                             
-
-                        if line.startswith("data: "):
-
-                            data_str = line[6:].strip()
-
-                            if data_str == "[DONE]":
-
-                                break
-
+                        try:
+                            data = json.loads(data_str)
+                            
+                            # Handle usage statistics payload in the stream
+                            if "usage" in data and data["usage"] is not None:
+                                if on_usage_callback:
+                                    on_usage_callback(data["usage"])
+                                continue
                                 
-
-                            try:
-
-                                data = json.loads(data_str)
-
-                                chunk = data["choices"][0]["delta"].get("content", "")
-                                if not chunk: continue
+                            if not data.get("choices"):
+                                continue
                                 
-                                delta = chunk
+                            chunk = data["choices"][0]["delta"].get("content", "")
+                            if not chunk: continue
+                            
+                            delta = chunk
+                            
+                            # State machine to filter <think> tags from true deltas
+                            clean_delta = ""
+                            if think_state == 0:
+                                think_buf += delta
+                                b = think_buf.lstrip()
                                 
-                                # State machine to filter <think> tags from true deltas
-                                clean_delta = ""
-                                if think_state == 0:
-                                    think_buf += delta
-                                    b = think_buf.lstrip()
-                                    
-                                    if b.startswith("<think>"):
-                                        think_state = 1
-                                        think_buf = b[7:]
-                                        if "</think>" in think_buf:
-                                            think_state = 2
-                                            clean_delta = think_buf.split("</think>", 1)[1].lstrip("\n")
-                                            think_buf = ""
-                                    elif "<think>".startswith(b):
-                                        pass # wait
-                                    else:
-                                        think_state = 2
-                                        clean_delta = think_buf
-                                        think_buf = ""
-                                        
-                                elif think_state == 1:
-                                    think_buf += delta
+                                if b.startswith("<think>"):
+                                    think_state = 1
+                                    think_buf = b[7:]
                                     if "</think>" in think_buf:
                                         think_state = 2
                                         clean_delta = think_buf.split("</think>", 1)[1].lstrip("\n")
                                         think_buf = ""
-                                        
-                                elif think_state == 2:
-                                    clean_delta = delta
+                                elif "<think>".startswith(b):
+                                    pass # wait
+                                else:
+                                    think_state = 2
+                                    clean_delta = think_buf
+                                    think_buf = ""
                                     
-                                if clean_delta:
-                                    yield clean_delta
-                            except json.JSONDecodeError as e:
-                                logger.warning(f"  Response parsing error in stream: {e} for line {data_str}")
-                                continue
+                            elif think_state == 1:
+                                think_buf += delta
+                                if "</think>" in think_buf:
+                                    think_state = 2
+                                    clean_delta = think_buf.split("</think>", 1)[1].lstrip("\n")
+                                    think_buf = ""
+                                    
+                            elif think_state == 2:
+                                clean_delta = delta
                                 
+                            if clean_delta:
+                                yield clean_delta
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"  Response parsing error in stream: {e} for line {data_str}")
+                            continue
+                            
             logger.info(f"LLM Stream Completed in {time.time() - start_time:.2f}s")
             
         except httpx.ReadTimeout:

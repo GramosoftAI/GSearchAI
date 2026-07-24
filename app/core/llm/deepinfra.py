@@ -75,7 +75,7 @@ class DeepInfraEmbeddingClient:
         self.model = "BAAI/bge-large-en-v1.5"
         self.timeout = 30.0  # Request timeout in seconds
         self.max_retries = 3  # Number of retry attempts
-        self.max_text_length = 2000  # Allow full chunk content for better semantic quality
+        self.max_text_length = 600  # Allow full chunk content for better semantic quality
         self.expected_dimension = EXPECTED_EMBEDDING_DIMENSION  # 1024
 
         logger.info(
@@ -84,43 +84,14 @@ class DeepInfraEmbeddingClient:
 
     async def generate_embedding(self, text: str) -> List[float]:
         """
-        Generate embedding for text via DeepInfra API.
+        Generate embedding for text via DeepInfra API (backward compatibility wrapper).
+        """
+        vector, _ = await self.generate_embedding_with_usage(text)
+        return vector
 
-        FLOW:
-        1. Validate input (not empty)
-        2. Check embedding cache (avoid repeated API calls)
-        3. Truncate if too long (safety)
-        4. Acquire rate limit semaphore (prevent throttling)
-        5. Call API with retries
-        6. Validate vector dimension (prevent silent bugs)
-        7. Return vector
-
-        RETRY LOGIC:
-        - Attempt 1: Initial request
-        - Attempt 2: Retry on failure (exponential backoff)
-        - Attempt 3: Final retry
-        - If all fail: Raise exception (caller handles fallback)
-
-        TIMEOUT:
-        - 10 seconds max per request
-        - Prevents hanging on slow API
-
-        Args:
-            text: Text to embed (string)
-
-        Returns:
-            List[float]: Embedding vector (typically 512 dimensions)
-
-        Raises:
-            ValueError: If text is empty
-            httpx.HTTPError: If API request fails after retries
-            Exception: Any unexpected error (caller should fallback)
-
-        Examples:
-            >>> client = DeepInfraEmbeddingClient()
-            >>> embedding = await client.generate_embedding("Hello world")
-            >>> len(embedding)
-            512
+    async def generate_embedding_with_usage(self, text: str) -> tuple[List[float], int]:
+        """
+        Generate embedding for text via DeepInfra API, returning the vector and token count.
         """
         global _embedding_cache_insertion_order
 
@@ -131,7 +102,7 @@ class DeepInfraEmbeddingClient:
         # Truncate to prevent API overload
         text = text[: self.max_text_length]
 
-        # IMPROVEMENT 1: CHECK EMBEDDING CACHE (avoid repeated API calls)
+        # CHECK EMBEDDING CACHE (avoid repeated API calls)
         global _cache_hits, _cache_misses
 
         text_hash = hashlib.sha256(text.encode()).hexdigest()
@@ -145,9 +116,8 @@ class DeepInfraEmbeddingClient:
             if text_hash in _embedding_cache_insertion_order:
                 _embedding_cache_insertion_order.remove(text_hash)
                 _embedding_cache_insertion_order.append(text_hash)
-            # IMPROVEMENT 2: LOG EMBEDDING SOURCE
             logger.info(f"Embedding source: Cache (for text: {text[:50]}...)")
-            return embedding
+            return embedding, 0  # Cache hits consume 0 API tokens
 
         _cache_misses += 1
 
@@ -165,7 +135,7 @@ class DeepInfraEmbeddingClient:
             "input": text,
         }
 
-        # IMPROVEMENT 3: RATE LIMIT GUARD (prevent API throttling)
+        # RATE LIMIT GUARD (prevent API throttling)
         async with _embedding_semaphore:
             # Retry logic with exponential backoff
             last_error = None
@@ -187,7 +157,6 @@ class DeepInfraEmbeddingClient:
                         data = response.json()
 
                         # Extract embedding from response
-                        # DeepInfra returns: {"data": [{"embedding": [...], "index": 0}]}
                         if "data" not in data or len(data["data"]) == 0:
                             raise ValueError(
                                 "Invalid API response: missing embedding data"
@@ -199,15 +168,19 @@ class DeepInfraEmbeddingClient:
                                 "Invalid API response: missing embedding vector"
                             )
 
-                        # IMPROVEMENT 4: VALIDATE VECTOR DIMENSION (prevent silent bugs)
+                        # VALIDATE VECTOR DIMENSION
                         if len(embedding) != self.expected_dimension:
                             raise ValueError(
                                 f"Invalid embedding dimension: got {len(embedding)}, expected {self.expected_dimension}"
                             )
 
-                        # CACHE THE EMBEDDING (for future calls) with LRU eviction
+                        # Extract prompt tokens from usage meta
+                        prompt_tokens = data.get("usage", {}).get("prompt_tokens", 0)
+                        if prompt_tokens == 0:
+                            # Fallback token estimate
+                            prompt_tokens = max(1, len(text) // 4)
 
-                        # Track insertion order for LRU eviction
+                        # CACHE THE EMBEDDING (for future calls) with LRU eviction
                         if text_hash not in _embedding_cache_insertion_order:
                             _embedding_cache_insertion_order.append(text_hash)
 
@@ -227,11 +200,10 @@ class DeepInfraEmbeddingClient:
                             f" Embedding generated and cached ({len(embedding)} dims, cache: {len(_embedding_cache)}/{_MAX_EMBEDDING_CACHE})"
                         )
 
-                        # LOG EMBEDDING SOURCE (for rollout monitoring)
                         logger.info(
                             f"Embedding source: DeepInfra (for text: {text[:50]}...)"
                         )
-                        return embedding
+                        return embedding, prompt_tokens
 
                 except httpx.TimeoutException:
                     last_error = TimeoutError(
@@ -242,28 +214,23 @@ class DeepInfraEmbeddingClient:
                     )
 
                 except httpx.HTTPStatusError as e:
-                    # HTTP error (4xx, 5xx)
                     last_error = e
                     logger.warning(
                         f"  HTTP {e.response.status_code} on attempt {attempt + 1}/{self.max_retries}: {e.response.text}"
                     )
 
                 except (ValueError, KeyError) as e:
-                    # Response parsing error
                     last_error = e
                     logger.warning(f"  Response parsing error: {e}")
 
                 except Exception as e:
-                    # Unexpected error
                     last_error = e
                     logger.warning(f"  Unexpected error on attempt {attempt + 1}: {e}")
 
                 # Don't retry on last attempt
                 if attempt < self.max_retries - 1:
-                    # Exponential backoff: 1s, 2s, 4s, ...
                     wait_time = 2**attempt
                     logger.debug(f"Retrying in {wait_time}s...")
-
                     await asyncio.sleep(wait_time)
 
             # All retries exhausted
@@ -276,20 +243,18 @@ class DeepInfraEmbeddingClient:
 
     async def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """
-        Generate embeddings for multiple texts using TRUE API BATCHING.
+        Generate embeddings for multiple texts (backward compatibility wrapper).
+        """
+        vectors, _ = await self.generate_embeddings_batch_with_usage(texts)
+        return vectors
 
-        PHASE 3.5 ENHANCEMENT:
-        Sends up to 50 texts in a single HTTP request. This dramatically 
-        reduces HTTP overhead and allows the server to process chunks in parallel.
-        
-        Args:
-            texts: List of texts to embed
-            
-        Returns:
-            List of embeddings (same length as input)
+    async def generate_embeddings_batch_with_usage(self, texts: List[str]) -> tuple[List[List[float]], int]:
+        """
+        Generate embeddings for multiple texts using TRUE API BATCHING.
+        Returns a tuple: (list of embeddings, total prompt tokens consumed).
         """
         if not texts:
-            return []
+            return [], 0
             
         # 1. Filter out already cached embeddings to save API costs
         results_map = {} # index -> embedding
@@ -297,7 +262,6 @@ class DeepInfraEmbeddingClient:
         to_embed_texts = []
         
         for i, text in enumerate(texts):
-            # Validate and truncate text to prevent API token limit errors
             if not text or not text.strip():
                 text = "empty"
             text = text[: self.max_text_length]
@@ -311,13 +275,14 @@ class DeepInfraEmbeddingClient:
                 
         if not to_embed_texts:
             logger.info(f" All {len(texts)} embeddings retrieved from cache")
-            return [results_map[i] for i in range(len(texts))]
+            return [results_map[i] for i in range(len(texts))], 0
 
         logger.info(f" API Batch generating {len(to_embed_texts)} embeddings (out of {len(texts)} total)...")
         
         # 2. Process in chunks of 50 (API limit safety)
         batch_size = 50
         all_new_embeddings = []
+        total_tokens = 0
         
         for i in range(0, len(to_embed_texts), batch_size):
             chunk = to_embed_texts[i:i+batch_size]
@@ -332,7 +297,6 @@ class DeepInfraEmbeddingClient:
                     "input": chunk,
                 }
                 
-                # Reuse persistent HTTP client across batches
                 global _embedding_http_client
                 if _embedding_http_client is None or _embedding_http_client.is_closed:
                     _embedding_http_client = httpx.AsyncClient(timeout=self.timeout)
@@ -348,6 +312,12 @@ class DeepInfraEmbeddingClient:
                         # Extract embeddings: {"data": [{"embedding": [...], "index": 0}, ...]}
                         new_batch = [item["embedding"] for item in sorted(data["data"], key=lambda x: x["index"])]
                         all_new_embeddings.extend(new_batch)
+                        
+                        # Extract tokens
+                        chunk_tokens = data.get("usage", {}).get("prompt_tokens", 0)
+                        if chunk_tokens == 0:
+                            chunk_tokens = sum(max(1, len(t) // 4) for t in chunk)
+                        total_tokens += chunk_tokens
                         
                         # Update cache
                         for j, emb in enumerate(new_batch):
@@ -385,4 +355,4 @@ class DeepInfraEmbeddingClient:
             
         final_results = [results_map[i] for i in range(len(texts))]
         logger.info(f" Batch generation complete: {len(texts)} embeddings")
-        return final_results
+        return final_results, total_tokens
