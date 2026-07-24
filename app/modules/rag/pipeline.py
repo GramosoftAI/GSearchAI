@@ -547,11 +547,7 @@ class RAGPipeline:
             setattr(task, "top_k", top_k)
             engine_cls = CapabilityRegistry.get_engine_class(task.engine_name)
             if engine_cls:
-<<<<<<< HEAD
-                engine = engine_cls(self.tenant_id, self.neo4j_repo, db=self.db)
-=======
                 engine = engine_cls(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
->>>>>>> origin/staging
                 secs = await engine.get_candidate_sections(task, kb_ids)
                 candidate_sections.extend(secs)
                 
@@ -571,11 +567,7 @@ class RAGPipeline:
         for task in plan.tasks:
             engine_cls = CapabilityRegistry.get_engine_class(task.engine_name)
             if engine_cls:
-<<<<<<< HEAD
-                engine = engine_cls(self.tenant_id, self.neo4j_repo, db=self.db)
-=======
                 engine = engine_cls(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
->>>>>>> origin/staging
                 chunks = await engine.retrieve(task, kb_ids)
                 all_chunks.extend(chunks)
                 
@@ -586,11 +578,7 @@ class RAGPipeline:
         if missing_goals:
             logger.warning(f"Coverage Validation failed. Missing goals: {missing_goals}. Triggering fallback.")
             from app.modules.rag.engines.vector_engine import VectorEngine
-<<<<<<< HEAD
-            vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo, db=self.db)
-=======
             vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
->>>>>>> origin/staging
             from app.modules.rag.orchestrator.planner import RetrievalTask
             for missing in missing_goals:
                 fallback_task = RetrievalTask(
@@ -779,7 +767,6 @@ class RAGPipeline:
 
 
 
-<<<<<<< HEAD
         # STAGE 0.5: EARLY EXIT FOR TABLE ANALYTICS
         if search_type == SearchType.TABLE_ANALYTICS:
             logger.info("   -> Intercepting query for SQL Table Analytics engine!")
@@ -802,8 +789,6 @@ class RAGPipeline:
                 if self.db:
                     await self.db.rollback()
                 search_type = SearchType.CHUNK_SEARCH
-=======
->>>>>>> origin/staging
 
         # STAGE 0.6: HYBRID CONTEXT INJECTION (Extractive DB + Vector Search)
         extractive_context_text = ""

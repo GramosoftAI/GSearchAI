@@ -68,7 +68,6 @@ class VectorEngine(BaseEngine):
 
     async def retrieve(self, task: Any, kb_ids: List[str]) -> List[RetrievedChunk]:
         """
-<<<<<<< HEAD
         Retrieves chunks using PostgreSQL pgvector when db session is available.
         Otherwise, falls back to simulated vector retrieval using Cypher.
         """
@@ -81,15 +80,19 @@ class VectorEngine(BaseEngine):
 
         if self.db:
             try:
-                from sqlalchemy import select, and_
+                from app.core.embeddings import EmbeddingGenerator
+                from sqlalchemy import select, and_, case, Float
                 from app.modules.knowledge_bases.models import DocumentChunk
                 from uuid import UUID
-                from app.core.embeddings import EmbeddingGenerator
-                import json
+
+                query_embedding = await EmbeddingGenerator.generate_embedding(task.query)
                 
-                query_embedding, _ = await EmbeddingGenerator.generate_embedding_with_usage(task.query)
+                top_k = getattr(task, "top_k", 15)
+                candidate_limit = max(top_k, 15)
                 
-                # Query using pgvector cosine_distance operator
+                vector_score = (1.0 - DocumentChunk.embedding.cosine_distance(query_embedding))
+                position_boost = case((DocumentChunk.chunk_index < 3, 1.0), else_=0.0).cast(Float)
+
                 stmt = (
                     select(
                         DocumentChunk.id,
@@ -97,7 +100,7 @@ class VectorEngine(BaseEngine):
                         DocumentChunk.chunk_index,
                         DocumentChunk.kb_id,
                         DocumentChunk.metadata_json,
-                        (1.0 - DocumentChunk.embedding.cosine_distance(query_embedding)).label("similarity")
+                        vector_score.label("similarity")
                     )
                     .where(
                         and_(
@@ -105,41 +108,49 @@ class VectorEngine(BaseEngine):
                             DocumentChunk.kb_id.in_([UUID(str(kb_id)) for kb_id in kb_ids])
                         )
                     )
-                    .order_by(DocumentChunk.embedding.cosine_distance(query_embedding).asc())
-                    .limit(10)
+                    .order_by((vector_score + position_boost).desc())
+                    .limit(200)  # Fetch more for Python re-ranking
                 )
                 
-                result = await self.db.execute(stmt)
-                rows = result.fetchall()
-                
+                res = await self.db.execute(stmt)
                 chunks = []
-                for idx, row in enumerate(rows):
+                
+                # Simple keyword extraction (alphanumeric words > 4 chars)
+                exact_terms = [w for w in task.query.split() if len(w) > 4 and w.isalnum()]
+                
+                all_rows = res.fetchall()
+                for idx, row in enumerate(all_rows):
                     similarity = float(row.similarity) if row.similarity is not None else 0.8
                     chunk_text = row.text or ""
-                    if row.metadata_json:
-                        row_id_attr = f' row_id="{row.metadata_json.get("row_id")}"' if row.metadata_json.get("row_id") else ""
-                        chunk_text += f"\n<ROW_DATA{row_id_attr}>\n{json.dumps(row.metadata_json, indent=2)}\n</ROW_DATA>"
-                        
-                    section_title = row.metadata_json.get("section") if row.metadata_json else None
-                    if not section_title:
-                        section_title = getattr(task, "target_section", "Unknown")
-                        
+                    
+                    weight = 1.0
+                    for term in exact_terms:
+                        if term.lower() in chunk_text.lower():
+                            weight *= 1.15
+                            
+                    if row.chunk_index < 3:
+                        final_score = similarity + 1.0
+                    else:
+                        final_score = min(similarity * weight, 1.0)
+                    
                     chunks.append(RetrievedChunk(
                         chunk_id=str(row.id),
                         text=chunk_text,
                         kb_id=str(row.kb_id),
-                        position=row.chunk_index,
+                        position=idx,
                         embedding_similarity=similarity,
-                        graph_score=0.1,
-                        hybrid_score=similarity,
-                        reason="VECTOR_ENGINE_PGVECTOR",
-                        source=f"Section: {section_title}",
+                        graph_score=0.0,
+                        hybrid_score=final_score,
+                        reason="VECTOR_SEARCH_HYBRID",
+                        source=f"DocumentChunk {row.chunk_index}",
                         engine_name="vector",
-                        section=section_title,
+                        section="Unknown",
                         ontology_node=getattr(task, "target_section", "Unknown")
                     ))
-                logger.info(f"VectorEngine (pgvector) retrieved {len(chunks)} chunks")
-                return chunks
+                    
+                # Rerank in python
+                chunks.sort(key=lambda x: x.hybrid_score, reverse=True)
+                return chunks[:candidate_limit]
             except Exception as e:
                 logger.error(f"VectorEngine pgvector retrieval failed: {e}. Falling back to Cypher.")
 
@@ -185,88 +196,4 @@ class VectorEngine(BaseEngine):
             return chunks
         except Exception as e:
             logger.error(f"VectorEngine Cypher fallback failed: {e}")
-=======
-        Production vector retrieval using PostgreSQL pgvector.
-        """
-        logger.info(f"VectorEngine executing task: {task.task_id} via pgvector")
-        
-        if not self.db:
-            logger.error("VectorEngine requires a database session (db) for pgvector.")
-            return []
-            
-        try:
-            from app.core.embeddings import EmbeddingGenerator
-            from sqlalchemy import select, and_, case, Float
-            from app.modules.knowledge_bases.models import DocumentChunk
-            from uuid import UUID
-
-            query_embedding = await EmbeddingGenerator.generate_embedding(task.query)
-            
-            top_k = getattr(task, "top_k", 15)
-            candidate_limit = max(top_k, 15)
-            
-            vector_score = (1.0 - DocumentChunk.embedding.cosine_distance(query_embedding))
-            position_boost = case((DocumentChunk.chunk_index < 3, 1.0), else_=0.0).cast(Float)
-
-            stmt = (
-                select(
-                    DocumentChunk.id,
-                    DocumentChunk.text,
-                    DocumentChunk.chunk_index,
-                    DocumentChunk.kb_id,
-                    DocumentChunk.metadata_json,
-                    vector_score.label("similarity")
-                )
-                .where(
-                    and_(
-                        DocumentChunk.tenant_id == UUID(self.tenant_id),
-                        DocumentChunk.kb_id.in_([UUID(kb_id) for kb_id in kb_ids])
-                    )
-                )
-                .order_by((vector_score + position_boost).desc())
-                .limit(200)  # Fetch more for Python re-ranking
-            )
-            
-            res = await self.db.execute(stmt)
-            chunks = []
-            
-            # Simple keyword extraction (alphanumeric words > 4 chars)
-            exact_terms = [w for w in task.query.split() if len(w) > 4 and w.isalnum()]
-            
-            all_rows = res.fetchall()
-            for idx, row in enumerate(all_rows):
-                similarity = float(row.similarity)
-                chunk_text = row.text or ""
-                
-                weight = 1.0
-                for term in exact_terms:
-                    if term.lower() in chunk_text.lower():
-                        weight *= 1.15
-                        
-                if row.chunk_index < 3:
-                    final_score = similarity + 1.0
-                else:
-                    final_score = min(similarity * weight, 1.0)
-                
-                chunks.append(RetrievedChunk(
-                    chunk_id=str(row.id),
-                    text=chunk_text,
-                    kb_id=str(row.kb_id),
-                    position=idx,
-                    embedding_similarity=similarity,
-                    graph_score=0.0,
-                    hybrid_score=final_score,
-                    reason="VECTOR_SEARCH_HYBRID",
-                    source=f"DocumentChunk {row.chunk_index}",
-                    engine_name="vector",
-                    section="Unknown",
-                    ontology_node=getattr(task, "target_section", "Unknown")
-                ))
-                
-            # Rerank in python
-            chunks.sort(key=lambda x: x.hybrid_score, reverse=True)
-            return chunks[:candidate_limit]
-        except Exception as e:
-            logger.error(f"VectorEngine pgvector retrieval failed: {e}", exc_info=True)
->>>>>>> origin/staging
             return []

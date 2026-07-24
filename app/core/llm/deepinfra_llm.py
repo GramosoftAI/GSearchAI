@@ -215,15 +215,9 @@ class DeepInfraLLMClient:
         import os
         from dotenv import load_dotenv
         load_dotenv()
-<<<<<<< HEAD
         self.gateway_api_key = os.environ.get("LLM_GATEWAY_API_KEY") or getattr(settings, 'llm_gateway_api_key', "")
         self.gateway_base_url = f"{getattr(settings, 'llm_base_url', 'http://103.191.132.28:7218')}/v1/chat/completions"
         self.gateway_model = os.environ.get("LLM_GATEWAY_MODEL") or getattr(settings, "llm_gateway_model", "qwen2.5:3b")
-=======
-        self.gateway_api_key = self.deepinfra_api_key
-        self.gateway_base_url = self.deepinfra_base_url
-        self.gateway_model = "Qwen/Qwen2.5-7B-Instruct"
->>>>>>> origin/staging
 
         self.timeout = 120.0  # Restored timeout since cloud is fast
         self.max_retries = 3  # Number of retry attempts
