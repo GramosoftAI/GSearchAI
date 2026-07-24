@@ -336,25 +336,10 @@ export default function KnowledgeBasePage() {
   }, [agentlistres]);
 
   const handleOpenPreview = async (item: any) => {
-    setPreviewItem(item);
-    setPreviewVisible(true);
-    setPreviewUrl("");
-    setParsedText("");
-    setParsedUrl("");
-    setPreviewType("other");
-    setExcelSheets({});
-    setExcelSheetNames([]);
-    setActiveExcelSheet("");
-
     const nameStr = (item.name || item.source || "").toLowerCase();
     const isUrl = nameStr.includes("url") || nameStr.includes("http") || nameStr.includes("www.");
 
-    const kbId = item.id || item.kb_id;
-
     if (isUrl) {
-      setPreviewLoading(false);
-      setPreviewTab('parsed');
-
       const rawSource = item.name || item.source || "";
       let extractedUrl = "";
       const urlMatch = rawSource.match(/(https?:\/\/[^\s]+)/i);
@@ -372,10 +357,20 @@ export default function KnowledgeBasePage() {
       if (extractedUrl) {
         window.open(extractedUrl, '_blank');
       }
-
-      setParsedText(`### URL Source\n\nDestination URL opened in a new tab:\n\n**URL:** [${extractedUrl}](${extractedUrl})\n\nNo preview content available. Data is empty.`);
       return;
     }
+
+    setPreviewItem(item);
+    setPreviewVisible(true);
+    setPreviewUrl("");
+    setParsedText("");
+    setParsedUrl("");
+    setPreviewType("other");
+    setExcelSheets({});
+    setExcelSheetNames([]);
+    setActiveExcelSheet("");
+
+    const kbId = item.id || item.kb_id;
 
     // Set initial tab based on name and paths
     const isText = nameStr.includes("text");
@@ -1167,11 +1162,11 @@ export default function KnowledgeBasePage() {
                   size="small"
                   className="shadow-sm hover:shadow-md transition-all"
                 >
-                  <div className="flex items-start gap-3 justify-between">
+                  <div className="flex flex-col sm:flex-row sm:items-start gap-3 justify-between">
                     <div className="flex items-start gap-3 flex-1 min-w-0">
                       <FileTextOutlined
                         style={{ fontSize: 20 }}
-                        className="text-blue-500 mt-1"
+                        className="text-blue-500 mt-1 shrink-0"
                       />
 
                       <div className="flex-1 min-w-0">
@@ -1209,7 +1204,7 @@ export default function KnowledgeBasePage() {
                       </div>
                     </div>
 
-                    <div className="shrink-0 ml-3 flex gap-2">
+                    <div className="flex items-center justify-end gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-[var(--app-border)]/40 shrink-0 sm:ml-3">
                       <Button
                         type="primary"
                         size="middle"

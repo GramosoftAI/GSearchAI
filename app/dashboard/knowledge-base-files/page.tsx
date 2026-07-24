@@ -284,13 +284,35 @@ export default function KnowledgeBaseFilesPage() {
   };
 
   const handlePreview = async (item: any) => {
+    const nameStr = (item.name || item.source || "").toLowerCase();
+    const isUrl = nameStr.includes("url") || nameStr.includes("http") || nameStr.includes("www.");
+
+    if (isUrl) {
+      const rawSource = item.name || item.source || "";
+      let extractedUrl = "";
+      const urlMatch = rawSource.match(/(https?:\/\/[^\s]+)/i);
+      if (urlMatch) {
+        extractedUrl = urlMatch[1];
+      } else {
+        const domainMatch = rawSource.match(/([a-zA-Z0-9-]+\.[a-zA-Z]{2,}[^\s]*)/);
+        if (domainMatch) {
+          extractedUrl = "https://" + domainMatch[1];
+        } else {
+          extractedUrl = rawSource;
+        }
+      }
+
+      if (extractedUrl) {
+        window.open(extractedUrl, '_blank');
+      }
+      return;
+    }
+
     setPreviewItem(item);
     setPreviewOpen(true);
     setPreviewLoading(true);
     setPreviewUrl("");
     setParsedText("");
-
-    const nameStr = (item.name || item.source || "").toLowerCase();
 
     // Set initial tab: parsed content first if it's text or pdf without original
     const isText = nameStr.includes("text");
@@ -447,10 +469,11 @@ export default function KnowledgeBaseFilesPage() {
       title: "File Name",
       dataIndex: "name",
       key: "name",
+      minWidth: 200,
       render: (text: string) => {
         const cleaned = text ? text.replace(/^(pdf|spreadsheet|text|url|file|csv|excel):\s*/i, "") : "Unnamed File";
         return (
-          <Text className="font-semibold text-[var(--app-text)]">{cleaned}</Text>
+          <Text className="font-semibold text-[var(--app-text)] block break-words max-w-sm">{cleaned}</Text>
         );
       },
     },
@@ -458,10 +481,11 @@ export default function KnowledgeBaseFilesPage() {
       title: "Agent",
       dataIndex: "agent_id",
       key: "agent_id",
+      minWidth: 120,
       render: (agentId: string) => {
         const agent = agents.find((a: any) => a.id === agentId);
         return (
-          <Text className="text-[var(--app-text-soft)]">
+          <Text className="text-[var(--app-text-soft)] whitespace-nowrap">
             {agent ? agent.name : agentId || "N/A"}
           </Text>
         );
@@ -471,8 +495,9 @@ export default function KnowledgeBaseFilesPage() {
       title: "Created At",
       dataIndex: "created_at",
       key: "created_at",
+      minWidth: 160,
       render: (date: string) => (
-        <Text className="text-[var(--app-text-soft)]">
+        <Text className="text-[var(--app-text-soft)] whitespace-nowrap">
           {date ? dayjs(date).format("DD MMM YYYY hh:mm A") : "N/A"}
         </Text>
       ),
@@ -480,6 +505,7 @@ export default function KnowledgeBaseFilesPage() {
     {
       title: "Actions",
       key: "actions",
+      minWidth: 80,
       render: (_: any, record: any) => (
         <Space size="middle">
           <Tooltip title="View Document Preview">
@@ -609,7 +635,7 @@ export default function KnowledgeBaseFilesPage() {
         </Card>
 
         {/* Table Content Section */}
-        <Card className="bg-[var(--app-surface)] border-[var(--app-border)] shadow-sm rounded-2xl overflow-hidden">
+        <Card className="bg-[var(--app-surface)] border-[var(--app-border)] shadow-sm rounded-2xl overflow-hidden" styles={{ body: { padding: 0 } }}>
           <Table
             columns={columns}
             dataSource={filteredKbs}
@@ -617,6 +643,7 @@ export default function KnowledgeBaseFilesPage() {
             loading={loading}
             pagination={paginationConfig}
             className="custom-table"
+            scroll={{ x: 'max-content' }}
           />
         </Card>
       </Flex>
@@ -799,6 +826,17 @@ export default function KnowledgeBaseFilesPage() {
           color: var(--app-text) !important;
           background: var(--app-surface) !important;
           padding: 16px 24px !important;
+        }
+        @media (max-width: 640px) {
+          .custom-table :global(.ant-table-thead > tr > th) {
+            padding: 12px 14px !important;
+            white-space: nowrap !important;
+            font-size: 11px !important;
+          }
+          .custom-table :global(.ant-table-tbody > tr > td) {
+            padding: 12px 14px !important;
+            font-size: 13px !important;
+          }
         }
         .custom-table :global(.ant-table-tbody > tr:hover > td) {
           background: var(--app-hover) !important;
