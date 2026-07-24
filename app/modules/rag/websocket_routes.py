@@ -262,27 +262,9 @@ async def rag_websocket(
 
                     await websocket.send_text(json.dumps({"type": "done"}))
                     continue
-
-                # ============================================================
-                # STANDARD RAG EXECUTION PATH
-                # ============================================================
-                # 8. PROMPT ENHANCER / QUERY REWRITING
-                enhanced_query = query
-                is_enhanced = False
-                if enhance_prompt:
-                    try:
-                        rewritten = await query_rewriter.rewrite_query(query)
-                        if rewritten and rewritten != query:
-                            enhanced_query = rewritten
-                            is_enhanced = True
-                    except Exception as e:
-                        logger.error(f"Prompt enhancement failed: {e}", exc_info=True)
-
-                # 9. INJECT SAME-SESSION SHORT-TERM HISTORY + EPISODIC GUIDANCE
-                augmented_query = enhanced_query
-                memory_used = False
+                # 8. FETCH RECENT HISTORY
+                history_messages = []
                 conversation_turns = 0
-
                 if session.message_count > 1:
                     try:
                         memory_messages = await chat_service.chat_repo.get_recent_messages(
@@ -290,35 +272,57 @@ async def rag_websocket(
                             count=10
                         )
                         history_messages = [m for m in memory_messages if str(m.id) != str(user_msg.id)]
-                        if history_messages:
-                            augmented_query = chat_service._format_memory_context(
-                                history=history_messages,
-                                current_query=enhanced_query
-                            )
-                            memory_used = True
-                            conversation_turns = sum(1 for m in history_messages if m.role == "user")
+                        conversation_turns = sum(1 for m in history_messages if m.role == "user")
                     except Exception as me:
-                        logger.warning(f"Same-session memory injection failed: {me}")
+                        logger.warning(f"Failed to fetch recent memory messages: {me}")
 
-                if episodic_guidance:
-                    augmented_query = (
-                        "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
-                        f"{episodic_guidance}\n\n"
-                        "### CONTEXT & QUESTION / TASK\n"
-                        f"{augmented_query}"
+                # 9. PROMPT ENHANCER / QUERY REWRITING
+                enhanced_query = query
+                is_enhanced = False
+                if enhance_prompt or history_messages:
+                    try:
+                        rewritten = await query_rewriter.rewrite_query(query, history=history_messages)
+                        if rewritten and rewritten != query:
+                            enhanced_query = rewritten
+                            is_enhanced = True
+                    except Exception as e:
+                        logger.error(f"Prompt enhancement failed: {e}", exc_info=True)
+
+                # 10. PREPARE CONTEXT FOR FINAL LLM GENERATION
+                chat_history_str = None
+                memory_used = False
+                if history_messages:
+                    chat_history_str = chat_service._format_memory_context(
+                        history=history_messages,
+                        current_query=enhanced_query
                     )
                     memory_used = True
 
-                # 10. STREAM RAG ANSWER FROM KNOWLEDGE BASE
+                if episodic_guidance:
+                    guidance_block = (
+                        "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
+                        f"{episodic_guidance}\n"
+                    )
+                    chat_history_str = guidance_block + ("\n" + chat_history_str if chat_history_str else "")
+                    memory_used = True
+
+                skip_search = False
+                if enhanced_query.startswith("[HISTORY_FILTER]"):
+                    skip_search = True
+                    enhanced_query = enhanced_query.replace("[HISTORY_FILTER]", "").strip()
+
+                # 11. STREAM RAG ANSWER FROM KNOWLEDGE BASE
                 full_response_text = ""
                 sources = []
                 has_error = False
 
                 async for chunk in rag_service.stream_rag_answer(
-                    query=augmented_query,
+                    query=enhanced_query,
                     agent_id=agent_id,
                     kb_id=kb_ids,
-                    user_id=user_id
+                    user_id=user_id,
+                    chat_history=chat_history_str,
+                    skip_search=skip_search,
                 ):
                     is_control_frame = False
                     try:

@@ -98,6 +98,8 @@ class RAGService:
         user_id: Optional[str] = None,
         top_k: int = 15,
         max_depth: int = 2,
+        chat_history: Optional[str] = None,
+        skip_search: bool = False,
     ):
         logger.info(f" RAG Service: Streaming answer for agent={agent_id}, kb={kb_id}")
 
@@ -232,55 +234,70 @@ If you'd like, I can also:
             "system_prompt": injected_system_prompt
         }
 
+        if chat_history:
+            agent_persona["system_prompt"] += f"\n\n==================================================\nCONVERSATION HISTORY\n==================================================\n{chat_history}\n\nCRITICAL INSTRUCTION: If the user's current question asks to filter, modify, or extract from the 'above' or 'previous' answer, you MUST use the CONVERSATION HISTORY as your primary source of truth and ignore any conflicting retrieved documents below."
+
         # 2. Retrieve Context
-        try:
-            context = await asyncio.wait_for(
-                self.pipeline.query(
-                    query=query,
-                    agent_id=agent_id,
-                    kb_id=kb_ids,
-                    user_id=user_id,
-                    top_k=top_k,
-                    max_depth=max_depth,
-                ),
-                timeout=_RAG_TIMEOUT_SECONDS,
-            )
-        except asyncio.TimeoutError:
-            logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
-            yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
-            return
-        except Exception as e:
-            error_msg = str(e) if str(e) else e.__class__.__name__
-            logger.error(f"RAG Retrieval failed for stream: {error_msg}")
-            yield json.dumps({"error": f"Retrieval failed: {error_msg}"})
-            return
+        context = None
+        if not skip_search:
+            try:
+                context = await asyncio.wait_for(
+                    self.pipeline.query(
+                        query=query,
+                        agent_id=agent_id,
+                        kb_id=kb_ids,
+                        user_id=user_id,
+                        top_k=top_k,
+                        max_depth=max_depth,
+                    ),
+                    timeout=_RAG_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
+                yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
+                return
+            except Exception as e:
+                error_msg = str(e) if str(e) else e.__class__.__name__
+                logger.error(f"RAG Retrieval failed for stream: {error_msg}")
+                yield json.dumps({"error": f"Retrieval failed: {error_msg}"})
+                return
 
         # 3. Yield metadata first
-        for c in context.chunks:
-            logger.info(f"Chunk={c.chunk_id} Source={c.source} Score={c.hybrid_score}")
+        if context:
+            for c in context.chunks:
+                logger.info(f"Chunk={c.chunk_id} Source={c.source} Score={c.hybrid_score}")
 
-        metadata = {
-            "type": "metadata",
-            "sources": [
-                {
-                    "chunk_id": c.chunk_id,
-                    "source": c.source,
-                    "score": round(c.hybrid_score, 3),
-                    "position": c.position,
-                    "reason": c.reason,
-                    "kb_id": c.kb_id,
-                    "content_type": getattr(c, "content_type", "original")
-                }
-                for c in context.chunks
-            ],
-            "triplets": [
-                {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
-                for t in (context.triplets or [])
-            ],
-            "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-            "augmented_query": query,
-            "authoritative_entities": context.authoritative_entities or []
-        }
+            metadata = {
+                "type": "metadata",
+                "sources": [
+                    {
+                        "chunk_id": c.chunk_id,
+                        "source": c.source,
+                        "score": round(c.hybrid_score, 3),
+                        "position": c.position,
+                        "reason": c.reason,
+                        "kb_id": c.kb_id,
+                        "content_type": getattr(c, "content_type", "original")
+                    }
+                    for c in context.chunks
+                ],
+                "triplets": [
+                    {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
+                    for t in (context.triplets or [])
+                ],
+                "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                "augmented_query": query,
+                "authoritative_entities": context.authoritative_entities or []
+            }
+        else:
+            metadata = {
+                "type": "metadata",
+                "sources": [],
+                "triplets": [],
+                "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                "augmented_query": query,
+                "authoritative_entities": []
+            }
 
         yield json.dumps(metadata)
 
@@ -298,13 +315,13 @@ If you'd like, I can also:
             yield context.triplet_context
             return
 
-        if not context or not context.chunks:
+        if (not context or not context.chunks) and not chat_history:
             logger.info("Empty context retrieved for stream, returning fallback message.")
             yield "I'm sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
             return
 
         # 4. Stream chunks
-        formatted_context = self._format_context(context)
+        formatted_context = self._format_context(context) if context else ""
         start_time = datetime.now()
 
         async for chunk in self.llm_client.stream_answer(
@@ -317,8 +334,8 @@ If you'd like, I can also:
 
         # 5. ASYNC LOGGING (Background)
         latency_ms = (datetime.now() - start_time).total_seconds() * 1000
-        confidence = sum(c.hybrid_score for c in context.chunks) / len(context.chunks) if context.chunks else 0.0
-        status = ResponseStatus.SUCCESS if context.chunks else ResponseStatus.UNANSWERED
+        confidence = sum(c.hybrid_score for c in context.chunks) / len(context.chunks) if (context and context.chunks) else 0.0
+        status = ResponseStatus.SUCCESS if (context and context.chunks) else (ResponseStatus.SUCCESS if chat_history else ResponseStatus.UNANSWERED)
 
         try:
             analytics_repo = AnalyticsRepository(self.db, UUID(self.tenant_id))
