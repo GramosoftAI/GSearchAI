@@ -273,6 +273,22 @@ async def run_pdf_ingestion_job(
                     logger.error(f"Job {job_id}: Failed to clean up KnowledgeBase {kb_id} after ingestion failure: {cleanup_err}")
                 return
                 
+            if getattr(document_text, "extraction_incomplete", False):
+                failed_pages = getattr(document_text, "failed_pages", [])
+                try:
+                    from app.modules.knowledge_bases.models import DocumentIngestionRun
+                    from sqlalchemy import update
+                    import json
+                    structured_error = json.dumps({"incomplete": True, "failed_pages": failed_pages})
+                    await db.execute(
+                        update(DocumentIngestionRun)
+                        .where(DocumentIngestionRun.document_id == uuid.UUID(kb_id))
+                        .values(error_message=structured_error)
+                    )
+                    await db.commit()
+                except Exception as meta_err:
+                    logger.error(f"Job {job_id}: Failed to persist extraction incomplete metadata: {meta_err}")
+
             # Success!
             await job_service.update_job_progress(job_id, status="completed", progress=100, current_step="Complete")
             logger.info(f"Job {job_id}: Successfully completed!")

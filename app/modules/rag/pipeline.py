@@ -371,17 +371,8 @@ class RAGPipeline:
 
 
         top_k: int = 3,
-
-
-
         max_depth: int = 2,
-
-
-
-        max_tokens: int = 3000,
-
-
-
+        max_tokens: int = 24000,
     ) -> RAGContext:
 
 
@@ -519,6 +510,10 @@ class RAGPipeline:
         analyzer = QueryAnalyzer()
         analysis = await analyzer.analyze_query(query)
         
+        if getattr(analysis.metadata, "corrected_query", None):
+            logger.info(f"Query spell checked: '{query}' -> '{analysis.metadata.corrected_query}'")
+            query = analysis.metadata.corrected_query
+        
         planner = AdaptivePlanner(self.neo4j_repo, self.tenant_id)
         plan = await planner.create_plan(analysis, query)
         
@@ -528,9 +523,10 @@ class RAGPipeline:
         # --- PHASE 1: CANDIDATE SECTION GATHERING ---
         candidate_sections = []
         for task in plan.tasks:
+            setattr(task, "top_k", top_k)
             engine_cls = CapabilityRegistry.get_engine_class(task.engine_name)
             if engine_cls:
-                engine = engine_cls(self.tenant_id, self.neo4j_repo)
+                engine = engine_cls(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
                 secs = await engine.get_candidate_sections(task, kb_ids)
                 candidate_sections.extend(secs)
                 
@@ -550,7 +546,7 @@ class RAGPipeline:
         for task in plan.tasks:
             engine_cls = CapabilityRegistry.get_engine_class(task.engine_name)
             if engine_cls:
-                engine = engine_cls(self.tenant_id, self.neo4j_repo)
+                engine = engine_cls(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
                 chunks = await engine.retrieve(task, kb_ids)
                 all_chunks.extend(chunks)
                 
@@ -561,7 +557,7 @@ class RAGPipeline:
         if missing_goals:
             logger.warning(f"Coverage Validation failed. Missing goals: {missing_goals}. Triggering fallback.")
             from app.modules.rag.engines.vector_engine import VectorEngine
-            vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo)
+            vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
             from app.modules.rag.orchestrator.planner import RetrievalTask
             for missing in missing_goals:
                 fallback_task = RetrievalTask(
@@ -571,6 +567,7 @@ class RAGPipeline:
                     task_id=f"fallback_{missing}",
                     target_section=missing
                 )
+                setattr(fallback_task, "top_k", top_k)
                 fb_chunks = await vector_fallback.retrieve(fallback_task, kb_ids)
                 all_chunks.extend(fb_chunks)
                 
@@ -582,12 +579,30 @@ class RAGPipeline:
             if final_chunks:
                 logger.info("Adaptive Orchestrator successfully retrieved and aggregated chunks. Returning early.")
                 
+                triplet_context_str = ""
+                relevant_triplets_list = None
+                if self.settings.use_triplet_extraction:
+                    try:
+                        from app.core.triplet_extractor import TripletRetriever
+                        retriever = TripletRetriever(self.tenant_id)
+                        query_embedding_local = await EmbeddingGenerator.generate_embedding(query)
+                        relevant_triplets_list = await retriever.search_triplets(
+                            query_embedding=query_embedding_local,
+                            kb_ids=kb_ids,
+                            top_k=self.settings.triplet_retrieval_top_k,
+                        )
+                        if relevant_triplets_list:
+                            triplet_context_str = retriever.format_triplets_as_context(relevant_triplets_list)
+                    except Exception as e:
+                        logger.warning(f"Triplet retrieval failed (non-blocking): {e}")
+
                 rag_context = RAGContext(
                     query=query,
                     chunks=final_chunks,
                     entity_mentions={},
                     total_tokens=sum(len(c.text.split()) for c in final_chunks),
-                    triplet_context="",
+                    triplet_context=triplet_context_str,
+                    triplets=relevant_triplets_list,
                     search_type=analysis.intent.name
                 )
                 
@@ -731,28 +746,6 @@ class RAGPipeline:
 
 
 
-        # STAGE 0.5: EARLY EXIT FOR TABLE ANALYTICS
-        if search_type == SearchType.TABLE_ANALYTICS:
-            logger.info("   -> Intercepting query for SQL Table Analytics engine!")
-            try:
-                table_results = await self._execute_table_analytics(query, kb_ids)
-                if table_results:
-                    return RAGContext(
-                        query=query,
-                        chunks=[],
-                        entity_mentions={},
-                        total_tokens=0,
-                        triplet_context=f"### Table Analytics Results\n\n{table_results}",
-                        search_type=search_type.name
-                    )
-                else:
-                    logger.warning("   -> SQL Table Analytics returned no results. Falling back to vector search.")
-                    search_type = SearchType.CHUNK_SEARCH
-            except Exception as e:
-                logger.error(f"   -> SQL Table Analytics failed: {e}. Falling back to vector search.", exc_info=True)
-                if self.db:
-                    await self.db.rollback()
-                search_type = SearchType.CHUNK_SEARCH
 
         # STAGE 0.6: HYBRID CONTEXT INJECTION (Extractive DB + Vector Search)
         extractive_context_text = ""

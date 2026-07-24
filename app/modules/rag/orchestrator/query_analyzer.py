@@ -28,6 +28,7 @@ class QueryMetadata(BaseModel):
     document_type: Optional[str] = Field(None, description="E.g., 10-Q, 10-K, Earnings Call")
     primary_topic: Optional[str] = Field(None, description="Primary domain topic (e.g., Accounting, Revenue, Tax)")
     keywords: List[str] = Field(default_factory=list, description="Extracted keywords for search")
+    corrected_query: Optional[str] = Field(None, description="The query with spelling or typo corrections applied")
 
 class AnalysisResult(BaseModel):
     intent: QueryIntent
@@ -49,37 +50,39 @@ class QueryAnalyzer:
         Uses LLM to extract intent and metadata in a single pass.
         """
         prompt = f"""
-You are an Enterprise Financial Query Analyzer.
+You are an Expert Knowledge Retrieval Query Analyzer.
 Your task is to classify the user's query into one of the exact intents below and extract structured metadata.
 
-INTENTS:
-- FACT: Direct lookup of a single fact or entity (e.g., "Who is the CEO?", "What is the address?").
-- CALCULATION: Requires math (e.g., "What proportion of revenue...", "Margin percentage").
-- COMPARISON: Comparing two or more things (e.g., "Compare FY23 and FY24 revenue").
-- TEMPORAL: Requires time-aware filtering (e.g., "Q3 stock repurchases").
-- STRUCTURAL: Asking about document structure (e.g., "What does Note 1 say?").
-- TABLE: Explicitly asking about a financial table or cell (e.g., "Gaming Revenue in Q3").
-- SUMMARY: Needs an overview or tl;dr.
-- WHY: Needs reasoning or explanation for a phenomenon.
-- UNKNOWN: Fallback if nothing matches.
+CRITICAL TASK: SPELL CHECK & QUERY EXPANSION
+You must output a `corrected_query` field. 
+- Fix any obvious typos in named entities or concepts (e.g. "Jon Sno" -> "Jon Snow", "justce" -> "justice").
+- If the query is already perfect, `corrected_query` should just be the original query.
 
-Extract metadata if explicitly mentioned or strongly implied. 
-If not present, use null.
-The `primary_topic` is the core domain concept (e.g., Accounting, Revenue, Expenses, Legal, Medical).
+INTENTS:
+- FACT: Direct lookup of a single fact or entity.
+- CALCULATION: Requires math.
+- COMPARISON: Comparing two or more things.
+- TEMPORAL: Requires time-aware filtering.
+- STRUCTURAL: Asking about document structure.
+- TABLE: Explicitly asking about a table or cell.
+- SUMMARY: Needs an overview or tl;dr.
+- WHY: Needs reasoning or explanation.
+- UNKNOWN: Fallback if nothing matches.
 
 Return ONLY valid JSON:
 {{
-  "intent": "CALCULATION",
+  "intent": "FACT",
   "metadata": {{
-    "quarter": "Q3",
-    "year": "2023",
-    "company": "NVIDIA",
-    "document_type": "10-Q",
-    "primary_topic": "Accounting",
-    "keywords": ["accounting", "changes", "estimate"]
+    "quarter": null,
+    "year": null,
+    "company": null,
+    "document_type": null,
+    "primary_topic": "Character",
+    "keywords": ["Jon Snow"],
+    "corrected_query": "Who is Jon Snow?"
   }},
   "confidence": 0.95,
-  "reasoning": "Query asks for accounting changes, which requires finding related accounting data."
+  "reasoning": "Query asks for a specific character fact. The typo 'Jon Sno' was corrected."
 }}
 
 QUERY:
@@ -121,7 +124,8 @@ QUERY:
                 company=metadata_dict.get("company"),
                 document_type=metadata_dict.get("document_type"),
                 primary_topic=metadata_dict.get("primary_topic"),
-                keywords=metadata_dict.get("keywords", [])
+                keywords=metadata_dict.get("keywords", []),
+                corrected_query=metadata_dict.get("corrected_query")
             )
             
             return AnalysisResult(

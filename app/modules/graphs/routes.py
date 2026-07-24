@@ -96,8 +96,7 @@ async def get_kb_graph(request: Request, kb_id: str, limit: int = 200):
     MATCH (kb:KnowledgeBase {id: $kb_id, tenant_id: $tenant_id})
     MATCH (kb)-[:HAS_CHUNK]->(c:Chunk)
     WITH c LIMIT $limit
-    OPTIONAL MATCH (c)-[r:MENTIONS|NEXT|RELATED]-(m)
-    WHERE m.tenant_id = $tenant_id
+    OPTIONAL MATCH (c)-[r:MENTIONS|NEXT|RELATED]-(m {tenant_id: $tenant_id})
     RETURN c, r, m
     """
     
@@ -154,8 +153,7 @@ async def get_agent_graph(request: Request, agent_id: str, limit: int = 300):
     OPTIONAL MATCH (a)-[r1:OWNS_KB]->(kb:KnowledgeBase)
     OPTIONAL MATCH (kb)-[r2:HAS_CHUNK]->(c:Chunk)
     WITH a, kb, c, r1, r2 LIMIT $limit
-    OPTIONAL MATCH (c)-[r3:MENTIONS|NEXT|RELATED|EXTRACTED_FROM|SENT|BELONGS_TO]-(m)
-    WHERE m.tenant_id = $tenant_id
+    OPTIONAL MATCH (c)-[r3:MENTIONS|NEXT|RELATED|EXTRACTED_FROM|SENT|BELONGS_TO]-(m {tenant_id: $tenant_id})
     RETURN a, kb, c, m, r1, r2, r3
     """
     

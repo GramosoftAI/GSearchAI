@@ -1,0 +1,191 @@
+@import "tailwindcss";
+
+
+@variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #ffffff;
+  --foreground: #14161f;
+  --app-surface: #ffffff;
+  --app-surface-muted: #f5f7fa;
+  --app-border: #e5e9ef;
+  --app-text: #14161f;
+  --app-text-muted: #414856;
+  --app-text-soft: #6b7280;
+  --app-primary: #0fb5a1;
+  --app-on-primary: #ffffff;
+  --app-active-bg: #e3f7f3;
+  --app-hover: #eef2f6;
+  --neutral: #ebdfdf;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-plus-jakarta-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+:root[data-theme="dark"] {
+  --background: #0d0f17;
+  --foreground: #ffffff;
+  --app-surface: #14161f;
+  --app-surface-muted: #0d0f17;
+  --app-border: #2e3347;
+  --app-text: #ffffff;
+  --app-text-muted: #cbd5e1;
+  --app-text-soft: #94a3b8;
+  --app-primary: #0fb5a1;
+  --app-on-primary: #052e2b;
+  --app-active-bg: #12352f;
+  --app-hover: #1e212f;
+  --neutral: #ebdfdf;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-plus-jakarta-sans), Arial, Helvetica, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Custom Ant Design Notification Styles */
+.custom-toast-success {
+  background-color: #22c55e !important; /* Tailwind green-500 */
+}
+.custom-toast-success .ant-notification-notice-message,
+.custom-toast-success .ant-notification-notice-description,
+.custom-toast-success .ant-notification-notice-icon {
+  color: white !important;
+}
+.custom-toast-success .ant-notification-notice-close-icon {
+  color: white !important;
+}
+
+.custom-toast-error {
+  background-color: black !important;
+}
+.custom-toast-error .ant-notification-notice-message,
+.custom-toast-error .ant-notification-notice-description,
+.custom-toast-error .ant-notification-notice-icon {
+  color: #22c55e !important; /* Tailwind green-500 */
+}
+.custom-toast-error .ant-notification-notice-close-icon {
+  color: #22c55e !important;
+}
+
+/* Document Viewer styling for Extracted PDF HTML/Markdown content */
+.extracted-html-container {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.extracted-html-container h1 {
+  font-size: 1.8em;
+  margin-top: 24px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  border-bottom: 1px solid #eaecef;
+  padding-bottom: 0.3em;
+}
+
+.extracted-html-container h2 {
+  font-size: 1.4em;
+  margin-top: 24px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  border-bottom: 1px solid #eaecef;
+  padding-bottom: 0.3em;
+}
+
+.extracted-html-container h3 {
+  font-size: 1.2em;
+  margin-top: 24px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.extracted-html-container table {
+  border-collapse: collapse;
+  min-width: 100%;
+  width: max-content;
+  max-width: 100%;
+  table-layout: auto;
+  margin-bottom: 16px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: var(--app-surface);
+}
+
+/* Correctly scale nested tables within parent cells */
+.extracted-html-container table table {
+  min-width: 100%;
+  width: 100%;
+}
+
+.extracted-html-container th,
+.extracted-html-container td {
+  border: 1px solid var(--app-border);
+  padding: 10px 14px;
+  vertical-align: top;
+  color: var(--app-text-soft);
+}
+
+.extracted-html-container thead th {
+  position: sticky;
+  top: 0;
+  background: var(--app-surface-muted) !important;
+  color: var(--app-text) !important;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  letter-spacing: 0.05em;
+  z-index: 10;
+  border-bottom: 2px solid var(--app-border);
+}
+
+.extracted-html-container img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Premium Agent Select override style for input bar */
+.agent-select-premium {
+  height: 32px !important;
+}
+
+.agent-select-premium .ant-select-selector {
+  background: rgba(168, 85, 247, 0.06) !important; /* purple tint */
+  border: 1.5px solid rgba(168, 85, 247, 0.3) !important;
+  border-radius: 9999px !important; /* full capsule shape */
+  padding-left: 14px !important;
+  padding-right: 14px !important;
+  font-size: 11px !important;
+  font-weight: 750 !important;
+  height: 32px !important;
+  display: flex !important;
+  align-items: center !important;
+  transition: all 0.2s ease-in-out !important;
+}
+
+.agent-select-premium:hover .ant-select-selector {
+  border-color: rgba(168, 85, 247, 0.75) !important;
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.2) !important;
+}
+
+.agent-select-premium .ant-select-selection-item {
+  color: var(--app-text) !important;
+  font-weight: 750 !important;
+}
+
+.agent-select-premium .ant-select-arrow {
+  color: rgba(168, 85, 247, 0.8) !important;
+}
+
+

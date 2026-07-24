@@ -23,10 +23,24 @@ class PostgresWriter:
         chunk_texts = []
         chunk_metadatas = []
         
+        import datetime
+        
+        def serialize_dates(val):
+            if isinstance(val, dict):
+                return {k: serialize_dates(v) for k, v in val.items()}
+            elif isinstance(val, list):
+                return [serialize_dates(v) for v in val]
+            elif isinstance(val, (datetime.datetime, datetime.date)):
+                return val.isoformat()
+            return val
+            
         for obj in objects:
             semantic_parts = [f"{obj.entity_type}: {obj.id}"]
             for k, v in obj.attributes.items():
-                semantic_parts.append(f"{k}: {v}")
+                if isinstance(v, (datetime.datetime, datetime.date)):
+                    semantic_parts.append(f"{k}: {v.isoformat()}")
+                else:
+                    semantic_parts.append(f"{k}: {v}")
             for rel in obj.relationships:
                 semantic_parts.append(f"{rel.predicate} ({rel.target_type}): {rel.target_id}")
                 
@@ -37,7 +51,7 @@ class PostgresWriter:
                 "entity_type": obj.entity_type,
                 "provenance": asdict(obj.provenance),
                 "schema_snapshot_id": obj.schema_snapshot_id,
-                "raw_data": obj.attributes
+                "raw_data": serialize_dates(obj.attributes)
             })
 
         logger.info(f"Generating embeddings for {total_chunks} Business Objects...")
