@@ -37,5 +37,11 @@ ALLOWED_SCHEMA_MATRIX = {
     ("TABLE", "HAS_ROW", "ROW"),
     ("DOCUMENT", "PART_OF", "DOCUMENT"),
     
+    # Web Extraction Edges
+    ("ORGANIZATION", "HAS_WEBSITE", "URL"),
+    ("ORGANIZATION", "HAS_WEBSITE", "CONCEPT"),
+    ("PERSON", "HAS_WEBSITE", "URL"),
+    ("CONCEPT", "HAS_URL", "URL"),
+    
     # Add more allowed relationships as the schema expands
 }

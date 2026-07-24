@@ -1394,7 +1394,7 @@ async def instant_ingest_url(
 
                 mode=url_data.crawl_type, 
 
-                proxy_mode=url_data.proxy_mode
+                proxy_mode="default"
 
             )
 

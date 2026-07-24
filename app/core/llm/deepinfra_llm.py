@@ -211,22 +211,28 @@ class DeepInfraLLMClient:
         self.deepinfra_base_url = f"{getattr(settings, 'deepinfra_api_url', 'https://api.deepinfra.com/v1/openai')}/chat/completions"
         self.deepinfra_model = getattr(settings, "deepinfra_llm_model", "Qwen/Qwen3.5-9B")
 
-        # Ingestion / Extraction Configuration (Local Ollama Gateway)
+        # Ingestion / Extraction Configuration (now using DeepInfra instead of local gateway)
         import os
         from dotenv import load_dotenv
         load_dotenv()
+<<<<<<< HEAD
         self.gateway_api_key = os.environ.get("LLM_GATEWAY_API_KEY") or getattr(settings, 'llm_gateway_api_key', "")
         self.gateway_base_url = f"{getattr(settings, 'llm_base_url', 'http://103.191.132.28:7218')}/v1/chat/completions"
         self.gateway_model = os.environ.get("LLM_GATEWAY_MODEL") or getattr(settings, "llm_gateway_model", "qwen2.5:3b")
+=======
+        self.gateway_api_key = self.deepinfra_api_key
+        self.gateway_base_url = self.deepinfra_base_url
+        self.gateway_model = "Qwen/Qwen2.5-7B-Instruct"
+>>>>>>> origin/staging
 
-        self.timeout = None  # Removed timeout limit for slow gateway responses
+        self.timeout = 120.0  # Restored timeout since cloud is fast
         self.max_retries = 3  # Number of retry attempts
         self.max_tokens = 4000  # Max output tokens (GUARD: prevent very long responses)
         self.max_answer_length = 2000  # Max chars in answer (latency + cost guard)
         self.temperature = 0.0  # Maximize consistency and minimize hallucinations for RAG and extraction tasks
 
         logger.info(
-            f" LLM Client init: RAG -> {self.deepinfra_model} (Cloud), Ingestion -> {self.gateway_model} (Gateway)"
+            f" LLM Client init: RAG -> {self.deepinfra_model} (Cloud), Ingestion -> {self.gateway_model} (Cloud)"
         )
 
 

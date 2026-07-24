@@ -55,8 +55,11 @@ def get_docling_converter():
                     import time
                     t0 = time.perf_counter()
                     logger.info(" [Timing] Initializing Docling DocumentConverter (Singleton)...")
-                    from docling.document_converter import DocumentConverter
-                    _DOCLING_CONVERTER = DocumentConverter()
+                    from docling.document_converter import DocumentConverter, PdfFormatOption
+                    from docling.datamodel.pipeline_options import PdfPipelineOptions, TableStructureOptions
+                    from docling.datamodel.base_models import InputFormat
+                    pipeline_options = PdfPipelineOptions(do_ocr=False, do_table_structure=True)
+                    _DOCLING_CONVERTER = DocumentConverter(allowed_formats=[InputFormat.PDF], format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)})
                     t1 = time.perf_counter()
                     logger.info(f" [Timing] Docling DocumentConverter initialized in {t1 - t0:.2f}s")
                 except ImportError:
