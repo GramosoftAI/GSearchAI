@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     # ============= EXTERNAL ALERTS =============
     slack_webhook_url: Optional[str] = None
     
+    # ============= GCRAWL API =============
+    gcrawl_api_key: Optional[str] = None
+    gcrawl_timeout: int = 60
+    gcrawl_retry: int = 3
+    gcrawl_enabled: bool = True
     # ============= REDIS (ARQ) =============
     redis_url: str = "redis://localhost:6379"
 
