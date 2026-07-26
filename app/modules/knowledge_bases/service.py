@@ -1289,6 +1289,53 @@ class KnowledgeBaseService:
 
 
 
+            # 1.5. Large Dataset Bypass (Tabular Files > 2MB)
+            if len(file_bytes) > 2 * 1024 * 1024:
+                logger.info(f"Large tabular dataset detected ({len(file_bytes)} bytes). Bypassing Vector Ingestion in favor of Pandas Query Engine.")
+                import uuid
+                from sqlalchemy import update
+                
+                # Use S3 path directly instead of local temp folder
+                dataset_path = s3_path if s3_path else f"s3://pending-upload/{kb_id}_{filename}"
+                    
+                # Update PostgreSQL KB
+                await self.db.execute(
+                    update(KnowledgeBase)
+                    .where(KnowledgeBase.id == uuid.UUID(kb_id))
+                    .values(parsed_path=dataset_path)
+                )
+                await self.db.commit()
+                
+                # Update Neo4j KB
+                neo_bypass_q = """
+                MATCH (kb:KnowledgeBase {id: $kb_id, tenant_id: $tenant_id})
+                SET kb.parsed_path = $parsed_path, kb.document_category = 'dataset'
+                """
+                try:
+                    await retry_neo4j_operation(
+                        lambda: self.neo4j_repo.execute_write(
+                            neo_bypass_q,
+                            {
+                                "kb_id": kb_id,
+                                "tenant_id": str(self.tenant_id),
+                                "parsed_path": dataset_path
+                            }
+                        )
+                    )
+                except Exception as neo_err:
+                    logger.warning(f"Failed to update Neo4j KB parsed_path for bypass: {neo_err}")
+                
+                return {
+                    "success": True,
+                    "data": {
+                        "kb_id": kb_id,
+                        "chunks_created": 0,
+                        "entities_extracted": 0,
+                        "triplets_extracted": 0,
+                        "message": "Large dataset stored in S3 for Pandas SQL querying."
+                    },
+                    "meta": {"message": "Large dataset bypassed semantic chunking."}
+                }
 
             # 2. Invoke ExcelIngestionService
 

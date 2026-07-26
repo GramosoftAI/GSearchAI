@@ -483,11 +483,35 @@ class RAGPipeline:
 
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
 
-
-
-
-
-
+        # --- EXCLUSIVE PANDAS BYPASS ---
+        # If the target KB is a bypassed CSV, immediately intercept and run Table Analytics
+        try:
+            from sqlalchemy import text
+            if getattr(self, "db", None):
+                kb_query = "SELECT parsed_path FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[]));"
+                result = await self.db.execute(text(kb_query), {"kb_ids": kb_ids})
+                kb_rows = result.all()
+                is_csv = False
+                for row in kb_rows:
+                    if row.parsed_path and str(row.parsed_path).lower().endswith('.csv'):
+                        is_csv = True
+                        break
+                        
+                if is_csv:
+                    logger.info(" CSV Dataset detected at start of pipeline! Intercepting query directly to Pandas Engine.")
+                    pandas_result = await self._execute_table_analytics(query, kb_ids)
+                    if pandas_result:
+                        return RAGContext(
+                            query=query,
+                            chunks=[],
+                            entity_mentions={},
+                            total_tokens=len(pandas_result.split()),
+                            triplet_context=pandas_result,
+                            search_type="TABLE_ANALYTICS"
+                        )
+        except Exception as e:
+            logger.error(f"Failed early CSV intercept check: {e}")
+        # -------------------------------
 
         # STEP 0: ROUTE QUERY TO OPTIMAL SEARCH STRATEGY (USING NEW ADAPTIVE PLANNER)
         import time
@@ -634,6 +658,7 @@ class RAGPipeline:
         # Fallback to standard router
         route_result = await self.router.route_query(query, tenant_id=str(self.tenant_id))
         search_type = route_result.intent
+        
         rewritten_data = route_result.rewritten or {}
         extracted_keywords = rewritten_data.get("keywords", [])
         if extracted_keywords:
