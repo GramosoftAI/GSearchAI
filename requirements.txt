@@ -112,7 +112,7 @@ mypy_extensions==1.1.0
 narwhals==2.18.1
 neo4j==5.14.1
 nexus-rpc==1.4.0
-numpy==2.4.4
+numpy==1.26.4
 oauthlib==3.3.1
 openai==2.33.0
 openapi-pydantic==0.5.1
@@ -148,7 +148,7 @@ pluggy==1.6.0
 prometheus_client==0.25.0
 prompt_toolkit==3.0.52
 propcache==0.4.1
-protobuf==6.33.6
+protobuf==4.25.3
 psutil==7.2.2
 psycopg2-binary==2.9.9
 py-key-value-aio==0.4.4
