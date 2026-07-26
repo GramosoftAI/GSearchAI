@@ -262,51 +262,55 @@ class RAGService:
 
         
 
-        # We'll just verify the first one exists and belongs to the agent for security
-
-        # (The pipeline will filter by these IDs anyway)
-
-        kb = await self.kb_repo.get_by_id(kb_ids[0])
-
-        if not kb:
-
-            yield json.dumps({"error": f"Knowledge Base {kb_ids[0]} not found"})
-
-            return
-
-        if str(kb.agent_id) != str(agent_id):
-
-            yield json.dumps({"error": "Unauthorized: Agent does not own this Knowledge Base"})
-
-            return
+        # 1. Validate KB ownership and separate Excel vs Document KBs
+        excel_kbs = []
+        doc_kbs = []
+        for kid in kb_ids:
+            kb = await self.kb_repo.get_by_id(kid)
+            if not kb:
+                yield json.dumps({"error": f"Knowledge Base {kid} not found"})
+                return
+            if str(kb.agent_id) != str(agent_id):
+                yield json.dumps({"error": "Unauthorized: Agent does not own this Knowledge Base"})
+                return
+            if getattr(kb, "description", "") == "excel_parquet":
+                excel_kbs.append(kb)
+            else:
+                doc_kbs.append(kb)
 
         # ============= HYBRID RAG: INTERCEPT EXCEL/PARQUET STREAM QUERIES =============
-        if getattr(kb, "description", "") == "excel_parquet":
-            dataset_name = getattr(kb, "parsed_path", None) or getattr(kb, "s3_path", None)
-            if not dataset_name:
-                yield json.dumps({"error": "Excel dataset name not found in KB parsed_path field."})
-                return
+        if excel_kbs:
             from app.core.parquet_ingester import ParquetIngester
             from app.modules.rag.pandas_engine import PandasQueryEngine
-            active_dataset_path = ParquetIngester.get_active_dataset(dataset_name)
-            if not active_dataset_path:
-                yield json.dumps({"error": f"Active parquet dataset for {dataset_name} not found."})
+            active_paths = []
+            for ekb in excel_kbs:
+                dataset_name = getattr(ekb, "parsed_path", None) or getattr(ekb, "s3_path", None)
+                if dataset_name:
+                    p = ParquetIngester.get_active_dataset(dataset_name)
+                    if p:
+                        active_paths.append(p)
+                        
+            if not active_paths and not doc_kbs:
+                yield json.dumps({"error": "Active parquet datasets for Excel Knowledge Bases not found."})
                 return
-            engine = PandasQueryEngine(active_dataset_path)
-            try:
-                result = await engine.execute_query(query)
-                yield json.dumps({
-                    "type": "metadata",
-                    "sources": [],
-                    "kb_name": getattr(kb, "name", "Excel Parquet"),
-                    "context_type": "duckdb_parquet"
-                })
-                yield str(result)
-                return
-            except Exception as e:
-                logger.error(f"PandasQueryEngine stream failed: {e}")
-                yield json.dumps({"error": str(e)})
-                return
+                
+            if active_paths:
+                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                try:
+                    result = await engine.execute_query(query)
+                    yield json.dumps({
+                        "type": "metadata",
+                        "sources": [],
+                        "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
+                        "context_type": "duckdb_parquet"
+                    })
+                    yield str(result)
+                    return
+                except Exception as e:
+                    logger.error(f"PandasQueryEngine stream failed: {e}")
+                    if not doc_kbs:
+                        yield json.dumps({"error": str(e)})
+                        return
 
             
 

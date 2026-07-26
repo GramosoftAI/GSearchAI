@@ -73,13 +73,14 @@ class PandasQueryEngine:
     Hybrid Execution Engine for 1M+ rows.
     Implements Intent Routing, Parquet querying, and strict Semantic SQL building.
     """
-    def __init__(self, data_path_or_client=None, llm_client=None):
+    def __init__(self, data_path_or_client=None, llm_client=None, all_dataset_paths: Optional[List[str]] = None):
         if isinstance(data_path_or_client, str):
             self.data_path = data_path_or_client
             self.llm_client = llm_client
         else:
             self.data_path = None
             self.llm_client = data_path_or_client
+        self.all_dataset_paths = all_dataset_paths or ([self.data_path] if self.data_path else [])
         settings = get_settings()
         
         api_key = getattr(settings, "deepinfra_api_key", "")
@@ -102,23 +103,21 @@ class PandasQueryEngine:
             
         from langchain_core.output_parsers import StrOutputParser
         # DUCKDB BINDING (CSV or PARQUET)
-        logger.info(f"Initializing DuckDB on dataset: {target_path}")
+        logger.info(f"Initializing DuckDB on dataset: {target_path} | total_paths: {len(self.all_dataset_paths)}")
         try:
             temp_db_path = os.path.join(tempfile.gettempdir(), f"duckdb_{id(self)}.db")
             engine = create_engine(f"duckdb:///{temp_db_path}")
             
             with engine.connect() as conn:
-                safe_data_path = str(target_path).replace('\\', '/')
-                conn.execute(text("DROP VIEW IF EXISTS dataset;"))
-                
-                # Intelligent Ingestion Reader
-                if safe_data_path.lower().endswith(".parquet"):
-                    reader = f"read_parquet('{safe_data_path}')"
-                else:
-                    reader = f"read_csv_auto('{safe_data_path}', sample_size=10000, nullstr='NULL')"
-                    
-                # We inject an implicit row_id to support paginated fetch_rows
-                conn.execute(text(f"CREATE VIEW dataset AS SELECT row_number() OVER () AS row_id, * FROM {reader};"))
+                paths_to_register = self.all_dataset_paths if self.all_dataset_paths else [target_path]
+                for idx, path_item in enumerate(paths_to_register):
+                    if not path_item or not os.path.exists(path_item):
+                        continue
+                    safe_path = str(path_item).replace('\\', '/')
+                    view_name = "dataset" if idx == 0 else f"dataset_{idx+1}"
+                    conn.execute(text(f"DROP VIEW IF EXISTS {view_name};"))
+                    reader = f"read_parquet('{safe_path}')" if safe_path.lower().endswith(".parquet") else f"read_csv_auto('{safe_path}', sample_size=10000, nullstr='NULL')"
+                    conn.execute(text(f"CREATE VIEW {view_name} AS SELECT row_number() OVER () AS row_id, * FROM {reader};"))
                 try:
                     conn.commit()
                 except:
