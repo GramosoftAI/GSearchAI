@@ -510,6 +510,30 @@ class RAGPipeline:
 
 
 
+        # STAGE 0.1: EARLY INTERCEPT FOR TABLE ANALYTICS (Deterministic SQL Execution)
+        table_analytics_attempted = False
+        try:
+            route_result = await self.router.route_query(query, tenant_id=str(self.tenant_id))
+            if route_result.intent == SearchType.TABLE_ANALYTICS:
+                table_analytics_attempted = True
+                logger.info("   -> Intercepting query for SQL Table Analytics engine BEFORE Adaptive Planner!")
+                table_results = await self._execute_table_analytics(query, kb_ids)
+                if table_results and "validation error" not in table_results.lower():
+                    return RAGContext(
+                        query=query,
+                        chunks=[],
+                        entity_mentions={},
+                        total_tokens=0,
+                        triplet_context=f"### Table Analytics Results\n\n{table_results}",
+                        search_type=route_result.intent.name
+                    )
+                else:
+                    logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to Adaptive Planner.")
+        except Exception as e:
+            logger.error(f"   -> SQL Table Analytics preprocessing failed: {e}. Falling back to Adaptive Planner.", exc_info=True)
+            if self.db:
+                await self.db.rollback()
+
         # STEP 0: ROUTE QUERY TO OPTIMAL SEARCH STRATEGY (USING NEW ADAPTIVE PLANNER)
         import time
         start_time = time.time()
@@ -769,26 +793,30 @@ class RAGPipeline:
 
         # STAGE 0.5: EARLY EXIT FOR TABLE ANALYTICS
         if search_type == SearchType.TABLE_ANALYTICS:
-            logger.info("   -> Intercepting query for SQL Table Analytics engine!")
-            try:
-                table_results = await self._execute_table_analytics(query, kb_ids)
-                if table_results and "validation error" not in table_results.lower():
-                    return RAGContext(
-                        query=query,
-                        chunks=[],
-                        entity_mentions={},
-                        total_tokens=0,
-                        triplet_context=f"### Table Analytics Results\n\n{table_results}",
-                        search_type=search_type.name
-                    )
-                else:
-                    logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to vector search.")
-                    search_type = SearchType.CHUNK_SEARCH
-            except Exception as e:
-                logger.error(f"   -> SQL Table Analytics failed: {e}. Falling back to vector search.", exc_info=True)
-                if self.db:
-                    await self.db.rollback()
+            if table_analytics_attempted:
+                logger.info("   -> SQL Table Analytics already attempted and failed. Forcing fallback to vector search.")
                 search_type = SearchType.CHUNK_SEARCH
+            else:
+                logger.info("   -> Intercepting query for SQL Table Analytics engine!")
+                try:
+                    table_results = await self._execute_table_analytics(query, kb_ids)
+                    if table_results and "validation error" not in table_results.lower():
+                        return RAGContext(
+                            query=query,
+                            chunks=[],
+                            entity_mentions={},
+                            total_tokens=0,
+                            triplet_context=f"### Table Analytics Results\n\n{table_results}",
+                            search_type=search_type.name
+                        )
+                    else:
+                        logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to vector search.")
+                        search_type = SearchType.CHUNK_SEARCH
+                except Exception as e:
+                    logger.error(f"   -> SQL Table Analytics failed: {e}. Falling back to vector search.", exc_info=True)
+                    if self.db:
+                        await self.db.rollback()
+                    search_type = SearchType.CHUNK_SEARCH
 
         # STAGE 0.6: HYBRID CONTEXT INJECTION (Extractive DB + Vector Search)
         extractive_context_text = ""
@@ -1973,6 +2001,8 @@ class RAGPipeline:
         import json
         import time
         import os
+        import uuid
+        from app.modules.knowledge_bases.models import AnalyticsQueryLog as TableQueryLog
         
         debug_mode = os.environ.get("DEBUG_ANALYTICS", "False").lower() == "true"
         trace_log = []
@@ -1980,13 +2010,36 @@ class RAGPipeline:
             trace_log.append(f"User Query:\n{query}\n\nIntent:\nTABLE_ANALYTICS\n")
             
         t_start = time.perf_counter()
+        ast = {}
+        query_str = "SQL Generation Failed"
+        rows_count = 0
+
+        async def log_attempt(status_rows: int = 0):
+            try:
+                log_record = TableQueryLog(
+                    tenant_id=uuid.UUID(str(self.tenant_id)),
+                    kb_id=uuid.UUID(str(kb_ids[0])) if kb_ids else None,
+                    query_text=query,
+                    intent_json=ast,
+                    generated_sql=query_str,
+                    rows_returned=status_rows,
+                    execution_time_ms=int((time.perf_counter() - t_start) * 1000)
+                )
+                self.db.add(log_record)
+                await self.db.commit()
+            except Exception as db_err:
+                logger.error(f"Failed to save AnalyticsQueryLog: {db_err}")
+                if self.db:
+                    await self.db.rollback()
         
         # 1. Fetch schema, name, and parsed_path for target KBs
-        kb_query = "SELECT id, name, dataset_schema, parsed_path, source FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[]));"
-        result = await self.db.execute(text(kb_query), {"kb_ids": kb_ids})
+        import uuid
+        kb_query = "SELECT id, name, dataset_schema, parsed_path, source FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id;"
+        result = await self.db.execute(text(kb_query), {"kb_ids": kb_ids, "tenant_id": uuid.UUID(str(self.tenant_id))})
         kb_rows = result.all()
         
         if not kb_rows:
+            await log_attempt(0)
             return None
             
         kb_names = {str(r.id): r.name for r in kb_rows}
@@ -1999,12 +2052,15 @@ class RAGPipeline:
             logger.info(" CSV File detected! Routing TABLE_ANALYTICS to PandasQueryEngine.")
             from .pandas_engine import PandasQueryEngine
             engine = PandasQueryEngine(self.llm_client)
-            return await engine.execute_query(query, str(parsed_path))
+            query_str = "PANDAS PandasQueryEngine.execute_query"
+            res = await engine.execute_query(query, str(parsed_path))
+            await log_attempt(1 if res else 0)
+            return res
 
         # (If not CSV, fallback to standard SQL generation)
         if not dataset_schema:
-            sample_query = "SELECT row_data FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) LIMIT 300;"
-            result = await self.db.execute(text(sample_query), {"kb_ids": kb_ids})
+            sample_query = "SELECT row_data FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id LIMIT 300;"
+            result = await self.db.execute(text(sample_query), {"kb_ids": kb_ids, "tenant_id": uuid.UUID(str(self.tenant_id))})
             rows = result.scalars().all()
             if rows:
                 dataset_schema = {}
@@ -2051,6 +2107,9 @@ class RAGPipeline:
                         if "%" in val_str:
                             has_percentage_symbols = True
                             val_str = val_str.replace("%", "").strip()
+
+                        # Strip common ordinal suffixes like st, nd, rd, th from numbers
+                        val_str = re.sub(r'(?<=\d)(st|nd|rd|th)\b', '', val_str, flags=re.IGNORECASE)
                             
                         if "," in val_str:
                             if "." in val_str:
@@ -2113,24 +2172,32 @@ AVAILABLE COLUMNS & TYPES:
 USER QUERY: {query}
 
 INSTRUCTIONS:
-Return ONLY valid JSON matching this schema exactly:
+Return ONLY valid JSON matching this schema:
 {{
-  "operation": "string", // MUST be one of: "COUNT", "AVG", "MAX", "MIN", "SUM", "GROUP", "SORT", "FILTER"
+  "operation": "string", // MUST be one of: "COUNT", "AVG", "MAX", "MIN", "SUM", "GROUP", "SORT", "FILTER", "ERROR"
   "target_field": "string | null", // The field to aggregate or target, or null
   "filters": [
     {{
       "field": "string", // The exact column name
-      "operator": "string", // MUST be one of: "=", "!=", ">", "<", ">=", "<=", "ILIKE", "LIKE". Use ILIKE for case-insensitive substring searches (e.g., %Action%).
-      "value": "string | number" // The value to compare. For ILIKE, wrap in % like "%Action%".
+      "operator": "string", // MUST be one of: "=", "!=", ">", "<", ">=", "<=", "ILIKE", "LIKE". Use ILIKE for case-insensitive substring/regex matches.
+      "value": "string | number" // The value to compare.
     }}
   ],
   "group_by": "string | null", // Field to group by
   "sort_by": "string | null", // Field to sort by
   "sort_dir": "string", // "ASC" or "DESC"
+  "difference_fields": ["string", "string"] | null, // Exactly two fields to compute difference/subtraction, or null
   "limit": 50 // Integer limit
 }}
 
-Return ONLY JSON, no markdown formatting.
+CRITICAL RULES:
+1. If the query asks for "Which country has the highest/lowest X" or "Which country has the maximum/minimum X", do NOT use operations "MAX", "MIN" or "AVG". Instead, use operation "SORT" with target_field=null, sort_by="X", sort_dir="DESC" (for highest/max) or "ASC" (for lowest/min), and set limit=1. This ensures the engine returns the complete row including the country name, rather than just the number.
+2. For rank queries, e.g., "Which country is ranked 5th?", use operation "FILTER" with a filter on "rank" equal to 5 (or "5th").
+3. For comparisons, e.g., "Compare the Economy (E1) scores of Somalia and Yemen", use "FILTER" with a filter on "country" matching "Somalia" and "Yemen".
+4. Always use exact column names matching the AVAILABLE COLUMNS list. Do not invent columns.
+5. If the query asks for a difference/comparison between two columns (e.g., 'greatest difference between X and Y'), do NOT use sort_by. Instead, set 'difference_fields': ['X', 'Y'], 'sort_dir': 'DESC', 'operation': 'SORT', 'limit': 1.
+6. For queries asking for the average, sum, minimum, or maximum of a subset of top/bottom ranked records (e.g., 'average of the top 5', 'sum of the bottom 10'), set 'operation' to the aggregate ("AVG", "SUM", etc.), 'target_field' to the field to aggregate, 'sort_by' to the rank or sort field (e.g. 'rank' or 'total'), 'sort_dir' to "DESC" (for top/highest) or "ASC" (for bottom/lowest), and 'limit' to the number of records (e.g., 5 or 10).
+7. If the query requires a multi-stage or nested sort/filter (e.g., 'Among the top 10, which one has the lowest X'), do not generate a JSON AST. Instead, return a JSON with "operation": "ERROR" and "target_field": "Nested operations not supported".
 """
 
         generated_ast_str = await self.llm_client.generate_cloud(
@@ -2156,6 +2223,16 @@ Return ONLY JSON, no markdown formatting.
                 else:
                     clean_json = generated_ast_str
             ast = json.loads(clean_json)
+            
+            # Reject relative queries and nested sorts
+            relative_terms = ["immediately after", "ranked after", "immediately before", "ranked before", "ranked immediately", "next to"]
+            if any(term in query.lower() for term in relative_terms):
+                await log_attempt(0)
+                return "Validation Error: Relative ranking queries cannot be resolved via static SQL filters."
+
+            if ast.get("operation") == "ERROR":
+                await log_attempt(0)
+                return f"Validation Error: {ast.get('target_field', 'Unsupported query structure')}"
         except Exception as e:
             logger.error(f" Failed to parse JSON AST: {e} - String: {generated_ast_str}")
             return None
@@ -2172,20 +2249,23 @@ Return ONLY JSON, no markdown formatting.
         
         valid_operations = {"COUNT", "AVG", "MAX", "MIN", "SUM", "GROUP", "SORT", "FILTER"}
         if operation not in valid_operations:
+            await log_attempt(0)
             return f"Validation Error: Unsupported operation '{operation}'."
             
         numeric_types = ["float", "integer", "currency", "percentage"]
         if operation in ["AVG", "MAX", "MIN", "SUM"]:
             if not target_field:
+                await log_attempt(0)
                 return f"Validation Error: Operation '{operation}' requires a target_field."
             if target_field not in dataset_schema:
+                await log_attempt(0)
                 return f"Validation Error: Field '{target_field}' does not exist in this dataset."
             if dataset_schema[target_field] not in numeric_types:
                 # Dynamically check if the values in database are actually numeric
                 try:
                     import re
-                    sample_query = "SELECT row_data->>:field as val FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) LIMIT 20;"
-                    sample_res = await self.db.execute(text(sample_query), {"kb_ids": kb_ids, "field": target_field})
+                    sample_query = "SELECT row_data->>:field as val FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id LIMIT 20;"
+                    sample_res = await self.db.execute(text(sample_query), {"kb_ids": kb_ids, "field": target_field, "tenant_id": uuid.UUID(str(self.tenant_id))})
                     sample_vals = [r.val for r in sample_res.all() if r.val is not None and str(r.val).strip() != ""]
                     if sample_vals:
                         non_empty_count = 0
@@ -2211,23 +2291,41 @@ Return ONLY JSON, no markdown formatting.
                     logger.error(f"Dynamic numeric validation check failed: {e}")
 
             if dataset_schema[target_field] not in numeric_types:
+                await log_attempt(0)
                 return f"Validation Error: {operation} cannot be applied to string field '{target_field}'"
                 
         if operation == "GROUP":
             group_by = ast.get("group_by")
             if not group_by or group_by not in dataset_schema:
+                await log_attempt(0)
                 return f"Validation Error: Unknown or missing group_by field '{group_by}'."
                 
         sort_by = ast.get("sort_by")
         if sort_by and sort_by not in dataset_schema:
+            await log_attempt(0)
             return f"Validation Error: Unknown sort_by field '{sort_by}'."
             
+        diff_fields = ast.get("difference_fields")
+        if diff_fields:
+            if not isinstance(diff_fields, list) or len(diff_fields) != 2:
+                await log_attempt(0)
+                return "Validation Error: 'difference_fields' must be an array of exactly 2 fields."
+            for f in diff_fields:
+                if f not in dataset_schema:
+                    await log_attempt(0)
+                    return f"Validation Error: Field '{f}' in 'difference_fields' does not exist in this dataset."
+                if dataset_schema[f] not in numeric_types:
+                    await log_attempt(0)
+                    return f"Validation Error: Field '{f}' in 'difference_fields' is not numeric."
+
         for f in ast.get("filters", []):
             field = f.get("field")
             if not field or field not in dataset_schema:
+                await log_attempt(0)
                 return f"Validation Error: Unknown filter field '{field}'."
             op = str(f.get("operator", "=")).upper()
             if op not in ["=", "!=", ">", "<", ">=", "<=", "ILIKE", "LIKE", "CONTAINS"]:
+                await log_attempt(0)
                 return f"Validation Error: Unsupported filter operator '{op}' for field '{field}'."
 
         t_ast_val = time.perf_counter() - t_val_start
@@ -2235,18 +2333,18 @@ Return ONLY JSON, no markdown formatting.
             trace_log.append(f"Validated AST:\n{json.dumps(ast, indent=2)}\n")
 
         # 3. Secure Backend Query Builder
+        def safe_numeric_cast(field_name):
+            return f"NULLIF(REGEXP_REPLACE(row_data->>'{field_name}', '[^0-9.-]', '', 'g'), '')::numeric"
+
         t_sql_start = time.perf_counter()
-        select_clause = "row_data, kb_id, page_number, table_index"
-        if operation == "COUNT":
-            select_clause = "COUNT(*)"
-        elif operation in ["AVG", "MAX", "MIN", "SUM"] and target_field:
-            select_clause = f"{operation}((row_data->>'{target_field}')::numeric)"
-        elif operation == "GROUP" and ast.get("group_by"):
-            group_field = ast.get("group_by")
-            select_clause = f"row_data->>'{group_field}' as group_key, COUNT(*) as count"
-            
-        where_clauses = ["kb_id = ANY(CAST(:kb_ids AS uuid[]))"]
-        params = {"kb_ids": kb_ids}
+        
+        # Determine if we need a subquery for aggregation over limited/sorted rows
+        use_subquery = False
+        if operation in ["AVG", "MAX", "MIN", "SUM"] and ast.get("limit") and (ast.get("sort_by") or ast.get("filters") or ast.get("difference_fields")):
+            use_subquery = True
+
+        where_clauses = ["kb_id = ANY(CAST(:kb_ids AS uuid[]))", "tenant_id = :tenant_id"]
+        params = {"kb_ids": kb_ids, "tenant_id": uuid.UUID(str(self.tenant_id))}
         
         # Build explainability parts
         explain_filters = []
@@ -2263,33 +2361,86 @@ Return ONLY JSON, no markdown formatting.
                     
             field_type = dataset_schema.get(field, "string")
             if field_type in numeric_types and op in [">", "<", ">=", "<=", "=", "!="]:
-                where_clauses.append(f"(row_data->>'{field}')::numeric {op} :val_{i}")
+                try:
+                    val_str = re.sub(r'[^\d.-]', '', str(val))
+                    val_cast = float(val_str)
+                    if val_cast.is_integer():
+                        val_cast = int(val_cast)
+                except ValueError:
+                    val_cast = val
+                where_clauses.append(f"{safe_numeric_cast(field)} {op} :val_{i}")
+                params[f"val_{i}"] = val_cast
+            elif field_type == "boolean":
+                safe_bool = f"CASE WHEN LOWER(row_data->>'{field}') IN ('true', 'yes', 't', '1') THEN TRUE WHEN LOWER(row_data->>'{field}') IN ('false', 'no', 'f', '0') THEN FALSE ELSE NULL END"
+                bool_val = str(val).lower().strip() in ["true", "yes", "t", "1"]
+                where_clauses.append(f"{safe_bool} = :val_{i}")
+                params[f"val_{i}"] = bool_val
             else:
                 where_clauses.append(f"row_data->>'{field}' {op} :val_{i}")
+                params[f"val_{i}"] = val
                 
-            params[f"val_{i}"] = val
             explain_filters.append(f"{field} {op} {val}")
             
         where_str = " AND ".join(where_clauses)
-        query_str = f"SELECT {select_clause} FROM document_table_rows WHERE {where_str}"
-        
-        if operation == "GROUP" and ast.get("group_by"):
-            query_str += f" GROUP BY row_data->>'{ast['group_by']}'"
+
+        if use_subquery:
+            inner_select = f"{safe_numeric_cast(target_field)} as sub_val"
+            inner_query = f"SELECT {inner_select} FROM document_table_rows WHERE {where_str}"
             
-        if ast.get("sort_by"):
-            sort_dir = "ASC" if str(ast.get("sort_dir", "DESC")).upper() == "ASC" else "DESC"
-            sort_field = ast["sort_by"]
+            if ast.get("sort_by"):
+                sort_dir = "ASC" if str(ast.get("sort_dir", "DESC")).upper() == "ASC" else "DESC"
+                sort_field = ast["sort_by"]
+                if sort_field == "rank":
+                    inner_query += f" ORDER BY NULLIF(REGEXP_REPLACE(row_data->>'rank', '[^0-9]', '', 'g'), '')::numeric {sort_dir}"
+                elif dataset_schema.get(sort_field) in numeric_types:
+                    inner_query += f" ORDER BY {safe_numeric_cast(sort_field)} {sort_dir}"
+                else:
+                    inner_query += f" ORDER BY row_data->>'{sort_field}' {sort_dir}"
+            elif ast.get("difference_fields"):
+                sort_dir = "ASC" if str(ast.get("sort_dir", "DESC")).upper() == "ASC" else "DESC"
+                diff_f = ast["difference_fields"]
+                sort_expr = f"ABS({safe_numeric_cast(diff_f[0])} - {safe_numeric_cast(diff_f[1])})"
+                inner_query += f" ORDER BY {sort_expr} {sort_dir}"
+                
+            limit = min(int(ast.get("limit", 50) or 50), 100)
+            inner_query += f" LIMIT {limit}"
             
-            if dataset_schema.get(sort_field) in numeric_types:
-                query_str += f" ORDER BY (row_data->>'{sort_field}')::numeric {sort_dir}"
-            else:
-                query_str += f" ORDER BY row_data->>'{sort_field}' {sort_dir}"
-        elif operation == "GROUP":
-            query_str += " ORDER BY count DESC"
+            query_str = f"SELECT {operation}(sub_val) as val FROM ({inner_query}) as sub"
+        else:
+            select_clause = "row_data, kb_id, page_number, table_index"
+            if operation == "COUNT":
+                select_clause = "COUNT(*)"
+            elif operation in ["AVG", "MAX", "MIN", "SUM"] and target_field:
+                select_clause = f"{operation}({safe_numeric_cast(target_field)}) as val"
+            elif operation == "GROUP" and ast.get("group_by"):
+                group_field = ast.get("group_by")
+                select_clause = f"row_data->>'{group_field}' as group_key, COUNT(*) as count"
+                
+            query_str = f"SELECT {select_clause} FROM document_table_rows WHERE {where_str}"
             
-        limit = min(int(ast.get("limit", 50) or 50), 100)
-        if operation not in ["COUNT"]:
-            query_str += f" LIMIT {limit}"
+            if operation == "GROUP" and ast.get("group_by"):
+                query_str += f" GROUP BY row_data->>'{ast['group_by']}'"
+                
+            if ast.get("sort_by"):
+                sort_dir = "ASC" if str(ast.get("sort_dir", "DESC")).upper() == "ASC" else "DESC"
+                sort_field = ast["sort_by"]
+                if sort_field == "rank":
+                    query_str += f" ORDER BY NULLIF(REGEXP_REPLACE(row_data->>'rank', '[^0-9]', '', 'g'), '')::numeric {sort_dir}"
+                elif dataset_schema.get(sort_field) in numeric_types:
+                    query_str += f" ORDER BY {safe_numeric_cast(sort_field)} {sort_dir}"
+                else:
+                    query_str += f" ORDER BY row_data->>'{sort_field}' {sort_dir}"
+            elif ast.get("difference_fields"):
+                sort_dir = "ASC" if str(ast.get("sort_dir", "DESC")).upper() == "ASC" else "DESC"
+                diff_f = ast["difference_fields"]
+                sort_expr = f"ABS({safe_numeric_cast(diff_f[0])} - {safe_numeric_cast(diff_f[1])})"
+                query_str += f" ORDER BY {sort_expr} {sort_dir}"
+            elif operation == "GROUP":
+                query_str += " ORDER BY count DESC"
+                
+            limit = min(int(ast.get("limit", 50) or 50), 100)
+            if operation not in ["COUNT", "AVG", "MAX", "MIN", "SUM"]:
+                query_str += f" LIMIT {limit}"
             
         logger.info(f" Executing Parameterized SQL: {query_str} with {params}")
         t_sql_gen = time.perf_counter() - t_sql_start
@@ -2311,6 +2462,7 @@ Return ONLY JSON, no markdown formatting.
             
             if not rows:
                 logger.warning(f"SQL execution returned no records: {query_str}")
+                await log_attempt(0)
                 return None
 
             from decimal import Decimal
@@ -2344,6 +2496,7 @@ Return ONLY JSON, no markdown formatting.
                     break
             if all_none:
                 logger.warning("SQL execution returned only None or empty values. Falling back to vector search.")
+                await log_attempt(0)
                 return None
                     
             # Group rows by (kb_id, page_number, table_index)
@@ -2429,10 +2582,12 @@ Return ONLY JSON, no markdown formatting.
             if debug_mode:
                 explanation += "\n\n---\n**Analytics Debug Trace:**\n```text\n" + "\n".join(trace_log) + "\n```"
             
+            await log_attempt(len(formatted_rows))
             return formatted + explanation
             
         except Exception as e:
             logger.error(f" SQL Execution Failed: {e}")
+            await log_attempt(0)
             if self.db:
                 await self.db.rollback()
             return None

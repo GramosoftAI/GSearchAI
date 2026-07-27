@@ -30,6 +30,7 @@ class SearchType(Enum):
     DATA_ANALYSIS = "DATA_ANALYSIS"         # Analysis of data/numbers
     SUMMARIZATION = "SUMMARIZATION"         # Requesting summaries
     EXTRACTIVE = "EXTRACTIVE"               # Exact value extraction (e.g., GSTIN, PAN)
+    TABLE_ANALYTICS = "TABLE_ANALYTICS"     # Structured table query analytics
 
 class RouteResult:
     def __init__(
@@ -173,6 +174,34 @@ class QueryRouter:
             mock_res = self.benchmark_mocks[query_lower]
             mock_res.latency_ms = (time.perf_counter() - start_time) * 1000
             return mock_res
+
+        # STAGE 1.5: DETERMINISTIC TABLE ANALYTICS ROUTING (Hard-coded aggregation/analytics detection)
+        analytics_keywords = [
+            r'\baverage\b', r'\bmean\b', r'\bmax(imum)?\b', r'\bmin(imum)?\b', 
+            r'\bhighest\b', r'\blowest\b', r'\bhigher\b', r'\blower\b', r'\bgreatest\b',
+            r'\bcount\b', r'\bhow\s+many\b', r'\bsum\b', r'\bcalculate\b', r'\bcompare\b',
+            r'\bdifference(s)?\b', r'\btop\b', r'\bbottom\b', r'\bfirst\b', r'\blast\b',
+            r'\brank(ed)?\b', r'\babove\b', r'\bbelow\b', r'\bgreater\s+than\b', r'\bless\s+than\b'
+        ]
+        analytics_pattern = re.compile('|'.join(analytics_keywords), re.IGNORECASE)
+        if analytics_pattern.search(query_strip):
+            logger.info("Router Stage 1.5: Hard-coded Aggregation/Analytics Query Match -> TABLE_ANALYTICS")
+            res = RouteResult(
+                intent=SearchType.TABLE_ANALYTICS,
+                confidence=1.0,
+                reason="Hard-coded aggregation/analytics regex match",
+                rewritten={
+                    "keywords": query_strip.split(),
+                    "entities": [],
+                    "date_filter": "",
+                    "intent": "TABLE_ANALYTICS",
+                    "rewritten_query": query_strip
+                },
+                latency_ms=(time.perf_counter() - start_time) * 1000,
+                source="hardcoded_analytics"
+            )
+            self.cache.set(query_lower, res)
+            return res
 
         # STAGE 2: BUSINESS OBJECTS (Zero-Latency Early Exit)
         if self.business_object_pattern:

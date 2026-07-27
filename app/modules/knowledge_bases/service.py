@@ -1105,19 +1105,19 @@ class KnowledgeBaseService:
                 triplet_stats = {"triplets_extracted": persist_result.get("triplets_created", 0), "triplet_entities": persist_result.get("entities_created", 0), "triplet_relationships": persist_result.get("relationships_created", 0)}
 
             # 8.5 GRAPH CLEANUP (NEW) - Run Asynchronously
-            async def run_cleanup_async(tenant_id_str: str):
+            async def run_cleanup_async(tenant_id_str: str, kb_id_str: str):
                 try:
-                    logger.info(f"Background graph cleanup started for tenant {tenant_id_str}...")
+                    logger.info(f"Background graph cleanup started for tenant {tenant_id_str} and KB {kb_id_str}...")
                     from ...core.graph_cleanup import GraphCleanupService
-                    cleanup_service = GraphCleanupService(tenant_id=tenant_id_str)
+                    cleanup_service = GraphCleanupService(tenant_id=tenant_id_str, kb_id=kb_id_str)
                     stats = await cleanup_service.cleanup_graph()
-                    logger.info(f"Background graph cleanup completed for tenant {tenant_id_str}: {stats}")
+                    logger.info(f"Background graph cleanup completed for tenant {tenant_id_str} and KB {kb_id_str}: {stats}")
                 except Exception as cleanup_err:
-                    logger.error(f"Background graph cleanup failed for tenant {tenant_id_str}: {cleanup_err}", exc_info=True)
+                    logger.error(f"Background graph cleanup failed for tenant {tenant_id_str} and KB {kb_id_str}: {cleanup_err}", exc_info=True)
 
             cleanup_stats = {"total_merges": 0, "relationships_deduplicated": 0}
             # Start cleanup task in background, avoiding blocking the main ingestion pipeline completion
-            asyncio.create_task(run_cleanup_async(str(self.tenant_id)))
+            asyncio.create_task(run_cleanup_async(str(self.tenant_id), str(kb_id)))
 
             # 9. FINAL UPDATE
 
@@ -1317,17 +1317,17 @@ class KnowledgeBaseService:
             await self.db.commit()
 
             # Trigger graph cleanup asynchronously in the background
-            async def run_cleanup_async(tenant_id_str: str):
+            async def run_cleanup_async(tenant_id_str: str, kb_id_str: str):
                 try:
-                    logger.info(f"Background graph cleanup started for tenant {tenant_id_str}...")
+                    logger.info(f"Background graph cleanup started for tenant {tenant_id_str} and KB {kb_id_str}...")
                     from ...core.graph_cleanup import GraphCleanupService
-                    cleanup_service = GraphCleanupService(tenant_id=tenant_id_str)
+                    cleanup_service = GraphCleanupService(tenant_id=tenant_id_str, kb_id=kb_id_str)
                     stats = await cleanup_service.cleanup_graph()
-                    logger.info(f"Background graph cleanup completed for tenant {tenant_id_str}: {stats}")
+                    logger.info(f"Background graph cleanup completed for tenant {tenant_id_str} and KB {kb_id_str}: {stats}")
                 except Exception as cleanup_err:
-                    logger.error(f"Background graph cleanup failed for tenant {tenant_id_str}: {cleanup_err}", exc_info=True)
+                    logger.error(f"Background graph cleanup failed for tenant {tenant_id_str} and KB {kb_id_str}: {cleanup_err}", exc_info=True)
 
-            asyncio.create_task(run_cleanup_async(str(self.tenant_id)))
+            asyncio.create_task(run_cleanup_async(str(self.tenant_id), str(kb_id)))
 
             return format_success(
                 result["data"],
