@@ -96,6 +96,25 @@ class PandasQueryEngine:
             extra_body={"enable_thinking": False}
         )
 
+    def get_schema_columns(self, data_path: Optional[str] = None) -> List[str]:
+        """Fast helper to retrieve columns of the active dataset for schema-aware intent routing."""
+        target_path = data_path or getattr(self, "data_path", None)
+        if not target_path or not os.path.exists(target_path):
+            return []
+        try:
+            temp_db_path = os.path.join(tempfile.gettempdir(), f"duckdb_{id(self)}.db")
+            engine = create_engine(f"duckdb:///{temp_db_path}")
+            with engine.connect() as conn:
+                safe_path = str(target_path).replace('\\', '/')
+                conn.execute(text("DROP VIEW IF EXISTS dataset;"))
+                reader = f"read_parquet('{safe_path}')" if safe_path.lower().endswith(".parquet") else f"read_csv_auto('{safe_path}', sample_size=1000, nullstr='NULL')"
+                conn.execute(text(f"CREATE VIEW dataset AS SELECT * FROM {reader};"))
+                result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dataset';"))
+                return [row[0] for row in result.fetchall()]
+        except Exception as e:
+            logger.warning(f"Failed fetching schema columns for routing: {e}")
+            return []
+
     async def execute_query(self, query: str, data_path: Optional[str] = None) -> Optional[str]:
         target_path = data_path or getattr(self, "data_path", None)
         if not target_path or not os.path.exists(target_path):

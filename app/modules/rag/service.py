@@ -278,7 +278,8 @@ class RAGService:
             else:
                 doc_kbs.append(kb)
 
-        # ============= HYBRID RAG: INTERCEPT EXCEL/PARQUET STREAM QUERIES =============
+        # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
+        hybrid_merge_context = ""
         if excel_kbs:
             from app.core.parquet_ingester import ParquetIngester
             from app.modules.rag.pandas_engine import PandasQueryEngine
@@ -296,29 +297,34 @@ class RAGService:
                 
             if active_paths:
                 engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
-                # 1. Intelligent Hybrid Routing if BOTH Excel and Document KBs exist
+                # 1. Schema-Aware Enterprise Hybrid Routing (TABULAR_SQL vs VECTOR_DOCS vs HYBRID_MERGE)
                 route_to_excel = True
                 if doc_kbs:
                     try:
-                        from langchain_core.prompts import ChatPromptTemplate
-                        from langchain_core.output_parsers import StrOutputParser
-                        router_prompt = ChatPromptTemplate.from_messages([
-                            ("system",
-                             "You are an intelligent supervisor router for an AI agent with two knowledge bases:\n"
-                             "1. EXCEL/TABLE: Numerical data, spreadsheets, counts, calculations, lists, rows, or tabular columns.\n"
-                             "2. PDF/DOCUMENT: Unstructured document text, manuals, policies, legal clauses, or prose.\n"
-                             "Analyze the user question. Return ONLY the word 'EXCEL' if the question should be answered from tabular spreadsheet data, or ONLY the word 'PDF' if the question should be answered from unstructured PDF/document text."),
-                            ("user", "{question}")
-                        ])
-                        router_chain = router_prompt | engine.llm | StrOutputParser()
-                        intent = (await router_chain.ainvoke({"question": query})).strip().upper()
-                        logger.info(f"[Hybrid RAG Router] Query '{query}' classified as: {intent}")
-                        if "PDF" in intent and "EXCEL" not in intent:
+                        from app.modules.rag.hybrid_router import EnterpriseHybridRouter
+                        cols_list = engine.get_schema_columns()
+                        decision = await EnterpriseHybridRouter.classify(
+                            query=query,
+                            columns=cols_list,
+                            doc_kbs_count=len(doc_kbs),
+                            llm=engine.llm
+                        )
+                        logger.info(f"[EnterpriseHybridRouter] Engine={decision.target_engine} | Conf={decision.confidence:.2f} | Cols={decision.matched_columns} | Reason={decision.reasoning}")
+                        if decision.target_engine == "VECTOR_DOCS":
                             route_to_excel = False
+                        elif decision.target_engine == "HYBRID_MERGE":
+                            logger.info("[EnterpriseHybridRouter] Executing HYBRID_MERGE: Gathering tabular SQL context to enrich Document RAG...")
+                            try:
+                                sql_res = await engine.execute_query(query)
+                                if sql_res and not any(sig in str(sql_res).lower() for sig in ["not present in dataset", "no records matched", "error"]):
+                                    hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                            except Exception as merge_err:
+                                logger.warning(f"[EnterpriseHybridRouter] HYBRID_MERGE tabular step error: {merge_err}")
+                            route_to_excel = False  # Continue into doc_kbs vector retrieval with hybrid_merge_context injected!
                     except Exception as router_err:
-                        logger.warning(f"[Hybrid RAG Router] Router classification failed ({router_err}), defaulting to Excel check.")
+                        logger.warning(f"[EnterpriseHybridRouter] Enterprise router failed ({router_err}), defaulting to Excel check.")
                 
-                # 2. Execute Excel Engine if routed to Excel
+                # 2. Execute Excel Engine if routed strictly to TABULAR_SQL
                 if route_to_excel:
                     try:
                         result = await engine.execute_query(query)
@@ -326,7 +332,7 @@ class RAGService:
                         # Smart Fallback: If Excel dataset lacked answer and PDF KBs exist, fall through to PDFs!
                         unmatched_signals = ["Not present in dataset", "No records matched", "not present in dataset"]
                         if doc_kbs and any(sig.lower() in result_str.lower() for sig in unmatched_signals):
-                            logger.info(f"[Hybrid RAG Router] Excel dataset lacked answer ({result_str}). Falling back to PDF knowledge bases...")
+                            logger.info(f"[EnterpriseHybridRouter] Excel dataset lacked answer ({result_str}). Falling back to PDF knowledge bases...")
                         else:
                             yield json.dumps({
                                 "type": "metadata",
@@ -341,7 +347,7 @@ class RAGService:
                         if not doc_kbs:
                             yield json.dumps({"error": str(e)})
                             return
-                        logger.info("[Hybrid RAG Router] Excel execution failed, falling through to PDF knowledge bases...")
+                        logger.info("[EnterpriseHybridRouter] Excel execution failed, falling through to PDF knowledge bases...")
 
             
 
@@ -420,6 +426,8 @@ Personality Definition:
 
 Base Instruction:
 {base_prompt}
+
+{hybrid_merge_context}
 
 You are an enterprise AI assistant.
 
