@@ -120,14 +120,14 @@ class PandasQueryEngine:
         try:
             synth_prompt = ChatPromptTemplate.from_messages([
                 ("system",
-                 "You are an Executive Data Analyst. Given a user's question and the SQL result table from an enterprise spreadsheet dataset, write a clear, direct, professional executive answer.\n"
+                 "You are an Executive Data Analyst. Given a user's question and the retrieved database result from an enterprise spreadsheet dataset, write a clear, fluent, natural-language executive answer.\n"
                  "CRITICAL RULES:\n"
-                 "1. Answer the user's specific comparative or analytical question DIRECTLY in the very first sentence (e.g. explicitly state WHO is the senior employee, WHO has the better/higher salary, what the exact dates/figures are, and why).\n"
-                 "2. FOR SENIORITY / TENURE QUESTIONS: Remember that an employee who joined EARLIER in time (earliest year/date, e.g. 2018 vs 2021) or has MORE years of experience is MORE SENIOR.\n"
-                 "3. Use bolding formatting for key names, figures, dates, and comparisons.\n"
-                 "4. Include the formatted Markdown table below your explanation as supporting evidence.\n"
-                 "5. Be 100% factual and grounded strictly in the provided table numbers/dates."),
-                ("user", "User Question: {question}\n\nSQL Explanation: {explanation}\n\nSQL Result Table:\n{table}")
+                 "1. Answer ONLY using the retrieved data. Do not invent or assume information.\n"
+                 "2. Answer the user's specific question DIRECTLY in the very first sentence.\n"
+                 "3. FOR SENIORITY / TENURE QUESTIONS: Remember that an employee who joined EARLIER in time (earliest year/date, e.g. 2018 vs 2021) or has MORE years of experience is MORE SENIOR.\n"
+                 "4. Respond naturally, concisely, and use bolding formatting for key names, figures, dates, and comparisons.\n"
+                 "5. Include the formatted Markdown table below your explanation as supporting evidence."),
+                ("user", "User Question: {question}\n\nSQL Explanation: {explanation}\n\nRetrieved Database Result Table:\n{table}")
             ])
             from langchain_core.output_parsers import StrOutputParser
             synth_chain = synth_prompt | self.llm | StrOutputParser()
@@ -314,18 +314,10 @@ class PandasQueryEngine:
                     row_str = " | ".join(str(item) if item is not None else "NULL" for item in r)
                     formatted += f"| {row_str} |\n"
                     
-            analytical_keywords = [
-                "who", "compare", "better", "higher", "lower", "difference", "highest", "lowest",
-                "vs", "between", "which", "why", "explain", "summarize", "top", "bottom", "rank",
-                "more", "less", "greater", "best", "worst", "salary", "amount", "earn", "paid",
-                "senior", "snior", "junior", "old", "older", "young", "younger", "tenure",
-                "experience", "join", "joined", "hire", "hired", "earlier", "earliest", "latest",
-                "first", "last", "among", "both"
-            ]
-            is_analytical = any(kw in query.lower() for kw in analytical_keywords) or (len(rows) > 1 and len(rows) <= 30)
-            
-            if is_analytical:
-                logger.info(f"[PandasQueryEngine] Analytical/Comparative query detected ('{query}'). Generating executive synthesis...")
+            # 6. UNIVERSAL NATURAL-LANGUAGE SYNTHESIS (Zero Keyword Trigger Architecture)
+            # The database engine answers WHAT the data is; the LLM answers HOW to communicate it in natural language.
+            if len(rows) <= 50:
+                logger.info(f"[PandasQueryEngine] Executing universal natural-language synthesis for query: '{query}'...")
                 return await self._synthesize_analytical_response(query, formatted, query_plan.explanation)
 
             return formatted
