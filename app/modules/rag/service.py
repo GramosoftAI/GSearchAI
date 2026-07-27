@@ -256,23 +256,55 @@ class RAGService:
 
         
 
-        # We'll just verify the first one exists and belongs to the agent for security
+        # 1. Validate KB ownership and separate Excel vs Document KBs
+        excel_kbs = []
+        doc_kbs = []
+        for kid in kb_ids:
+            kb = await self.kb_repo.get_by_id(kid)
+            if not kb:
+                yield json.dumps({"error": f"Knowledge Base {kid} not found"})
+                return
+            if str(kb.agent_id) != str(agent_id):
+                yield json.dumps({"error": "Unauthorized: Agent does not own this Knowledge Base"})
+                return
+            if getattr(kb, "description", "") == "excel_parquet":
+                excel_kbs.append(kb)
+            else:
+                doc_kbs.append(kb)
 
-        # (The pipeline will filter by these IDs anyway)
-
-        kb = await self.kb_repo.get_by_id(kb_ids[0])
-
-        if not kb:
-
-            yield json.dumps({"error": f"Knowledge Base {kb_ids[0]} not found"})
-
-            return
-
-        if str(kb.agent_id) != str(agent_id):
-
-            yield json.dumps({"error": "Unauthorized: Agent does not own this Knowledge Base"})
-
-            return
+        # ============= HYBRID RAG: INTERCEPT EXCEL/PARQUET STREAM QUERIES =============
+        if excel_kbs:
+            from app.core.parquet_ingester import ParquetIngester
+            from app.modules.rag.pandas_engine import PandasQueryEngine
+            active_paths = []
+            for ekb in excel_kbs:
+                dataset_name = getattr(ekb, "parsed_path", None) or getattr(ekb, "s3_path", None)
+                if dataset_name:
+                    p = ParquetIngester.get_active_dataset(dataset_name)
+                    if p:
+                        active_paths.append(p)
+                        
+            if not active_paths and not doc_kbs:
+                yield json.dumps({"error": "Active parquet datasets for Excel Knowledge Bases not found."})
+                return
+                
+            if active_paths:
+                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                try:
+                    result = await engine.execute_query(query)
+                    yield json.dumps({
+                        "type": "metadata",
+                        "sources": [],
+                        "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
+                        "context_type": "duckdb_parquet"
+                    })
+                    yield str(result)
+                    return
+                except Exception as e:
+                    logger.error(f"PandasQueryEngine stream failed: {e}")
+                    if not doc_kbs:
+                        yield json.dumps({"error": str(e)})
+                        return
 
             
 
@@ -888,13 +920,39 @@ If you'd like, I can also:
 
             return {
 
-                "error": "Unauthorized: Agent does not own this Knowledge Base",
+                "error": f"Agent {agent_id} does not own Knowledge Base {kb_ids[0]}",
 
                 "answer": None,
 
                 "sources": [],
 
             }
+            
+        # ============= HYBRID RAG: INTERCEPT EXCEL/PARQUET QUERIES =============
+        if getattr(kb, "description", "") == "excel_parquet":
+            dataset_name = getattr(kb, "parsed_path", None) or getattr(kb, "s3_path", None)
+            if not dataset_name:
+                return {"error": "Excel dataset name not found in KB parsed_path field.", "answer": None, "sources": []}
+                
+            from app.core.parquet_ingester import ParquetIngester
+            from app.modules.rag.pandas_engine import PandasQueryEngine
+            
+            active_dataset_path = ParquetIngester.get_active_dataset(dataset_name)
+            if not active_dataset_path:
+                return {"error": f"Active parquet dataset for {dataset_name} not found.", "answer": None, "sources": []}
+                
+            engine = PandasQueryEngine(active_dataset_path)
+            try:
+                result = await engine.execute_query(query)
+                return {
+                    "answer": result,
+                    "sources": [],
+                    "context": {"type": "duckdb_parquet"},
+                    "stats": {}
+                }
+            except Exception as e:
+                logger.error(f"PandasQueryEngine failed: {e}")
+                return {"error": str(e), "answer": None, "sources": []}
 
 
 

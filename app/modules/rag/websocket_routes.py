@@ -478,7 +478,7 @@ async def rag_websocket(
 
             try:
 
-                await websocket.send_text(json.dumps({"error": "Session interrupted"}))
+                await websocket.send_text(json.dumps({"error": f"Session interrupted: {str(e)}"}))
 
             except:
 

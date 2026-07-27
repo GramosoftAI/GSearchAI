@@ -62,12 +62,10 @@ class ScraperService:
             logger.error("GCRAWL_API_KEY is missing in configuration.")
             raise ValueError("GCRAWL_API_KEY not configured")
 
-        is_all = (crawl_type == "all")
-
         payload = {
             "url": url,
             "crawl": {
-                "max_pages": "auto" if is_all else 1,
+                "max_pages": "auto",
                 "same_domain_only": True,
                 "include_subdomains": False
             },

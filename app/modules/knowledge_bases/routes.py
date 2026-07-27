@@ -862,50 +862,35 @@ async def ingest_file(
 
 
         elif filename.endswith((".xlsx", ".xls", ".csv")):
-
-
-
-            # Ingest structured Excel or CSV
-
-            async with AsyncSessionLocal() as db:
-
-                service = KnowledgeBaseService(db, tenant_id)
-                await service.clear_kb_contents(kb_id)
-                s3_url = s3_service.get_s3_url(str(tenant_id), file.filename)
-
-                result = await service.ingest_excel_or_csv(
-
-                    kb_id=kb_id,
-
-                    file_bytes=content,
-
-                    filename=file.filename,
-
-                    s3_path=s3_url,
-
-                )
-
-
-
-
-                if not result.get("success"):
-
-                    error_msg = result.get("error", "Unknown error")
-
-                    status_code = result.get("status_code", 400)
-
-                    raise HTTPException(status_code=status_code, detail=error_msg)
-
-                # Set file_hash on the KnowledgeBase
-                from sqlalchemy import update
-                await db.execute(
-                    update(KnowledgeBase)
-                    .where(KnowledgeBase.id == uuid.UUID(kb_id))
-                    .values(file_hash=file_hash)
-                )
-                await db.commit()
-
-                return result
+            import tempfile
+            import os
+            from app.core.parquet_ingester import ParquetIngester
+            
+            # Write bytes to temp file so ParquetIngester can read it
+            temp_fd, temp_path = tempfile.mkstemp(suffix=os.path.splitext(filename)[1])
+            try:
+                with os.fdopen(temp_fd, 'wb') as f:
+                    f.write(content)
+                    
+                dataset_name = os.path.splitext(filename)[0]
+                ParquetIngester.ingest_to_parquet(temp_path, dataset_name=dataset_name)
+                
+                async with AsyncSessionLocal() as db:
+                    from sqlalchemy import update
+                    await db.execute(
+                        update(KnowledgeBase)
+                        .where(KnowledgeBase.id == uuid.UUID(kb_id))
+                        # Save dataset_name to parsed_path so query engine can retrieve active file
+                        # Save description to "excel_parquet" to route queries
+                        .values(file_hash=file_hash, parsed_path=dataset_name, description="excel_parquet")
+                    )
+                    await db.commit()
+                    
+                return {"success": True, "message": "Successfully ingested into memory-safe Parquet pipeline."}
+                
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
 
         else:
 

@@ -382,24 +382,52 @@ async def run_excel_ingestion_job(
             kb_id = str(kb_result["data"]["kb"].id)
             await job_service.update_job_progress(job_id, status="processing", progress=20, current_step="Knowledge Base Created", kb_id=kb_id)
             
-            # Step 2: Run ESDIP Service
-            logger.info(f"Job {job_id}: Invoking ExcelIngestionService for KB {kb_id}")
-            await job_service.update_job_progress(job_id, status="processing", progress=50, current_step="Running ESDIP Inference")
+            # Step 2: Run Parquet Ingestion (Hybrid Architecture)
+            import tempfile
+            import os
+            from app.core.parquet_ingester import ParquetIngester
+            from sqlalchemy import update
+
+            await job_service.update_job_progress(job_id, status="processing", progress=40, current_step="Streaming to Parquet via Polars")
             
-            ingestion_service = ExcelIngestionService(db, tenant_id)
-            
-            result = await ingestion_service.ingest_file(
-                kb_id=kb_id,
-                file_bytes=content,
-                filename=filename,
-                mime_type=None,
-                source=s3_url
+            temp_fd, temp_path = tempfile.mkstemp(suffix=os.path.splitext(filename)[1])
+            try:
+                with os.fdopen(temp_fd, 'wb') as f:
+                    f.write(content)
+                dataset_name = os.path.splitext(filename)[0]
+                ParquetIngester.ingest_to_parquet(temp_path, dataset_name=dataset_name)
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+
+            await db.execute(
+                update(KnowledgeBase)
+                .where(KnowledgeBase.id == uuid.UUID(kb_id))
+                .values(parsed_path=dataset_name, description="excel_parquet")
             )
             
-            if not result.get("success"):
-                await job_service.update_job_progress(job_id, status="failed", progress=80, current_step="ESDIP Failure", error_message=result.get("error", "Unknown ingestion error"))
-                return
-                
+            # Update Neo4j KB if needed
+            neo_bypass_q = """
+            MATCH (kb:KnowledgeBase {id: $kb_id, tenant_id: $tenant_id})
+            SET kb.parsed_path = $dataset_name, kb.description = 'excel_parquet', kb.document_category = 'dataset'
+            """
+            try:
+                from app.core.database import Neo4jRepository
+                neo4j_repo = Neo4jRepository()
+                from app.core.utils import retry_neo4j_operation
+                await retry_neo4j_operation(
+                    lambda: neo4j_repo.execute_write(
+                        neo_bypass_q,
+                        {
+                            "kb_id": kb_id,
+                            "tenant_id": str(tenant_id),
+                            "dataset_name": dataset_name
+                        }
+                    )
+                )
+            except Exception as neo_err:
+                logger.warning(f"Failed to update Neo4j KB description for parquet: {neo_err}")
+
             await db.commit()
                 
             # Trigger graph cleanup asynchronously in the background
@@ -415,9 +443,8 @@ async def run_excel_ingestion_job(
 
             asyncio.create_task(run_cleanup_async(str(tenant_id), kb_id))
 
-            # Success!
             await job_service.update_job_progress(job_id, status="completed", progress=100, current_step="Complete")
-            logger.info(f"Job {job_id}: ESDIP successfully completed!")
+            logger.info(f"Job {job_id}: Parquet hybrid ingestion successfully completed!")
 
     except Exception as e:
         logger.error(f"Job {job_id}: Unexpected error in Excel job: {e}", exc_info=True)
