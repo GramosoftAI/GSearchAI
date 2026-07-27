@@ -133,18 +133,19 @@ class PandasQueryEngine:
                  "Available columns in 'dataset':\n{columns}\n\n"
                  "CRITICAL RULES FOR DUCKDB SQL:\n"
                  "1. Table name MUST ALWAYS be 'dataset'.\n"
-                 "2. When performing mathematical calculations (SUM, AVG, arithmetic) on string/varchar columns, ALWAYS wrap the column in TRY_CAST(col AS DOUBLE), e.g., SUM(TRY_CAST(exchange_rate AS DOUBLE)), AVG(TRY_CAST(exchange_rate AS DOUBLE)), to prevent type conversion issues.\n"
-                 "3. For counting total records, use SELECT COUNT(*) AS total_records FROM dataset;\n"
-                 "4. For most frequent items, use GROUP BY col ORDER BY COUNT(*) DESC LIMIT N;\n"
-                 "5. For boolean columns (like mb_part), NEVER use '= TRUE' or '= FALSE' directly. ALWAYS compare as uppercase string: UPPER(TRY_CAST(col AS VARCHAR)) = 'TRUE' or UPPER(TRY_CAST(col AS VARCHAR)) = 'FALSE' because boolean columns may contain string 'NULL' values.\n"
-                 "6. For time differences or durations between two timestamps, NEVER use SQLite julianday(). ALWAYS use DuckDB date_diff('day', TRY_CAST(col1 AS TIMESTAMP), TRY_CAST(col2 AS TIMESTAMP)) or (epoch(TRY_CAST(col2 AS TIMESTAMP)) - epoch(TRY_CAST(col1 AS TIMESTAMP))) / 86400.0.\n"
-                 "7. For date comparisons or min/max, handle strings appropriately.\n"
-                 "8. Include descriptive column aliases (e.g. AS average_rate, AS total_count).\n"
-                 "9. NEVER use INSERT, UPDATE, DELETE, DROP, or ALTER. ONLY read-only SELECT queries.\n"
-                 "10. Output ONLY valid JSON matching the schema with 'sql' and 'explanation'.\n"
-                 "11. In your 'explanation' string, NEVER use the words 'error', 'errors', 'exception', or 'fail' (use 'issues' or 'problems' instead).\n"
-                 "12. For extracting YEAR, MONTH, or date parts from timestamp columns, ALWAYS cast to timestamp first: EXTRACT(YEAR FROM TRY_CAST(col AS TIMESTAMP)).\n"
-                 "13. If the user asks for information or columns that DO NOT EXIST in the schema (e.g. wholesale price, CEO, warehouse, email, warranty), generate: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset.\n"
+                 "2. COLUMN NAMES WITH SPACES OR SYMBOLS: You MUST ALWAYS wrap column names containing spaces, punctuation, or special characters in DOUBLE QUOTES (e.g., \"Customer ID\", \"Customer Name\", \"Total Amount\"). NEVER write unquoted multi-word column names like Customer ID.\n"
+                 "3. When performing mathematical calculations (SUM, AVG, arithmetic) on string/varchar columns, ALWAYS wrap the column in TRY_CAST(\"col\" AS DOUBLE), e.g., SUM(TRY_CAST(\"exchange_rate\" AS DOUBLE)), AVG(TRY_CAST(\"exchange_rate\" AS DOUBLE)), to prevent type conversion issues.\n"
+                 "4. For counting total records, use SELECT COUNT(*) AS total_records FROM dataset;\n"
+                 "5. For most frequent items or duplicate checks, use GROUP BY \"col\" ORDER BY COUNT(*) DESC LIMIT N (always quote column names if they contain spaces);\n"
+                 "6. For boolean columns (like mb_part), NEVER use '= TRUE' or '= FALSE' directly. ALWAYS compare as uppercase string: UPPER(TRY_CAST(\"col\" AS VARCHAR)) = 'TRUE' or UPPER(TRY_CAST(\"col\" AS VARCHAR)) = 'FALSE' because boolean columns may contain string 'NULL' values.\n"
+                 "7. For time differences or durations between two timestamps, NEVER use SQLite julianday(). ALWAYS use DuckDB date_diff('day', TRY_CAST(\"col1\" AS TIMESTAMP), TRY_CAST(\"col2\" AS TIMESTAMP)) or (epoch(TRY_CAST(\"col2\" AS TIMESTAMP)) - epoch(TRY_CAST(\"col1\" AS TIMESTAMP))) / 86400.0.\n"
+                 "8. For date comparisons or min/max, handle strings appropriately.\n"
+                 "9. Include descriptive column aliases (e.g. AS average_rate, AS total_count).\n"
+                 "10. NEVER use INSERT, UPDATE, DELETE, DROP, or ALTER. ONLY read-only SELECT queries.\n"
+                 "11. Output ONLY valid JSON matching the schema with 'sql' and 'explanation'.\n"
+                 "12. In your 'explanation' string, NEVER use the words 'error', 'errors', 'exception', or 'fail' (use 'issues' or 'problems' instead).\n"
+                 "13. For extracting YEAR, MONTH, or date parts from timestamp columns, ALWAYS cast to timestamp first: EXTRACT(YEAR FROM TRY_CAST(\"col\" AS TIMESTAMP)).\n"
+                 "14. If the user asks for information or columns that DO NOT EXIST in the schema (e.g. wholesale price, CEO, warehouse, email, warranty), generate: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset.\n"
                  "IMPORTANT: DO NOT generate any <think> tags or internal reasoning steps. Output ONLY valid JSON immediately without any thinking."),
                 ("user", "{question}")
             ])
@@ -153,7 +154,7 @@ class PandasQueryEngine:
             chain = prompt | self.llm | StrOutputParser() | parse_json_from_thinking
             
             query_plan_dict = await chain.ainvoke({
-                "columns": ", ".join(columns), 
+                "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns), 
                 "question": query
             })
             query_plan = DuckDBSemanticQuery(**query_plan_dict)
