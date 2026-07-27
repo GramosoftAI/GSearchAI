@@ -115,6 +115,31 @@ class PandasQueryEngine:
             logger.warning(f"Failed fetching schema columns for routing: {e}")
             return []
 
+    async def _synthesize_analytical_response(self, question: str, table_md: str, explanation: str) -> str:
+        """Synthesizes an executive natural-language answer from SQL table results for comparative or analytical queries."""
+        try:
+            synth_prompt = ChatPromptTemplate.from_messages([
+                ("system",
+                 "You are an Executive Data Analyst. Given a user's question and the SQL result table from an enterprise spreadsheet dataset, write a clear, direct, professional executive answer.\n"
+                 "CRITICAL RULES:\n"
+                 "1. Answer the user's specific comparative or analytical question DIRECTLY in the very first sentence (e.g. explicitly state WHO has the better/higher salary, what the exact figures are, and what the difference is).\n"
+                 "2. Use bolding formatting for key names, figures, and comparisons.\n"
+                 "3. Include the formatted Markdown table below your explanation as supporting evidence.\n"
+                 "4. Be 100% factual and grounded strictly in the provided table numbers."),
+                ("user", "User Question: {question}\n\nSQL Explanation: {explanation}\n\nSQL Result Table:\n{table}")
+            ])
+            from langchain_core.output_parsers import StrOutputParser
+            synth_chain = synth_prompt | self.llm | StrOutputParser()
+            synthesis = await synth_chain.ainvoke({
+                "question": question,
+                "explanation": explanation,
+                "table": table_md
+            })
+            return synthesis.strip()
+        except Exception as e:
+            logger.warning(f"Analytical synthesis failed ({e}), returning formatted table.")
+            return table_md
+
     async def execute_query(self, query: str, data_path: Optional[str] = None) -> Optional[str]:
         target_path = data_path or getattr(self, "data_path", None)
         if not target_path or not os.path.exists(target_path):
@@ -165,6 +190,8 @@ class PandasQueryEngine:
                  "12. In your 'explanation' string, NEVER use the words 'error', 'errors', 'exception', or 'fail' (use 'issues' or 'problems' instead).\n"
                  "13. For extracting YEAR, MONTH, or date parts from timestamp columns, ALWAYS cast to timestamp first: EXTRACT(YEAR FROM TRY_CAST(\"col\" AS TIMESTAMP)).\n"
                  "14. If the user asks for information or columns that DO NOT EXIST in the schema (e.g. wholesale price, CEO, warehouse, email, warranty), generate: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset.\n"
+                 "15. STRING FILTERING & ENTITY MATCHING: When filtering string columns (e.g. employee names, departments, products in WHERE clauses), NEVER use exact '=' or 'IN (...)'. ALWAYS use case-insensitive matching with ILIKE or LOWER(str) LIKE '%val%' (e.g., WHERE LOWER(\"Employee Name\") LIKE '%john%' OR LOWER(\"Employee Name\") LIKE '%jane%') so that minor spacing or case differences do not cause zero results.\n"
+                 "16. COMPARATIVE & SUPERLATIVE QUERIES: When the user asks to compare two or more entities (e.g. 'who has higher salary', 'compare X and Y', 'who is better', 'who earns more', 'which has better'), select the relevant columns for ALL compared entities AND ORDER BY the comparison metric DESC so the highest/best entity appears at the top of the result.\n"
                  "IMPORTANT: DO NOT generate any <think> tags or internal reasoning steps. Output ONLY valid JSON immediately without any thinking."),
                 ("user", "{question}")
             ])
@@ -233,6 +260,34 @@ class PandasQueryEngine:
                         logger.error(f"Self-healing SQL retry failed: {e_retry}", exc_info=True)
                         return f"Error executing SQL ({sql_query}): {str(e)}"
                         
+            if not rows and "WHERE " in sql_query.upper():
+                logger.warning(f"Query returned 0 rows with WHERE filter ({sql_query}). Attempting Layer 3 fuzzy string matching retry...")
+                try:
+                    fuzzy_prompt = ChatPromptTemplate.from_messages([
+                        ("system",
+                         "You are an enterprise DuckDB SQL expert. The previous SQL query returned 0 rows because the WHERE filter was too strict.\n"
+                         "Rewrite the DuckDB SELECT query on table 'dataset' using case-insensitive partial string matching (ILIKE or LOWER(\"col\") LIKE '%val%') so matching rows are found.\n\n"
+                         "Available columns in 'dataset':\n{columns}\n\n"
+                         "Return ONLY valid JSON with 'sql' and 'explanation' without markdown fences."),
+                        ("user",
+                         "User Question: {question}\nPrevious SQL that returned 0 rows:\n{sql}")
+                    ])
+                    fuzzy_chain = fuzzy_prompt | self.llm | StrOutputParser() | parse_json_from_thinking
+                    fuzzy_dict = await fuzzy_chain.ainvoke({
+                        "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns),
+                        "question": query,
+                        "sql": sql_query
+                    })
+                    fuzzy_plan = DuckDBSemanticQuery(**fuzzy_dict)
+                    sql_query = fuzzy_plan.sql.strip().rstrip(";") + ";"
+                    logger.info(f"Layer 3 Healed DuckDB SQL: {sql_query} | Explanation: {fuzzy_plan.explanation}")
+                    result = conn.execute(text(sql_query))
+                    rows = result.fetchall()
+                    col_names = list(result.keys())
+                    query_plan = fuzzy_plan
+                except Exception as fuzzy_err:
+                    logger.warning(f"Fuzzy retry failed: {fuzzy_err}")
+
             if not rows:
                 return f"{query_plan.explanation}\nNo records matched your query."
                 
@@ -254,6 +309,13 @@ class PandasQueryEngine:
                     row_str = " | ".join(str(item) if item is not None else "NULL" for item in r)
                     formatted += f"| {row_str} |\n"
                     
+            analytical_keywords = ["who", "compare", "better", "higher", "lower", "difference", "highest", "lowest", "vs", "between", "which", "why", "explain", "summarize", "top", "bottom", "rank", "more", "less", "greater", "best", "worst", "salary", "amount", "earn", "paid"]
+            is_analytical = any(kw in query.lower() for kw in analytical_keywords) or (len(rows) > 1 and len(rows) <= 30)
+            
+            if is_analytical:
+                logger.info(f"[PandasQueryEngine] Analytical/Comparative query detected ('{query}'). Generating executive synthesis...")
+                return await self._synthesize_analytical_response(query, formatted, query_plan.explanation)
+
             return formatted
             
         except Exception as e:
