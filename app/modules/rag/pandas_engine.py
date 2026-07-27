@@ -122,10 +122,11 @@ class PandasQueryEngine:
                 ("system",
                  "You are an Executive Data Analyst. Given a user's question and the SQL result table from an enterprise spreadsheet dataset, write a clear, direct, professional executive answer.\n"
                  "CRITICAL RULES:\n"
-                 "1. Answer the user's specific comparative or analytical question DIRECTLY in the very first sentence (e.g. explicitly state WHO has the better/higher salary, what the exact figures are, and what the difference is).\n"
-                 "2. Use bolding formatting for key names, figures, and comparisons.\n"
-                 "3. Include the formatted Markdown table below your explanation as supporting evidence.\n"
-                 "4. Be 100% factual and grounded strictly in the provided table numbers."),
+                 "1. Answer the user's specific comparative or analytical question DIRECTLY in the very first sentence (e.g. explicitly state WHO is the senior employee, WHO has the better/higher salary, what the exact dates/figures are, and why).\n"
+                 "2. FOR SENIORITY / TENURE QUESTIONS: Remember that an employee who joined EARLIER in time (earliest year/date, e.g. 2018 vs 2021) or has MORE years of experience is MORE SENIOR.\n"
+                 "3. Use bolding formatting for key names, figures, dates, and comparisons.\n"
+                 "4. Include the formatted Markdown table below your explanation as supporting evidence.\n"
+                 "5. Be 100% factual and grounded strictly in the provided table numbers/dates."),
                 ("user", "User Question: {question}\n\nSQL Explanation: {explanation}\n\nSQL Result Table:\n{table}")
             ])
             from langchain_core.output_parsers import StrOutputParser
@@ -192,6 +193,10 @@ class PandasQueryEngine:
                  "14. If the user asks for information or columns that DO NOT EXIST in the schema (e.g. wholesale price, CEO, warehouse, email, warranty), generate: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset.\n"
                  "15. STRING FILTERING & ENTITY MATCHING: When filtering string columns (e.g. employee names, departments, products in WHERE clauses), NEVER use exact '=' or 'IN (...)'. ALWAYS use case-insensitive matching with ILIKE or LOWER(str) LIKE '%val%' (e.g., WHERE LOWER(\"Employee Name\") LIKE '%john%' OR LOWER(\"Employee Name\") LIKE '%jane%') so that minor spacing or case differences do not cause zero results.\n"
                  "16. COMPARATIVE & SUPERLATIVE QUERIES: When the user asks to compare two or more entities (e.g. 'who has higher salary', 'compare X and Y', 'who is better', 'who earns more', 'which has better'), select the relevant columns for ALL compared entities AND ORDER BY the comparison metric DESC so the highest/best entity appears at the top of the result.\n"
+                 "17. SENIORITY, TENURE & JOINING DATE QUERIES: When the user asks who is the 'senior' ('snior'), 'most senior', 'oldest', or 'who joined first/earliest' among employees:\n"
+                 "   - If comparing by JOINING DATE / HIRE DATE / START DATE: A senior employee joined EARLIEST in time. You MUST cast string dates to date/timestamp and order ASCENDING (ORDER BY TRY_CAST(\"Joining Date\" AS DATE) ASC) so the earliest date (earliest year, e.g. 2018 before 2022) is ranked FIRST.\n"
+                 "   - If comparing by YEARS OF EXPERIENCE / TENURE / AGE: A senior employee has more years. You MUST order DESCENDING (ORDER BY TRY_CAST(\"Experience\" AS DOUBLE) DESC).\n"
+                 "   - If selecting among specific people (e.g. 'among both', 'between X and Y'), always use case-insensitive fuzzy matching (LOWER(\"col\") LIKE '%name%') for the WHERE clause.\n"
                  "IMPORTANT: DO NOT generate any <think> tags or internal reasoning steps. Output ONLY valid JSON immediately without any thinking."),
                 ("user", "{question}")
             ])
@@ -309,7 +314,14 @@ class PandasQueryEngine:
                     row_str = " | ".join(str(item) if item is not None else "NULL" for item in r)
                     formatted += f"| {row_str} |\n"
                     
-            analytical_keywords = ["who", "compare", "better", "higher", "lower", "difference", "highest", "lowest", "vs", "between", "which", "why", "explain", "summarize", "top", "bottom", "rank", "more", "less", "greater", "best", "worst", "salary", "amount", "earn", "paid"]
+            analytical_keywords = [
+                "who", "compare", "better", "higher", "lower", "difference", "highest", "lowest",
+                "vs", "between", "which", "why", "explain", "summarize", "top", "bottom", "rank",
+                "more", "less", "greater", "best", "worst", "salary", "amount", "earn", "paid",
+                "senior", "snior", "junior", "old", "older", "young", "younger", "tenure",
+                "experience", "join", "joined", "hire", "hired", "earlier", "earliest", "latest",
+                "first", "last", "among", "both"
+            ]
             is_analytical = any(kw in query.lower() for kw in analytical_keywords) or (len(rows) > 1 and len(rows) <= 30)
             
             if is_analytical:
