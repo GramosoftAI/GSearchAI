@@ -296,21 +296,52 @@ class RAGService:
                 
             if active_paths:
                 engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
-                try:
-                    result = await engine.execute_query(query)
-                    yield json.dumps({
-                        "type": "metadata",
-                        "sources": [],
-                        "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
-                        "context_type": "duckdb_parquet"
-                    })
-                    yield str(result)
-                    return
-                except Exception as e:
-                    logger.error(f"PandasQueryEngine stream failed: {e}")
-                    if not doc_kbs:
-                        yield json.dumps({"error": str(e)})
-                        return
+                # 1. Intelligent Hybrid Routing if BOTH Excel and Document KBs exist
+                route_to_excel = True
+                if doc_kbs:
+                    try:
+                        from langchain_core.prompts import ChatPromptTemplate
+                        from langchain_core.output_parsers import StrOutputParser
+                        router_prompt = ChatPromptTemplate.from_messages([
+                            ("system",
+                             "You are an intelligent supervisor router for an AI agent with two knowledge bases:\n"
+                             "1. EXCEL/TABLE: Numerical data, spreadsheets, counts, calculations, lists, rows, or tabular columns.\n"
+                             "2. PDF/DOCUMENT: Unstructured document text, manuals, policies, legal clauses, or prose.\n"
+                             "Analyze the user question. Return ONLY the word 'EXCEL' if the question should be answered from tabular spreadsheet data, or ONLY the word 'PDF' if the question should be answered from unstructured PDF/document text."),
+                            ("user", "{question}")
+                        ])
+                        router_chain = router_prompt | engine.llm | StrOutputParser()
+                        intent = (await router_chain.ainvoke({"question": query})).strip().upper()
+                        logger.info(f"[Hybrid RAG Router] Query '{query}' classified as: {intent}")
+                        if "PDF" in intent and "EXCEL" not in intent:
+                            route_to_excel = False
+                    except Exception as router_err:
+                        logger.warning(f"[Hybrid RAG Router] Router classification failed ({router_err}), defaulting to Excel check.")
+                
+                # 2. Execute Excel Engine if routed to Excel
+                if route_to_excel:
+                    try:
+                        result = await engine.execute_query(query)
+                        result_str = str(result)
+                        # Smart Fallback: If Excel dataset lacked answer and PDF KBs exist, fall through to PDFs!
+                        unmatched_signals = ["Not present in dataset", "No records matched", "not present in dataset"]
+                        if doc_kbs and any(sig.lower() in result_str.lower() for sig in unmatched_signals):
+                            logger.info(f"[Hybrid RAG Router] Excel dataset lacked answer ({result_str}). Falling back to PDF knowledge bases...")
+                        else:
+                            yield json.dumps({
+                                "type": "metadata",
+                                "sources": [],
+                                "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
+                                "context_type": "duckdb_parquet"
+                            })
+                            yield result_str
+                            return
+                    except Exception as e:
+                        logger.error(f"PandasQueryEngine stream failed: {e}")
+                        if not doc_kbs:
+                            yield json.dumps({"error": str(e)})
+                            return
+                        logger.info("[Hybrid RAG Router] Excel execution failed, falling through to PDF knowledge bases...")
 
             
 
