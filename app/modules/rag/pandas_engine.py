@@ -160,6 +160,15 @@ class PandasQueryEngine:
             query_plan = DuckDBSemanticQuery(**query_plan_dict)
             
             sql_query = query_plan.sql.strip().rstrip(";") + ";"
+            
+            # 4. DETERMINISTIC COLUMN AUTO-QUOTING (Layer 1 Protection)
+            # Automatically wrap multi-word or special column names in double quotes if left unquoted by the LLM
+            for col in sorted(columns, key=lambda c: len(str(c)), reverse=True):
+                col_str = str(col)
+                if ' ' in col_str or not col_str.isalnum():
+                    pattern = r'(?<!["\'\w])' + re.escape(col_str) + r'(?!["\'\w])'
+                    sql_query = re.sub(pattern, f'"{col_str}"', sql_query)
+            
             logger.info(f"Generated DuckDB SQL: {sql_query} | Explanation: {query_plan.explanation}")
             
             # Security check
@@ -167,15 +176,44 @@ class PandasQueryEngine:
             if any(kw in sql_query.upper() for kw in forbidden_kw):
                 return "Error: Security violation - only read-only SELECT queries are permitted."
             
-            # 5. EXECUTE SECURELY
+            # 5. EXECUTE SECURELY (with Layer 2 Self-Healing SQL Repair on Parser/Syntax Errors)
             with engine.connect() as conn:
                 try:
                     result = conn.execute(text(sql_query))
                     rows = result.fetchall()
                     col_names = list(result.keys())
                 except Exception as e:
-                    return f"Error executing SQL ({sql_query}): {str(e)}"
-                    
+                    logger.warning(f"Initial SQL execution failed ({sql_query}): {e}. Attempting self-healing repair...")
+                    try:
+                        repair_prompt = ChatPromptTemplate.from_messages([
+                            ("system",
+                             "You are an enterprise DuckDB SQL expert. Fix the syntax error in the DuckDB SELECT SQL query on table 'dataset'.\n\n"
+                             "Available columns in 'dataset':\n{columns}\n\n"
+                             "CRITICAL RULES:\n"
+                             "1. Return ONLY valid JSON with 'sql' and 'explanation'. No markdown, no <think> tags.\n"
+                             "2. ALWAYS enclose column names containing spaces or symbols in DOUBLE QUOTES (e.g. \"Customer ID\").\n"
+                             "3. The query MUST be a read-only DuckDB SELECT on table 'dataset'."),
+                            ("user",
+                             "User Question: {question}\n\nFailed SQL Query:\n{sql}\n\nDuckDB Error Message:\n{error}\n\nProvide the corrected DuckDB SQL query in valid JSON.")
+                        ])
+                        repair_chain = repair_prompt | self.llm | StrOutputParser() | parse_json_from_thinking
+                        repaired_dict = await repair_chain.ainvoke({
+                            "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns),
+                            "question": query,
+                            "sql": sql_query,
+                            "error": str(e)
+                        })
+                        repaired_plan = DuckDBSemanticQuery(**repaired_dict)
+                        sql_query = repaired_plan.sql.strip().rstrip(";") + ";"
+                        logger.info(f"Self-Healed DuckDB SQL: {sql_query} | Explanation: {repaired_plan.explanation}")
+                        result = conn.execute(text(sql_query))
+                        rows = result.fetchall()
+                        col_names = list(result.keys())
+                        query_plan = repaired_plan
+                    except Exception as e_retry:
+                        logger.error(f"Self-healing SQL retry failed: {e_retry}", exc_info=True)
+                        return f"Error executing SQL ({sql_query}): {str(e)}"
+                        
             if not rows:
                 return f"{query_plan.explanation}\nNo records matched your query."
                 
