@@ -145,7 +145,7 @@ test_llm.py
 
 test_passlib.txt
 deploy_test.txt
-requirements-1.txt
+#requirements-1.txt
 temp_page.tsx
 scratch_ingest_res.json
 
@@ -224,3 +224,18 @@ test_*.py
 # Local environment / runner exclusions
 appDataDir/
 .pytest_cache/
+
+
+# memory :: 
+Short_Term_Memory_Test.csv
+Long_Term_Memory_Test.csv
+clean_neo4j.py
+rename_key.py
+
+# Allow memory microservice files to override staging ignores
+!app/memory/**/requirements.txt
+#!app/memory/**/test_*.py
+#!app/memory/**/*.csv
+!app/memory/app/schema/
+!app/memory/app/main.py
+server.py
