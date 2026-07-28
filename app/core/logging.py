@@ -49,8 +49,8 @@ for logger_name in [
     "pdfminer",  # SILENCE CHATTY PDF PARSER
 ]:
     logger = logging.getLogger(logger_name)
-    if logger_name == "pdfminer":
-        logger.setLevel(logging.WARNING)  # Specifically silence pdfminer
+    if logger_name in ["pdfminer", "sqlalchemy.engine"]:
+        logger.setLevel(logging.WARNING)  # Specifically silence noisy parsers and sql engines
     else:
         logger.setLevel(LOG_LEVEL)
     # Don't add handlers here - let them propagate to root

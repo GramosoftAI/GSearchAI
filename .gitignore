@@ -212,6 +212,7 @@ tests/test_pdf_ingestion_optimization.py
 # Excluded per User Request (Staging)
 # ==========================================================
 *.txt
+!requirements.txt
 *.pdf
 *.csv
 *.CSV

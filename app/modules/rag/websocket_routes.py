@@ -406,6 +406,6 @@ async def rag_websocket(
         except Exception as e:
             logger.error(f"WebSocket session error: {e}", exc_info=True)
             try:
-                await websocket.send_text(json.dumps({"type": "error", "message": "Session interrupted"}))
+                await websocket.send_text(json.dumps({"type": "error", "message": f"Session interrupted: {str(e)}"}))
             except Exception:
                 pass

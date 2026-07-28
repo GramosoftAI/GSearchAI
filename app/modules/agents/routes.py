@@ -1382,12 +1382,13 @@ async def instant_ingest_url(
 
         tenant_id, user_id = get_tenant_and_user(request)
 
-        
+        import time
+        t_total_start = time.time()
 
         # 1. Crawl URL (Robust primary + Fallback)
 
         try:
-
+            t_gcrawl_start = time.time()
             document_text = await crawl_url(
 
                 url=url_data.url, 
@@ -1397,6 +1398,8 @@ async def instant_ingest_url(
                 proxy_mode="default"
 
             )
+            t_gcrawl_end = time.time()
+            gcrawl_time_seconds = round(t_gcrawl_end - t_gcrawl_start, 2)
 
         except Exception as e:
 
@@ -1450,7 +1453,11 @@ async def instant_ingest_url(
 
             # 4. Ingest
             try:
+                t_process_start = time.time()
                 ingest_result = await kb_service.ingest_document(kb_id, document_text)
+                t_process_end = time.time()
+                processing_time_seconds = round(t_process_end - t_process_start, 2)
+
                 if not ingest_result.get("success"):
                     try:
                         logger.info(f"Instant Ingest URL failed. Cleaning up KnowledgeBase {kb_id}.")
@@ -1470,9 +1477,20 @@ async def instant_ingest_url(
                     logger.error(f"Failed to clean up KnowledgeBase {kb_id} after URL ingestion error: {cleanup_err}")
                 raise ingest_err
 
+            t_total_end = time.time()
+            total_time_seconds = round(t_total_end - t_total_start, 2)
+
             # Add agent name to response
             agent_name = agent_result["data"]["agent"]["name"]
             ingest_result["data"]["agent_name"] = agent_name
+            
+            # Attach detailed time metrics
+            ingest_result["data"]["time_metrics"] = {
+                "gcrawl_time_seconds": gcrawl_time_seconds,
+                "processing_time_seconds": processing_time_seconds,
+                "total_time_seconds": total_time_seconds
+            }
+
             ingest_result["meta"]["message"] = f"Web content from {url_data.url} stored to agent: {agent_name}"
             
             return ingest_result
