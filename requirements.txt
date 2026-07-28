@@ -1,4 +1,4 @@
-ag-ui-protocol==0.1.18
+﻿ag-ui-protocol==0.1.18
 aiofile==3.9.0
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.5
@@ -242,3 +242,10 @@ langchain-community==0.3.0
 langchain-openai==0.2.0
 duckdb==1.1.0
 duckdb-engine==0.13.0
+polars
+fastexcel
+pyarrow
+openpyxl
+duckdb==1.1.0
+duckdb-engine==0.13.0
+pandas==2.3.3

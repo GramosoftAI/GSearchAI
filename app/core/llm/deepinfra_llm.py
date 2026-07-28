@@ -1007,6 +1007,11 @@ class DeepInfraLLMClient:
 
 
                         answer = answer.strip()
+                        # Strip <think>...</think> blocks (Qwen thinking mode leak guard)
+                        import re as _re
+                        answer = _re.sub(r'<think>.*?</think>', '', answer, flags=_re.DOTALL).strip()
+                        if '<think>' in answer:
+                            answer = answer[:answer.index('<think>')].strip()
 
 
 

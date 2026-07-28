@@ -196,6 +196,10 @@ class PandasQueryEngine:
                     row_str = " | ".join(str(item) if item is not None else "NULL" for item in r)
                     formatted += f"| {row_str} |\n"
                     
+            # Strip any residual <think> tags the gateway model may have injected
+            formatted = re.sub(r'<think>.*?</think>', '', formatted, flags=re.DOTALL).strip()
+            if '<think>' in formatted:
+                formatted = formatted[:formatted.index('<think>')].strip()
             return formatted
             
         except Exception as e:

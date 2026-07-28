@@ -683,7 +683,23 @@ If you'd like, I can also:
                     clean_src = clean_source_name(ent.get('source', 'document_entities'))
                     yield f"**{clean_name}:** {ent['value']} (Page {ent.get('page', 1)}) [Source: {clean_src}]\n"
                 yield "\n"
-            yield context.triplet_context
+
+            # Strip any <think> tags from triplet_context (gateway LLM leak guard)
+            import re as _re
+            clean_triplet = context.triplet_context or ""
+            clean_triplet = _re.sub(r'<think>.*?</think>', '', clean_triplet, flags=_re.DOTALL).strip()
+            if '<think>' in clean_triplet:
+                clean_triplet = clean_triplet[:clean_triplet.index('<think>')].strip()
+
+            yield clean_triplet
+
+            # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
+            # Use the kb object already fetched for metadata (line 661 scope)
+            try:
+                _src_name = kb.name if len(kb_ids) == 1 else (kb_ids[0] if kb_ids else "Dataset")
+                yield f"\n\n[Source: {_src_name}]"
+            except Exception:
+                pass
             return
 
         if not context or not context.chunks:
