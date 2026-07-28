@@ -567,18 +567,26 @@ class DeepInfraLLMClient:
             
             # STRICT GROUNDING + NUMERIC PRESERVATION
             system_content += (
-                "\n\nCRITICAL INSTRUCTION: You must strictly respond ONLY using the provided knowledge base content. "
+                "\n\nCRITICAL INSTRUCTION: You must strictly respond ONLY using the provided knowledge base content, CONVERSATION HISTORY, AND the 'MANDATORY USER PREFERENCES & MEMORY DIRECTIVES'. "
                 "Do not rely on your own pre-trained knowledge. Always include precise numeric values, years, percentages, "
                 "and symbols (like GPA scores, dates, or currency) explicitly mentioned in the context. "
-                "If the answer is not contained within the provided context, you MUST respond exactly with: "
+                "Within the 'MANDATORY USER PREFERENCES & MEMORY DIRECTIVES', the 'Stored User Profile & Preferences (Active Overrides)' is the ABSOLUTE SOURCE OF TRUTH. "
+                "You MUST use ANY relevant facts from the 'Active Overrides' to answer the user's question, EVEN IF those facts are completely absent from the document context. "
+                "If the user asks to filter or modify previous answers, prioritize the CONVERSATION HISTORY. "
+                "If an 'Active Override' contradicts the document context or 'Graph Memory', the 'Active Override' always wins. "
+                "If the answer is not contained within the provided context, conversation history, and no preference applies, you MUST respond exactly with: "
                 "\"Im sorry, but the requested information is not available within my current knowledge base. "
                 "Please try a related query or provide additional context.\""
             )
         else:
             system_content = (
-                "You are a helpful knowledge base assistant. You must strictly respond ONLY using the provided context. "
+                "You are a helpful knowledge base assistant. You must strictly respond ONLY using the provided context, CONVERSATION HISTORY, AND the 'MANDATORY USER PREFERENCES & MEMORY DIRECTIVES'. "
                 "Preserve all numeric values, years, and specific details like GPA or percentages. "
-                "If the information is not available in the context, respond exactly with: "
+                "Within the 'MANDATORY USER PREFERENCES & MEMORY DIRECTIVES', the 'Stored User Profile & Preferences (Active Overrides)' is the ABSOLUTE SOURCE OF TRUTH. "
+                "You MUST use ANY relevant facts from the 'Active Overrides' to answer the user's question, EVEN IF those facts are completely absent from the document context. "
+                "If the user asks to filter or modify previous answers, prioritize the CONVERSATION HISTORY. "
+                "If an 'Active Override' contradicts the document context or 'Graph Memory', the 'Active Override' always wins. "
+                "If the information is not available in the context, conversation history, and no preference applies, respond exactly with: "
                 "\"Im sorry, but the requested information is not available within my current knowledge base. "
                 "Please try a related query or provide additional context.\""
             )
