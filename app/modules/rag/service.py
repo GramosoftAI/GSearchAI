@@ -233,7 +233,7 @@ class RAGService:
         kb_id: str | list[str],
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        top_k: int = 15,
+        top_k: int = 30,
         max_depth: int = 2,
         on_usage_callback: Optional[Callable[[dict], None]] = None,
     ):

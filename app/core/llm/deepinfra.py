@@ -75,7 +75,7 @@ class DeepInfraEmbeddingClient:
         self.model = "BAAI/bge-large-en-v1.5"
         self.timeout = 30.0  # Request timeout in seconds
         self.max_retries = 3  # Number of retry attempts
-        self.max_text_length = 600  # Allow full chunk content for better semantic quality
+        self.max_text_length = 1000  # Safe limit (~300-400 tokens) for BGE-large 512-token context limit
         self.expected_dimension = EXPECTED_EMBEDDING_DIMENSION  # 1024
 
         logger.info(
@@ -346,8 +346,9 @@ class DeepInfraEmbeddingClient:
                         logger.debug(f"Retrying batch in {wait_time}s...")
                         await asyncio.sleep(wait_time)
                 else:
-                    logger.error(f" All {self.max_retries} attempts failed for batch. Last error: {last_error}")
-                    raise last_error or Exception("Failed to generate batch embeddings after all retries")
+                    logger.warning(f" Batch API failed ({last_error}). Falling back to concurrent item-by-item embedding generation for chunk of {len(chunk)} items.")
+                    item_results = await asyncio.gather(*[self.generate_embedding(item_text) for item_text in chunk])
+                    all_new_embeddings.extend(item_results)
 
         # 3. Reconstruct full list in original order
         for i, idx in enumerate(to_embed_indices):

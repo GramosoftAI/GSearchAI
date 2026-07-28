@@ -44,7 +44,11 @@ class EnterpriseHybridRouter:
         q_lower = query.lower()
 
         # Explicit document/PDF indicators
-        doc_signals = ["in the pdf", "in the document", "policy", "manual", "guideline", "section", "clause", "paragraph", "according to the doc"]
+        doc_signals = [
+            "in the pdf", "in the document", "policy", "manual", "guideline", "section", 
+            "clause", "paragraph", "according to the doc", "what does the document", 
+            "what does the pdf", "doc mentions", "pdf mentions", "article"
+        ]
         if any(sig in q_lower for sig in doc_signals):
             return HybridRoutingDecision(
                 target_engine="VECTOR_DOCS",
@@ -53,16 +57,25 @@ class EnterpriseHybridRouter:
                 reasoning="Query explicitly references unstructured document text, policies, or manuals."
             )
 
-        # Explicit table/Excel indicators or direct column name mentions
-        table_signals = ["in the excel", "in the table", "spreadsheet", "sum of", "average of", "count of", "total of", "how many rows", "group by"]
-        matched_cols = [c for c in columns if c and len(str(c)) > 2 and str(c).lower() in q_lower]
+        # Explicit table/Excel indicators, comparisons, rankings, or analytical operations
+        table_signals = [
+            "in the excel", "in the table", "spreadsheet", "sum of", "average of", "count of", 
+            "total of", "how many rows", "group by", "compare the salary", "who has better salary", 
+            "better salary", "higher salary", "lower salary", "more senior", "senior employee", 
+            "who is senior", "who earns more", "highest salary", "lowest salary", "top salary", 
+            "compare both", "among both", "between both", "who has higher", "who has lower",
+            "difference between", "wage", "income", "compensation"
+        ]
+        # Match columns only if they are specific/distinctive (>3 chars, not generic stopwords)
+        generic_cols = {"name", "date", "id", "type", "status", "data", "info", "value", "text", "description"}
+        matched_cols = [c for c in columns if c and len(str(c)) > 3 and str(c).lower() not in generic_cols and str(c).lower() in q_lower]
 
         if any(sig in q_lower for sig in table_signals) or len(matched_cols) >= 2:
             return HybridRoutingDecision(
                 target_engine="TABULAR_SQL",
                 confidence=0.95,
                 matched_columns=matched_cols,
-                reasoning=f"Query explicitly targets spreadsheet calculations or directly references columns: {matched_cols}."
+                reasoning=f"Query explicitly targets spreadsheet calculations, comparisons, or distinctive columns: {matched_cols}."
             )
 
         return None
