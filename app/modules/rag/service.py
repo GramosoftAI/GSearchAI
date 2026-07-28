@@ -238,7 +238,7 @@ class RAGService:
 
         user_id: Optional[str] = None,
 
-        top_k: int = 15,
+        top_k: int = 30,
 
         max_depth: int = 2,
 

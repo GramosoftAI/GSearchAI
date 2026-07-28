@@ -32,18 +32,27 @@ class OntologyResolver:
             # Fallback to exact match (no embedding)
             return {e["text"]: {"text": e["text"], "embedding": []} for e in unique_entities}
             
-        entities_with_embeddings = []
         mapping = {}
-        
         for i, ent in enumerate(unique_entities):
             emb = embeddings[i] if embeddings[i] else []
-            entities_with_embeddings.append({
-                "text": ent["text"],
-                "type": ent["type"],
-                "embedding": emb
-            })
             mapping[ent["text"]] = {"text": ent["text"], "embedding": emb}
-            
+
+        # Enterprise Performance Optimization: Limit Neo4j vector similarity scan
+        # to top 60 relevant entity types (PERSON, ORGANIZATION, CONCEPT) to prevent
+        # O(N*M) Cartesian similarity scans in Cypher when ingesting large documents.
+        entities_for_neo4j = []
+        for i, ent in enumerate(unique_entities):
+            emb = embeddings[i] if embeddings[i] else []
+            if emb and ent.get("type", "").upper() in ("PERSON", "ORGANIZATION", "CONCEPT"):
+                entities_for_neo4j.append({
+                    "text": ent["text"],
+                    "type": ent["type"],
+                    "embedding": emb
+                })
+        entities_for_neo4j = entities_for_neo4j[:60]
+        if not entities_for_neo4j:
+            return mapping
+
         # 2. Query Neo4j for matches using cosine similarity > 0.92
         # We find existing TripletEntities of the same type in the same tenant
         query = """
@@ -60,9 +69,13 @@ class OntologyResolver:
         """
         
         try:
-            results = await self.neo4j_repo.execute_read(
-                query,
-                {"entities": entities_with_embeddings, "tenant_id": self.tenant_id}
+            import asyncio
+            results = await asyncio.wait_for(
+                self.neo4j_repo.execute_read(
+                    query,
+                    {"entities": entities_for_neo4j, "tenant_id": self.tenant_id}
+                ),
+                timeout=15.0
             )
             
             resolved_count = 0
@@ -82,5 +95,5 @@ class OntologyResolver:
             return mapping
             
         except Exception as e:
-            logger.error(f"Ontology query failed: {e}")
+            logger.warning(f"Ontology resolution query skipped/timed out: {e}")
             return mapping

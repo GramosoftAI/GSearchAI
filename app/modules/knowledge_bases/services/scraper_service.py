@@ -62,11 +62,10 @@ class ScraperService:
             logger.error("GCRAWL_API_KEY is missing in configuration.")
             raise ValueError("GCRAWL_API_KEY not configured")
 
-        max_pages_val = 1 if crawl_type == "single" else 15
         payload = {
             "url": url,
             "crawl": {
-                "max_pages": max_pages_val,
+                "max_pages": "auto",
                 "same_domain_only": True,
                 "include_subdomains": False
             },
@@ -161,10 +160,10 @@ class ScraperService:
                         return None
                         
                     # If still queued/processing, wait and poll again
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(5)
                 except Exception as e:
                     logger.warning(f"Error while polling Gcrawl task {job_id}: {e}")
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(5)
 
     @staticmethod
     def normalize_gcrawl_response(response: Dict[str, Any], root_url: str) -> List[Dict[str, Any]]:
