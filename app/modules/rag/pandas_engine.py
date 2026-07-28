@@ -96,19 +96,37 @@ class PandasQueryEngine:
             extra_body={"enable_thinking": False}
         )
 
+    def _build_union_query(self, paths: List[str], with_row_id: bool = False) -> str:
+        """Builds a DuckDB UNION ALL BY NAME query across all provided CSV/Parquet dataset paths."""
+        valid_readers = []
+        for p in paths:
+            if not p or not os.path.exists(p):
+                continue
+            safe_path = str(p).replace('\\', '/')
+            if safe_path.lower().endswith(".parquet"):
+                valid_readers.append(f"SELECT * FROM read_parquet('{safe_path}')")
+            else:
+                valid_readers.append(f"SELECT * FROM read_csv_auto('{safe_path}', sample_size=10000, nullstr='NULL')")
+        if not valid_readers:
+            return "SELECT 1 WHERE FALSE"
+        union_sql = " UNION ALL BY NAME ".join(valid_readers)
+        if with_row_id:
+            return f"SELECT row_number() OVER () AS row_id, * FROM ({union_sql})"
+        return f"SELECT * FROM ({union_sql})"
+
     def get_schema_columns(self, data_path: Optional[str] = None) -> List[str]:
-        """Fast helper to retrieve columns of the active dataset for schema-aware intent routing."""
+        """Fast helper to retrieve columns of the active dataset(s) for schema-aware intent routing."""
         target_path = data_path or getattr(self, "data_path", None)
-        if not target_path or not os.path.exists(target_path):
+        paths_to_check = [p for p in (self.all_dataset_paths or ([target_path] if target_path else [])) if p and os.path.exists(p)]
+        if not paths_to_check:
             return []
         try:
             temp_db_path = os.path.join(tempfile.gettempdir(), f"duckdb_{id(self)}.db")
             engine = create_engine(f"duckdb:///{temp_db_path}")
             with engine.connect() as conn:
-                safe_path = str(target_path).replace('\\', '/')
+                union_sql = self._build_union_query(paths_to_check, with_row_id=False)
                 conn.execute(text("DROP VIEW IF EXISTS dataset;"))
-                reader = f"read_parquet('{safe_path}')" if safe_path.lower().endswith(".parquet") else f"read_csv_auto('{safe_path}', sample_size=1000, nullstr='NULL')"
-                conn.execute(text(f"CREATE VIEW dataset AS SELECT * FROM {reader};"))
+                conn.execute(text(f"CREATE VIEW dataset AS {union_sql};"))
                 result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dataset';"))
                 return [row[0] for row in result.fetchall()]
         except Exception as e:
@@ -148,23 +166,26 @@ class PandasQueryEngine:
 
     async def execute_query(self, query: str, data_path: Optional[str] = None) -> Optional[str]:
         target_path = data_path or getattr(self, "data_path", None)
-        if not target_path or not os.path.exists(target_path):
-            return f"Error: Dataset {target_path} not found on server."
+        paths_to_register = [p for p in (self.all_dataset_paths or ([target_path] if target_path else [])) if p and os.path.exists(p)]
+        if not paths_to_register:
+            return "Error: No valid spreadsheet datasets found on server."
             
         from langchain_core.output_parsers import StrOutputParser
         # DUCKDB BINDING (CSV or PARQUET)
-        logger.info(f"Initializing DuckDB on dataset: {target_path} | total_paths: {len(self.all_dataset_paths)}")
+        logger.info(f"Initializing DuckDB on dataset(s): {target_path} | total_paths: {len(paths_to_register)}")
         try:
             temp_db_path = os.path.join(tempfile.gettempdir(), f"duckdb_{id(self)}.db")
             engine = create_engine(f"duckdb:///{temp_db_path}")
             
             with engine.connect() as conn:
-                paths_to_register = self.all_dataset_paths if self.all_dataset_paths else [target_path]
+                union_sql = self._build_union_query(paths_to_register, with_row_id=True)
+                conn.execute(text("DROP VIEW IF EXISTS dataset;"))
+                conn.execute(text(f"CREATE VIEW dataset AS {union_sql};"))
+                
+                # Also register individual views (dataset_1, dataset_2, etc.) for backwards compatibility
                 for idx, path_item in enumerate(paths_to_register):
-                    if not path_item or not os.path.exists(path_item):
-                        continue
                     safe_path = str(path_item).replace('\\', '/')
-                    view_name = "dataset" if idx == 0 else f"dataset_{idx+1}"
+                    view_name = f"dataset_{idx+1}"
                     conn.execute(text(f"DROP VIEW IF EXISTS {view_name};"))
                     reader = f"read_parquet('{safe_path}')" if safe_path.lower().endswith(".parquet") else f"read_csv_auto('{safe_path}', sample_size=10000, nullstr='NULL')"
                     conn.execute(text(f"CREATE VIEW {view_name} AS SELECT row_number() OVER () AS row_id, * FROM {reader};"))
