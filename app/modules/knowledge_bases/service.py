@@ -903,8 +903,19 @@ class KnowledgeBaseService:
             entities_by_chunk = {}
             all_entities_set = set()
             for i, extracted in enumerate(entity_results):
-                entities_by_chunk[i] = [{"text": e.text, "type": e.entity_type, "confidence": e.confidence} for e in extracted]
-                for e in extracted: all_entities_set.add(f"{e.text}|{e.entity_type}")
+                chunk_entities = []
+                for e in extracted:
+                    if isinstance(e, dict):
+                        e_text = e.get("text", e.get("name", ""))
+                        e_type = e.get("entity_type", e.get("type", "KEYWORD"))
+                        e_conf = e.get("confidence", 1.0)
+                    else:
+                        e_text = getattr(e, "text", getattr(e, "name", ""))
+                        e_type = getattr(e, "entity_type", getattr(e, "type", "KEYWORD"))
+                        e_conf = getattr(e, "confidence", 1.0)
+                    chunk_entities.append({"text": e_text, "type": e_type, "confidence": e_conf})
+                    all_entities_set.add(f"{e_text}|{e_type}")
+                entities_by_chunk[i] = chunk_entities
 
             # Prepare structured entities for storage
             from .models import DocumentEntity, DocumentSection
