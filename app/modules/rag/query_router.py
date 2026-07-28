@@ -29,7 +29,6 @@ class SearchType(Enum):
     DOCUMENT_QA = "DOCUMENT_QA"             # Questions about documents
     DATA_ANALYSIS = "DATA_ANALYSIS"         # Analysis of data/numbers
     SUMMARIZATION = "SUMMARIZATION"         # Requesting summaries
-    TABLE_ANALYTICS = "TABLE_ANALYTICS"     # SQL-like database filtering on structured tables
     EXTRACTIVE = "EXTRACTIVE"               # Exact value extraction (e.g., GSTIN, PAN)
 
 class RouteResult:
@@ -352,7 +351,6 @@ Choose exactly one of the following intents:
 - MEMORY_ONLY: Personal history/preferences
 - ENTITY_CONNECTION: Relationship between two things
 - SOCIAL: Greetings, thanks, or small talk
-- TABLE_ANALYTICS: Database-style filtering or aggregations on structured tabular data (COUNT, AVG, MIN, MAX, GROUP BY, SORT, highest, lowest)
 - EXTRACTIVE: Strict exact value retrieval without generation (e.g., "Give me the GSTIN", "What is the invoice number and engine number")
 - GRAPH_COMPLETION: General default.
 
@@ -441,7 +439,6 @@ Perform two tasks:
    - MEMORY_ONLY: User preferences or chat history
    - ENTITY_CONNECTION: Relationships between entities
    - SOCIAL: Greetings, greetings back, small talk, polite interaction
-   - TABLE_ANALYTICS: SQL-like mathematical operations/aggregations (COUNT, SUM, AVG, MIN, MAX, highest, lowest, group by, order by)
    - EXTRACTIVE: Exact identifier value extraction without narrative response (e.g. "What is the GSTIN?", "Give me the registration number")
    - GRAPH_COMPLETION: Default hybrid search
 
@@ -453,9 +450,9 @@ Perform two tasks:
 
 Return ONLY valid JSON in this exact structure with no markdown formatting, no backticks, and no explanation text:
 {{
-  "intent": "TABLE_ANALYTICS",
+  "intent": "GRAPH_COMPLETION",
   "confidence": 0.95,
-  "reason": "Calculations and averages requested",
+  "reason": "Request for data synthesis",
   "keywords": ["average", "revenue"],
   "entities": [],
   "date_filter": "",

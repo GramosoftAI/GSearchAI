@@ -187,15 +187,13 @@ class KBURLIngest(BaseModel):
     Schema for URL ingestion request.
     """
     url: str = Field(..., description="Target URL to crawl")
-    crawl_type: str = Field("single", pattern="^(single|all)$", description="Crawl depth: single or all (up to 10 pages)")
-    proxy_mode: str = Field("basic", pattern="^(basic|stealth|enhanced)$", description="Proxy mode for scraping")
+    crawl_type: str = Field("all", pattern="^(single|all)$", description="Crawl depth: single or all (up to 10 pages)")
 
     class Config:
         json_schema_extra = {
             "example": {
                 "url": "https://example.com",
-                "crawl_type": "single",
-                "proxy_mode": "basic"
+                "crawl_type": "all"
             }
         }
 

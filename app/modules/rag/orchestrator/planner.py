@@ -15,6 +15,7 @@ class RetrievalTask(BaseModel):
     priority: float = 1.0
     required: bool = False
     reason: str = ""
+    top_k: int = 15
 
 class RetrievalPlan(BaseModel):
     tasks: List[RetrievalTask]

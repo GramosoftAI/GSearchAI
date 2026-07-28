@@ -238,7 +238,7 @@ class RAGService:
 
         user_id: Optional[str] = None,
 
-        top_k: int = 15,
+        top_k: int = 30,
 
         max_depth: int = 2,
 
@@ -262,23 +262,92 @@ class RAGService:
 
         
 
-        # We'll just verify the first one exists and belongs to the agent for security
+        # 1. Validate KB ownership and separate Excel vs Document KBs
+        excel_kbs = []
+        doc_kbs = []
+        for kid in kb_ids:
+            kb = await self.kb_repo.get_by_id(kid)
+            if not kb:
+                yield json.dumps({"error": f"Knowledge Base {kid} not found"})
+                return
+            if str(kb.agent_id) != str(agent_id):
+                yield json.dumps({"error": "Unauthorized: Agent does not own this Knowledge Base"})
+                return
+            if getattr(kb, "description", "") == "excel_parquet":
+                excel_kbs.append(kb)
+            else:
+                doc_kbs.append(kb)
 
-        # (The pipeline will filter by these IDs anyway)
-
-        kb = await self.kb_repo.get_by_id(kb_ids[0])
-
-        if not kb:
-
-            yield json.dumps({"error": f"Knowledge Base {kb_ids[0]} not found"})
-
-            return
-
-        if str(kb.agent_id) != str(agent_id):
-
-            yield json.dumps({"error": "Unauthorized: Agent does not own this Knowledge Base"})
-
-            return
+        # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
+        hybrid_merge_context = ""
+        if excel_kbs:
+            from app.core.parquet_ingester import ParquetIngester
+            from app.modules.rag.pandas_engine import PandasQueryEngine
+            active_paths = []
+            for ekb in excel_kbs:
+                dataset_name = getattr(ekb, "parsed_path", None) or getattr(ekb, "s3_path", None)
+                if dataset_name:
+                    p = ParquetIngester.get_active_dataset(dataset_name)
+                    if p:
+                        active_paths.append(p)
+                        
+            if not active_paths and not doc_kbs:
+                yield json.dumps({"error": "Active parquet datasets for Excel Knowledge Bases not found."})
+                return
+                
+            if active_paths:
+                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                # 1. Schema-Aware Enterprise Hybrid Routing (TABULAR_SQL vs VECTOR_DOCS vs HYBRID_MERGE)
+                route_to_excel = True
+                if doc_kbs:
+                    try:
+                        from app.modules.rag.hybrid_router import EnterpriseHybridRouter
+                        cols_list = engine.get_schema_columns()
+                        decision = await EnterpriseHybridRouter.classify(
+                            query=query,
+                            columns=cols_list,
+                            doc_kbs_count=len(doc_kbs),
+                            llm=engine.llm
+                        )
+                        logger.info(f"[EnterpriseHybridRouter] Engine={decision.target_engine} | Conf={decision.confidence:.2f} | Cols={decision.matched_columns} | Reason={decision.reasoning}")
+                        if decision.target_engine == "VECTOR_DOCS":
+                            route_to_excel = False
+                        elif decision.target_engine == "HYBRID_MERGE":
+                            logger.info("[EnterpriseHybridRouter] Executing HYBRID_MERGE: Gathering tabular SQL context to enrich Document RAG...")
+                            try:
+                                sql_res = await engine.execute_query(query)
+                                if sql_res and not any(sig in str(sql_res).lower() for sig in ["not present in dataset", "no records matched", "error"]):
+                                    hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                            except Exception as merge_err:
+                                logger.warning(f"[EnterpriseHybridRouter] HYBRID_MERGE tabular step error: {merge_err}")
+                            route_to_excel = False  # Continue into doc_kbs vector retrieval with hybrid_merge_context injected!
+                    except Exception as router_err:
+                        logger.warning(f"[EnterpriseHybridRouter] Enterprise router failed ({router_err}), defaulting to Excel check.")
+                
+                # 2. Execute Excel Engine if routed strictly to TABULAR_SQL
+                if route_to_excel:
+                    try:
+                        result = await engine.execute_query(query)
+                        result_str = str(result)
+                        # Smart Fallback: If Excel dataset lacked answer and PDF KBs exist, fall through to PDFs!
+                        unmatched_signals = ["Not present in dataset", "No records matched", "not present in dataset"]
+                        if doc_kbs and any(sig.lower() in result_str.lower() for sig in unmatched_signals):
+                            logger.info(f"[EnterpriseHybridRouter] Excel dataset lacked answer ({result_str}). Falling back to PDF knowledge bases...")
+                        else:
+                            yield json.dumps({
+                                "type": "metadata",
+                                "sources": [],
+                                "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
+                                "context_type": "duckdb_parquet"
+                            })
+                            yield result_str
+                            return
+                    except Exception as e:
+                        logger.error(f"PandasQueryEngine stream failed: {e}")
+                        if not doc_kbs:
+                            yield json.dumps({"error": str(e)})
+                            return
+                        logger.info("[EnterpriseHybridRouter] Excel execution failed, falling through to PDF knowledge bases...")
 
             
 
@@ -357,6 +426,8 @@ Personality Definition:
 
 Base Instruction:
 {base_prompt}
+
+{hybrid_merge_context}
 
 You are an enterprise AI assistant.
 
@@ -870,13 +941,39 @@ If you'd like, I can also:
 
             return {
 
-                "error": "Unauthorized: Agent does not own this Knowledge Base",
+                "error": f"Agent {agent_id} does not own Knowledge Base {kb_ids[0]}",
 
                 "answer": None,
 
                 "sources": [],
 
             }
+            
+        # ============= HYBRID RAG: INTERCEPT EXCEL/PARQUET QUERIES =============
+        if getattr(kb, "description", "") == "excel_parquet":
+            dataset_name = getattr(kb, "parsed_path", None) or getattr(kb, "s3_path", None)
+            if not dataset_name:
+                return {"error": "Excel dataset name not found in KB parsed_path field.", "answer": None, "sources": []}
+                
+            from app.core.parquet_ingester import ParquetIngester
+            from app.modules.rag.pandas_engine import PandasQueryEngine
+            
+            active_dataset_path = ParquetIngester.get_active_dataset(dataset_name)
+            if not active_dataset_path:
+                return {"error": f"Active parquet dataset for {dataset_name} not found.", "answer": None, "sources": []}
+                
+            engine = PandasQueryEngine(active_dataset_path)
+            try:
+                result = await engine.execute_query(query)
+                return {
+                    "answer": result,
+                    "sources": [],
+                    "context": {"type": "duckdb_parquet"},
+                    "stats": {}
+                }
+            except Exception as e:
+                logger.error(f"PandasQueryEngine failed: {e}")
+                return {"error": str(e), "answer": None, "sources": []}
 
 
 

@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     # ============= EXTERNAL ALERTS =============
     slack_webhook_url: Optional[str] = None
     
+    # ============= GCRAWL API =============
+    gcrawl_api_key: Optional[str] = None
+    gcrawl_timeout: int = 60
+    gcrawl_retry: int = 3
+    gcrawl_enabled: bool = True
     # ============= REDIS (ARQ) =============
     redis_url: str = "redis://localhost:6379"
 
@@ -317,8 +322,8 @@ class Settings(BaseSettings):
 
 
     # ============= LLM OPTIMIZATIONS =============
-    ingestion_llm_concurrency: int = 30  # Max parallel LLM extractions
-    ingestion_llm_timeout: float = 120.0  # Extended timeout for complex extractions
+    ingestion_llm_concurrency: int = 35  # Max parallel LLM extractions
+    ingestion_llm_timeout: float = 60.0  # Optimized timeout for fail-fast extraction
     enable_thinking: bool = False  # Enable/disable thinking/reasoning mode in LLM calls
 
     
