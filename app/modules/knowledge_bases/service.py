@@ -500,6 +500,7 @@ class KnowledgeBaseService:
         parsed_path: Optional[str] = None,
         document_category: str = "general_document",
         structured_records: Optional[list] = None,
+        progress_callback: Optional[callable] = None,
     ) -> dict:
 
         """
@@ -627,8 +628,8 @@ class KnowledgeBaseService:
 
             t_chunk_end = _time.time()
             logger.info(f" Chunked document into {len(chunks)} chunks using Adaptive/Structured Chunking ({source_type}) in {t_chunk_end - t_chunk_start:.1f}s")
-
-
+            if progress_callback:
+                await progress_callback(70, "Generating Document Embeddings")
 
             # 3. GENERATE EMBEDDINGS (Optimized Batching)
             t_embed_start = _time.time()
@@ -644,8 +645,8 @@ class KnowledgeBaseService:
 
             t_embed_end = _time.time()
             logger.info(f" Generated {len(embeddings)} embeddings in {t_embed_end - t_embed_start:.1f}s")
-
-
+            if progress_callback:
+                await progress_callback(80, "Extracting Knowledge Graph Entities")
 
             # 4. UNIFIED EXTRACTION (Entities, Triplets, Structured)
             from ...core.unified_extractor import UnifiedExtractor
@@ -704,10 +705,23 @@ class KnowledgeBaseService:
             _chunk_extract_cache = {}
             
             # Mutable counters for routing observability
-            routing_stats = {"fluff": 0, "processed": 0, "cache_hits": 0, "kg_calls": 0}
+            routing_stats = {"fluff": 0, "processed": 0, "cache_hits": 0, "kg_calls": 0, "fast_regex": 0}
             
             # Use dynamic high-throughput semaphore instead of hardcoded 10
             sem = asyncio.Semaphore(max(35, settings.ingestion_llm_concurrency))
+
+            def _fast_regex_extract_entities(chunk_text: str) -> list:
+                """0-ms deterministic entity extractor using NLP capitalization, technical terms, and regex heuristics."""
+                entities = set()
+                for match in re.findall(r'\b[A-Z][a-z0-9]+(?:\s+[A-Z][a-z0-9]+)+\b', chunk_text):
+                    if len(match) > 3 and match.lower() not in {"table of", "page of", "this is", "in the", "on the"}:
+                        entities.add(match)
+                for match in re.findall(r'\b[A-Z]{2,10}\b', chunk_text):
+                    if match not in {"AND", "THE", "FOR", "WITH", "THAT", "THIS", "FROM", "ARE", "WAS", "NOT", "BUT", "ALL", "ANY"}:
+                        entities.add(match)
+                for match in re.findall(r'\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b', chunk_text):
+                    entities.add(match)
+                return [{"name": e, "type": "KEYWORD"} for e in sorted(list(entities))[:20]]
 
             async def safe_extract_unified(chunk_id: str, text: str, idx: int):
                 # Fast-Path: Skip LLM extraction for fluff chunks or purely structured spreadsheet chunks to save time
@@ -728,15 +742,26 @@ class KnowledgeBaseService:
                     cached_result["_metadata"]["cached"] = True
                     return cached_result
 
+                # Enterprise Smart KG Sampling:
+                # Run LLM KG extraction on top 15 chunks (with a 6-second timeout); 
+                # 0-ms Fast Deterministic Regex Entity Extraction on secondary chunks (idx >= 15)
+                if idx >= 15:
+                    routing_stats["fast_regex"] += 1
+                    fast_entities = _fast_regex_extract_entities(text)
+                    result = {"entities": fast_entities, "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"fast_regex": True, "chunk_idx": idx}}
+                    _chunk_extract_cache[text_hash] = result
+                    return result
+
                 routing_stats["kg_calls"] += 1
                 try:
                     async with sem:
-                        result = await unified_extractor.extract_all(chunk_id, text)
+                        result = await asyncio.wait_for(unified_extractor.extract_all(chunk_id, text), timeout=6.0)
                     _chunk_extract_cache[text_hash] = result
                     return result
                 except Exception as e:
-                    logger.warning(f"Unified extraction failed for chunk {idx}: {e}")
-                    return {"entities": [], "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"failed_completely": True, "chunk_idx": idx}}
+                    logger.warning(f"Unified LLM extraction timed out/failed for chunk {idx} ({e}). Using 0-ms fast regex fallback...")
+                    fast_entities = _fast_regex_extract_entities(text)
+                    return {"entities": fast_entities, "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"fast_regex_fallback": True, "chunk_idx": idx}}
 
             logger.info(f" Processing Unified Extractions for {len(chunks)} chunks (sliding-window concurrency={max(35, settings.ingestion_llm_concurrency)})...")
             
@@ -916,6 +941,9 @@ class KnowledgeBaseService:
                 self.db.add_all(structured_entities_to_save)
             if structured_sections_to_save:
                 self.db.add_all(structured_sections_to_save)
+
+            if progress_callback:
+                await progress_callback(90, "Indexing Vector & Graph Stores")
 
             neo4j_start_time = time.time()
 

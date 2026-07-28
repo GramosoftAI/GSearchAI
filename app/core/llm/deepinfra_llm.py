@@ -219,7 +219,7 @@ class DeepInfraLLMClient:
         self.gateway_base_url = f"{getattr(settings, 'llm_base_url', 'http://103.191.132.28:7218')}/v1/chat/completions"
         self.gateway_model = os.environ.get("LLM_GATEWAY_MODEL") or getattr(settings, "llm_gateway_model", "qwen2.5:3b")
 
-        self.timeout = 120.0  # Restored timeout since cloud is fast
+        self.timeout = 25.0  # Enterprise timeout cap against stalled sockets
         self.max_retries = 3  # Number of retry attempts
         self.max_tokens = 4000  # Max output tokens (GUARD: prevent very long responses)
         self.max_answer_length = 2000  # Max chars in answer (latency + cost guard)
