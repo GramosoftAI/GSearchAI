@@ -1652,24 +1652,29 @@ class RAGPipeline:
                             except ValueError:
                                 pass
                                 
-                    stmt = select(DocumentChunk, KnowledgeBase.parsed_path).outerjoin(
+                    stmt = select(DocumentChunk, KnowledgeBase.parsed_path, KnowledgeBase.name, KnowledgeBase.s3_path).outerjoin(
                         KnowledgeBase, DocumentChunk.kb_id == KnowledgeBase.id
                     ).where(DocumentChunk.id.in_(uuid_chunk_ids))
                     res = await self.db.execute(stmt)
                     
                     db_chunks = {}
-                    for db_c, parsed_path in res.all():
-                        db_chunks[str(db_c.id)] = (db_c, parsed_path)
+                    for db_c, parsed_path, kb_name, s3_path in res.all():
+                        db_chunks[str(db_c.id)] = (db_c, parsed_path, kb_name, s3_path)
                     
                     for chunk in context_chunks:
                         if chunk.chunk_id in db_chunks:
-                            db_c, parsed_path = db_chunks[chunk.chunk_id]
+                            db_c, parsed_path, kb_name, s3_path = db_chunks[chunk.chunk_id]
                             if not chunk.text:
                                 chunk.text = db_c.text or ""
                             if not chunk.kb_id:
                                 chunk.kb_id = str(db_c.kb_id)
                             if chunk.position == 0:
                                 chunk.position = db_c.chunk_index
+                                
+                            # Overwrite default "DocumentChunk X" source with actual filename
+                            if not chunk.source or str(chunk.source).startswith("DocumentChunk"):
+                                chunk.source = s3_path or kb_name or chunk.source
+                                
                             if parsed_path:
                                 if parsed_path.endswith(".html"):
                                     chunk.content_type = "text/html"
