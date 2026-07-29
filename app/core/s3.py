@@ -63,8 +63,8 @@ class S3StorageService:
                 pass
         except ClientError as e:
             error_code = e.response.get('Error', {}).get('Code')
-            if error_code == '404':
-                # File doesn't exist, proceed to upload
+            if error_code in ['404', '403']:
+                # File doesn't exist (404) or IAM lacks list permissions (403), proceed to upload
                 pass
             else:
                 logger.error(f"Error checking S3 object existence: {e}")
