@@ -535,6 +535,35 @@ If you'd like, I can also:
             logger.warning(f"Failed fetching active ontology for RAG prompt: {e}")
             ontology_rules_str = ""
 
+        # ============= MEMORY-API: RECALL USER PREFERENCES & EPISODIC GUIDANCE =============
+        episodic_guidance = ""
+        if memory_enabled and user_id:
+            import httpx
+            import uuid
+            MEMORY_API_BASE_URL = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
+            MEMORY_API_URL = f"{MEMORY_API_BASE_URL}/api/v1/memory"
+            async with httpx.AsyncClient() as client:
+                try:
+                    mem_resp = await client.post(
+                        f"{MEMORY_API_URL}/process-turn",
+                        json={
+                            "query": query,
+                            "session_id": str(uuid.uuid4()),
+                            "agent_id": agent_id,
+                            "user_id": user_id,
+                            "tenant_id": self.tenant_id
+                        },
+                        timeout=8.0
+                    )
+                    if mem_resp.status_code == 200:
+                        mem_data = mem_resp.json()
+                        episodic_guidance = mem_data.get("guidance_context") or ""
+                        logger.info(f"Memory API returned guidance_context: {episodic_guidance!r}")
+                    else:
+                        logger.warning(f"memory-api process-turn status={mem_resp.status_code}: {mem_resp.text}")
+                except Exception as e:
+                    logger.warning(f"memory-api process-turn unreachable, continuing without memory: {e}")
+
         injected_system_prompt = f"""
 [PERSONALITY MODE: STRICT]
 
@@ -548,15 +577,37 @@ Personality Definition:
 Base Instruction:
 {base_prompt}{ontology_rules_str}
 
+You are an enterprise AI assistant.
+
 ==================================================
-CORE RULES
+MEMORY AUTHORITY (HIGHEST PRIORITY — READ FIRST)
 ==================================================
-- Answer ONLY using the provided context.
-- Never use external knowledge.
+If the user's message contains a section beginning with:
+  "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES"
+then you MUST treat everything in that section as VERIFIED GROUND TRUTH about the user.
+- These facts are authoritative and override document context.
+- Use them to answer personal questions directly (e.g., "what is my name?", "what is my 10th grade mark?").
+- You are ALLOWED and REQUIRED to answer from this memory section even if the answer is not in the documents.
+- Do NOT say "I couldn't find it" if the answer is present in the memory/preferences section.
+- When answering from memory, say "Based on your saved profile, ..." to be transparent.
+
+==================================================
+GROUNDING RULES & HALLUCINATION PREVENTION
+==================================================
+Never complete missing information using prior knowledge.
+If retrieved passages conflict, state the conflict. Do not resolve it yourself.
+- Answer ONLY using the provided context OR verified user memory (see MEMORY AUTHORITY above).
+- Before answering, verify that every factual statement in your response is explicitly supported by the retrieved context or user memory.
+- If a statement is not directly supported by either source, do not include it.
+- Do not combine information from your general knowledge with the retrieved context.
+- Never use outside knowledge.
 - Never invent, infer, estimate, or assume facts.
-- If the requested information is not available in the provided context, reply:
+- If the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
   "I couldn't find it."
 - If only part of the answer exists, answer only that part.
+- Mention the relevant source at the end.
+- Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
+- Be concise. Focus strictly on direct answers and avoid filler.
 - TRANSACTION CLASSIFICATION: Categorize transactions strictly:
   * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
   * Debit (Withdrawal/Outgoing/Payment): ATM withdrawals, payments to merchants, fees, taxes, outgoing transfers.
@@ -593,6 +644,9 @@ If you'd like, I can also:
             "personality": personality_description,
             "system_prompt": injected_system_prompt
         }
+
+        if episodic_guidance:
+            logger.debug("Episodic guidance retrieved; will inject into RAG context.")
 
         # Step 2: Cache check
         cache_key = self._make_cache_key(query, agent_id, "|".join(kb_ids), kb_version=kb.total_chunks)
@@ -770,6 +824,13 @@ If you'd like, I can also:
 
         # Step 4: Format Context & LLM Generation
         formatted_context = self._format_context(context)
+        
+        if episodic_guidance:
+            formatted_context = (
+                "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
+                f"{episodic_guidance}\n\n"
+            ) + formatted_context
+
         llm_response = await self._generate_answer_llm(
             query=query,
             context=formatted_context,

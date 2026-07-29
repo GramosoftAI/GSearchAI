@@ -11,11 +11,6 @@ annotated-doc==0.0.4
 annotated-types==0.7.0
 anthropic==0.97.0
 anyio==4.13.0
-argcomplete==3.6.3
-arize-phoenix==15.1.0
-arize-phoenix-client==2.6.0
-arize-phoenix-evals==3.0.0
-arize-phoenix-otel==0.16.0
 asgiref==3.11.1
 asyncpg==0.31.0
 attrs==26.1.0
@@ -134,7 +129,7 @@ opentelemetry-sdk==1.39.1
 opentelemetry-semantic-conventions==0.60b1
 opentelemetry-util-http==0.60b1
 orjson==3.11.8
-packaging==23.2
+packaging>=24.0
 pandas==2.3.3
 passlib==1.7.4
 pathable==0.5.0
@@ -148,7 +143,7 @@ pluggy==1.6.0
 prometheus_client==0.25.0
 prompt_toolkit==3.0.52
 propcache==0.4.1
-protobuf==4.25.8
+protobuf>=5.0.0
 psutil==7.2.2
 psycopg2-binary==2.9.9
 py-key-value-aio==0.4.4
@@ -158,13 +153,8 @@ pyasn1_modules==0.4.2
 pycodestyle==2.11.1
 pycparser==3.0
 pydantic==2.13.3
-pydantic-ai==1.89.1
-pydantic-ai-slim==1.89.1
-pydantic-evals==1.89.1
-pydantic-graph==1.89.1
-pydantic-handlebars==0.1.0
 pydantic-settings==2.14.0
-pydantic_core==2.41.5
+pydantic_core>=2.41.5
 pydeck==0.9.1
 pyflakes==3.1.0
 Pygments==2.20.0
@@ -226,7 +216,6 @@ watchfiles==1.1.1
 wcwidth==0.6.0
 websockets==16.0
 wrapt==1.17.3
-xai-sdk==1.12.1
 yarl==1.23.0
 zipp==3.23.1
 
@@ -242,3 +231,4 @@ langchain-community==0.3.0
 langchain-openai==0.2.0
 duckdb==1.1.0
 duckdb-engine==0.13.0
+polars==1.43.1

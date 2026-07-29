@@ -26,7 +26,7 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "graphmind_password")
 logger.info(f"[NEO4J INIT] Initializing Neo4j Driver connecting to: {NEO4J_URI}")
 neo4j_driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
-EMBED_DIM = 5120
+EMBED_DIM = 768
 
 LIVE_SEMAPHORE = asyncio.Semaphore(int(os.getenv("OLLAMA_LIVE_CONCURRENCY", "1")))
 BACKGROUND_SEMAPHORE = asyncio.Semaphore(int(os.getenv("OLLAMA_BACKGROUND_CONCURRENCY", "1")))
