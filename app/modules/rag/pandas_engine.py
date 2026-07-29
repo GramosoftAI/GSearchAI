@@ -65,7 +65,7 @@ class DuckDBSemanticQuery(BaseModel):
     )
     explanation: str = Field(
         ...,
-        description="Concise human explanation of what the query retrieves."
+        description="Explanation of what the SQL query does."
     )
 
 class PandasQueryEngine:
@@ -81,20 +81,18 @@ class PandasQueryEngine:
             self.data_path = None
             self.llm_client = data_path_or_client
         self.all_dataset_paths = all_dataset_paths or ([self.data_path] if self.data_path else [])
-        settings = get_settings()
         
-        api_key = getattr(settings, "deepinfra_api_key", "")
-        base_url = getattr(settings, "deepinfra_api_url", "https://api.deepinfra.com/v1/openai")
-        model_name = getattr(settings, "deepinfra_llm_model", "Qwen/Qwen2.5-72B-Instruct")
+        if not self.llm_client:
+            from app.core.llm.deepinfra_llm import DeepInfraLLMClient
+            self.llm_client = DeepInfraLLMClient()
+            
+        from langchain_core.runnables import RunnableLambda
         
-        self.llm = ChatOpenAI(
-            model=model_name,
-            api_key=api_key,
-            base_url=base_url,
-            temperature=0.0,
-            max_tokens=2048,
-            extra_body={"enable_thinking": False}
-        )
+        async def _ainvoke(prompt_val, config=None, **kwargs):
+            text = prompt_val.to_string() if hasattr(prompt_val, 'to_string') else str(prompt_val)
+            return await self.llm_client.generate_cloud(prompt=text)
+            
+        self.llm = RunnableLambda(_ainvoke)
 
     def _build_union_query(self, paths: List[str], with_row_id: bool = False) -> str:
         """Builds a DuckDB UNION ALL BY NAME query across all provided CSV/Parquet dataset paths."""

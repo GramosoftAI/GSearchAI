@@ -128,6 +128,7 @@ class RetrievedChunk:
 
 
     source: Optional[str] = None  # Source of the chunk (e.g., filename, URL, database table)
+    s3_path: Optional[str] = None # S3 path to the original document
     content_type: str = "original"
     
     # Provenance fields for Enterprise Retrieval Orchestrator
@@ -1674,6 +1675,7 @@ class RAGPipeline:
                             # Overwrite default "DocumentChunk X" source with actual filename
                             if not chunk.source or str(chunk.source).startswith("DocumentChunk"):
                                 chunk.source = s3_path or kb_name or chunk.source
+                                chunk.s3_path = s3_path
                                 
                             if parsed_path:
                                 if parsed_path.endswith(".html"):
@@ -1691,7 +1693,7 @@ class RAGPipeline:
                 MATCH (c:Chunk {tenant_id: $tenant_id})
                 WHERE c.id IN $chunk_ids
                 OPTIONAL MATCH (kb:KnowledgeBase {tenant_id: $tenant_id})-[:HAS_CHUNK]->(c)
-                RETURN c.id as chunk_id, c.text as text, c.kb_id as kb_id, c.position as position, COALESCE(kb.s3_path, c.source, kb.name) as source, kb.parsed_path as parsed_path
+                RETURN c.id as chunk_id, c.text as text, c.kb_id as kb_id, c.position as position, COALESCE(kb.s3_path, c.source, kb.name) as source, kb.parsed_path as parsed_path, kb.s3_path as s3_path
                 """
                 neo_res = await self.neo4j_repo.execute_read(neo_query, {
                     "chunk_ids": needed_chunk_ids,
@@ -1708,7 +1710,14 @@ class RAGPipeline:
                             chunk.kb_id = n_c["kb_id"]
                         if chunk.position == 0 and n_c.get("position") is not None:
                             chunk.position = n_c["position"]
-                        chunk.source = n_c.get("source")
+                        neo_source = n_c.get("source")
+                        kb_name = self._kb_metadata.get(chunk.kb_id, {}).get("name") if chunk.kb_id else None
+                        s3_path = n_c.get("s3_path")
+                        if not neo_source or str(neo_source).startswith("DocumentChunk"):
+                            chunk.source = s3_path or kb_name or neo_source
+                        else:
+                            chunk.source = neo_source
+                        chunk.s3_path = s3_path
                         parsed_path = n_c.get("parsed_path")
                         if parsed_path:
                             if parsed_path.endswith(".html"):
