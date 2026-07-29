@@ -664,6 +664,7 @@ class KnowledgeBaseService:
                     skip_all_llm_extraction = True
                     logger.info(f"Skipping LLM extraction for structured Knowledge Base {kb_id} because all columns are structured.")
 
+
             def is_dense_chunk(chunk_text: str) -> bool:
                 # Fast NLP heuristic (Enterprise Safe)
                 text_len = len(chunk_text)
@@ -1495,8 +1496,32 @@ class KnowledgeBaseService:
                 )
             else:
                 kb_dict["time_taken"] = None
-                
-            kb_dict["processing_jobs"] = kb_jobs.get(kb.id)
+            job_dict = kb_jobs.get(kb.id)
+            kb_dict["processing_jobs"] = job_dict
+            
+            kb_dict["time_metrics"] = None
+            if job_dict and job_dict.get("started_at") and job_dict.get("completed_at") and run_info and run_info.started_at and run_info.completed_at:
+                try:
+                    from datetime import datetime
+                    j_start = datetime.fromisoformat(job_dict["started_at"].replace("Z", "+00:00"))
+                    j_end = datetime.fromisoformat(job_dict["completed_at"].replace("Z", "+00:00"))
+                    
+                    total_time = (j_end - j_start).total_seconds()
+                    processing_time = (run_info.completed_at - run_info.started_at).total_seconds()
+                    extract_time = total_time - processing_time
+                    if extract_time < 0: extract_time = 0
+                    
+                    extract_key = "gcrawl_time_seconds" if kb.source == "url_crawl" else "gdocz_time_seconds"
+                    
+                    kb_dict["time_metrics"] = {
+                        extract_key: round(extract_time, 2),
+                        "processing_time_seconds": round(processing_time, 2),
+                        "total_time_seconds": round(total_time, 2)
+                    }
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(f"Failed to calculate time_metrics: {e}")
+
             responses.append(kb_dict)
         return responses
 

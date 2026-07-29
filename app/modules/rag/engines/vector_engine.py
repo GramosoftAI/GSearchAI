@@ -82,7 +82,7 @@ class VectorEngine(BaseEngine):
             try:
                 from app.core.embeddings import EmbeddingGenerator
                 from sqlalchemy import select, and_, case, Float
-                from app.modules.knowledge_bases.models import DocumentChunk
+                from app.modules.knowledge_bases.models import DocumentChunk, KnowledgeBase
                 from uuid import UUID
 
                 query_embedding = await EmbeddingGenerator.generate_embedding(task.query)
@@ -100,8 +100,11 @@ class VectorEngine(BaseEngine):
                         DocumentChunk.chunk_index,
                         DocumentChunk.kb_id,
                         DocumentChunk.metadata_json,
+                        KnowledgeBase.name,
+                        KnowledgeBase.s3_path,
                         vector_score.label("similarity")
                     )
+                    .join(KnowledgeBase, DocumentChunk.kb_id == KnowledgeBase.id)
                     .where(
                         and_(
                             DocumentChunk.tenant_id == UUID(str(self.tenant_id)),
@@ -142,7 +145,8 @@ class VectorEngine(BaseEngine):
                         graph_score=0.0,
                         hybrid_score=final_score,
                         reason="VECTOR_SEARCH_HYBRID",
-                        source=f"DocumentChunk {row.chunk_index}",
+                        source=row.s3_path or row.name or f"DocumentChunk {row.chunk_index}",
+                        s3_path=row.s3_path,
                         engine_name="vector",
                         section="Unknown",
                         ontology_node=getattr(task, "target_section", "Unknown")
