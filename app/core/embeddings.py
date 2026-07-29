@@ -95,102 +95,47 @@ class EmbeddingGenerator:
 
 
     @staticmethod
-
     async def generate_embedding(text: str) -> List[float]:
-
         """
-
         Generate embedding for text using feature flag for Phase switching.
-
-
-
-        PHASE 2 (default): Hash-based embeddings (deterministic, fast, testable)
-
-        PHASE 3 (enabled via flag): Real DeepInfra API (semantic, accurate)
-
-
-
-        Feature flag: settings.use_real_embeddings
-
-        - Phase 2: False (hash-based) - fast development, zero cost
-
-        - Phase 3: True (real embeddings from DeepInfra API)
-
-
-
-        Args:
-
-            text: Text to embed
-
-
-
-        Returns:
-
-            List of 768 floats representing the embedding
-
         """
+        vector, _ = await EmbeddingGenerator.generate_embedding_with_usage(text)
+        return vector
 
-        # Log embedding mode on first call (for debugging + rollout monitoring)
-
+    @staticmethod
+    async def generate_embedding_with_usage(text: str) -> tuple[List[float], int]:
+        """
+        Generate embedding for text, returning (embedding vector, token count).
+        """
         if not EmbeddingGenerator._mode_logged:
-
             mode = (
-
                 "REAL (DeepInfra API)"
-
                 if settings.use_real_embeddings
-
                 else "HASH (Phase 2)"
-
             )
-
             logger.info(f"Using embedding mode: {mode}")
-
             EmbeddingGenerator._mode_logged = True
 
         if not text or len(text.strip()) == 0:
-
-            return [0.0] * settings.embedding_dimension
-
-
+            return [0.0] * settings.embedding_dimension, 0
 
         try:
-
-            # FEATURE FLAG: Switch between hash (Phase 2) and real (Phase 3)
-
             if settings.use_real_embeddings:
-
-                # Phase 3: Real embeddings from DeepInfra
-
-                return await EmbeddingGenerator._real_embedding(text)
-
+                client = _get_deepinfra_client()
+                return await client.generate_embedding_with_usage(text)
             else:
-
-                # Phase 2: Deterministic hash-based embeddings
-
                 logger.debug(
-
                     f"Embedding source: Hash (Phase 2) for text: {text[:50]}..."
-
                 )
-
-                return EmbeddingGenerator._hash_to_embedding(text)
-
-
-
+                return EmbeddingGenerator._hash_to_embedding(text), 0
         except Exception as e:
-
-            logger.warning(f"Failed to generate embedding: {e}. Falling back to hash.")
-
-            # Graceful fallback: use hash instead of failing
-
-            logger.info(
-
-                f"Embedding source: Fallback Hash (API failed) for text: {text[:50]}..."
-
+            logger.warning(
+                f"Failed to generate embedding: {e}. Falling back to hash."
             )
-
-            return EmbeddingGenerator._hash_to_embedding(text)
+            logger.info(
+                f"Embedding source: Fallback Hash (API failed) for text: {text[:50]}..."
+            )
+            return EmbeddingGenerator._hash_to_embedding(text), 0
 
 
 
@@ -265,124 +210,32 @@ class EmbeddingGenerator:
 
 
     @staticmethod
-
-    async def _real_embedding(text: str) -> List[float]:
-
+    async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
         """
-
-        Generate real embedding from DeepInfra API (Phase 3).
-
-
-
-        PRODUCTION IMPLEMENTATION: Calls actual embedding API.
-
-
-
-        Uses qwen3-embedd-0.4B model for semantic embeddings.
-
-        Includes automatic retries and timeout protection.
-
-
-
-        Args:
-
-            text: Text to embed
-
-
-
-        Returns:
-
-            Embedding vector from DeepInfra API
-
-
-
-        Safety:
-
-        - Automatic retries (try 3 times)
-
-        - Timeout after 10 seconds
-
-        - Text limited to 2000 chars (prevent overload)
-
-        - Fallback to hash on failure
-
+        Generate embeddings for multiple texts in parallel.
         """
-
-        try:
-
-            # Get DeepInfra client (singleton)
-
-            client = _get_deepinfra_client()
-
-
-
-            # Call API to generate real embedding
-
-            embedding = await client.generate_embedding(text)
-
-
-
-            logger.debug(f" Real embedding from DeepInfra ({len(embedding)} dims)")
-
-            return embedding
-
-
-
-        except Exception as e:
-
-            # Graceful fallback: use hash-based embedding instead of crashing
-
-            logger.warning(
-
-                f"Failed to get real embedding from DeepInfra: {e}. Falling back to hash-based."
-
-            )
-
-            return EmbeddingGenerator._hash_to_embedding(text)
-
-
+        vectors, _ = await EmbeddingGenerator.generate_embeddings_batch_with_usage(texts)
+        return vectors
 
     @staticmethod
-
-    async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
-
+    async def generate_embeddings_batch_with_usage(texts: List[str]) -> tuple[List[List[float]], int]:
         """
-
-        Generate embeddings for multiple texts in parallel (Phase 3.5).
-
-        
-
-        Args:
-
-            texts: List of texts to embed
-
-            
-
-        Returns:
-
-            List of embeddings (optimized via asyncio.gather in client)
-
+        Generate embeddings for multiple texts, returning (list of vectors, total token count).
         """
-
         if not texts:
-
-            return []
-
-            
-
-        # Get DeepInfra client (singleton)
-
-        client = _get_deepinfra_client()
-
-        
-
+            return [], 0
 
         try:
-            # Call optimized parallel batch method
-            return await client.generate_embeddings_batch(texts)
+            if settings.use_real_embeddings:
+                client = _get_deepinfra_client()
+                return await client.generate_embeddings_batch_with_usage(texts)
+            else:
+                return [EmbeddingGenerator._hash_to_embedding(text) for text in texts], 0
         except Exception as e:
-            logger.warning(f"Failed to generate real embeddings batch: {e}. Falling back to hash-based.")
-            return [EmbeddingGenerator._hash_to_embedding(text) for text in texts]
+            logger.warning(
+                f"Failed to generate real embeddings batch: {e}. Falling back to hash-based."
+            )
+            return [EmbeddingGenerator._hash_to_embedding(text) for text in texts], 0
 
 
 

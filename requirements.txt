@@ -232,3 +232,9 @@ langchain-openai==0.2.0
 duckdb==1.1.0
 duckdb-engine==0.13.0
 polars==1.43.1
+fastexcel
+pyarrow
+openpyxl
+duckdb==1.1.0
+duckdb-engine==0.13.0
+pandas==2.3.3

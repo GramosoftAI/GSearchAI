@@ -51,6 +51,12 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
     }
 
     async def dispatch(self, request: Request, call_next):
+        # ============= BYPASS WEBSOCKETS =============
+        # BaseHTTPMiddleware is designed for HTTP. WebSocket handshakes and message
+        # flows are handled directly by their respective endpoints.
+        if request.scope.get("type") == "websocket":
+            return await call_next(request)
+
         # ============= CHECK IF ROUTE IS PUBLIC =============
         route_key = (request.url.path, request.method)
         if (
@@ -156,6 +162,8 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
+        if request.scope.get("type") == "websocket":
+            return await call_next(request)
         try:
             response = await call_next(request)
             return response
@@ -213,6 +221,8 @@ class LoggingMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
+        if request.scope.get("type") == "websocket":
+            return await call_next(request)
         # Extract tenant for logging
         tenant_id = getattr(request.state, "tenant_id", "unknown")
 

@@ -5,7 +5,7 @@ Phase 2 Step 4: Transforms retrieved context into generated answers
 
 import logging
 import os
-from typing import Optional
+from typing import Optional, Callable
 from uuid import UUID
 import asyncio
 import hashlib
@@ -96,8 +96,10 @@ class RAGService:
         agent_id: str,
         kb_id: str | list[str],
         user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         top_k: int = 30,
         max_depth: int = 2,
+        on_usage_callback: Optional[Callable[[dict], None]] = None,
         chat_history: Optional[str] = None,
         skip_search: bool = False,
     ):
@@ -160,7 +162,8 @@ class RAGService:
                             logger.info("[EnterpriseHybridRouter] Executing HYBRID_MERGE: Gathering tabular SQL context to enrich Document RAG...")
                             try:
                                 sql_res = await engine.execute_query(query)
-                                if sql_res and not any(sig in str(sql_res).lower() for sig in ["not present in dataset", "no records matched", "error"]):
+                                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                                if sql_res and not any(sig in str(sql_res).lower() for sig in unmatched_signals):
                                     hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
                             except Exception as merge_err:
                                 logger.warning(f"[EnterpriseHybridRouter] HYBRID_MERGE tabular step error: {merge_err}")
@@ -173,10 +176,16 @@ class RAGService:
                     try:
                         result = await engine.execute_query(query)
                         result_str = str(result)
-                        # Smart Fallback: If Excel dataset lacked answer and PDF KBs exist, fall through to PDFs!
-                        unmatched_signals = ["Not present in dataset", "No records matched", "not present in dataset"]
-                        if doc_kbs and any(sig.lower() in result_str.lower() for sig in unmatched_signals):
-                            logger.info(f"[EnterpriseHybridRouter] Excel dataset lacked answer ({result_str}). Falling back to PDF knowledge bases...")
+                        unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                        is_unmatched = any(sig in result_str.lower() for sig in unmatched_signals)
+                        explicit_math_keywords = ["sum of", "average of", "count of", "total of", "how many rows", "group by"]
+                        is_pure_math = any(kw in query.lower() for kw in explicit_math_keywords)
+                        if doc_kbs and is_unmatched:
+                            logger.info(f"[EnterpriseHybridRouter] Excel dataset lacked answer ({result_str}). Falling back to PDF/URL knowledge bases...")
+                        elif doc_kbs and not is_pure_math:
+                            logger.info("[EnterpriseHybridRouter] Mixed sources: Injecting tabular result into hybrid context and also searching PDFs/URLs...")
+                            hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{result_str}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                            route_to_excel = False
                         else:
                             yield json.dumps({
                                 "type": "metadata",
@@ -191,7 +200,7 @@ class RAGService:
                         if not doc_kbs:
                             yield json.dumps({"error": str(e)})
                             return
-                        logger.info("[EnterpriseHybridRouter] Excel execution failed, falling through to PDF knowledge bases...")
+                        logger.info("[EnterpriseHybridRouter] Excel execution failed, falling through to PDF/URL knowledge bases...")
             
         if len(kb_ids) > 1:
             logger.info(f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}")
@@ -393,7 +402,23 @@ If you'd like, I can also:
                     clean_src = clean_source_name(ent.get('source', 'document_entities'))
                     yield f"**{clean_name}:** {ent['value']} (Page {ent.get('page', 1)}) [Source: {clean_src}]\n"
                 yield "\n"
-            yield context.triplet_context
+
+            # Strip any <think> tags from triplet_context (gateway LLM leak guard)
+            import re as _re
+            clean_triplet = context.triplet_context or ""
+            clean_triplet = _re.sub(r'<think>.*?</think>', '', clean_triplet, flags=_re.DOTALL).strip()
+            if '<think>' in clean_triplet:
+                clean_triplet = clean_triplet[:clean_triplet.index('<think>')].strip()
+
+            yield clean_triplet
+
+            # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
+            # Use the kb object already fetched for metadata (line 661 scope)
+            try:
+                _src_name = kb.name if len(kb_ids) == 1 else (kb_ids[0] if kb_ids else "Dataset")
+                yield f"\n\n[Source: {_src_name}]"
+            except Exception:
+                pass
             return
 
         if (not context or not context.chunks) and not chat_history:
@@ -402,14 +427,21 @@ If you'd like, I can also:
             return
 
         # 4. Stream chunks
-        formatted_context = self._format_context(context) if context else ""
+        formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
         start_time = datetime.now()
 
+        full_answer = []
+        token_usage = {}
+        def handle_usage(usage_dict):
+            token_usage.update(usage_dict)
+            if on_usage_callback:
+                on_usage_callback(usage_dict)
         async for chunk in self.llm_client.stream_answer(
             query, 
             formatted_context, 
             agent_persona=agent_persona,
             enable_thinking=False,
+            on_usage_callback=handle_usage,
         ):
             yield chunk
 
@@ -418,13 +450,29 @@ If you'd like, I can also:
         confidence = sum(c.hybrid_score for c in context.chunks) / len(context.chunks) if (context and context.chunks) else 0.0
         status = ResponseStatus.SUCCESS if (context and context.chunks) else (ResponseStatus.SUCCESS if chat_history else ResponseStatus.UNANSWERED)
 
+        llm_input_tokens = token_usage.get("prompt_tokens", 0)
+        llm_output_tokens = token_usage.get("completion_tokens", 0)
+        embedding_tokens = getattr(context, "query_embedding_tokens", 0) or max(1, len(query) // 4)
+
+        llm_cost_usd = (llm_input_tokens / 1000000.0) * 0.10 + (llm_output_tokens / 1000000.0) * 0.15
+        embedding_cost_usd = (embedding_tokens / 1000000.0) * 0.01
+        total_cost_usd = llm_cost_usd + embedding_cost_usd
+
         try:
             analytics_repo = AnalyticsRepository(self.db, UUID(self.tenant_id))
             await analytics_repo.create_query_log({
                 "query": query,
                 "response_status": status,
                 "confidence_score": confidence,
-                "latency_ms": latency_ms
+                "latency_ms": latency_ms,
+                "session_id": UUID(session_id) if session_id else None,
+                "user_id": UUID(user_id) if user_id else None,
+                "llm_input_tokens": llm_input_tokens,
+                "llm_output_tokens": llm_output_tokens,
+                "embedding_tokens": embedding_tokens,
+                "llm_cost_usd": llm_cost_usd,
+                "embedding_cost_usd": embedding_cost_usd,
+                "total_cost_usd": total_cost_usd
             })
             await self.db.commit()
         except Exception as ae:
@@ -449,49 +497,64 @@ If you'd like, I can also:
         start_time_total = datetime.now()
 
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
+        hybrid_merge_context = ""
         
-        kb = await self.kb_repo.get_by_id(kb_ids[0])
-        if not kb:
-            return {"error": f"Knowledge Base {kb_ids[0]} not found", "answer": None, "sources": []}
+        excel_kbs = []
+        doc_kbs = []
+        for kid in kb_ids:
+            k_obj = await self.kb_repo.get_by_id(kid)
+            if not k_obj:
+                continue
+            if str(k_obj.agent_id) != str(agent_id):
+                logger.error(f"Agent {agent_id} does not own KB {kid}")
+                return {"error": f"Agent {agent_id} does not own Knowledge Base {kid}", "answer": None, "sources": []}
+            if getattr(k_obj, "description", "") == "excel_parquet":
+                excel_kbs.append(k_obj)
+            else:
+                doc_kbs.append(k_obj)
 
-        if str(kb.agent_id) != str(agent_id):
-            logger.error(f" Agent {agent_id} does not own KB {kb_ids[0]}")
+        if not excel_kbs and not doc_kbs:
+            return {"error": "No valid Knowledge Bases found", "answer": None, "sources": []}
 
-            return {
-
-                "error": f"Agent {agent_id} does not own Knowledge Base {kb_ids[0]}",
-
-                "answer": None,
-
-                "sources": [],
-
-            }
-            
         # ============= HYBRID RAG: INTERCEPT EXCEL/PARQUET QUERIES =============
-        if getattr(kb, "description", "") == "excel_parquet":
-            dataset_name = getattr(kb, "parsed_path", None) or getattr(kb, "s3_path", None)
-            if not dataset_name:
-                return {"error": "Excel dataset name not found in KB parsed_path field.", "answer": None, "sources": []}
-                
+        if excel_kbs:
             from app.core.parquet_ingester import ParquetIngester
             from app.modules.rag.pandas_engine import PandasQueryEngine
-            
-            active_dataset_path = ParquetIngester.get_active_dataset(dataset_name)
-            if not active_dataset_path:
-                return {"error": f"Active parquet dataset for {dataset_name} not found.", "answer": None, "sources": []}
-                
-            engine = PandasQueryEngine(active_dataset_path)
-            try:
-                result = await engine.execute_query(query)
-                return {
-                    "answer": result,
-                    "sources": [],
-                    "context": {"type": "duckdb_parquet"},
-                    "stats": {}
-                }
-            except Exception as e:
-                logger.error(f"PandasQueryEngine failed: {e}")
-                return {"error": str(e), "answer": None, "sources": []}
+            active_paths = []
+            for ek in excel_kbs:
+                dataset_name = getattr(ek, "parsed_path", None) or getattr(ek, "s3_path", None)
+                if dataset_name:
+                    p = ParquetIngester.get_active_dataset(dataset_name)
+                    if p:
+                        active_paths.append(p)
+            if active_paths:
+                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                try:
+                    result = await engine.execute_query(query)
+                    result_str = str(result)
+                    unmatched_signals = [
+                        "not present in dataset", "no records matched", "error", 
+                        "0 rows", "empty dataframe", "could not find", "no matching"
+                    ]
+                    is_unmatched = any(sig in result_str.lower() for sig in unmatched_signals)
+                    explicit_math_keywords = ["sum of", "average of", "count of", "total of", "how many rows", "group by"]
+                    is_pure_math = any(kw in query.lower() for kw in explicit_math_keywords)
+                    if doc_kbs and is_unmatched:
+                        logger.info(f"[generate_answer] Excel dataset lacked answer ({result_str}). Falling back to PDF/URL knowledge bases...")
+                    elif doc_kbs and not is_pure_math:
+                        logger.info("[generate_answer] Mixed sources: Injecting tabular result and searching PDFs/URLs...")
+                        hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{result_str}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                    else:
+                        return {
+                            "answer": result_str,
+                            "sources": [],
+                            "context": {"type": "duckdb_parquet"},
+                            "stats": {}
+                        }
+                except Exception as e:
+                    logger.error(f"PandasQueryEngine failed in generate_answer: {e}")
+                    if not doc_kbs:
+                        return {"error": str(e), "answer": None, "sources": []}
 
 
 
@@ -823,14 +886,13 @@ If you'd like, I can also:
             }
 
         # Step 4: Format Context & LLM Generation
-        formatted_context = self._format_context(context)
+        formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
         
         if episodic_guidance:
             formatted_context = (
                 "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
                 f"{episodic_guidance}\n\n"
             ) + formatted_context
-
         llm_response = await self._generate_answer_llm(
             query=query,
             context=formatted_context,
@@ -942,8 +1004,10 @@ If you'd like, I can also:
             if oldest_key in _rag_cache:
                 del _rag_cache[oldest_key]
 
-    def _format_context(self, context: RAGContext) -> str:
+    def _format_context(self, context: RAGContext, hybrid_merge_context: Optional[str] = None) -> str:
         context_text = f"QUERY: {context.query}\n" + "=" * 60 + "\nCONTEXT (from Knowledge Base):\n"
+        if hybrid_merge_context:
+            context_text += f"{hybrid_merge_context}\n" + "=" * 60 + "\n"
 
         for i, chunk in enumerate(context.chunks, 1):
             source_info = clean_source_name(chunk.source) if chunk.source else "Unknown Source"

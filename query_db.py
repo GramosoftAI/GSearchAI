@@ -4,12 +4,28 @@ from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 async def check():
-    engine = create_async_engine('postgresql+asyncpg://postgres:postgres%40docker@localhost:5433/graphmind')
+    engine = create_async_engine('postgresql+asyncpg://graphmind:graphmind_password@localhost:5433/graphmind')
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     
     async with async_session() as session:
-        res = await session.execute(text("SELECT tenant_id FROM agents WHERE id = '443a6edd-4117-4ba3-9d8c-2be0d091527b'"))
-        agent = res.fetchone()
-        print('Agent Tenant:', agent)
+        res = await session.execute(text("""
+            SELECT id, query, response_status, llm_input_tokens, llm_output_tokens, embedding_tokens, total_cost_usd, created_at
+            FROM analytics_query_logs
+            ORDER BY created_at DESC
+            LIMIT 1
+        """))
+        row = res.fetchone()
+        if row:
+            print("Latest Query Log in DB:")
+            print("ID:", row[0])
+            print("Query:", row[1])
+            print("Status:", row[2])
+            print("LLM Input Tokens:", row[3])
+            print("LLM Output Tokens:", row[4])
+            print("Embedding Tokens:", row[5])
+            print("Total Cost USD:", row[6])
+            print("Created At:", row[7])
+        else:
+            print("No query logs found.")
 
 asyncio.run(check())

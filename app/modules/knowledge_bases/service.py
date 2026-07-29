@@ -500,6 +500,7 @@ class KnowledgeBaseService:
         parsed_path: Optional[str] = None,
         document_category: str = "general_document",
         structured_records: Optional[list] = None,
+        progress_callback: Optional[callable] = None,
     ) -> dict:
 
         """
@@ -627,12 +628,14 @@ class KnowledgeBaseService:
 
             t_chunk_end = _time.time()
             logger.info(f" Chunked document into {len(chunks)} chunks using Adaptive/Structured Chunking ({source_type}) in {t_chunk_end - t_chunk_start:.1f}s")
-
-
+            if progress_callback:
+                await progress_callback(70, "Generating Document Embeddings")
 
             # 3. GENERATE EMBEDDINGS (Optimized Batching)
             t_embed_start = _time.time()
-            embeddings = await EmbeddingGenerator.generate_embeddings_batch(chunks)
+            embeddings, emb_tokens = await EmbeddingGenerator.generate_embeddings_batch_with_usage(chunks)
+            audit_run.embedding_tokens = emb_tokens
+            audit_run.embedding_cost_usd = (emb_tokens / 1000000.0) * 0.01
             # Yield control back to event loop so server stays responsive
             await asyncio.sleep(0)
 
@@ -642,8 +645,8 @@ class KnowledgeBaseService:
 
             t_embed_end = _time.time()
             logger.info(f" Generated {len(embeddings)} embeddings in {t_embed_end - t_embed_start:.1f}s")
-
-
+            if progress_callback:
+                await progress_callback(80, "Extracting Knowledge Graph Entities")
 
             # 4. UNIFIED EXTRACTION (Entities, Triplets, Structured)
             from ...core.unified_extractor import UnifiedExtractor
@@ -702,10 +705,23 @@ class KnowledgeBaseService:
             _chunk_extract_cache = {}
             
             # Mutable counters for routing observability
-            routing_stats = {"fluff": 0, "processed": 0, "cache_hits": 0, "kg_calls": 0}
+            routing_stats = {"fluff": 0, "processed": 0, "cache_hits": 0, "kg_calls": 0, "fast_regex": 0}
             
             # Use dynamic high-throughput semaphore instead of hardcoded 10
             sem = asyncio.Semaphore(max(35, settings.ingestion_llm_concurrency))
+
+            def _fast_regex_extract_entities(chunk_text: str) -> list:
+                """0-ms deterministic entity extractor using NLP capitalization, technical terms, and regex heuristics."""
+                entities = set()
+                for match in re.findall(r'\b[A-Z][a-z0-9]+(?:\s+[A-Z][a-z0-9]+)+\b', chunk_text):
+                    if len(match) > 3 and match.lower() not in {"table of", "page of", "this is", "in the", "on the"}:
+                        entities.add(match)
+                for match in re.findall(r'\b[A-Z]{2,10}\b', chunk_text):
+                    if match not in {"AND", "THE", "FOR", "WITH", "THAT", "THIS", "FROM", "ARE", "WAS", "NOT", "BUT", "ALL", "ANY"}:
+                        entities.add(match)
+                for match in re.findall(r'\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b', chunk_text):
+                    entities.add(match)
+                return [{"name": e, "type": "KEYWORD"} for e in sorted(list(entities))[:20]]
 
             async def safe_extract_unified(chunk_id: str, text: str, idx: int):
                 # Fast-Path: Skip LLM extraction for fluff chunks or purely structured spreadsheet chunks to save time
@@ -726,15 +742,26 @@ class KnowledgeBaseService:
                     cached_result["_metadata"]["cached"] = True
                     return cached_result
 
+                # Enterprise Smart KG Sampling:
+                # Run LLM KG extraction on top 15 chunks (with a 6-second timeout); 
+                # 0-ms Fast Deterministic Regex Entity Extraction on secondary chunks (idx >= 15)
+                if idx >= 15:
+                    routing_stats["fast_regex"] += 1
+                    fast_entities = _fast_regex_extract_entities(text)
+                    result = {"entities": fast_entities, "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"fast_regex": True, "chunk_idx": idx}}
+                    _chunk_extract_cache[text_hash] = result
+                    return result
+
                 routing_stats["kg_calls"] += 1
                 try:
                     async with sem:
-                        result = await unified_extractor.extract_all(chunk_id, text)
+                        result = await asyncio.wait_for(unified_extractor.extract_all(chunk_id, text), timeout=6.0)
                     _chunk_extract_cache[text_hash] = result
                     return result
                 except Exception as e:
-                    logger.warning(f"Unified extraction failed for chunk {idx}: {e}")
-                    return {"entities": [], "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"failed_completely": True, "chunk_idx": idx}}
+                    logger.warning(f"Unified LLM extraction timed out/failed for chunk {idx} ({e}). Using 0-ms fast regex fallback...")
+                    fast_entities = _fast_regex_extract_entities(text)
+                    return {"entities": fast_entities, "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"fast_regex_fallback": True, "chunk_idx": idx}}
 
             logger.info(f" Processing Unified Extractions for {len(chunks)} chunks (sliding-window concurrency={max(35, settings.ingestion_llm_concurrency)})...")
             
@@ -876,8 +903,19 @@ class KnowledgeBaseService:
             entities_by_chunk = {}
             all_entities_set = set()
             for i, extracted in enumerate(entity_results):
-                entities_by_chunk[i] = [{"text": e.text, "type": e.entity_type, "confidence": e.confidence} for e in extracted]
-                for e in extracted: all_entities_set.add(f"{e.text}|{e.entity_type}")
+                chunk_entities = []
+                for e in extracted:
+                    if isinstance(e, dict):
+                        e_text = e.get("text", e.get("name", ""))
+                        e_type = e.get("entity_type", e.get("type", "KEYWORD"))
+                        e_conf = e.get("confidence", 1.0)
+                    else:
+                        e_text = getattr(e, "text", getattr(e, "name", ""))
+                        e_type = getattr(e, "entity_type", getattr(e, "type", "KEYWORD"))
+                        e_conf = getattr(e, "confidence", 1.0)
+                    chunk_entities.append({"text": e_text, "type": e_type, "confidence": e_conf})
+                    all_entities_set.add(f"{e_text}|{e_type}")
+                entities_by_chunk[i] = chunk_entities
 
             # Prepare structured entities for storage
             from .models import DocumentEntity, DocumentSection
@@ -914,6 +952,9 @@ class KnowledgeBaseService:
                 self.db.add_all(structured_entities_to_save)
             if structured_sections_to_save:
                 self.db.add_all(structured_sections_to_save)
+
+            if progress_callback:
+                await progress_callback(90, "Indexing Vector & Graph Stores")
 
             neo4j_start_time = time.time()
 
@@ -1100,19 +1141,19 @@ class KnowledgeBaseService:
                 triplet_stats = {"triplets_extracted": persist_result.get("triplets_created", 0), "triplet_entities": persist_result.get("entities_created", 0), "triplet_relationships": persist_result.get("relationships_created", 0)}
 
             # 8.5 GRAPH CLEANUP (NEW) - Run Asynchronously
-            async def run_cleanup_async(tenant_id_str: str):
+            async def run_cleanup_async(tenant_id_str: str, kb_id_str: str):
                 try:
-                    logger.info(f"Background graph cleanup started for tenant {tenant_id_str}...")
+                    logger.info(f"Background graph cleanup started for tenant {tenant_id_str} and KB {kb_id_str}...")
                     from ...core.graph_cleanup import GraphCleanupService
-                    cleanup_service = GraphCleanupService(tenant_id=tenant_id_str)
+                    cleanup_service = GraphCleanupService(tenant_id=tenant_id_str, kb_id=kb_id_str)
                     stats = await cleanup_service.cleanup_graph()
-                    logger.info(f"Background graph cleanup completed for tenant {tenant_id_str}: {stats}")
+                    logger.info(f"Background graph cleanup completed for tenant {tenant_id_str} and KB {kb_id_str}: {stats}")
                 except Exception as cleanup_err:
-                    logger.error(f"Background graph cleanup failed for tenant {tenant_id_str}: {cleanup_err}", exc_info=True)
+                    logger.error(f"Background graph cleanup failed for tenant {tenant_id_str} and KB {kb_id_str}: {cleanup_err}", exc_info=True)
 
             cleanup_stats = {"total_merges": 0, "relationships_deduplicated": 0}
             # Start cleanup task in background, avoiding blocking the main ingestion pipeline completion
-            asyncio.create_task(run_cleanup_async(str(self.tenant_id)))
+            asyncio.create_task(run_cleanup_async(str(self.tenant_id), str(kb_id)))
 
             # 9. FINAL UPDATE
 
@@ -1358,14 +1399,22 @@ class KnowledgeBaseService:
 
             await self.db.commit()
 
+            # Trigger graph cleanup asynchronously in the background
+            async def run_cleanup_async(tenant_id_str: str, kb_id_str: str):
+                try:
+                    logger.info(f"Background graph cleanup started for tenant {tenant_id_str} and KB {kb_id_str}...")
+                    from ...core.graph_cleanup import GraphCleanupService
+                    cleanup_service = GraphCleanupService(tenant_id=tenant_id_str, kb_id=kb_id_str)
+                    stats = await cleanup_service.cleanup_graph()
+                    logger.info(f"Background graph cleanup completed for tenant {tenant_id_str} and KB {kb_id_str}: {stats}")
+                except Exception as cleanup_err:
+                    logger.error(f"Background graph cleanup failed for tenant {tenant_id_str} and KB {kb_id_str}: {cleanup_err}", exc_info=True)
 
+            asyncio.create_task(run_cleanup_async(str(self.tenant_id), str(kb_id)))
 
             return format_success(
-
                 result["data"],
-
                 meta={"message": f"Successfully ingested structured file '{filename}' into KB"}
-
             )
 
 

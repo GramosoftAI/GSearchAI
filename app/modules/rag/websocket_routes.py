@@ -316,11 +316,16 @@ async def rag_websocket(
                 sources = []
                 has_error = False
 
+                token_usage = {}
+                def capture_usage(usage_dict):
+                    token_usage.update(usage_dict)
                 async for chunk in rag_service.stream_rag_answer(
                     query=enhanced_query,
                     agent_id=agent_id,
                     kb_id=kb_ids,
                     user_id=user_id,
+                    session_id=active_session_id,
+                    on_usage_callback=capture_usage,
                     chat_history=chat_history_str,
                     skip_search=skip_search,
                 ):
@@ -366,6 +371,13 @@ async def rag_websocket(
                 if has_error:
                     assistant_metadata["error"] = True
 
+                if token_usage:
+                    assistant_metadata["stats"] = {
+                        "llm_input_tokens": token_usage.get("prompt_tokens", 0),
+                        "llm_output_tokens": token_usage.get("completion_tokens", 0),
+                        "total_tokens": token_usage.get("total_tokens", 0),
+                        "model": "Qwen/Qwen3.5-9B",
+                    }
                 await chat_service.chat_repo.add_message(
                     session_id=active_session_id,
                     role="assistant",

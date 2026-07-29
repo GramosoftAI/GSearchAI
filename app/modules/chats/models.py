@@ -220,8 +220,9 @@ class ChatMessage(Base):
     # }
     # NOTE: 'metadata' is reserved by SQLAlchemy Declarative API.
     # Using 'message_metadata' instead.
+    from sqlalchemy.dialects.postgresql import JSONB as PostgresJSONB
     message_metadata = Column(
-        JSON,
+        PostgresJSONB,
         nullable=True,
         default=dict,
     )

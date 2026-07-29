@@ -11,7 +11,11 @@ class TelemetryLogger:
     Logs retrieval metrics for automated regression testing and enterprise auditing.
     """
     
-    LOG_FILE = "v:/graphmind/logs/telemetry.jsonl"
+    LOG_FILE = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+        "logs",
+        "telemetry.jsonl"
+    )
     
     @classmethod
     def _ensure_dir(cls):

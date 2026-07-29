@@ -98,8 +98,27 @@ class AnalyticsService:
 
     # ================= COST GOVERNANCE =================
 
-    async def get_cost_governance(self) -> CostGovernanceResponse:
-        data = await self.repo.get_cost_governance_data()
+    async def get_cost_governance(
+        self,
+        user_id: Optional[UUID] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> CostGovernanceResponse:
+        from datetime import datetime as dt_parser
+        parsed_start = None
+        parsed_end = None
+        if start_date:
+            try:
+                parsed_start = dt_parser.fromisoformat(start_date.replace("Z", "+00:00"))
+            except ValueError:
+                parsed_start = dt_parser.strptime(start_date, "%Y-%m-%d")
+        if end_date:
+            try:
+                parsed_end = dt_parser.fromisoformat(end_date.replace("Z", "+00:00"))
+            except ValueError:
+                parsed_end = dt_parser.strptime(end_date, "%Y-%m-%d")
+
+        data = await self.repo.get_cost_governance_data(user_id, parsed_start, parsed_end)
         
         # DeepInfra LLM pricing constants
         inp_price_per_m = PRICE_PER_1M_INPUT_TOKENS
@@ -107,27 +126,67 @@ class AnalyticsService:
         
         total_inp = sum(d["input_tokens"] for d in data["daily_tokens"])
         total_out = sum(d["output_tokens"] for d in data["daily_tokens"])
+        total_emb = sum(d.get("embedding_tokens", 0) for d in data["daily_tokens"])
+        total_emb_cost = sum(d.get("embedding_cost_usd", 0.0) for d in data["daily_tokens"])
         
-        total_tokens = total_inp + total_out
-        total_cost = (total_inp / 1_000_000 * inp_price_per_m) + (total_out / 1_000_000 * out_price_per_m)
+        total_tokens = total_inp + total_out + total_emb
+        total_cost = (total_inp / 1_000_000 * inp_price_per_m) + \
+                     (total_out / 1_000_000 * out_price_per_m) + \
+                     total_emb_cost
         
         category_breakdown = []
         for cat in data["categories"]:
             cat_inp = cat["input_tokens"]
             cat_out = cat["output_tokens"]
-            cat_cost = (cat_inp / 1_000_000 * inp_price_per_m) + (cat_out / 1_000_000 * out_price_per_m)
+            cat_emb = cat.get("embedding_tokens", 0)
+            cat_emb_cost = cat.get("embedding_cost_usd", 0.0)
+            
+            cat_cost = (cat_inp / 1_000_000 * inp_price_per_m) + \
+                       (cat_out / 1_000_000 * out_price_per_m) + \
+                       cat_emb_cost
             category_breakdown.append({
                 "document_category": cat["document_category"],
-                "total_tokens": cat_inp + cat_out,
+                "total_tokens": cat_inp + cat_out + cat_emb,
                 "estimated_cost_usd": round(cat_cost, 4)
+            })
+            
+        daily_tokens = []
+        for d in data["daily_tokens"]:
+            daily_tokens.append({
+                "date": d["date"],
+                "input_tokens": d["input_tokens"],
+                "output_tokens": d["output_tokens"]
             })
             
         return CostGovernanceResponse(
             total_tokens_30d=total_tokens,
             total_cost_usd_30d=round(total_cost, 4),
+            total_tokens=total_tokens,
+            total_cost_usd=round(total_cost, 4),
             category_breakdown=category_breakdown,
-            daily_tokens=data["daily_tokens"]
+            daily_tokens=daily_tokens
         )
+
+    async def get_user_cost_governance(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> List[dict]:
+        from datetime import datetime as dt_parser
+        parsed_start = None
+        parsed_end = None
+        if start_date:
+            try:
+                parsed_start = dt_parser.fromisoformat(start_date.replace("Z", "+00:00"))
+            except ValueError:
+                parsed_start = dt_parser.strptime(start_date, "%Y-%m-%d")
+        if end_date:
+            try:
+                parsed_end = dt_parser.fromisoformat(end_date.replace("Z", "+00:00"))
+            except ValueError:
+                parsed_end = dt_parser.strptime(end_date, "%Y-%m-%d")
+
+        return await self.repo.get_user_cost_governance(parsed_start, parsed_end)
 
     # ================= CAPACITY PLANNING =================
 

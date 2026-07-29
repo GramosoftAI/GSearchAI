@@ -26,7 +26,8 @@ from .schemas import (
     OperationalTrendResponse,
     CostGovernanceResponse,
     CapacityGovernanceResponse,
-    AppErrorLogsPaginatedResponse
+    AppErrorLogsPaginatedResponse,
+    UserCostItem
 )
 from .repository import AnalyticsRepository
 from .service import AnalyticsService
@@ -121,10 +122,22 @@ async def get_operational_trends(
 
 @router.get("/governance/costs", response_model=CostGovernanceResponse)
 async def get_cost_governance(
+    user_id: Optional[UUID] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     service: AnalyticsService = Depends(get_analytics_service)
 ):
     """Get LLM token consumption and estimated costs."""
-    return await service.get_cost_governance()
+    return await service.get_cost_governance(user_id=user_id, start_date=start_date, end_date=end_date)
+
+@router.get("/governance/costs/users", response_model=List[UserCostItem])
+async def get_user_cost_governance(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    service: AnalyticsService = Depends(get_analytics_service)
+):
+    """Get DeepInfra LLM cost and token consumption breakdown per user."""
+    return await service.get_user_cost_governance(start_date=start_date, end_date=end_date)
 
 @router.get("/governance/capacity", response_model=CapacityGovernanceResponse)
 async def get_capacity_governance(
@@ -405,6 +418,7 @@ async def get_feedback_drilldown(
     from app.modules.knowledge_bases.models import KnowledgeBase
     from app.modules.chats.repository import safe_uuid
     from app.modules.chats.models import ChatMessage, ChatSession
+    from app.modules.agents.models import Agent
     
     current_tenant_id = getattr(request.state, "tenant_id", None)
     user_id = getattr(request.state, "user_id", None)
@@ -465,12 +479,13 @@ async def get_feedback_drilldown(
                 )
             )
             
-        # Base query joining ChatSession, User, and Tenant
+        # Base query joining ChatSession, User, Tenant, and Agent
         query = (
-            select(ChatMessage, ChatSession, User, Tenant)
+            select(ChatMessage, ChatSession, User, Tenant, Agent)
             .join(ChatSession, ChatMessage.session_id == ChatSession.id)
             .join(User, ChatSession.user_id == User.id)
             .join(Tenant, ChatSession.tenant_id == Tenant.id)
+            .join(Agent, ChatSession.agent_id == Agent.id)
             .where(and_(*filters))
         )
         
@@ -495,7 +510,7 @@ async def get_feedback_drilldown(
         
         # Fetch corresponding user questions in bulk
         user_msg_conditions = []
-        for msg, _, _, _ in rows:
+        for msg, _, _, _, _ in rows:
             user_msg_conditions.append(
                 and_(
                     ChatMessage.session_id == msg.session_id,
@@ -511,7 +526,7 @@ async def get_feedback_drilldown(
                 user_msgs[(u_msg.session_id, u_msg.position)] = u_msg.content
                 
         # Fetch associated Knowledge Bases in bulk
-        agent_ids = list(set(session.agent_id for _, session, _, _ in rows))
+        agent_ids = list(set(session.agent_id for _, session, _, _, _ in rows))
         agent_kbs = {}
         if agent_ids:
             kbs_query = select(KnowledgeBase).where(KnowledgeBase.agent_id.in_(agent_ids))
@@ -526,7 +541,7 @@ async def get_feedback_drilldown(
                 
         # Format records
         records = []
-        for msg, session, usr, tnt in rows:
+        for msg, session, usr, tnt, agent in rows:
             question = user_msgs.get((msg.session_id, msg.position - 1), "Question not found")
             
             user_info = {
@@ -539,6 +554,11 @@ async def get_feedback_drilldown(
             tenant_info = {
                 "id": str(tnt.id),
                 "name": tnt.name
+            }
+            
+            agent_info = {
+                "id": str(agent.id),
+                "name": agent.name
             }
             
             kb_list = agent_kbs.get(session.agent_id, [])
@@ -561,6 +581,7 @@ async def get_feedback_drilldown(
                 "time": (msg.feedback_at or msg.created_at).isoformat(),
                 "user": user_info,
                 "tenant": tenant_info,
+                "agent": agent_info,
                 "knowledge_base": kb_list,
                 "feedback_type": msg.feedback_type,
                 "feedback_reason": msg.feedback_reason,
@@ -721,6 +742,7 @@ async def get_feedback_messages(
     from app.modules.knowledge_bases.models import KnowledgeBase
     from app.modules.chats.repository import safe_uuid
     from app.modules.chats.models import ChatMessage, ChatSession
+    from app.modules.agents.models import Agent
     
     current_tenant_id = getattr(request.state, "tenant_id", None)
     user_id = getattr(request.state, "user_id", None)
@@ -783,12 +805,13 @@ async def get_feedback_messages(
                 )
             )
             
-        # Base query joining ChatSession, User, and Tenant
+        # Base query joining ChatSession, User, Tenant, and Agent
         query = (
-            select(ChatMessage, ChatSession, User, Tenant)
+            select(ChatMessage, ChatSession, User, Tenant, Agent)
             .join(ChatSession, ChatMessage.session_id == ChatSession.id)
             .join(User, ChatSession.user_id == User.id)
             .join(Tenant, ChatSession.tenant_id == Tenant.id)
+            .join(Agent, ChatSession.agent_id == Agent.id)
             .where(and_(*filters))
         )
         
@@ -813,7 +836,7 @@ async def get_feedback_messages(
         
         # Fetch corresponding user questions in bulk
         user_msg_conditions = []
-        for msg, _, _, _ in rows:
+        for msg, _, _, _, _ in rows:
             user_msg_conditions.append(
                 and_(
                     ChatMessage.session_id == msg.session_id,
@@ -829,7 +852,7 @@ async def get_feedback_messages(
                 user_msgs[(u_msg.session_id, u_msg.position)] = u_msg.content
                 
         # Fetch associated Knowledge Bases in bulk
-        agent_ids = list(set(session.agent_id for _, session, _, _ in rows))
+        agent_ids = list(set(session.agent_id for _, session, _, _, _ in rows))
         agent_kbs = {}
         if agent_ids:
             kbs_query = select(KnowledgeBase).where(KnowledgeBase.agent_id.in_(agent_ids))
@@ -844,7 +867,7 @@ async def get_feedback_messages(
                 
         # Format records
         records = []
-        for msg, session, usr, tnt in rows:
+        for msg, session, usr, tnt, agent in rows:
             question = user_msgs.get((msg.session_id, msg.position - 1), "Question not found")
             
             user_info = {
@@ -857,6 +880,11 @@ async def get_feedback_messages(
             tenant_info = {
                 "id": str(tnt.id),
                 "name": tnt.name
+            }
+            
+            agent_info = {
+                "id": str(agent.id),
+                "name": agent.name
             }
             
             kb_list = agent_kbs.get(session.agent_id, [])
@@ -879,6 +907,7 @@ async def get_feedback_messages(
                 "time": (msg.feedback_at or msg.created_at).isoformat(),
                 "user": user_info,
                 "tenant": tenant_info,
+                "agent": agent_info,
                 "knowledge_base": kb_list,
                 "feedback_type": msg.feedback_type,
                 "feedback_reason": msg.feedback_reason,

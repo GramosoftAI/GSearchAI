@@ -251,13 +251,18 @@ async def run_pdf_ingestion_job(
             
             t_ingest_start = time.time()
             logger.info(f"Job {job_id}: Starting embedding and graph ingestion for {kb_id}")
+
+            async def _update_ingest_progress(prog: int, step: str):
+                await job_service.update_job_progress(job_id, status="processing", progress=prog, current_step=step)
+
             ingest_result = await kb_service.ingest_document(
                 kb_id, 
                 document_text, 
                 source=s3_url, 
                 s3_path=s3_url,
                 parsed_path=parsed_url,
-                structured_records=structured_records
+                structured_records=structured_records,
+                progress_callback=_update_ingest_progress
             )
 
             t_ingest_end = time.time()
@@ -429,6 +434,20 @@ async def run_excel_ingestion_job(
                 logger.warning(f"Failed to update Neo4j KB description for parquet: {neo_err}")
 
             await db.commit()
+                
+            # Trigger graph cleanup asynchronously in the background
+            async def run_cleanup_async(tenant_id_str: str, kb_id_str: str):
+                try:
+                    logger.info(f"Background graph cleanup started for tenant {tenant_id_str} and KB {kb_id_str}...")
+                    from app.core.graph_cleanup import GraphCleanupService
+                    cleanup_service = GraphCleanupService(tenant_id=tenant_id_str, kb_id=kb_id_str)
+                    stats = await cleanup_service.cleanup_graph()
+                    logger.info(f"Background graph cleanup completed for tenant {tenant_id_str} and KB {kb_id_str}: {stats}")
+                except Exception as cleanup_err:
+                    logger.error(f"Background graph cleanup failed for tenant {tenant_id_str} and KB {kb_id_str}: {cleanup_err}", exc_info=True)
+
+            asyncio.create_task(run_cleanup_async(str(tenant_id), kb_id))
+
             await job_service.update_job_progress(job_id, status="completed", progress=100, current_step="Complete")
             logger.info(f"Job {job_id}: Parquet hybrid ingestion successfully completed!")
 
