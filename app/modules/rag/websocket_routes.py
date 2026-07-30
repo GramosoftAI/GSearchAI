@@ -27,6 +27,27 @@ MEMORY_API_BASE_URL = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001")
 MEMORY_API_URL = f"{MEMORY_API_BASE_URL}/api/v1/memory"
 
 
+async def call_memory_api(endpoint: str, json_data: dict, method: str = "POST", timeout: float = 5.0):
+    candidate_urls = [
+        f"{MEMORY_API_URL.rstrip('/')}{endpoint}",
+        f"http://localhost:8002/api/v1/memory{endpoint}",
+        f"http://127.0.0.1:8002/api/v1/memory{endpoint}",
+        f"http://memory-api:8001/api/v1/memory{endpoint}"
+    ]
+    urls = list(dict.fromkeys(candidate_urls))
+    
+    async with httpx.AsyncClient() as client:
+        for url in urls:
+            try:
+                resp = await client.request(method, url, json=json_data, timeout=timeout)
+                if resp.status_code == 200:
+                    return resp
+                logger.warning(f"Memory API {url} returned status {resp.status_code}: {resp.text}")
+            except Exception as e:
+                logger.debug(f"Memory API {url} unreachable: {e}")
+    return None
+
+
 @router.websocket("/{agent_id}")
 async def rag_websocket(
     websocket: WebSocket,
@@ -125,32 +146,26 @@ async def rag_websocket(
                 is_history_query = False
                 router_category = None
 
-                async with httpx.AsyncClient() as client:
-                    try:
-                        mem_resp = await client.post(
-                            f"{MEMORY_API_URL}/process-turn",
-                            json={
-                                "query": query,
-                                "session_id": active_session_id,
-                                "agent_id": agent_id,
-                                "user_id": user_id,
-                                "tenant_id": tenant_id
-                            },
-                            timeout=8.0
-                        )
-                        if mem_resp.status_code == 200:
-                            mem_data = mem_resp.json()
-                            episodic_guidance = mem_data.get("guidance_context") or ""
-                            is_feedback_only = mem_data.get("is_feedback_only", False)
-                            is_history_query = mem_data.get("is_history_query", False)
-                            # Forwarded to /save-turn so the background ingest step reuses
-                            # this exact classification instead of re-running the router
-                            # and potentially disagreeing with it.
-                            router_category = mem_data.get("category")
-                        else:
-                            logger.warning(f"memory-api process-turn status={mem_resp.status_code}: {mem_resp.text}")
-                    except Exception as e:
-                        logger.warning(f"memory-api process-turn unreachable, continuing without memory: {e}")
+                try:
+                    mem_resp = await call_memory_api(
+                        "/process-turn",
+                        json_data={
+                            "query": query,
+                            "session_id": active_session_id,
+                            "agent_id": agent_id,
+                            "user_id": user_id,
+                            "tenant_id": tenant_id
+                        },
+                        timeout=8.0
+                    )
+                    if mem_resp and mem_resp.status_code == 200:
+                        mem_data = mem_resp.json()
+                        episodic_guidance = mem_data.get("guidance_context") or ""
+                        is_feedback_only = mem_data.get("is_feedback_only", False)
+                        is_history_query = mem_data.get("is_history_query", False)
+                        router_category = mem_data.get("category")
+                except Exception as e:
+                    logger.warning(f"memory-api process-turn error: {e}")
 
                 # 7. SAVE USER MESSAGE TO CHAT DB
                 user_msg = await chat_service.chat_repo.add_message(
@@ -168,24 +183,23 @@ async def rag_websocket(
                 # Only short-circuit when there is truly nothing to recall.
                 if is_feedback_only:
                     acknowledgment = "Understood! I've updated your preferences and saved them to my long-term memory."
-                    async with httpx.AsyncClient() as client:
-                        try:
-                            await client.post(
-                                f"{MEMORY_API_URL}/save-turn",
-                                json={
-                                    "query": query,
-                                    "ai_response": acknowledgment,
-                                    "session_id": active_session_id,
-                                    "agent_id": agent_id,
-                                    "user_id": user_id,
-                                    "tenant_id": tenant_id,
-                                    "is_feedback_only": True,
-                                    "metadata": {"router_category": router_category}
-                                },
-                                timeout=3.0
-                            )
-                        except Exception as e:
-                            logger.warning(f"memory-api save-turn (feedback) failed: {e}")
+                    try:
+                        await call_memory_api(
+                            "/save-turn",
+                            json_data={
+                                "query": query,
+                                "ai_response": acknowledgment,
+                                "session_id": active_session_id,
+                                "agent_id": agent_id,
+                                "user_id": user_id,
+                                "tenant_id": tenant_id,
+                                "is_feedback_only": True,
+                                "metadata": {"router_category": router_category}
+                            },
+                            timeout=3.0
+                        )
+                    except Exception as e:
+                        logger.warning(f"memory-api save-turn (feedback) failed: {e}")
 
                     await chat_service.chat_repo.add_message(
                         session_id=active_session_id,
@@ -395,26 +409,25 @@ async def rag_websocket(
 
                 # 12. SAVE TURN TO MEMORY API
                 if not has_error and full_response_text:
-                    async with httpx.AsyncClient() as client:
-                        try:
-                            await client.post(
-                                f"{MEMORY_API_URL}/save-turn",
-                                json={
-                                    "query": query,
-                                    "ai_response": full_response_text,
-                                    "session_id": active_session_id,
-                                    "agent_id": agent_id,
-                                    "user_id": user_id,
-                                    "tenant_id": tenant_id,
-                                    "metadata": {
-                                        "source_doc_count": len(sources),
-                                        "router_category": router_category
-                                    }
-                                },
-                                timeout=3.0
-                            )
-                        except Exception as e:
-                            logger.warning(f"memory-api save-turn failed: {e}")
+                    try:
+                        await call_memory_api(
+                            "/save-turn",
+                            json_data={
+                                "query": query,
+                                "ai_response": full_response_text,
+                                "session_id": active_session_id,
+                                "agent_id": agent_id,
+                                "user_id": user_id,
+                                "tenant_id": tenant_id,
+                                "metadata": {
+                                    "source_doc_count": len(sources),
+                                    "router_category": router_category
+                                }
+                            },
+                            timeout=3.0
+                        )
+                    except Exception as e:
+                        logger.warning(f"memory-api save-turn failed: {e}")
 
                 # 13. SIGNAL COMPLETION
                 if not has_error:

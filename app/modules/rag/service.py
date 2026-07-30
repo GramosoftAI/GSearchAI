@@ -178,7 +178,7 @@ class RAGService:
                     "sources": [
                         {
                             "chunk_id": c.chunk_id,
-                            "source": c.source,
+                            "source": clean_source_name(getattr(c, "s3_path", None) or c.source),
                             "score": round(c.hybrid_score, 3),
                             "position": c.position,
                             "reason": c.reason,
@@ -350,11 +350,16 @@ Use paragraphs for explanations.
 ==================================================
 SOURCE CITATION RULES
 ==================================================
-Cite all the sources that were used to formulate your answer.
-Format each citation as: [Source: <s3_path_or_filename>]
+Cite all the UNIQUE document/data sources that were used to formulate your answer.
+Format each citation at the very end of your response on a single line:
+[Source: <source_1>, <source_2>]
 
-If multiple sources were used, list them separated by commas like this: [Source: <source_1>, <source_2>]
-The source citation must appear only once at the very end of the response.
+Rules:
+- List every unique source used (e.g. clean file names like ARUN_N.pdf, data.xlsx).
+- Deduplicate sources so each unique filename appears ONLY ONCE.
+- Do NOT repeat the same filename multiple times.
+- If tabular database/spreadsheet insights were used, include "[ENTERPRISE SPREADSHEET ANALYSIS]" as a source.
+- The source citation line must appear only once at the very end of the response.
 
 ==================================================
 FINAL RESPONSE FORMAT
@@ -366,7 +371,7 @@ If you'd like, I can also:
 - ...
 - ...
 
-[Source: <filename>]
+[Source: <source_1>, <source_2>]
 """.strip()
 
         agent_persona = {
@@ -428,7 +433,7 @@ If you'd like, I can also:
                     "sources": [
                         {
                             "chunk_id": c.chunk_id,
-                            "source": c.source,
+                            "source": clean_source_name(getattr(c, "s3_path", None) or c.source),
                             "score": round(c.hybrid_score, 3),
                             "position": c.position,
                             "reason": c.reason,
@@ -479,9 +484,17 @@ If you'd like, I can also:
             yield clean_triplet
 
             # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
-            # Use the kb object already fetched for metadata (line 661 scope)
+            # Collect unique clean source file names from context chunks if available
             try:
-                _src_name = kb.name if len(kb_ids) == 1 else (kb_ids[0] if kb_ids else "Dataset")
+                unique_srcs = []
+                if context and context.chunks:
+                    for chk in context.chunks:
+                        s_name = clean_source_name(getattr(chk, "s3_path", None) or chk.source)
+                        if s_name and s_name not in unique_srcs:
+                            unique_srcs.append(s_name)
+                if not unique_srcs:
+                    unique_srcs = [kb.name if kb else ("Dataset" if not kb_ids else kb_ids[0])]
+                _src_name = ", ".join(unique_srcs)
                 yield f"\n\n[Source: {_src_name}]"
             except Exception:
                 pass
@@ -751,11 +764,16 @@ FORMATTING RULES
 ==================================================
 SOURCE CITATION RULES
 ==================================================
-Cite all the sources that were used to formulate your answer.
-Format each citation as: [Source: <s3_path_or_filename>]
+Cite all the UNIQUE document/data sources that were used to formulate your answer.
+Format each citation at the very end of your response on a single line:
+[Source: <source_1>, <source_2>]
 
-If multiple sources were used, list them separated by commas like this: [Source: <source_1>, <source_2>]
-The source citation must appear only once at the very end of the response.
+Rules:
+- List every unique source used (e.g. clean file names like ARUN_N.pdf, data.xlsx).
+- Deduplicate sources so each unique filename appears ONLY ONCE.
+- Do NOT repeat the same filename multiple times.
+- If tabular database/spreadsheet insights were used, include "[ENTERPRISE SPREADSHEET ANALYSIS]" as a source.
+- The source citation line must appear only once at the very end of the response.
 
 ==================================================
 RESPONSE FORMAT
@@ -767,7 +785,7 @@ If you'd like, I can also:
 - ...
 - ...
 
-[Source: <filename>]
+[Source: <source_1>, <source_2>]
 """.strip()
 
         agent_persona = {
@@ -1080,7 +1098,8 @@ If you'd like, I can also:
 
         for i, chunk in enumerate(context.chunks, 1):
             s3_path = getattr(chunk, "s3_path", None)
-            source_info = s3_path if s3_path else (clean_source_name(chunk.source) if chunk.source else "Unknown Source")
+            raw_src = s3_path or chunk.source
+            source_info = clean_source_name(raw_src) if raw_src else "Unknown Source"
             context_text += f"\n[Chunk {i}/{len(context.chunks)} - Source: {source_info} - Position {chunk.position}]"
             context_text += f"\nScore: {chunk.hybrid_score:.3f} (Semantic: {chunk.embedding_similarity:.3f}, Graph: {chunk.graph_score:.3f})"
             context_text += f"\n{'-' * 40}\n{chunk.text}\n"

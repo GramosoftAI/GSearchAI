@@ -437,6 +437,38 @@ class ChatService:
             f"memory={'ON' if memory_used else 'OFF'}"
         )
 
+        # Trigger Standalone Memory API Save-Turn
+        try:
+            import httpx
+            import os
+            memory_api_base = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
+            candidate_urls = [
+                f"{memory_api_base}/api/v1/memory/save-turn",
+                "http://localhost:8002/api/v1/memory/save-turn",
+                "http://127.0.0.1:8002/api/v1/memory/save-turn",
+                "http://memory-api:8001/api/v1/memory/save-turn"
+            ]
+            urls = list(dict.fromkeys(candidate_urls))
+            payload = {
+                "query": message,
+                "ai_response": answer,
+                "session_id": session_id,
+                "agent_id": agent_id,
+                "user_id": user_id,
+                "tenant_id": self.tenant_id,
+                "metadata": {"source_doc_count": len(sources)}
+            }
+            async with httpx.AsyncClient() as client:
+                for url in urls:
+                    try:
+                        resp = await client.post(url, json=payload, timeout=3.0)
+                        if resp.status_code == 200:
+                            break
+                    except Exception as e:
+                        logger.debug(f"Memory API save-turn attempt {url} failed: {e}")
+        except Exception as me:
+            logger.warning(f"Failed to push turn to memory-api save-turn: {me}")
+
         # ============= STEP 9: MEMORY CONSOLIDATION (Pattern #11) =============
         # Trigger background consolidation to update Knowledge Graph with new facts
         # Feature-flagged: Only runs if triplet extraction is enabled

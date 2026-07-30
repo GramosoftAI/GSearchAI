@@ -67,13 +67,13 @@ _PREFERENCE_PATTERNS = re.compile(
     r"always (respond|answer|reply|format|use)|"
     r"from now on|i prefer|my preferred|please (always|remember)|"
     r"don'?t (use|do)|stop (using|doing)|never (use|do)|"
-    r"not\s+.+\s+it'?s|upgrade\s+my|update\s+my|change\s+my|my\s+.*is|upgrad|upgrade|change|update)\b",
+    r"not\s+.+\s+it'?s|upgrade\s+my\s+[a-z_]+|update\s+my\s+[a-z_]+|change\s+my\s+[a-z_]+|my\s+[a-z0-9_]+\s+is)\b",
     re.IGNORECASE,
 )
 
 _DELETE_PATTERNS = re.compile(
-    r"\b(delete|forget|remove|clear|erase)\s+(this|my|our|the)?\s*"
-    r"(conversation|chat|history|session|memory|preference|mark|grade|details|info)?\b",
+    r"\b(delete|forget|clear|erase)\s+(my|our|the|this)?\s*"
+    r"(conversation|chat|history|session|memory|preference|profile|account)\b",
     re.IGNORECASE
 )
 
@@ -129,9 +129,12 @@ async def get_embedding(text: str, priority: str = "live") -> List[float]:
                     if len(embedding) != EMBED_DIM:
                         logger.warning(
                             f"Embedding model '{embed_model}' returned {len(embedding)} dims, "
-                            f"expected {EMBED_DIM}."
+                            f"adapting to expected {EMBED_DIM} dims."
                         )
-                    return embedding[:EMBED_DIM] if len(embedding) >= EMBED_DIM else embedding + [0.0] * (EMBED_DIM - len(embedding))
+                    if len(embedding) >= EMBED_DIM:
+                        return embedding[:EMBED_DIM]
+                    else:
+                        return embedding + [0.0] * (EMBED_DIM - len(embedding))
                 logger.error(f"LLM embed error ({resp.status_code}): {resp.text}")
         except Exception as e:
             logger.error(f"Embedding failure: {type(e).__name__}: {e}")
@@ -828,60 +831,70 @@ async def save_turn(payload: MemorySaveRequest, background_tasks: BackgroundTask
 
 
 async def async_ingest_turn(payload: MemorySaveRequest):
-    if payload.is_feedback_only or _is_delete_statement(payload.query):
-        await save_user_preference(payload)
-        return
+    try:
+        logger.info(f"[INGEST] Processing save-turn for session={payload.session_id}, user={payload.user_id}, query={payload.query!r}")
+        if payload.is_feedback_only or _is_delete_statement(payload.query):
+            logger.info(f"[INGEST] Turn classified as feedback/deletion statement. Invoking save_user_preference.")
+            await save_user_preference(payload)
+            return
 
-    user_interaction = f"User: {payload.query}\nAssistant: {payload.ai_response}"
+        user_interaction = f"User: {payload.query}\nAssistant: {payload.ai_response}"
 
-    combined_prompt = (
-        "Analyze this conversation turn and produce BOTH of the following in ONE JSON response:\n\n"
-        "1. SUMMARY: Compress the interaction into a single concise, factual declarative statement. "
-        "Explicitly include the specific topic, entities, numbers, and answers discussed. "
-        "Example: 'User asked about their serial number; Assistant confirmed serial number 23-4583.' "
-        "CRITICAL: Do NOT use placeholder letters like X or Y. Always write out the real topics, parameters, and details.\n\n"
-        "2. TRIPLETS: Extract concrete knowledge triplets. Modify entity subject descriptors dynamically so sub-categories stay attached "
-        "(e.g., use '10th grade mark' as the subject rather than generic 'user').\n"
-        "STRICT RULES for triplets:\n"
-        "- Do NOT create triplets for negative, missing, or empty information (e.g. 'none', 'unknown', 'not present').\n"
-        "- Replace personal pronouns ('I', 'me', 'my') with 'user' or the specific dynamic subject entity.\n"
-        "- Relation must be UPPER_SNAKE_CASE (e.g. HAS_VALUE, HAS_SCORE, IS_NAMED).\n\n"
-        "Return strict JSON only:\n"
-        '{"summary": "User asked X; Answer was Y.", '
-        '"triplets": [{"subject": "10th grade mark", "relation": "HAS_VALUE", "object": "90%"}]}\n\n'
-        f"CONVERSATION:\n{user_interaction}"
-    )
-    combined_raw = await run_llm_completion(
-        "You are a strict extraction system. Return ONLY valid JSON.",
-        combined_prompt,
-        priority="background",
-    )
-    combined_data = _extract_json_block(combined_raw) or {}
-
-    summary_text = str(combined_data.get("summary", "")).strip()
-    if not summary_text:
-        summary_text = f"User interacted regarding: {payload.query[:50]}"
-
-    raw_vector = await get_embedding(f"{payload.query} {payload.ai_response}", priority="background")
-    summary_vector = await get_embedding(summary_text, priority="background")
-
-    async with AsyncSessionLocal() as db:
-        new_memory = EpisodicMemory(
-            user_id=payload.user_id,
-            session_id=payload.session_id,
-            tenant_id=payload.tenant_id,
-            agent_id=payload.agent_id,
-            user_query=payload.query,
-            ai_response=payload.ai_response,
-            summarization=summary_text,
-            raw_vector=raw_vector,
-            summary_vector=summary_vector,
-            metadata_json=payload.metadata or {}
+        combined_prompt = (
+            "Analyze this conversation turn and produce BOTH of the following in ONE JSON response:\n\n"
+            "1. SUMMARY: Compress the interaction into a single concise, factual declarative statement. "
+            "Explicitly include the specific topic, entities, numbers, and answers discussed. "
+            "Example: 'User asked about their serial number; Assistant confirmed serial number 23-4583.' "
+            "CRITICAL: Do NOT use placeholder letters like X or Y. Always write out the real topics, parameters, and details.\n\n"
+            "2. TRIPLETS: Extract concrete knowledge triplets. Modify entity subject descriptors dynamically so sub-categories stay attached "
+            "(e.g., use '10th grade mark' as the subject rather than generic 'user').\n"
+            "STRICT RULES for triplets:\n"
+            "- Do NOT create triplets for negative, missing, or empty information (e.g. 'none', 'unknown', 'not present').\n"
+            "- Replace personal pronouns ('I', 'me', 'my') with 'user' or the specific dynamic subject entity.\n"
+            "- Relation must be UPPER_SNAKE_CASE (e.g. HAS_VALUE, HAS_SCORE, IS_NAMED).\n\n"
+            "Return strict JSON only:\n"
+            '{"summary": "User asked X; Answer was Y.", '
+            '"triplets": [{"subject": "10th grade mark", "relation": "HAS_VALUE", "object": "90%"}]}\n\n'
+            f"CONVERSATION:\n{user_interaction}"
         )
-        db.add(new_memory)
-        await db.commit()
+        combined_data = {}
+        try:
+            combined_raw = await run_llm_completion(
+                "You are a strict extraction system. Return ONLY valid JSON.",
+                combined_prompt,
+                priority="background",
+            )
+            combined_data = _extract_json_block(combined_raw) or {}
+        except Exception as llm_err:
+            logger.warning(f"[INGEST WARNING] LLM summary extraction failed: {llm_err}")
 
-    triplets_json = json.dumps({"triplets": combined_data.get("triplets", [])})
-    await push_triplets_to_isolated_graph(
-        payload.tenant_id, payload.user_id, payload.agent_id, payload.session_id, triplets_json
-    )
+        summary_text = str(combined_data.get("summary", "")).strip()
+        if not summary_text:
+            summary_text = f"User asked: {payload.query[:100]} | Assistant answered: {payload.ai_response[:150]}"
+
+        raw_vector = await get_embedding(f"{payload.query} {payload.ai_response}", priority="background")
+        summary_vector = await get_embedding(summary_text, priority="background")
+
+        async with AsyncSessionLocal() as db:
+            new_memory = EpisodicMemory(
+                user_id=payload.user_id,
+                session_id=payload.session_id,
+                tenant_id=payload.tenant_id,
+                agent_id=payload.agent_id,
+                user_query=payload.query,
+                ai_response=payload.ai_response,
+                summarization=summary_text,
+                raw_vector=raw_vector,
+                summary_vector=summary_vector,
+                metadata_json=payload.metadata or {}
+            )
+            db.add(new_memory)
+            await db.commit()
+            logger.info(f"[INGEST SUCCESS] Saved episodic memory record {new_memory.id} to episodic_memories table.")
+
+        triplets_json = json.dumps({"triplets": combined_data.get("triplets", [])})
+        await push_triplets_to_isolated_graph(
+            payload.tenant_id, payload.user_id, payload.agent_id, payload.session_id, triplets_json
+        )
+    except Exception as e:
+        logger.error(f"[INGEST ERROR] Failed to ingest turn into episodic_memories: {e}", exc_info=True)
