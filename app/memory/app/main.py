@@ -110,7 +110,7 @@ async def get_embedding(text: str, priority: str = "live") -> List[float]:
         try:
             llm_base = os.getenv("EMBEDDING_BASE_URL", os.getenv("LLM_BASE_URL", "")).rstrip('/')
             api_key = os.getenv("EMBEDDING_API_KEY", os.getenv("LLM_GATEWAY_API_KEY"))
-            embed_model = os.getenv("OLLAMA_EMBED_MODEL", "bge-m3:latest")
+            embed_model = os.getenv("DEEPINFRA_EMBEDDING_MODEL")
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
             
             endpoint = f"{llm_base}/embeddings" if llm_base.endswith("/openai") else f"{llm_base}/v1/embeddings"
@@ -144,11 +144,12 @@ async def run_llm_completion(system_prompt: str, user_prompt: str, priority: str
         try:
             llm_base = os.getenv("LLM_BASE_URL").rstrip('/')
             api_key = os.getenv("LLM_GATEWAY_API_KEY")
-            chat_model = os.getenv("OLLAMA_CHAT_MODEL", "Qwen/Qwen2.5-14B")
+            chat_model = os.getenv("MEMORY_CHAT_MODEL")
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            endpoint = f"{llm_base}/chat/completions" if llm_base.endswith("/openai") else f"{llm_base}/v1/chat/completions"
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
-                    f"{llm_base}/v1/chat/completions",
+                    endpoint,
                     headers=headers,
                     json={
                         "model": chat_model,
