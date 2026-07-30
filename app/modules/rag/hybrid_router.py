@@ -122,7 +122,7 @@ class EnterpriseHybridRouter:
                  "- Select 'VECTOR_DOCS' if the query asks for qualitative explanations, policies, manuals, or concepts found in PDF documents.\n"
                  "- Select 'HYBRID_MERGE' if the query requires combining data from both the Excel spreadsheet and the PDF documents, or if it is ambiguous.\n\n"
                  "CRITICAL RULES:\n"
-                 "1. Return ONLY valid JSON matching the schema: {\"target_engine\": \"...\", \"confidence\": 0.90, \"matched_columns\": [\"...\"], \"reasoning\": \"...\"}.\n"
+                 "1. Return ONLY valid JSON matching the schema: {{\"target_engine\": \"...\", \"confidence\": 0.90, \"matched_columns\": [\"...\"], \"reasoning\": \"...\"}}.\n"
                  "2. Do NOT output any markdown code fences or <think> tags. Output raw JSON only."),
                 ("user", "{question}")
             ])

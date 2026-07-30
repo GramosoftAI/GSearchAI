@@ -143,64 +143,114 @@ class RAGService:
                 
             if active_paths:
                 engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
-                # 1. Schema-Aware Enterprise Hybrid Routing (TABULAR_SQL vs VECTOR_DOCS vs HYBRID_MERGE)
-                route_to_excel = True
-                if doc_kbs:
-                    try:
-                        from app.modules.rag.hybrid_router import EnterpriseHybridRouter
-                        cols_list = engine.get_schema_columns()
-                        decision = await EnterpriseHybridRouter.classify(
-                            query=query,
-                            columns=cols_list,
-                            doc_kbs_count=len(doc_kbs),
-                            llm=engine.llm
-                        )
-                        logger.info(f"[EnterpriseHybridRouter] Engine={decision.target_engine} | Conf={decision.confidence:.2f} | Cols={decision.matched_columns} | Reason={decision.reasoning}")
-                        if decision.target_engine == "VECTOR_DOCS":
-                            route_to_excel = False
-                        elif decision.target_engine == "HYBRID_MERGE":
-                            logger.info("[EnterpriseHybridRouter] Executing HYBRID_MERGE: Gathering tabular SQL context to enrich Document RAG...")
-                            try:
-                                sql_res = await engine.execute_query(query)
-                                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                                if sql_res and not any(sig in str(sql_res).lower() for sig in unmatched_signals):
-                                    hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
-                            except Exception as merge_err:
-                                logger.warning(f"[EnterpriseHybridRouter] HYBRID_MERGE tabular step error: {merge_err}")
-                            route_to_excel = False  # Continue into doc_kbs vector retrieval with hybrid_merge_context injected!
-                    except Exception as router_err:
-                        logger.warning(f"[EnterpriseHybridRouter] Enterprise router failed ({router_err}), defaulting to Excel check.")
+                sql_task = asyncio.create_task(engine.execute_query(query))
+
+        vector_task = None
+        if not skip_search and (doc_kbs or not excel_kbs):
+            vector_task = asyncio.create_task(
+                self.pipeline.query(
+                    query=query,
+                    agent_id=agent_id,
+                    kb_id=kb_ids,
+                    user_id=user_id,
+                    top_k=top_k,
+                    max_depth=max_depth,
+                )
+            )
+
+        context = None
+        metadata_yielded = False
+        if excel_kbs and sql_task and vector_task:
+            logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
+            
+            # Wait for vector_task first to yield metadata early
+            try:
+                context_res = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
+            except Exception as e:
+                context_res = e
+            
+            if not isinstance(context_res, Exception):
+                context = context_res
                 
-                # 2. Execute Excel Engine if routed strictly to TABULAR_SQL
-                if route_to_excel:
-                    try:
-                        result = await engine.execute_query(query)
-                        result_str = str(result)
-                        unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                        is_unmatched = any(sig in result_str.lower() for sig in unmatched_signals)
-                        explicit_math_keywords = ["sum of", "average of", "count of", "total of", "how many rows", "group by"]
-                        is_pure_math = any(kw in query.lower() for kw in explicit_math_keywords)
-                        if doc_kbs and is_unmatched:
-                            logger.info(f"[EnterpriseHybridRouter] Excel dataset lacked answer ({result_str}). Falling back to PDF/URL knowledge bases...")
-                        elif doc_kbs and not is_pure_math:
-                            logger.info("[EnterpriseHybridRouter] Mixed sources: Injecting tabular result into hybrid context and also searching PDFs/URLs...")
-                            hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{result_str}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
-                            route_to_excel = False
-                        else:
-                            yield json.dumps({
-                                "type": "metadata",
-                                "sources": [],
-                                "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
-                                "context_type": "duckdb_parquet"
-                            })
-                            yield result_str
-                            return
-                    except Exception as e:
-                        logger.error(f"PandasQueryEngine stream failed: {e}")
-                        if not doc_kbs:
-                            yield json.dumps({"error": str(e)})
-                            return
-                        logger.info("[EnterpriseHybridRouter] Excel execution failed, falling through to PDF/URL knowledge bases...")
+                # Yield metadata immediately so the UI doesn't hang!
+                metadata = {
+                    "type": "metadata",
+                    "sources": [
+                        {
+                            "chunk_id": c.chunk_id,
+                            "source": c.source,
+                            "score": round(c.hybrid_score, 3),
+                            "position": c.position,
+                            "reason": c.reason,
+                            "kb_id": c.kb_id,
+                            "content_type": getattr(c, "content_type", "original")
+                        }
+                        for c in context.chunks
+                    ],
+                    "triplets": [
+                        {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
+                        for t in (context.triplets or [])
+                    ],
+                    "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                    "augmented_query": query,
+                    "authoritative_entities": context.authoritative_entities or []
+                }
+                yield json.dumps(metadata)
+                metadata_yielded = True
+            else:
+                logger.error(f"Parallel RAG Retrieval failed: {context_res}")
+                yield json.dumps({"error": f"Retrieval failed: {str(context_res)}"})
+                return
+
+            # Now wait for SQL task which is running in parallel
+            try:
+                sql_res = await asyncio.wait_for(sql_task, timeout=60.0)
+            except Exception as e:
+                sql_res = e
+                
+            if not isinstance(sql_res, Exception) and sql_res:
+                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                if not any(sig in str(sql_res).lower() for sig in unmatched_signals):
+                    hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+            elif isinstance(sql_res, Exception):
+                logger.warning(f"Parallel TABULAR_SQL failed: {sql_res}")
+
+        elif sql_task:
+            logger.info("Executing TABULAR_SQL standalone...")
+            try:
+                sql_res = await asyncio.wait_for(sql_task, timeout=30.0)
+                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
+                if is_unmatched:
+                    logger.info(f"Excel dataset lacked answer ({sql_res}).")
+                else:
+                    yield json.dumps({
+                        "type": "metadata",
+                        "sources": [],
+                        "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
+                        "context_type": "duckdb_parquet"
+                    })
+                    yield str(sql_res)
+                    return
+            except Exception as e:
+                logger.error(f"PandasQueryEngine stream failed: {e}")
+                yield json.dumps({"error": str(e)})
+                return
+
+        elif vector_task:
+            logger.info("Executing VECTOR_DOCS standalone...")
+            try:
+                context = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
+                yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
+                return
+            except Exception as e:
+                logger.error(f"RAG Retrieval failed for stream: {e}")
+                yield json.dumps({"error": f"Retrieval failed: {e}"})
+                return
+
+        skip_search = True  # Bypass redundant sequential search below
             
         if len(kb_ids) > 1:
             logger.info(f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}")
@@ -328,7 +378,9 @@ If you'd like, I can also:
             agent_persona["system_prompt"] += f"\n\n==================================================\nCONVERSATION HISTORY\n==================================================\n{chat_history}\n\nCRITICAL INSTRUCTION: If the user's current question asks to filter, modify, or extract from the 'above' or 'previous' answer, you MUST use the CONVERSATION HISTORY as your primary source of truth and ignore any conflicting retrieved documents below."
 
         # 2. Retrieve Context
-        context = None
+        if 'context' not in locals():
+            context = None
+            
         if not skip_search:
             try:
                 context = await asyncio.wait_for(
@@ -351,45 +403,58 @@ If you'd like, I can also:
                 logger.error(f"RAG Retrieval failed for stream: {error_msg}")
                 yield json.dumps({"error": f"Retrieval failed: {error_msg}"})
                 return
+                
+        # ==================================================
+        # RELEVANCE FILTER (Context Poisoning Protection)
+        # ==================================================
+        import os
+        min_score = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.6"))
+        if context and context.chunks:
+            original_count = len(context.chunks)
+            context.chunks = [c for c in context.chunks if getattr(c, "hybrid_score", 0.0) >= min_score]
+            dropped = original_count - len(context.chunks)
+            if dropped > 0:
+                logger.info(f"Relevance Filter: Dropped {dropped} irrelevant chunks (score < {min_score}) to prevent hallucination.")
 
         # 3. Yield metadata first
-        if context:
-            for c in context.chunks:
-                logger.info(f"Chunk={c.chunk_id} Source={c.source} Score={c.hybrid_score}")
+        if not metadata_yielded:
+            if context:
+                for c in context.chunks:
+                    logger.info(f"Chunk={c.chunk_id} Source={c.source} Score={c.hybrid_score}")
 
-            metadata = {
-                "type": "metadata",
-                "sources": [
-                    {
-                        "chunk_id": c.chunk_id,
-                        "source": c.source,
-                        "score": round(c.hybrid_score, 3),
-                        "position": c.position,
-                        "reason": c.reason,
-                        "kb_id": c.kb_id,
-                        "content_type": getattr(c, "content_type", "original")
-                    }
-                    for c in context.chunks
-                ],
-                "triplets": [
-                    {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
-                    for t in (context.triplets or [])
-                ],
-                "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-                "augmented_query": query,
-                "authoritative_entities": context.authoritative_entities or []
-            }
-        else:
-            metadata = {
-                "type": "metadata",
-                "sources": [],
-                "triplets": [],
-                "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-                "augmented_query": query,
-                "authoritative_entities": []
-            }
+                metadata = {
+                    "type": "metadata",
+                    "sources": [
+                        {
+                            "chunk_id": c.chunk_id,
+                            "source": c.source,
+                            "score": round(c.hybrid_score, 3),
+                            "position": c.position,
+                            "reason": c.reason,
+                            "kb_id": c.kb_id,
+                            "content_type": getattr(c, "content_type", "original")
+                        }
+                        for c in context.chunks
+                    ],
+                    "triplets": [
+                        {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
+                        for t in (context.triplets or [])
+                    ],
+                    "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                    "augmented_query": query,
+                    "authoritative_entities": context.authoritative_entities or []
+                }
+            else:
+                metadata = {
+                    "type": "metadata",
+                    "sources": [],
+                    "triplets": [],
+                    "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                    "augmented_query": query,
+                    "authoritative_entities": []
+                }
 
-        yield json.dumps(metadata)
+            yield json.dumps(metadata)
 
         is_extractive = context.search_type == "EXTRACTIVE" if context else False
         is_table_analytics = context.search_type == "TABLE_ANALYTICS" if context else False
@@ -421,13 +486,14 @@ If you'd like, I can also:
                 pass
             return
 
-        if (not context or not context.chunks) and not chat_history:
+        if (not context or not context.chunks) and not chat_history and not hybrid_merge_context:
             logger.info("Empty context retrieved for stream, returning fallback message.")
             yield "I'm sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
             return
 
         # 4. Stream chunks
         formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
+
         start_time = datetime.now()
 
         full_answer = []

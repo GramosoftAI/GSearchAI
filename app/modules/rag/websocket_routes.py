@@ -1,22 +1,25 @@
 """
 WebSocket RAG routes - Streaming chat interface for GraphRAG
 Phase 3: Real-time Conversational Retrieval + Long-term Episodic Memory
+# Triggering uvicorn reload third time
 """
 
 import os
 import logging
 import json
+import sys
 from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status
 
 import httpx
 
+logger = logging.getLogger(__name__)
+logger.info(f"DEBUG: sys.path is: {sys.path}")
+
 from .service import RAGService
 from ..knowledge_bases.repository import KnowledgeBaseRepository
 from ...core.database import get_db_with_tenant
 from ...core.security import verify_access_token
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ws", tags=["WebSocket RAG"])
 
@@ -64,10 +67,14 @@ async def rag_websocket(
         rag_service = RAGService(db=db, tenant_id=tenant_id)
         kb_repo = KnowledgeBaseRepository(db, tenant_id)
 
-        kbs, _ = await kb_repo.list_by_agent(agent_id, limit=10)
-        if not kbs:
-            await websocket.send_text(json.dumps({"type": "error", "message": "Knowledge Base not found"}))
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        try:
+            kbs, _ = await kb_repo.list_by_agent(agent_id, limit=10)
+            if not kbs:
+                await websocket.send_text(json.dumps({"type": "error", "message": "Knowledge Base not found"}))
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+        except WebSocketDisconnect:
+            logger.info(f"WebSocket disconnected before initialization completed: Agent={agent_id}")
             return
 
         kb_ids = [str(kb.id) for kb in kbs]
