@@ -18,6 +18,15 @@ logger = logging.getLogger("memory_api")
 
 app = FastAPI(title="Native Vector & Graph Memory Core", version="2.5.0")
 
+@app.on_event("startup")
+async def startup_event():
+    logger.info("[STARTUP] Initializing memory database schema (init_db)...")
+    try:
+        await init_db()
+        logger.info("[STARTUP] Memory database tables (episodic_memories, user_preferences) verified and ready.")
+    except Exception as e:
+        logger.error(f"[STARTUP ERROR] Failed to initialize memory database tables: {e}", exc_info=True)
+
 # Neo4j Driver Connection Setup
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")

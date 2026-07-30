@@ -92,39 +92,32 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         
         # 3. Migration safety check for episodic_memories vectors
-        await conn.execute(text("""
-            ALTER TABLE episodic_memories 
-            ADD COLUMN IF NOT EXISTS raw_vector vector(768);
-        """))
-        
-        await conn.execute(text("""
-            ALTER TABLE episodic_memories 
-            ADD COLUMN IF NOT EXISTS summary_vector vector(768);
-        """))
-
-        # Dimension upgrade: This safely clears old vectors and changes type
-        await conn.execute(text("""
-            ALTER TABLE episodic_memories 
-            ALTER COLUMN raw_vector TYPE vector(768) USING NULL;
-        """))
-
-        await conn.execute(text("""
-            ALTER TABLE episodic_memories 
-            ALTER COLUMN summary_vector TYPE vector(768) USING NULL;
-        """))
-
-        # 4. Migration safety check for user_preferences agent_id column
-        await conn.execute(text("""
-            ALTER TABLE user_preferences 
-            ADD COLUMN IF NOT EXISTS agent_id VARCHAR(100) NOT NULL DEFAULT 'default_agent';
-        """))
-        
-        # 5. Drop old index for scoping so the new idx_user_preferences_scoping_v2 takes precedence
-        await conn.execute(text("""
-            DROP INDEX IF EXISTS idx_user_preferences_scoping;
-        """))
-        
-        # 6. If it was created as a constraint instead of an index, drop it too
-        await conn.execute(text("""
-            ALTER TABLE user_preferences DROP CONSTRAINT IF EXISTS idx_user_preferences_scoping;
-        """))
+        try:
+            await conn.execute(text("""
+                ALTER TABLE episodic_memories 
+                ADD COLUMN IF NOT EXISTS raw_vector vector(768);
+            """))
+            await conn.execute(text("""
+                ALTER TABLE episodic_memories 
+                ADD COLUMN IF NOT EXISTS summary_vector vector(768);
+            """))
+            await conn.execute(text("""
+                ALTER TABLE episodic_memories 
+                ALTER COLUMN raw_vector TYPE vector(768) USING NULL;
+            """))
+            await conn.execute(text("""
+                ALTER TABLE episodic_memories 
+                ALTER COLUMN summary_vector TYPE vector(768) USING NULL;
+            """))
+            await conn.execute(text("""
+                ALTER TABLE user_preferences 
+                ADD COLUMN IF NOT EXISTS agent_id VARCHAR(100) NOT NULL DEFAULT 'default_agent';
+            """))
+            await conn.execute(text("""
+                DROP INDEX IF EXISTS idx_user_preferences_scoping;
+            """))
+            await conn.execute(text("""
+                ALTER TABLE user_preferences DROP CONSTRAINT IF EXISTS idx_user_preferences_scoping;
+            """))
+        except Exception as e:
+            print(f"[MEMORY DB MIGRATION NOTICE] {e}")
