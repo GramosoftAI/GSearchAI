@@ -216,7 +216,11 @@ class DeepInfraLLMClient:
         from dotenv import load_dotenv
         load_dotenv()
         self.gateway_api_key = os.environ.get("LLM_GATEWAY_API_KEY") or getattr(settings, 'llm_gateway_api_key', "")
-        self.gateway_base_url = f"{getattr(settings, 'llm_base_url', 'http://103.191.132.28:7218')}/v1/chat/completions"
+        base_url = getattr(settings, 'llm_base_url', 'http://103.191.132.28:7218')
+        if base_url == "https://api.deepinfra.com/v1/openai":
+            self.gateway_base_url = f"{base_url}/chat/completions"
+        else:
+            self.gateway_base_url = f"{base_url}/v1/chat/completions" if not base_url.endswith("/v1/chat/completions") else base_url
         self.gateway_model = os.environ.get("LLM_GATEWAY_MODEL") or getattr(settings, "llm_gateway_model", "qwen2.5:3b")
 
         self.timeout = 25.0  # Enterprise timeout cap against stalled sockets
@@ -422,7 +426,6 @@ class DeepInfraLLMClient:
 
         logger.error(f"generate() all {self.max_retries} attempts failed. Last error: {last_error}")
         raise last_error
-
     async def generate_cloud(
         self, 
         prompt: str, 
@@ -437,9 +440,10 @@ class DeepInfraLLMClient:
         Thinking is disabled by default to save tokens.
         """
         headers = {
-            "Authorization": f"Bearer {self.deepinfra_api_key}",
             "Content-Type": "application/json",
         }
+        if self.deepinfra_api_key:
+            headers["Authorization"] = f"Bearer {self.deepinfra_api_key}"
         
         payload = {
             "model": self.deepinfra_model,

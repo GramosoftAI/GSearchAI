@@ -428,3 +428,10 @@ async def rag_websocket(
                 await websocket.send_text(json.dumps({"type": "error", "message": f"Session interrupted: {str(e)}"}))
             except Exception:
                 pass
+        finally:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+            if db:
+                await db.close()

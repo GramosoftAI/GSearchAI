@@ -239,7 +239,6 @@ rename_key.py
 !app/memory/app/schema/
 !app/memory/app/main.py
 server.py
-
-
+frontend/
 data/parquet/*.parquet
-
+repair.py

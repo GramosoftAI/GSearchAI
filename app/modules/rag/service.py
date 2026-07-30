@@ -350,9 +350,10 @@ Use paragraphs for explanations.
 ==================================================
 SOURCE CITATION RULES
 ==================================================
-For files ending in: .pdf, .csv, .xlsx, .xls:
-[Source: <filename>]
+Cite all the sources that were used to formulate your answer.
+Format each citation as: [Source: <s3_path_or_filename>]
 
+If multiple sources were used, list them separated by commas like this: [Source: <source_1>, <source_2>]
 The source citation must appear only once at the very end of the response.
 
 ==================================================
@@ -750,9 +751,10 @@ FORMATTING RULES
 ==================================================
 SOURCE CITATION RULES
 ==================================================
-For files ending in: .pdf, .csv, .xlsx, .xls:
-[Source: <filename>]
+Cite all the sources that were used to formulate your answer.
+Format each citation as: [Source: <s3_path_or_filename>]
 
+If multiple sources were used, list them separated by commas like this: [Source: <source_1>, <source_2>]
 The source citation must appear only once at the very end of the response.
 
 ==================================================
@@ -980,6 +982,7 @@ If you'd like, I can also:
                 "position": chunk.position,
                 "reason": chunk.reason,
                 "source": chunk.source,
+                "s3_path": getattr(chunk, "s3_path", None),
                 "kb_id": chunk.kb_id,
                 "content_type": getattr(chunk, "content_type", "original")
             }
@@ -1076,7 +1079,8 @@ If you'd like, I can also:
             context_text += f"{hybrid_merge_context}\n" + "=" * 60 + "\n"
 
         for i, chunk in enumerate(context.chunks, 1):
-            source_info = clean_source_name(chunk.source) if chunk.source else "Unknown Source"
+            s3_path = getattr(chunk, "s3_path", None)
+            source_info = s3_path if s3_path else (clean_source_name(chunk.source) if chunk.source else "Unknown Source")
             context_text += f"\n[Chunk {i}/{len(context.chunks)} - Source: {source_info} - Position {chunk.position}]"
             context_text += f"\nScore: {chunk.hybrid_score:.3f} (Semantic: {chunk.embedding_similarity:.3f}, Graph: {chunk.graph_score:.3f})"
             context_text += f"\n{'-' * 40}\n{chunk.text}\n"
