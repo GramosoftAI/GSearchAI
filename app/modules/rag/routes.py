@@ -326,13 +326,15 @@ async def rag_query(
 
             kb_id=kb_ids,
 
+            user_id=user,
+
             top_k=query_request.top_k or 15,
 
             max_depth=query_request.max_depth or 2,
 
-            reasoning_enabled=(query_request.Reasoning == "True"),
+            reasoning_enabled=(str(query_request.Reasoning).strip().lower() in ("true", "1", "yes")),
 
-            memory_enabled=(query_request.Memory == "True"),
+            memory_enabled=(str(query_request.Memory).strip().lower() in ("true", "1", "yes")),
 
         )
 

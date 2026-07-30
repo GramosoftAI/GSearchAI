@@ -30,9 +30,9 @@ class EpisodicMemory(Base):
     ai_response = Column(String, nullable=True)
     summarization = Column(String, nullable=True)
     
-    # Dual Vectorization Arrays (Qwen2.5-14B: 5120 dimensions)
-    raw_vector = Column(VECTOR(5120), nullable=True)
-    summary_vector = Column(VECTOR(5120), nullable=True)
+    # Dual Vectorization Arrays (768 dimensions)
+    raw_vector = Column(VECTOR(768), nullable=True)
+    summary_vector = Column(VECTOR(768), nullable=True)
     
     metadata_json = Column(JSONB, nullable=True, default=dict)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -94,23 +94,23 @@ async def init_db():
         # 3. Migration safety check for episodic_memories vectors
         await conn.execute(text("""
             ALTER TABLE episodic_memories 
-            ADD COLUMN IF NOT EXISTS raw_vector vector(5120);
+            ADD COLUMN IF NOT EXISTS raw_vector vector(768);
         """))
         
         await conn.execute(text("""
             ALTER TABLE episodic_memories 
-            ADD COLUMN IF NOT EXISTS summary_vector vector(5120);
+            ADD COLUMN IF NOT EXISTS summary_vector vector(768);
         """))
 
         # Dimension upgrade: This safely clears old vectors and changes type
         await conn.execute(text("""
             ALTER TABLE episodic_memories 
-            ALTER COLUMN raw_vector TYPE vector(5120) USING NULL;
+            ALTER COLUMN raw_vector TYPE vector(768) USING NULL;
         """))
 
         await conn.execute(text("""
             ALTER TABLE episodic_memories 
-            ALTER COLUMN summary_vector TYPE vector(5120) USING NULL;
+            ALTER COLUMN summary_vector TYPE vector(768) USING NULL;
         """))
 
         # 4. Migration safety check for user_preferences agent_id column

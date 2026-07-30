@@ -94,19 +94,37 @@ class PandasQueryEngine:
             
         self.llm = RunnableLambda(_ainvoke)
 
+    def _build_union_query(self, paths: List[str], with_row_id: bool = False) -> str:
+        """Builds a DuckDB UNION ALL BY NAME query across all provided CSV/Parquet dataset paths."""
+        valid_readers = []
+        for p in paths:
+            if not p or not os.path.exists(p):
+                continue
+            safe_path = str(p).replace('\\', '/')
+            if safe_path.lower().endswith(".parquet"):
+                valid_readers.append(f"SELECT * FROM read_parquet('{safe_path}')")
+            else:
+                valid_readers.append(f"SELECT * FROM read_csv_auto('{safe_path}', sample_size=10000, nullstr='NULL')")
+        if not valid_readers:
+            return "SELECT 1 WHERE FALSE"
+        union_sql = " UNION ALL BY NAME ".join(valid_readers)
+        if with_row_id:
+            return f"SELECT row_number() OVER () AS row_id, * FROM ({union_sql})"
+        return f"SELECT * FROM ({union_sql})"
+
     def get_schema_columns(self, data_path: Optional[str] = None) -> List[str]:
-        """Fast helper to retrieve columns of the active dataset for schema-aware intent routing."""
+        """Fast helper to retrieve columns of the active dataset(s) for schema-aware intent routing."""
         target_path = data_path or getattr(self, "data_path", None)
-        if not target_path or not os.path.exists(target_path):
+        paths_to_check = [p for p in (self.all_dataset_paths or ([target_path] if target_path else [])) if p and os.path.exists(p)]
+        if not paths_to_check:
             return []
         try:
             temp_db_path = os.path.join(tempfile.gettempdir(), f"duckdb_{id(self)}.db")
             engine = create_engine(f"duckdb:///{temp_db_path}")
             with engine.connect() as conn:
-                safe_path = str(target_path).replace('\\', '/')
+                union_sql = self._build_union_query(paths_to_check, with_row_id=False)
                 conn.execute(text("DROP VIEW IF EXISTS dataset;"))
-                reader = f"read_parquet('{safe_path}')" if safe_path.lower().endswith(".parquet") else f"read_csv_auto('{safe_path}', sample_size=1000, nullstr='NULL')"
-                conn.execute(text(f"CREATE VIEW dataset AS SELECT * FROM {reader};"))
+                conn.execute(text(f"CREATE VIEW dataset AS {union_sql};"))
                 result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dataset';"))
                 return [row[0] for row in result.fetchall()]
         except Exception as e:
@@ -144,25 +162,57 @@ class PandasQueryEngine:
             logger.warning(f"Analytical synthesis failed ({e}), returning formatted table.")
             return table_md
 
+    async def _resolve_to_local_path(self, path: str) -> str:
+        """
+        If path is an S3/HTTP(S) URL, download it to a local temp file and return that path.
+        If it's already a local path that exists, return it unchanged.
+        This is required because DuckDB can only read local filesystem paths.
+        """
+        if not path:
+            return path
+        if path.startswith("http://") or path.startswith("https://"):
+            try:
+                import httpx, tempfile
+                ext = ".csv" if path.lower().endswith(".csv") else ".parquet"
+                logger.info(f"Downloading remote CSV to temp file: {path}")
+                async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                    resp = await client.get(path)
+                    resp.raise_for_status()
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+                tmp.write(resp.content)
+                tmp.close()
+                logger.info(f"Downloaded {len(resp.content)} bytes -> {tmp.name}")
+                return tmp.name
+            except Exception as e:
+                logger.error(f"Failed to download remote CSV from {path}: {e}")
+                return path  # Return original — caller will catch os.path.exists failure
+        return path
+
     async def execute_query(self, query: str, data_path: Optional[str] = None) -> Optional[str]:
-        target_path = data_path or getattr(self, "data_path", None)
-        if not target_path or not os.path.exists(target_path):
-            return f"Error: Dataset {target_path} not found on server."
+        raw_path = data_path or getattr(self, "data_path", None)
+        # Resolve S3/HTTPS URLs to local temp files before DuckDB can read them
+        target_path = await self._resolve_to_local_path(raw_path) if raw_path else None
+        paths_to_register = [p for p in (self.all_dataset_paths or ([target_path] if target_path else [])) if p and os.path.exists(p)]
+        if not paths_to_register:
+            logger.error(f"No valid local dataset path found. raw_path={raw_path!r}, resolved={target_path!r}")
+            return "Error: No valid spreadsheet datasets found on server."
             
         from langchain_core.output_parsers import StrOutputParser
         # DUCKDB BINDING (CSV or PARQUET)
-        logger.info(f"Initializing DuckDB on dataset: {target_path} | total_paths: {len(self.all_dataset_paths)}")
+        logger.info(f"Initializing DuckDB on dataset(s): {target_path} | total_paths: {len(paths_to_register)}")
         try:
             temp_db_path = os.path.join(tempfile.gettempdir(), f"duckdb_{id(self)}.db")
             engine = create_engine(f"duckdb:///{temp_db_path}")
             
             with engine.connect() as conn:
-                paths_to_register = self.all_dataset_paths if self.all_dataset_paths else [target_path]
+                union_sql = self._build_union_query(paths_to_register, with_row_id=True)
+                conn.execute(text("DROP VIEW IF EXISTS dataset;"))
+                conn.execute(text(f"CREATE VIEW dataset AS {union_sql};"))
+                
+                # Also register individual views (dataset_1, dataset_2, etc.) for backwards compatibility
                 for idx, path_item in enumerate(paths_to_register):
-                    if not path_item or not os.path.exists(path_item):
-                        continue
                     safe_path = str(path_item).replace('\\', '/')
-                    view_name = "dataset" if idx == 0 else f"dataset_{idx+1}"
+                    view_name = f"dataset_{idx+1}"
                     conn.execute(text(f"DROP VIEW IF EXISTS {view_name};"))
                     reader = f"read_parquet('{safe_path}')" if safe_path.lower().endswith(".parquet") else f"read_csv_auto('{safe_path}', sample_size=10000, nullstr='NULL')"
                     conn.execute(text(f"CREATE VIEW {view_name} AS SELECT row_number() OVER () AS row_id, * FROM {reader};"))
@@ -194,7 +244,7 @@ class PandasQueryEngine:
                  "12. In your 'explanation' string, NEVER use the words 'error', 'errors', 'exception', or 'fail' (use 'issues' or 'problems' instead).\n"
                  "13. For extracting YEAR, MONTH, or date parts from timestamp columns, ALWAYS cast to timestamp first: EXTRACT(YEAR FROM TRY_CAST(\"col\" AS TIMESTAMP)).\n"
                  "14. If the user asks for information or columns that DO NOT EXIST in the schema (e.g. wholesale price, CEO, warehouse, email, warranty), generate: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset.\n"
-                 "15. STRING FILTERING & ENTITY MATCHING: When filtering string columns (e.g. employee names, departments, products in WHERE clauses), NEVER use exact '=' or 'IN (...)'. ALWAYS use case-insensitive matching with ILIKE or LOWER(str) LIKE '%val%' (e.g., WHERE LOWER(\"Employee Name\") LIKE '%john%' OR LOWER(\"Employee Name\") LIKE '%jane%') so that minor spacing or case differences do not cause zero results.\n"
+                 "15. STRING FILTERING & ENTITY MATCHING: When filtering string columns (e.g. employee names, IDs, departments in WHERE clauses), NEVER use exact '=' or 'LOWER(col) = ...' with mismatching case. Instead, ALWAYS use case-insensitive matching using the ILIKE operator (e.g., \"Employee ID\" ILIKE 'EMP1005' or \"Employee Name\" ILIKE '%Matthew%') so that case differences or spacing never cause zero results.\n"
                  "16. COMPARATIVE & SUPERLATIVE QUERIES: When the user asks to compare two or more entities (e.g. 'who has higher salary', 'compare the salary of both', 'who is better', 'who earns more', 'which has better'):\n"
                  "   - If the query mentions 'both', 'all', or does not specify explicit employee names, DO NOT filter with WHERE name = 'both'. Instead, select all rows from dataset and ORDER BY the comparison metric DESC (e.g., SELECT * FROM dataset ORDER BY TRY_CAST(\"Salary\" AS DOUBLE) DESC LIMIT 10;).\n"
                  "   - Select all relevant columns (name, department, salary, hire date, etc.) so the response synthesizer has full structured comparison data.\n"
@@ -270,33 +320,33 @@ class PandasQueryEngine:
                         logger.error(f"Self-healing SQL retry failed: {e_retry}", exc_info=True)
                         return f"Error executing SQL ({sql_query}): {str(e)}"
                         
-            if not rows and "WHERE " in sql_query.upper():
-                logger.warning(f"Query returned 0 rows with WHERE filter ({sql_query}). Attempting Layer 3 fuzzy string matching retry...")
-                try:
-                    fuzzy_prompt = ChatPromptTemplate.from_messages([
-                        ("system",
-                         "You are an enterprise DuckDB SQL expert. The previous SQL query returned 0 rows because the WHERE filter was too strict.\n"
-                         "Rewrite the DuckDB SELECT query on table 'dataset' using case-insensitive partial string matching (ILIKE or LOWER(\"col\") LIKE '%val%') so matching rows are found.\n\n"
-                         "Available columns in 'dataset':\n{columns}\n\n"
-                         "Return ONLY valid JSON with 'sql' and 'explanation' without markdown fences."),
-                        ("user",
-                         "User Question: {question}\nPrevious SQL that returned 0 rows:\n{sql}")
-                    ])
-                    fuzzy_chain = fuzzy_prompt | self.llm | StrOutputParser() | parse_json_from_thinking
-                    fuzzy_dict = await fuzzy_chain.ainvoke({
-                        "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns),
-                        "question": query,
-                        "sql": sql_query
-                    })
-                    fuzzy_plan = DuckDBSemanticQuery(**fuzzy_dict)
-                    sql_query = fuzzy_plan.sql.strip().rstrip(";") + ";"
-                    logger.info(f"Layer 3 Healed DuckDB SQL: {sql_query} | Explanation: {fuzzy_plan.explanation}")
-                    result = conn.execute(text(sql_query))
-                    rows = result.fetchall()
-                    col_names = list(result.keys())
-                    query_plan = fuzzy_plan
-                except Exception as fuzzy_err:
-                    logger.warning(f"Fuzzy retry failed: {fuzzy_err}")
+                if not rows and "WHERE " in sql_query.upper():
+                    logger.warning(f"Query returned 0 rows with WHERE filter ({sql_query}). Attempting Layer 3 fuzzy string matching retry...")
+                    try:
+                        fuzzy_prompt = ChatPromptTemplate.from_messages([
+                            ("system",
+                             "You are an enterprise DuckDB SQL expert. The previous SQL query returned 0 rows because the WHERE filter was too strict.\n"
+                             "Rewrite the DuckDB SELECT query on table 'dataset' using case-insensitive partial string matching (ILIKE or LOWER(\"col\") LIKE '%val%') so matching rows are found.\n\n"
+                             "Available columns in 'dataset':\n{columns}\n\n"
+                             "Return ONLY valid JSON with 'sql' and 'explanation' without markdown fences."),
+                            ("user",
+                             "User Question: {question}\nPrevious SQL that returned 0 rows:\n{sql}")
+                        ])
+                        fuzzy_chain = fuzzy_prompt | self.llm | StrOutputParser() | parse_json_from_thinking
+                        fuzzy_dict = await fuzzy_chain.ainvoke({
+                            "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns),
+                            "question": query,
+                            "sql": sql_query
+                        })
+                        fuzzy_plan = DuckDBSemanticQuery(**fuzzy_dict)
+                        sql_query = fuzzy_plan.sql.strip().rstrip(";") + ";"
+                        logger.info(f"Layer 3 Healed DuckDB SQL: {sql_query} | Explanation: {fuzzy_plan.explanation}")
+                        result = conn.execute(text(sql_query))
+                        rows = result.fetchall()
+                        col_names = list(result.keys())
+                        query_plan = fuzzy_plan
+                    except Exception as fuzzy_err:
+                        logger.warning(f"Fuzzy retry failed: {fuzzy_err}")
 
             if not rows:
                 return f"{query_plan.explanation}\nNo records matched your query."
@@ -319,10 +369,8 @@ class PandasQueryEngine:
                     row_str = " | ".join(str(item) if item is not None else "NULL" for item in r)
                     formatted += f"| {row_str} |\n"
                     
-            # 6. UNIVERSAL NATURAL-LANGUAGE SYNTHESIS (rows <= 50)
-            if len(rows) <= 50:
-                logger.info(f"[PandasQueryEngine] Executing natural-language synthesis for: '{query}'...")
-                return await self._synthesize_analytical_response(query, formatted, query_plan.explanation)
+            # 6. UNIVERSAL NATURAL-LANGUAGE SYNTHESIS
+            # (Removed redundant synthesis step. The final RAG LLM will read the formatted Markdown table directly, saving 20-60 seconds.)
 
             # For large result sets (>50 rows): strip <think> and return formatted table
             formatted = re.sub(r'<think>.*?</think>', '', formatted, flags=re.DOTALL).strip()

@@ -251,13 +251,18 @@ async def run_pdf_ingestion_job(
             
             t_ingest_start = time.time()
             logger.info(f"Job {job_id}: Starting embedding and graph ingestion for {kb_id}")
+
+            async def _update_ingest_progress(prog: int, step: str):
+                await job_service.update_job_progress(job_id, status="processing", progress=prog, current_step=step)
+
             ingest_result = await kb_service.ingest_document(
                 kb_id, 
                 document_text, 
                 source=s3_url, 
                 s3_path=s3_url,
                 parsed_path=parsed_url,
-                structured_records=structured_records
+                structured_records=structured_records,
+                progress_callback=_update_ingest_progress
             )
 
             t_ingest_end = time.time()

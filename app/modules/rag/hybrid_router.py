@@ -58,24 +58,36 @@ class EnterpriseHybridRouter:
             )
 
         # Explicit table/Excel indicators, comparisons, rankings, or analytical operations
-        table_signals = [
+        explicit_math_signals = [
             "in the excel", "in the table", "spreadsheet", "sum of", "average of", "count of", 
-            "total of", "how many rows", "group by", "compare the salary", "who has better salary", 
-            "better salary", "higher salary", "lower salary", "more senior", "senior employee", 
-            "who is senior", "who earns more", "highest salary", "lowest salary", "top salary", 
-            "compare both", "among both", "between both", "who has higher", "who has lower",
-            "difference between", "wage", "income", "compensation"
+            "total of", "how many rows", "group by"
+        ]
+        table_signals = [
+            "compare the salary", "who has better salary", "better salary", "higher salary", 
+            "lower salary", "more senior", "senior employee", "who is senior", "who earns more", 
+            "highest salary", "lowest salary", "top salary", "compare both", "among both", 
+            "between both", "who has higher", "who has lower", "difference between", 
+            "wage", "income", "compensation"
         ]
         # Match columns only if they are specific/distinctive (>3 chars, not generic stopwords)
         generic_cols = {"name", "date", "id", "type", "status", "data", "info", "value", "text", "description"}
         matched_cols = [c for c in columns if c and len(str(c)) > 3 and str(c).lower() not in generic_cols and str(c).lower() in q_lower]
 
-        if any(sig in q_lower for sig in table_signals) or len(matched_cols) >= 2:
+        if any(sig in q_lower for sig in explicit_math_signals):
             return HybridRoutingDecision(
                 target_engine="TABULAR_SQL",
                 confidence=0.95,
                 matched_columns=matched_cols,
-                reasoning=f"Query explicitly targets spreadsheet calculations, comparisons, or distinctive columns: {matched_cols}."
+                reasoning=f"Query explicitly targets spreadsheet calculations or aggregation: {matched_cols}."
+            )
+
+        if any(sig in q_lower for sig in table_signals) or len(matched_cols) >= 2:
+            target = "HYBRID_MERGE" if doc_kbs_count > 0 else "TABULAR_SQL"
+            return HybridRoutingDecision(
+                target_engine=target,
+                confidence=0.95,
+                matched_columns=matched_cols,
+                reasoning=f"Query references tabular columns or comparisons ({matched_cols}). Routing to {target}."
             )
 
         return None
@@ -110,7 +122,7 @@ class EnterpriseHybridRouter:
                  "- Select 'VECTOR_DOCS' if the query asks for qualitative explanations, policies, manuals, or concepts found in PDF documents.\n"
                  "- Select 'HYBRID_MERGE' if the query requires combining data from both the Excel spreadsheet and the PDF documents, or if it is ambiguous.\n\n"
                  "CRITICAL RULES:\n"
-                 "1. Return ONLY valid JSON matching the schema: {\"target_engine\": \"...\", \"confidence\": 0.90, \"matched_columns\": [\"...\"], \"reasoning\": \"...\"}.\n"
+                 "1. Return ONLY valid JSON matching the schema: {{\"target_engine\": \"...\", \"confidence\": 0.90, \"matched_columns\": [\"...\"], \"reasoning\": \"...\"}}.\n"
                  "2. Do NOT output any markdown code fences or <think> tags. Output raw JSON only."),
                 ("user", "{question}")
             ])
@@ -126,6 +138,9 @@ class EnterpriseHybridRouter:
             decision = HybridRoutingDecision(**raw_dict)
             if decision.confidence < 0.60:
                 logger.info(f"[EnterpriseHybridRouter] Low confidence ({decision.confidence:.2f}), elevating to HYBRID_MERGE.")
+                decision.target_engine = "HYBRID_MERGE"
+            elif decision.target_engine == "TABULAR_SQL" and doc_kbs_count > 0 and decision.confidence < 0.85:
+                logger.info(f"[EnterpriseHybridRouter] Promoting TABULAR_SQL to HYBRID_MERGE in mixed-source environment (Conf: {decision.confidence:.2f}).")
                 decision.target_engine = "HYBRID_MERGE"
 
             logger.info(f"[EnterpriseHybridRouter] LLM Decision: {decision.target_engine} | Conf: {decision.confidence:.2f} | Cols: {decision.matched_columns}")

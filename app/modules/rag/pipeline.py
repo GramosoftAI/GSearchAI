@@ -487,35 +487,31 @@ class RAGPipeline:
 
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
 
-        # --- EXCLUSIVE PANDAS BYPASS ---
-        # If the target KB is a bypassed CSV, immediately intercept and run Table Analytics
+
+        # --- SUPPLEMENTARY PANDAS CSV EXTRACTION ---
+        # Uses description='excel_parquet' as the authoritative detection flag.
+        # parsed_path is a bare dataset name; actual data is in local parquet via ParquetIngester.
+        supplementary_csv_context = ""
         try:
             from sqlalchemy import text
             if getattr(self, "db", None):
-                kb_query = "SELECT parsed_path FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[]));"
+                kb_query = "SELECT parsed_path, description FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[]));"
                 result = await self.db.execute(text(kb_query), {"kb_ids": kb_ids})
-                kb_rows = result.all()
-                is_csv = False
-                for row in kb_rows:
-                    if row.parsed_path and str(row.parsed_path).lower().endswith('.csv'):
-                        is_csv = True
-                        break
-                        
-                if is_csv:
-                    logger.info(" CSV Dataset detected at start of pipeline! Intercepting query directly to Pandas Engine.")
+                kb_path_rows = result.all()
+
+                has_excel_kb = any(getattr(r, 'description', '') == 'excel_parquet' for r in kb_path_rows)
+
+                if has_excel_kb:
+                    logger.info(" excel_parquet KB detected! Gathering supplementary tabular context.")
                     pandas_result = await self._execute_table_analytics(query, kb_ids)
-                    if pandas_result:
-                        return RAGContext(
-                            query=query,
-                            chunks=[],
-                            entity_mentions={},
-                            total_tokens=len(pandas_result.split()),
-                            triplet_context=pandas_result,
-                            search_type="TABLE_ANALYTICS"
-                        )
+                    if pandas_result and "validation error" not in pandas_result.lower() and "No valid spreadsheet" not in pandas_result:
+                        supplementary_csv_context = f"\n\n### Supplementary Tabular Data\n{pandas_result}\n"
+                    else:
+                        logger.warning(f" Supplementary CSV extraction returned no usable results: {pandas_result}")
         except Exception as e:
-            logger.error(f"Failed early CSV intercept check: {e}")
-        # -------------------------------
+            logger.error(f"Failed supplementary CSV extraction: {e}", exc_info=True)
+        # ---------------------------------------------
+
 
         # Populate KB metadata (names, total chunks)
         if self.db:
@@ -672,7 +668,7 @@ class RAGPipeline:
                     chunks=final_chunks,
                     entity_mentions={},
                     total_tokens=sum(len(c.text.split()) for c in final_chunks),
-                    triplet_context=triplet_context_str,
+                    triplet_context=triplet_context_str + supplementary_csv_context,
                     triplets=relevant_triplets_list,
                     search_type=analysis.intent.name
                 )
@@ -1764,6 +1760,8 @@ class RAGPipeline:
         if 'extractive_context_text' in locals() and extractive_context_text:
             final_triplet_context = extractive_context_text + final_triplet_context
             
+        final_triplet_context += supplementary_csv_context
+            
         return RAGContext(
 
             query=query,
@@ -2072,9 +2070,9 @@ class RAGPipeline:
                 if self.db:
                     await self.db.rollback()
         
-        # 1. Fetch schema, name, and parsed_path for target KBs
+        # 1. Fetch schema, name, parsed_path AND s3_path for target KBs
         import uuid
-        kb_query = "SELECT id, name, dataset_schema, parsed_path, source FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id;"
+        kb_query = "SELECT id, name, dataset_schema, parsed_path, s3_path, source FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id;"
         result = await self.db.execute(text(kb_query), {"kb_ids": kb_ids, "tenant_id": uuid.UUID(str(self.tenant_id))})
         kb_rows = result.all()
         
@@ -2083,19 +2081,60 @@ class RAGPipeline:
             return None
             
         kb_names = {str(r.id): r.name for r in kb_rows}
-        dataset_schema = kb_rows[0].dataset_schema
-        parsed_path = kb_rows[0].parsed_path
-        source = kb_rows[0].source
-            
-        # 1.5. HYBRID PANDAS ENGINE ROUTING FOR CSV FILES
-        if parsed_path and str(parsed_path).lower().endswith('.csv'):
-            logger.info(" CSV File detected! Routing TABLE_ANALYTICS to PandasQueryEngine.")
+
+        # --- DEFINITIVE FIX: Use ParquetIngester registry to resolve local parquet path ---
+        # The CSV ingestion pipeline converts CSV→Parquet and registers the path in
+        # data/parquet/active_datasets.json under the key kb.parsed_path (e.g. 'dummy_employees_details').
+        # kb.description == 'excel_parquet' is the authoritative flag for spreadsheet KBs.
+        # We must NOT check s3_path for .csv — the S3 bucket is private (403 Forbidden).
+        # This is the same pattern used in service.py lines 130-145.
+        from app.core.parquet_ingester import ParquetIngester
+
+        excel_kb_rows = [r for r in kb_rows if getattr(r, 'description', '') == 'excel_parquet']
+        non_excel_rows = [r for r in kb_rows if getattr(r, 'description', '') != 'excel_parquet']
+
+        # 1.5. HYBRID PANDAS ENGINE ROUTING FOR SPREADSHEET (PARQUET) FILES
+        if excel_kb_rows:
+            logger.info(f" {len(excel_kb_rows)} excel_parquet KB(s) detected! Resolving local parquet via ParquetIngester.")
             from .pandas_engine import PandasQueryEngine
-            engine = PandasQueryEngine(self.llm_client)
-            query_str = "PANDAS PandasQueryEngine.execute_query"
-            res = await engine.execute_query(query, str(parsed_path))
-            await log_attempt(1 if res else 0)
-            return res
+            active_paths = []
+            for ekb in excel_kb_rows:
+                dataset_name = getattr(ekb, 'parsed_path', None) or getattr(ekb, 'name', None)
+                if dataset_name:
+                    p = ParquetIngester.get_active_dataset(dataset_name)
+                    if p:
+                        logger.info(f" Resolved parquet: {p}")
+                        active_paths.append(p)
+                    else:
+                        logger.warning(f" No active parquet found for dataset_name={dataset_name!r}")
+
+            if active_paths:
+                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                query_str = "PANDAS PandasQueryEngine.execute_query"
+                all_csv_results = []
+                for ekb, path in zip(excel_kb_rows, active_paths):
+                    try:
+                        res = await engine.execute_query(query, path)
+                        if res and "No valid spreadsheet" not in res:
+                            kb_label = ekb.name or path
+                            all_csv_results.append(f"[Source: {kb_label}]\n{res}")
+                        else:
+                            logger.warning(f" PandasQueryEngine returned empty/error for {path}: {res}")
+                    except Exception as csv_err:
+                        logger.error(f"PandasQueryEngine failed for {path}: {csv_err}", exc_info=True)
+                if all_csv_results:
+                    await log_attempt(len(all_csv_results))
+                    return "\n\n".join(all_csv_results)
+            else:
+                logger.warning(" No active parquet files resolved for excel_parquet KBs. Cannot answer tabular query.")
+            await log_attempt(0)
+            return None
+
+        # Fall through to SQL path for non-spreadsheet knowledge bases
+        dataset_schema = non_excel_rows[0].dataset_schema if non_excel_rows else kb_rows[0].dataset_schema
+        parsed_path = non_excel_rows[0].parsed_path if non_excel_rows else kb_rows[0].parsed_path
+        source = non_excel_rows[0].source if non_excel_rows else kb_rows[0].source
+
 
         # (If not CSV, fallback to standard SQL generation)
         if not dataset_schema:

@@ -281,12 +281,8 @@ class DeepInfraEmbeddingClient:
         
         # 2. Process in chunks of 50 (API limit safety)
         batch_size = 50
-        all_new_embeddings = []
-        total_tokens = 0
-        
-        for i in range(0, len(to_embed_texts), batch_size):
-            chunk = to_embed_texts[i:i+batch_size]
-            
+
+        async def _embed_batch(chunk: List[str], b_idx: int):
             async with _embedding_semaphore:
                 headers = {
                     "Authorization": f"Bearer {self.api_key}",
@@ -309,25 +305,18 @@ class DeepInfraEmbeddingClient:
                         response.raise_for_status()
                         data = response.json()
                         
-                        # Extract embeddings: {"data": [{"embedding": [...], "index": 0}, ...]}
                         new_batch = [item["embedding"] for item in sorted(data["data"], key=lambda x: x["index"])]
-                        all_new_embeddings.extend(new_batch)
-                        
-                        # Extract tokens
                         chunk_tokens = data.get("usage", {}).get("prompt_tokens", 0)
                         if chunk_tokens == 0:
                             chunk_tokens = sum(max(1, len(t) // 4) for t in chunk)
-                        total_tokens += chunk_tokens
-                        
-                        # Update cache
+                            
                         for j, emb in enumerate(new_batch):
                             orig_text = chunk[j]
                             t_hash = hashlib.sha256(orig_text.encode()).hexdigest()
                             _embedding_cache[t_hash] = emb
                             if t_hash not in _embedding_cache_insertion_order:
                                 _embedding_cache_insertion_order.append(t_hash)
-                        break  # Success, exit retry loop
-                            
+                        return b_idx, new_batch, chunk_tokens
                     except httpx.TimeoutException:
                         last_error = TimeoutError(f"API timeout after {self.timeout}s (attempt {attempt + 1})")
                         logger.warning(f"  Batch API timeout on attempt {attempt + 1}/{self.max_retries}")
@@ -345,10 +334,19 @@ class DeepInfraEmbeddingClient:
                         wait_time = 2 ** attempt
                         logger.debug(f"Retrying batch in {wait_time}s...")
                         await asyncio.sleep(wait_time)
-                else:
-                    logger.warning(f" Batch API failed ({last_error}). Falling back to concurrent item-by-item embedding generation for chunk of {len(chunk)} items.")
-                    item_results = await asyncio.gather(*[self.generate_embedding(item_text) for item_text in chunk])
-                    all_new_embeddings.extend(item_results)
+                
+                logger.warning(f" Batch API failed ({last_error}). Falling back to concurrent item-by-item embedding generation for chunk of {len(chunk)} items.")
+                item_results = await asyncio.gather(*[self.generate_embedding(item_text) for item_text in chunk])
+                return b_idx, item_results, sum(max(1, len(t) // 4) for t in chunk)
+
+        batches = [to_embed_texts[i:i+batch_size] for i in range(0, len(to_embed_texts), batch_size)]
+        batch_results = await asyncio.gather(*[_embed_batch(chunk, idx) for idx, chunk in enumerate(batches)])
+        batch_results.sort(key=lambda x: x[0])
+        all_new_embeddings = []
+        total_tokens = 0
+        for _, embs, toks in batch_results:
+            all_new_embeddings.extend(embs)
+            total_tokens += toks
 
         # 3. Reconstruct full list in original order
         for i, idx in enumerate(to_embed_indices):
