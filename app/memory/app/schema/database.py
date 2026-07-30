@@ -7,10 +7,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from sqlalchemy.orm import declarative_base
 from pgvector.sqlalchemy import VECTOR
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    "postgresql+asyncpg://graphmind:graphmind_password@db:5432/graphmind"
+raw_db_url = (
+    os.getenv("DATABASE_URL") 
+    or os.getenv("POSTGRES_URL") 
+    or os.getenv("POSTGRES_URI") 
+    or "postgresql+asyncpg://graphmind:graphmind_password@db:5432/graphmind"
 )
+
+if raw_db_url.startswith("postgresql://"):
+    DATABASE_URL = raw_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+else:
+    DATABASE_URL = raw_db_url
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)

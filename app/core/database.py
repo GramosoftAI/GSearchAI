@@ -730,7 +730,11 @@ async def init_db():
 
         from ..modules.connectors.google.models import GmailMessage, GmailSyncState
         from ..modules.jobs.models import ProcessingJob
-
+        try:
+            from ..memory.app.schema.database import EpisodicMemory, UserPreference, init_db as init_memory_db
+            await init_memory_db()
+        except Exception as mem_init_err:
+            logger.warning(f"Memory DB init attempt in main database.py notice: {mem_init_err}")
 
         logger.debug("All models imported and registered")
 
