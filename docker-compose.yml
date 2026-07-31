@@ -41,7 +41,7 @@ services:
       - neo4j_data:/var/lib/neo4j/data
     ports:
       - "7687:7687"
-      - "7474:7474"
+      - "7475:7474"
     healthcheck:
       test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "graphmind_password", "RETURN 1"]
       interval: 15s
