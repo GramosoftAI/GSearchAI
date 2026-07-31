@@ -87,11 +87,15 @@ _DELETE_PATTERNS = re.compile(
 )
 
 _QUESTION_INDICATOR = re.compile(
-    r"^\s*(what|how|when|where|why|who|which|is|are|do|does|did|can|could|would|will)\b|\?\s*$",
+    r"^\s*(what|how|when|where|why|who|which|is|are|do|does|did|can|could|would|will|give|show|tell|list|count|find|search|get|fetch|display|provide|summarize|summary|explain|describe|calculate|total)\b|\?\s*$",
     re.IGNORECASE,
 )
 
-# Broadened dynamic regex parser pattern for fallback key-value extraction
+_RAG_COMMAND_PATTERN = re.compile(
+    r"\b(summarize|summrize|summary|overview|explain|list|show|analyze|extract|detail|details|count|total|male|female|employee|python|vishnu|find|search|give|get|know)\b",
+    re.IGNORECASE
+)
+
 _DYNAMIC_FACT_PATTERN = re.compile(
     r".*?\b(?:my\s+)?(?P<key>[a-zA-Z0-9_\-']+)\s+"
     r"(?:is|are|=|:|was|not\s+.*?\s+(?:it'?s|into|to)|to|into|changed?\s+to|upgraded?\s+to|upgrad\s+into)\s+"
@@ -101,7 +105,7 @@ _DYNAMIC_FACT_PATTERN = re.compile(
 
 
 def _is_deterministic_preference_statement(query: str) -> bool:
-    if _QUESTION_INDICATOR.search(query):
+    if _QUESTION_INDICATOR.search(query) or _RAG_COMMAND_PATTERN.search(query):
         return False
     return bool(_PREFERENCE_PATTERNS.search(query))
 
@@ -711,23 +715,15 @@ async def shutdown_event():
 # ============================================================================
 @app.post("/api/v1/memory/process-turn")
 async def process_turn(payload: MemoryProcessRequest):
-    if _is_delete_statement(payload.query):
-        is_feedback_only = True
-    elif _QUESTION_INDICATOR.search(payload.query):
+    if _QUESTION_INDICATOR.search(payload.query) or _RAG_COMMAND_PATTERN.search(payload.query):
         is_feedback_only = False
+    elif _is_delete_statement(payload.query):
+        is_feedback_only = True
     elif _is_deterministic_preference_statement(payload.query):
         is_feedback_only = True
     else:
-        triage_prompt = (
-            "You are an agent memory router. Analyze the user's message. "
-            "Reply with EXACTLY 'FEEDBACK_ONLY' if the user is:\n"
-            "- Giving corrective feedback/instructions/adjustments or deleting facts\n"
-            "- Setting, updating, or stating a PREFERENCE or FACT for you to remember\n"
-            "- Giving a simple acknowledgement ('got it', 'thanks')\n"
-            "Otherwise, reply with EXACTLY 'NORMAL_QUERY'."
-        )
-        triage_decision = await run_llm_completion(triage_prompt, payload.query, priority="live")
-        is_feedback_only = "FEEDBACK_ONLY" in triage_decision
+        # Default to NORMAL_QUERY unless explicit preference or delete pattern matched
+        is_feedback_only = False
 
     if is_feedback_only:
         return {

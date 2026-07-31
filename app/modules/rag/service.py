@@ -126,6 +126,7 @@ class RAGService:
 
         # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
         hybrid_merge_context = ""
+        sql_task = None
         if excel_kbs:
             from app.core.parquet_ingester import ParquetIngester
             from app.modules.rag.pandas_engine import PandasQueryEngine

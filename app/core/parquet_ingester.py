@@ -86,3 +86,34 @@ class ParquetIngester:
                 if dataset_name in registry:
                     return os.path.join(output_dir, registry[dataset_name])
         return None
+
+    @staticmethod
+    def unregister_dataset(dataset_name: str, output_dir: str = "data/parquet") -> bool:
+        """Removes a dataset from active_datasets.json registry and deletes its parquet files from disk."""
+        if not dataset_name:
+            return False
+        if not os.path.isabs(output_dir):
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            output_dir = os.path.join(base_dir, output_dir)
+            
+        registry_path = os.path.join(output_dir, "active_datasets.json")
+        deleted = False
+        if os.path.exists(registry_path):
+            try:
+                with open(registry_path, 'r') as f:
+                    registry = json.load(f)
+                if dataset_name in registry:
+                    filename = registry.pop(dataset_name)
+                    file_path = os.path.join(output_dir, filename)
+                    if os.path.exists(file_path):
+                        try:
+                            os.remove(file_path)
+                            deleted = True
+                            logger.info(f"Deleted parquet file: {file_path}")
+                        except Exception as e:
+                            logger.warning(f"Failed to remove parquet file {file_path}: {e}")
+                    with open(registry_path, 'w') as f:
+                        json.dump(registry, f, indent=4)
+            except Exception as reg_err:
+                logger.warning(f"Failed to unregister dataset '{dataset_name}': {reg_err}")
+        return deleted

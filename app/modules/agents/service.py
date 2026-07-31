@@ -646,131 +646,141 @@ class AgentService:
 
     async def delete_agent(self, user_id: str, agent_id: str) -> dict:
         """
-        Delete agent from BOTH PostgreSQL and Neo4j.
+        HARD DELETE agent and ALL associated resources permanently from PostgreSQL, S3,
+        local Parquet datasets, and Neo4j graph storage.
 
-        CRITICAL DELETE ORDER (Neo4j FIRST):
-        ====================================
-        1. Neo4j DELETE FIRST (with explicit cascade)
-           - Remove Agent node + all related: KBs, Chunks, Entities
-           - If fails: Stop here (PostgreSQL untouched = SAFE)
-        2. PostgreSQL soft-delete (set is_active = False, deleted_at = now())
-           - Only if Neo4j succeeded
-        3. COMMIT PostgreSQL
-
-        Why this order?
-        - If Neo4j fails: PostgreSQL is clean (no orphan PG records)
-        - If PostgreSQL fails: Both are rolled back (atomic for PG)
-        - If Neo4j succeeds but network fails: Retry succeeds (idempotent delete)
-
-        Args:
-            agent_id: Agent UUID
-
-        Returns:
-            Dict with success or error
+        CRITICAL DELETE ORDER (Neo4j FIRST, Then S3/Parquet, Then PostgreSQL):
+        ======================================================================
+        1. Neo4j HARD DELETE FIRST (Agent + KB + Chunks)
+        2. S3 Object Removal & Local Parquet Dataset Unregistration
+        3. PostgreSQL Hard Delete (CASCADE via Foreign Keys)
+        4. COMMIT PostgreSQL & Audit Log
         """
         try:
-            # ============= STEP 1: NEO4J DELETE FIRST (CRITICAL) =============
-            # Delete Agent node and cascade to all related nodes
-            neo4j_repo = Neo4jRepository(str(self.tenant_id))
+            from sqlalchemy import select, delete, func
+            import uuid
+            from .models import Agent
+            from app.modules.knowledge_bases.models import (
+                KnowledgeBase, DocumentChunk, DocumentTableRow, 
+                DocumentEntity, DocumentSection, DocumentIngestionRun, 
+                DatabaseConnection, AnalyticsQueryLog
+            )
+            from app.core.s3 import S3StorageService
+            from app.core.parquet_ingester import ParquetIngester
 
-            # Explicit cascade delete with all relationships and tenant_id validation:
-            # Agent → KB → Chunk → Entity
+            agent_uuid = uuid.UUID(agent_id) if isinstance(agent_id, str) else agent_id
+
+            # Verify Agent exists before deletion
+            agent = await self.db.scalar(
+                select(Agent).where(
+                    Agent.id == agent_uuid,
+                    Agent.tenant_id == self.tenant_id
+                )
+            )
+            if not agent:
+                logger.warning(f"Cannot hard delete: agent not found: {agent_id}")
+                return format_error(f"Agent not found: {agent_id}", meta={"status_code": 404})
+
+            # ============= STEP 1: NEO4J GRAPH HARD DELETE FIRST =============
+            neo4j_repo = Neo4jRepository(str(self.tenant_id))
             delete_query = """
             MATCH (a:Agent {tenant_id: $tenant_id, id: $agent_id})
-            OPTIONAL MATCH (a)-[:OWNS_KB]->(kb:KnowledgeBase {tenant_id: $tenant_id})
-            OPTIONAL MATCH (kb)-[:HAS_CHUNK]->(c:Chunk {tenant_id: $tenant_id})
+            OPTIONAL MATCH (a)-[:OWNS_KB]->(kb:KnowledgeBase)
+            OPTIONAL MATCH (kb)-[:HAS_CHUNK]->(c:Chunk)
             DETACH DELETE a, kb, c
             RETURN count(a) as deleted_agents
             """
-
             try:
                 await retry_neo4j_operation(
                     lambda: neo4j_repo.execute_write(
                         delete_query,
                         {
-                            "agent_id": agent_id,
+                            "agent_id": str(agent_id),
                             "tenant_id": str(self.tenant_id),
                         },
                     )
                 )
-                logger.info(
-                    f"✅ Neo4j: Deleted agent {agent_id} + cascade (KB, Chunks, Entities)"
-                )
-
+                logger.info(f"✅ Neo4j: Hard-deleted agent {agent_id} + cascade graph nodes")
             except Exception as neo4j_error:
-                # ❌ STOP HERE - DO NOT delete from PostgreSQL
-                # PostgreSQL remains untouched, safe to retry
-                logger.error(f"❌ Neo4j deletion failed: {neo4j_error}")
-                logger.error(f"   PostgreSQL NOT modified (safe state)")
+                logger.error(f"❌ Neo4j hard-deletion failed: {neo4j_error}")
                 return format_error(
                     f"Failed to delete agent from graph: {neo4j_error}",
                     meta={"error_code": "NEO4J_ERROR"},
                 )
 
-            # ============= STEP 2: POSTGRES SOFT-DELETE (AFTER NEO4J SUCCESS) =============
-            # Only soft-delete if Neo4j succeeded
-            deleted = await self.repository.soft_delete(agent_id)
-            
-            # CRITICAL: Cascade delete KnowledgeBases and DocumentChunks from Postgres
-            from sqlalchemy import update, delete, select
-            import uuid
-            from app.modules.knowledge_bases.models import KnowledgeBase, DocumentChunk
-            
-            agent_uuid = uuid.UUID(agent_id) if isinstance(agent_id, str) else agent_id
-            
-            # Find KBs to delete their chunks
-            kbs_query = select(KnowledgeBase.id).where(
-                KnowledgeBase.agent_id == agent_uuid,
-                KnowledgeBase.tenant_id == self.tenant_id
-            )
-            
-            # Hard-delete chunks (frees up pgvector space and prevents zombie retrieval)
-            await self.db.execute(
-                delete(DocumentChunk).where(DocumentChunk.kb_id.in_(kbs_query))
-            )
-            
-            # Soft-delete KnowledgeBases
-            await self.db.execute(
-                update(KnowledgeBase)
-                .where(
+            # ============= STEP 2: S3 & PARQUET DATASET CLEANUP =============
+            kbs_res = await self.db.execute(
+                select(KnowledgeBase).where(
                     KnowledgeBase.agent_id == agent_uuid,
                     KnowledgeBase.tenant_id == self.tenant_id
                 )
-                .values(is_active=False, deleted_at=datetime.utcnow())
             )
+            kbs = kbs_res.scalars().all()
+            kb_ids = [kb.id for kb in kbs]
 
-            if not deleted:
-                # Rare case: agent not found in PostgreSQL
-                # (Could happen if already deleted, or race condition)
-                logger.warning(f"⚠️ Agent not found in PostgreSQL: {agent_id}")
-                logger.warning(f"   Neo4j was deleted but PG has no record")
-                # This is OK - Neo4j is clean, PG is still consistent
-                await self.db.commit()
-                return format_error(
-                    f"Agent not found in PostgreSQL (may already be deleted): {agent_id}",
-                    meta={"status_code": 404},
-                )
+            s3_service = S3StorageService()
+            for kb in kbs:
+                # 1. Clean parsed content from S3 / Parquet disk storage
+                if kb.parsed_path:
+                    try:
+                        await s3_service.delete_file_by_url(kb.parsed_path)
+                    except Exception as s3_err:
+                        logger.warning(f"Failed to delete parsed_path S3 file for KB {kb.id}: {s3_err}")
+                    try:
+                        ParquetIngester.unregister_dataset(kb.parsed_path)
+                    except Exception as pq_err:
+                        logger.warning(f"Failed to unregister Parquet dataset for KB {kb.id}: {pq_err}")
 
-            # ============= STEP 3: COMMIT POSTGRESQL =============
+                # 2. Clean original uploaded source file from S3 if not shared
+                if kb.s3_path:
+                    try:
+                        stmt = select(func.count()).select_from(KnowledgeBase).where(
+                            KnowledgeBase.s3_path == kb.s3_path,
+                            KnowledgeBase.agent_id != agent_uuid
+                        )
+                        count_res = await self.db.execute(stmt)
+                        other_uses = count_res.scalar() or 0
+                        if other_uses == 0:
+                            await s3_service.delete_file_by_url(kb.s3_path)
+                    except Exception as s3_err:
+                        logger.warning(f"Failed to delete s3_path S3 file for KB {kb.id}: {s3_err}")
+
+            # ============= STEP 3: POSTGRES HARD DELETE (CASCADE) =============
+            if kb_ids:
+                await self.db.execute(delete(DocumentChunk).where(DocumentChunk.kb_id.in_(kb_ids)))
+                await self.db.execute(delete(DocumentTableRow).where(DocumentTableRow.kb_id.in_(kb_ids)))
+                await self.db.execute(delete(DocumentEntity).where(DocumentEntity.document_id.in_(kb_ids)))
+                await self.db.execute(delete(DocumentSection).where(DocumentSection.document_id.in_(kb_ids)))
+                await self.db.execute(delete(DocumentIngestionRun).where(DocumentIngestionRun.document_id.in_(kb_ids)))
+                await self.db.execute(delete(DatabaseConnection).where(DatabaseConnection.kb_id.in_(kb_ids)))
+                await self.db.execute(delete(AnalyticsQueryLog).where(AnalyticsQueryLog.kb_id.in_(kb_ids)))
+                await self.db.execute(delete(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids)))
+
+            from app.modules.chats.models import ChatSession
+            await self.db.execute(delete(ChatSession).where(ChatSession.agent_id == agent_uuid, ChatSession.tenant_id == self.tenant_id))
+
+            # Hard-delete Agent record
+            await self.db.execute(delete(Agent).where(Agent.id == agent_uuid, Agent.tenant_id == self.tenant_id))
+
+            # Commit changes
             await self.db.commit()
-            logger.info(f"✅ COMMITTED: Agent {agent_id} soft-deleted from PostgreSQL")
+            logger.info(f"✅ HARD DELETED Agent {agent_id} and all related KBs, S3 files, Parquet datasets, and chat memory.")
 
             # ============= AUDIT LOG =============
             await AgentAuditLog.log_event(
                 tenant_id=str(self.tenant_id),
                 user_id=user_id,
-                agent_id=agent_id,
+                agent_id=str(agent_id),
                 event_type=AuditEventType.AGENT_DELETED,
-                details={"deleted_at": datetime.utcnow().isoformat()},
+                details={"hard_deleted": True, "deleted_at": datetime.utcnow().isoformat()},
             )
 
             return format_success(
-                {"id": agent_id},
-                meta={"message": "Agent and associated knowledge base deleted successfully"},
+                {"id": str(agent_id)},
+                meta={"message": "Agent and all associated knowledge base files, datasets, and memory purged permanently."},
             )
 
         except Exception as e:
-            # ============= FINAL ROLLBACK =============
             await self.db.rollback()
-            logger.error(f"❌ Agent deletion failed: {e}")
-            return format_error(f"Failed to delete agent: {str(e)}")
+            logger.error(f"❌ Hard deletion of agent failed: {e}", exc_info=True)
+            return format_error(f"Failed to hard-delete agent: {str(e)}")

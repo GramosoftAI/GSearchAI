@@ -5,6 +5,7 @@ Phase 3: Real-time Conversational Retrieval + Long-term Episodic Memory
 """
 
 import os
+import re
 import logging
 import json
 import sys
@@ -90,15 +91,11 @@ async def rag_websocket(
 
         try:
             kbs, _ = await kb_repo.list_by_agent(agent_id, limit=10)
-            if not kbs:
-                await websocket.send_text(json.dumps({"type": "error", "message": "Knowledge Base not found"}))
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-                return
+            kb_ids = [str(kb.id) for kb in kbs] if kbs else []
         except WebSocketDisconnect:
             logger.info(f"WebSocket disconnected before initialization completed: Agent={agent_id}")
             return
 
-        kb_ids = [str(kb.id) for kb in kbs]
         logger.info(f"Session ready: Agent={agent_id}, KBs={len(kb_ids)}")
 
         from ..chats.service import ChatService
@@ -111,8 +108,17 @@ async def rag_websocket(
             while True:
                 # 5. WAIT FOR MESSAGE
                 data = await websocket.receive_text()
+
+                # Handle Ping/Pong Heartbeat (Keep-Alive for Cloudflare/Nginx proxies)
+                if data.strip().lower() in ("ping", '{"type":"ping"}', '{"type": "ping"}'):
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+                    continue
+
                 try:
                     msg = json.loads(data)
+                    if isinstance(msg, dict) and msg.get("type") in ("ping", "heartbeat"):
+                        await websocket.send_text(json.dumps({"type": "pong"}))
+                        continue
                     query = msg.get("query", "").strip() if msg.get("query") else ""
                     session_id = msg.get("session_id")
                     enhance_prompt = msg.get("prompt_enhancer", False) or msg.get("enhance_prompt", False)
@@ -180,8 +186,17 @@ async def rag_websocket(
                 # it means the query may need an answer from memory (e.g., "what is my name?"
                 # was mis-classified as PREFERENCE_UPDATE). Fall through to the RAG path so
                 # the AI can answer using that memory context.
-                # Only short-circuit when there is truly nothing to recall.
-                if is_feedback_only:
+                _EXPLICIT_PREFERENCE_REGEX = re.compile(
+                    r"\b(remember (that|to|my|i|this|it)|please remember|note (that|down)|"
+                    r"always (respond|answer|reply|format|use)|"
+                    r"from now on|i prefer|my preferred|please (always|remember)|"
+                    r"don'?t (use|do)|stop (using|doing)|never (use|do)|"
+                    r"delete|forget|clear|erase)\b",
+                    re.IGNORECASE
+                )
+                
+                # Only short-circuit when the message is explicitly a preference update or deletion statement
+                if is_feedback_only and _EXPLICIT_PREFERENCE_REGEX.search(query):
                     acknowledgment = "Understood! I've updated your preferences and saved them to my long-term memory."
                     try:
                         await call_memory_api(
