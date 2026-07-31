@@ -2018,6 +2018,11 @@ class RAGPipeline:
                 reverse=True
             )
             
+            # DOCUMENT VECTOR SUMMARY FALLBACK: If no chunks met similarity threshold, return initial 5 document chunks for overview/summarization
+            if not sorted_chunks and chunks_with_similarity:
+                logger.info("   -> Broad Summary Fallback: No chunks met similarity threshold. Returning top 5 initial document chunks by position.")
+                sorted_chunks = sorted(chunks_with_similarity, key=lambda x: x.get("position", 0))
+            
             if chunks_with_similarity:
                 max_score = max(c["similarity"] for c in chunks_with_similarity)
                 logger.info(f" Max similarity score found in Neo4j: {max_score:.4f} (Threshold: {self.settings.similarity_min_threshold})")
