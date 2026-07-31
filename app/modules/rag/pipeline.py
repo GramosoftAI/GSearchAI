@@ -2098,6 +2098,7 @@ class RAGPipeline:
             logger.info(f" {len(excel_kb_rows)} excel_parquet KB(s) detected! Resolving local parquet via ParquetIngester.")
             from .pandas_engine import PandasQueryEngine
             active_paths = []
+            file_names = []
             for ekb in excel_kb_rows:
                 dataset_name = getattr(ekb, 'parsed_path', None) or getattr(ekb, 'name', None)
                 if dataset_name:
@@ -2105,11 +2106,13 @@ class RAGPipeline:
                     if p:
                         logger.info(f" Resolved parquet: {p}")
                         active_paths.append(p)
+                        raw_fn = getattr(ekb, 'source', None) or getattr(ekb, 's3_path', None) or getattr(ekb, 'name', None) or dataset_name
+                        file_names.append(raw_fn)
                     else:
                         logger.warning(f" No active parquet found for dataset_name={dataset_name!r}")
 
             if active_paths:
-                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths, file_names=file_names)
                 query_str = "PANDAS PandasQueryEngine.execute_query"
                 all_csv_results = []
                 from .service import clean_source_name

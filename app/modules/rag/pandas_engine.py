@@ -73,7 +73,7 @@ class PandasQueryEngine:
     Hybrid Execution Engine for 1M+ rows.
     Implements Intent Routing, Parquet querying, and strict Semantic SQL building.
     """
-    def __init__(self, data_path_or_client=None, llm_client=None, all_dataset_paths: Optional[List[str]] = None):
+    def __init__(self, data_path_or_client=None, llm_client=None, all_dataset_paths: Optional[List[str]] = None, file_names: Optional[List[str]] = None):
         if isinstance(data_path_or_client, str):
             self.data_path = data_path_or_client
             self.llm_client = llm_client
@@ -81,6 +81,7 @@ class PandasQueryEngine:
             self.data_path = None
             self.llm_client = data_path_or_client
         self.all_dataset_paths = all_dataset_paths or ([self.data_path] if self.data_path else [])
+        self.file_names = file_names or []
         
         if not self.llm_client:
             from app.core.llm.deepinfra_llm import DeepInfraLLMClient
@@ -211,49 +212,70 @@ class PandasQueryEngine:
                 conn.execute(text("DROP VIEW IF EXISTS dataset;"))
                 conn.execute(text(f"CREATE VIEW dataset AS {union_sql};"))
                 
-                # Also register individual views (dataset_1, dataset_2, etc.) for backwards compatibility
+                registered_view_names = []
+                # Register distinct named views for each uploaded spreadsheet file
                 for idx, path_item in enumerate(paths_to_register):
                     safe_path = str(path_item).replace('\\', '/')
-                    view_name = f"dataset_{idx+1}"
-                    conn.execute(text(f"DROP VIEW IF EXISTS {view_name};"))
                     reader = f"read_parquet('{safe_path}')" if safe_path.lower().endswith(".parquet") else f"read_csv_auto('{safe_path}', sample_size=10000, nullstr='NULL')"
-                    conn.execute(text(f"CREATE VIEW {view_name} AS SELECT row_number() OVER () AS row_id, * FROM {reader};"))
+                    
+                    # Backward-compatible numbered views
+                    conn.execute(text(f"DROP VIEW IF EXISTS dataset_{idx+1};"))
+                    conn.execute(text(f"CREATE VIEW dataset_{idx+1} AS SELECT row_number() OVER () AS row_id, * FROM {reader};"))
+                    
+                    # Generate clean, sanitized named view from source filename
+                    raw_fn = self.file_names[idx] if idx < len(self.file_names) and self.file_names[idx] else os.path.basename(path_item)
+                    base_name = os.path.splitext(os.path.basename(raw_fn))[0]
+                    sanitized_name = re.sub(r'[^a-zA-Z0-9_]', '_', base_name).strip('_')
+                    if not sanitized_name or sanitized_name.isdigit():
+                        sanitized_name = f"table_{idx+1}"
+                    
+                    if sanitized_name.lower() != "dataset" and sanitized_name not in registered_view_names:
+                        try:
+                            conn.execute(text(f'DROP VIEW IF EXISTS "{sanitized_name}";'))
+                            conn.execute(text(f'CREATE VIEW "{sanitized_name}" AS SELECT row_number() OVER () AS row_id, * FROM {reader};'))
+                            registered_view_names.append(sanitized_name)
+                        except Exception as view_err:
+                            logger.warning(f"Failed to create named view '{sanitized_name}': {view_err}")
+                        
                 try:
                     conn.commit()
                 except:
                     pass
                     
-                result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dataset';"))
-                columns = [row[0] for row in result.fetchall()]
+                # Extract schema across all registered views
+                tables_schema_text = []
+                # 1. Main 'dataset' view
+                res_dataset = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dataset';"))
+                columns = [row[0] for row in res_dataset.fetchall()]
+                tables_schema_text.append(f"- Table 'dataset' (Unified view combining all uploaded spreadsheets):\n  Columns: " + ", ".join(f'"{c}"' for c in columns))
+                
+                # 2. Individual named views
+                for vname in registered_view_names:
+                    res_v = conn.execute(text(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{vname}';"))
+                    v_cols = [row[0] for row in res_v.fetchall()]
+                    if v_cols:
+                        tables_schema_text.append(f"- Table \"{vname}\" (Individual spreadsheet file view):\n  Columns: " + ", ".join(f'"{c}"' for c in v_cols))
+                        
+                full_schema_str = "\n".join(tables_schema_text)
 
             # 3. GENERATE DUCKDB SQL DIRECTLY
             prompt = ChatPromptTemplate.from_messages([
                 ("system", 
-                 "You are an enterprise data engine and SQL expert. Convert the user's natural language question into a clean, read-only DuckDB SELECT SQL query on the view named 'dataset'.\n\n"
-                 "Available columns in 'dataset':\n{columns}\n\n"
+                 "You are an enterprise data engine and SQL expert. Convert the user's natural language question into a clean, read-only DuckDB SELECT SQL query.\n\n"
+                 "AVAILABLE DUCKDB TABLES & SCHEMAS:\n{tables_schema}\n\n"
                  "CRITICAL RULES FOR DUCKDB SQL:\n"
-                 "1. Table name MUST ALWAYS be 'dataset'.\n"
-                 "2. COLUMN NAMES WITH SPACES OR SYMBOLS: You MUST ALWAYS wrap column names containing spaces, punctuation, or special characters in DOUBLE QUOTES (e.g., \"Customer ID\", \"Customer Name\", \"Total Amount\"). NEVER write unquoted multi-word column names like Customer ID.\n"
-                 "3. When performing mathematical calculations (SUM, AVG, arithmetic) on string/varchar columns, ALWAYS wrap the column in TRY_CAST(\"col\" AS DOUBLE), e.g., SUM(TRY_CAST(\"exchange_rate\" AS DOUBLE)), AVG(TRY_CAST(\"exchange_rate\" AS DOUBLE)), to prevent type conversion issues.\n"
-                 "4. For counting total records, use SELECT COUNT(*) AS total_records FROM dataset;\n"
-                 "5. For most frequent items or duplicate checks, use GROUP BY \"col\" ORDER BY COUNT(*) DESC LIMIT N (always quote column names if they contain spaces);\n"
-                 "6. For boolean columns (like mb_part), NEVER use '= TRUE' or '= FALSE' directly. ALWAYS compare as uppercase string: UPPER(TRY_CAST(\"col\" AS VARCHAR)) = 'TRUE' or UPPER(TRY_CAST(\"col\" AS VARCHAR)) = 'FALSE' because boolean columns may contain string 'NULL' values.\n"
-                 "7. For time differences or durations between two timestamps, NEVER use SQLite julianday(). ALWAYS use DuckDB date_diff('day', TRY_CAST(\"col1\" AS TIMESTAMP), TRY_CAST(\"col2\" AS TIMESTAMP)) or (epoch(TRY_CAST(\"col2\" AS TIMESTAMP)) - epoch(TRY_CAST(\"col1\" AS TIMESTAMP))) / 86400.0.\n"
-                 "8. For date comparisons or min/max, handle strings appropriately.\n"
-                 "9. Include descriptive column aliases (e.g. AS average_rate, AS total_count).\n"
-                 "10. NEVER use INSERT, UPDATE, DELETE, DROP, or ALTER. ONLY read-only SELECT queries.\n"
-                 "11. Output ONLY valid JSON matching the schema with 'sql' and 'explanation'.\n"
-                 "12. In your 'explanation' string, NEVER use the words 'error', 'errors', 'exception', or 'fail' (use 'issues' or 'problems' instead).\n"
-                 "13. For extracting YEAR, MONTH, or date parts from timestamp columns, ALWAYS cast to timestamp first: EXTRACT(YEAR FROM TRY_CAST(\"col\" AS TIMESTAMP)).\n"
-                 "14. If the user asks for information or columns that DO NOT EXIST in the schema (e.g. wholesale price, CEO, warehouse, email, warranty), generate: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset.\n"
-                 "15. STRING FILTERING & ENTITY MATCHING: When filtering string columns (e.g. employee names, IDs, departments in WHERE clauses), NEVER use exact '=' or 'LOWER(col) = ...' with mismatching case. Instead, ALWAYS use case-insensitive matching using the ILIKE operator (e.g., \"Employee ID\" ILIKE 'EMP1005' or \"Employee Name\" ILIKE '%Matthew%') so that case differences or spacing never cause zero results.\n"
-                 "16. COMPARATIVE & SUPERLATIVE QUERIES: When the user asks to compare two or more entities (e.g. 'who has higher salary', 'compare the salary of both', 'who is better', 'who earns more', 'which has better'):\n"
-                 "   - If the query mentions 'both', 'all', or does not specify explicit employee names, DO NOT filter with WHERE name = 'both'. Instead, select all rows from dataset and ORDER BY the comparison metric DESC (e.g., SELECT * FROM dataset ORDER BY TRY_CAST(\"Salary\" AS DOUBLE) DESC LIMIT 10;).\n"
-                 "   - Select all relevant columns (name, department, salary, hire date, etc.) so the response synthesizer has full structured comparison data.\n"
-                 "17. SENIORITY, TENURE & JOINING DATE QUERIES: When the user asks who is the 'senior' ('snior'), 'most senior', 'oldest', or 'who joined first/earliest' among employees:\n"
-                 "   - If comparing by JOINING DATE / HIRE DATE / START DATE: A senior employee joined EARLIEST in time. You MUST cast string dates to date/timestamp and order ASCENDING (ORDER BY TRY_CAST(\"Joining Date\" AS DATE) ASC) so the earliest date (earliest year, e.g. 2018 before 2022) is ranked FIRST.\n"
-                 "   - If comparing by YEARS OF EXPERIENCE / TENURE / AGE: A senior employee has more years. You MUST order DESCENDING (ORDER BY TRY_CAST(\"Experience\" AS DOUBLE) DESC).\n"
-                 "   - If selecting among specific people (e.g. 'between John and Jane'), always use case-insensitive fuzzy matching (LOWER(\"col\") LIKE '%name%') for the WHERE clause. If selecting 'among both', DO NOT filter by the word 'both'.\n"
+                 "1. You may query the merged 'dataset' view OR query individual named tables (e.g. \"Employees\", \"Sales\") directly.\n"
+                 "2. MULTI-TABLE JOIN QUERIES: You CAN write SQL JOIN queries across multiple individual named tables when foreign keys match (e.g., SELECT e.name, s.amount FROM \"Employees\" e JOIN \"Sales\" s ON e.emp_id = s.emp_id).\n"
+                 "3. COLUMN & TABLE NAMES WITH SPACES OR SYMBOLS: You MUST ALWAYS wrap column names and table names containing spaces, punctuation, or special characters in DOUBLE QUOTES (e.g., \"Customer ID\", \"Customer Name\", \"Total Amount\").\n"
+                 "4. When performing mathematical calculations (SUM, AVG, arithmetic) on string/varchar columns, ALWAYS wrap the column in TRY_CAST(\"col\" AS DOUBLE), e.g., SUM(TRY_CAST(\"exchange_rate\" AS DOUBLE)).\n"
+                 "5. For counting total records, use SELECT COUNT(*) AS total_records FROM dataset;\n"
+                 "6. GENERIC SUMMARY & OVERVIEW QUERIES: If the user asks generic summary questions (e.g., 'summarize dataset', 'tell me about this file', 'overview of data', 'what does this dataset contain'), generate: SELECT * FROM dataset LIMIT 10; with an executive explanation.\n"
+                 "7. For boolean columns, compare as uppercase string: UPPER(TRY_CAST(\"col\" AS VARCHAR)) = 'TRUE'.\n"
+                 "8. Include descriptive column aliases (e.g. AS average_rate, AS total_count).\n"
+                 "9. NEVER use INSERT, UPDATE, DELETE, DROP, or ALTER. ONLY read-only SELECT queries.\n"
+                 "10. Output ONLY valid JSON matching the schema with 'sql' and 'explanation'.\n"
+                 "11. STRING FILTERING & ENTITY MATCHING: When filtering string columns, ALWAYS use case-insensitive matching using ILIKE (e.g., \"Employee Name\" ILIKE '%Matthew%').\n"
+                 "12. COMPARATIVE & SUPERLATIVE QUERIES: When comparing entities, DO NOT filter with WHERE name = 'both'. Select all relevant rows and ORDER BY the comparison metric DESC LIMIT 10.\n"
                  "IMPORTANT: DO NOT generate any <think> tags or internal reasoning steps. Output ONLY valid JSON immediately without any thinking."),
                 ("user", "{question}")
             ])
@@ -262,7 +284,7 @@ class PandasQueryEngine:
             chain = prompt | self.llm | StrOutputParser() | parse_json_from_thinking
             
             query_plan_dict = await chain.ainvoke({
-                "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns), 
+                "tables_schema": full_schema_str, 
                 "question": query
             })
             query_plan = DuckDBSemanticQuery(**query_plan_dict)
