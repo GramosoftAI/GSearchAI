@@ -493,7 +493,11 @@ If you'd like, I can also:
                         if s_name and s_name not in unique_srcs:
                             unique_srcs.append(s_name)
                 if not unique_srcs:
-                    unique_srcs = [kb.name if kb else ("Dataset" if not kb_ids else kb_ids[0])]
+                    raw_kb_src = (getattr(kb, "source", None) or getattr(kb, "s3_path", None) or getattr(kb, "name", None)) if kb else ("Dataset" if not kb_ids else kb_ids[0])
+                    if kb and "ENTERPRISE SPREADSHEET ANALYSIS" in str(getattr(kb, "name", "")).upper() and getattr(kb, "source", None):
+                        raw_kb_src = kb.source
+                    clean_kb = clean_source_name(str(raw_kb_src))
+                    unique_srcs = [clean_kb]
                 _src_name = ", ".join(unique_srcs)
                 yield f"\n\n[Source: {_src_name}]"
             except Exception:

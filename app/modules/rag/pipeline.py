@@ -2112,11 +2112,15 @@ class RAGPipeline:
                 engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
                 query_str = "PANDAS PandasQueryEngine.execute_query"
                 all_csv_results = []
+                from .service import clean_source_name
                 for ekb, path in zip(excel_kb_rows, active_paths):
                     try:
                         res = await engine.execute_query(query, path)
                         if res and "No valid spreadsheet" not in res:
-                            kb_label = ekb.name or path
+                            raw_src = getattr(ekb, 'source', None) or getattr(ekb, 's3_path', None) or getattr(ekb, 'parsed_path', None) or ekb.name or path
+                            kb_label = clean_source_name(raw_src)
+                            if "ENTERPRISE SPREADSHEET ANALYSIS" in str(kb_label).upper() and getattr(ekb, 'source', None):
+                                kb_label = clean_source_name(ekb.source)
                             all_csv_results.append(f"[Source: {kb_label}]\n{res}")
                         else:
                             logger.warning(f" PandasQueryEngine returned empty/error for {path}: {res}")
