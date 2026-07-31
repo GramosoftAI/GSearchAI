@@ -131,8 +131,13 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       - APP_ENV=development
-      - REDIS_URL=${REDIS_URL}
-      - POSTGRES_URL=${POSTGRES_URL}
+      - POSTGRES_USER=graphmind
+      - POSTGRES_PASSWORD=graphmind_password
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=graphmind
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - POSTGRES_URL=${POSTGRES_URL:-}
       - WATCHFILES_FORCE_POLLING=true
       - LLM_BASE_URL=${DEEPINFRA_API_URL:-https://api.deepinfra.com/v1/openai}
       - LLM_GATEWAY_API_KEY=${DEEPINFRA_API_KEY}

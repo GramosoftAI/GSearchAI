@@ -7,17 +7,22 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from sqlalchemy.orm import declarative_base
 from pgvector.sqlalchemy import VECTOR
 
-raw_db_url = (
-    os.getenv("DATABASE_URL") 
-    or os.getenv("POSTGRES_URL") 
-    or os.getenv("POSTGRES_URI") 
-    or "postgresql+asyncpg://graphmind:graphmind_password@db:5432/graphmind"
-)
+def get_db_url() -> str:
+    url = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL") or os.getenv("POSTGRES_URI")
+    if not url or not url.strip():
+        user = os.getenv("POSTGRES_USER", "graphmind")
+        password = os.getenv("POSTGRES_PASSWORD", "graphmind_password")
+        host = os.getenv("POSTGRES_HOST", "db")
+        port = os.getenv("POSTGRES_PORT", "5432")
+        db_name = os.getenv("POSTGRES_DB", "graphmind")
+        url = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db_name}"
+    
+    url = url.strip()
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return url
 
-if raw_db_url.startswith("postgresql://"):
-    DATABASE_URL = raw_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-else:
-    DATABASE_URL = raw_db_url
+DATABASE_URL = get_db_url()
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
