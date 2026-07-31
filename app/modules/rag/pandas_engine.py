@@ -87,10 +87,12 @@ class PandasQueryEngine:
             self.llm_client = DeepInfraLLMClient()
             
         from langchain_core.runnables import RunnableLambda
+        import os
+        sql_model = os.environ.get("SQL_GENERATION_MODEL", "Qwen/Qwen2.5-72B-Instruct")
         
         async def _ainvoke(prompt_val, config=None, **kwargs):
             text = prompt_val.to_string() if hasattr(prompt_val, 'to_string') else str(prompt_val)
-            return await self.llm_client.generate_cloud(prompt=text)
+            return await self.llm_client.generate_cloud(prompt=text, model=sql_model)
             
         self.llm = RunnableLambda(_ainvoke)
 

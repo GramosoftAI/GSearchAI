@@ -228,6 +228,8 @@ class Settings(BaseSettings):
     
     deepinfra_llm_model: str = "Qwen/Qwen2.5-7B-Instruct"
 
+    sql_generation_model: str = "Qwen/Qwen2.5-72B-Instruct"
+
     llm_gateway_api_key: Optional[str] = None
 
     gdocz_api_key: Optional[str] = None  # For PDF  Markdown extraction (primary)

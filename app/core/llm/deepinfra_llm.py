@@ -433,6 +433,7 @@ class DeepInfraLLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         enable_thinking: Optional[bool] = False,
+        model: Optional[str] = None,
     ) -> str:
         """
         Equivalent to generate() but explicitly routes to the cloud DeepInfra model 
@@ -445,8 +446,9 @@ class DeepInfraLLMClient:
         if self.deepinfra_api_key:
             headers["Authorization"] = f"Bearer {self.deepinfra_api_key}"
         
+        target_model = model or self.deepinfra_model
         payload = {
-            "model": self.deepinfra_model,
+            "model": target_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
