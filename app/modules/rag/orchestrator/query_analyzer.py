@@ -29,6 +29,9 @@ class QueryMetadata(BaseModel):
     primary_topic: Optional[str] = Field(None, description="Primary domain topic (e.g., Accounting, Revenue, Tax)")
     keywords: List[str] = Field(default_factory=list, description="Extracted keywords for search")
     corrected_query: Optional[str] = Field(None, description="The query with spelling or typo corrections applied")
+    tabular_subquery: Optional[str] = Field(None, description="Extracted sub-query meant for structured tabular/spreadsheet data with pronouns resolved.")
+    vector_subquery: Optional[str] = Field(None, description="Extracted sub-query meant for unstructured document/text data with pronouns resolved.")
+
 
 class AnalysisResult(BaseModel):
     intent: QueryIntent
@@ -58,6 +61,12 @@ You must output a `corrected_query` field.
 - Fix any obvious typos in named entities or concepts (e.g. "Jon Sno" -> "Jon Snow", "justce" -> "justice").
 - If the query is already perfect, `corrected_query` should just be the original query.
 
+CRITICAL TASK: COMPOSITE QUERY DECOMPOSITION & CO-REFERENCE RESOLUTION
+If the query is composite (asking multiple distinct questions where some apply to spreadsheets/tables and others to documents/resumes/text), you must decompose it:
+- `tabular_subquery`: Extract the portion meant for structured tabular/spreadsheet data (like salary, age, count, sums, employee rosters). RESOLVE pronouns (like "he", "she", "his", "her") to the actual subject name (e.g., "Arun's salary" instead of "his salary").
+- `vector_subquery`: Extract the portion meant for unstructured text/document data (like job descriptions, work history, resume summaries, textual facts). RESOLVE pronouns to the actual subject name.
+- If the query is simple and not composite, set both `tabular_subquery` and `vector_subquery` to null (or omit them).
+
 INTENTS:
 - FACT: Direct lookup of a single fact or entity.
 - CALCULATION: Requires math.
@@ -79,10 +88,32 @@ Return ONLY valid JSON:
     "document_type": null,
     "primary_topic": "Character",
     "keywords": ["Jon Snow"],
-    "corrected_query": "Who is Jon Snow?"
+    "corrected_query": "Who is Jon Snow?",
+    "tabular_subquery": null,
+    "vector_subquery": null
   }},
   "confidence": 0.95,
   "reasoning": "Query asks for a specific character fact. The typo 'Jon Sno' was corrected."
+}}
+
+Example of Composite Query Decomposition:
+QUERY: "tell me about arun and what is his salary from the 1st CSV file"
+JSON:
+{{
+  "intent": "COMPARISON",
+  "metadata": {{
+    "quarter": null,
+    "year": null,
+    "company": null,
+    "document_type": "Resume",
+    "primary_topic": "Employee Details",
+    "keywords": ["Arun", "salary"],
+    "corrected_query": "tell me about arun and what is his salary from the 1st CSV file",
+    "tabular_subquery": "What is Arun's salary from the 1st CSV file?",
+    "vector_subquery": "Tell me about Arun."
+  }},
+  "confidence": 0.98,
+  "reasoning": "Query is composite. Split into tabular salary query with resolved pronoun, and vector document query."
 }}
 
 QUERY:
@@ -125,8 +156,11 @@ QUERY:
                 document_type=metadata_dict.get("document_type"),
                 primary_topic=metadata_dict.get("primary_topic"),
                 keywords=metadata_dict.get("keywords", []),
-                corrected_query=metadata_dict.get("corrected_query")
+                corrected_query=metadata_dict.get("corrected_query"),
+                tabular_subquery=metadata_dict.get("tabular_subquery"),
+                vector_subquery=metadata_dict.get("vector_subquery")
             )
+
             
             return AnalysisResult(
                 intent=intent,

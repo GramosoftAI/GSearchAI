@@ -98,8 +98,10 @@ services:
       - REDIS_DB=0
       - DEBUG=true
       - APP_ENV=development
-      - JWT_SECRET_KEY=your-secret-key-change-in-production-at-least-32-chars
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - DEEPINFRA_API_KEY=${DEEPINFRA_API_KEY:-}
+      - DEEPINFRA_LLM_MODEL=${DEEPINFRA_LLM_MODEL:-}
+      - SQL_GENERATION_MODEL=${SQL_GENERATION_MODEL:-}
       - MEMORY_API_BASE_URL=http://memory-api:8001
       - WATCHFILES_FORCE_POLLING=true
     depends_on:

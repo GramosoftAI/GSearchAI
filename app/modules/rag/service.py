@@ -124,6 +124,31 @@ class RAGService:
             else:
                 doc_kbs.append(kb)
 
+        # Upfront Query Classification and Decomposition
+        from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer
+        analyzer = QueryAnalyzer()
+        tabular_query = query
+        vector_query = query
+        try:
+            analysis_res = await analyzer.analyze_query(query)
+            if analysis_res and analysis_res.metadata:
+                corrected = getattr(analysis_res.metadata, "corrected_query", None)
+                if corrected:
+                    query = corrected
+                    tabular_query = corrected
+                    vector_query = corrected
+                
+                tab_sub = getattr(analysis_res.metadata, "tabular_subquery", None)
+                vec_sub = getattr(analysis_res.metadata, "vector_subquery", None)
+                if tab_sub:
+                    logger.info(f"Decomposed tabular sub-query: {tab_sub}")
+                    tabular_query = tab_sub
+                if vec_sub:
+                    logger.info(f"Decomposed vector sub-query: {vec_sub}")
+                    vector_query = vec_sub
+        except Exception as e:
+            logger.error(f"QueryAnalyzer upfront decomposition failed: {e}")
+
         # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
         hybrid_merge_context = ""
         if excel_kbs:
@@ -143,13 +168,13 @@ class RAGService:
                 
             if active_paths:
                 engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
-                sql_task = asyncio.create_task(engine.execute_query(query))
+                sql_task = asyncio.create_task(engine.execute_query(tabular_query))
 
         vector_task = None
         if not skip_search and (doc_kbs or not excel_kbs):
             vector_task = asyncio.create_task(
                 self.pipeline.query(
-                    query=query,
+                    query=vector_query,
                     agent_id=agent_id,
                     kb_id=kb_ids,
                     user_id=user_id,
@@ -391,7 +416,7 @@ If you'd like, I can also:
             try:
                 context = await asyncio.wait_for(
                     self.pipeline.query(
-                        query=query,
+                        query=vector_query,
                         agent_id=agent_id,
                         kb_id=kb_ids,
                         user_id=user_id,

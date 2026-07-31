@@ -37,10 +37,21 @@ class ParquetIngester:
         
         try:
             if file_path.lower().endswith('.csv'):
+                # Automatically detect separator (comma or tab) by inspecting the first line
+                separator = ","
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        first_line = f.readline()
+                        if "\t" in first_line and first_line.count("\t") > first_line.count(","):
+                            separator = "\t"
+                            logger.info(f"Detected tab delimiter for {file_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to auto-detect delimiter: {e}")
+                    
                 # PRODUCTION FIX: Schema Evolution (Dirty Data)
                 # infer_schema_length=0 forces all columns to String (Utf8).
                 # DuckDB will handle strict typing/casting at the semantic SQL layer.
-                lf = pl.scan_csv(file_path, ignore_errors=True, infer_schema_length=0)
+                lf = pl.scan_csv(file_path, separator=separator, ignore_errors=True, infer_schema_length=0)
                 lf.sink_parquet(output_path, row_group_size=100_000)
                 logger.info(f"Successfully streamed CSV to {output_path}")
                 

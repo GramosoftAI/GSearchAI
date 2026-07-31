@@ -86,6 +86,10 @@ class PandasQueryEngine:
             from app.core.llm.deepinfra_llm import DeepInfraLLMClient
             self.llm_client = DeepInfraLLMClient()
             
+        # SQL Generation requires high reasoning capacity. Load from environment variable (default: Qwen/Qwen2.5-72B-Instruct)
+        import os
+        self.llm_client.deepinfra_model = os.environ.get("SQL_GENERATION_MODEL", "Qwen/Qwen2.5-72B-Instruct")
+        
         from langchain_core.runnables import RunnableLambda
         
         async def _ainvoke(prompt_val, config=None, **kwargs):
@@ -95,22 +99,24 @@ class PandasQueryEngine:
         self.llm = RunnableLambda(_ainvoke)
 
     def _build_union_query(self, paths: List[str], with_row_id: bool = False) -> str:
-        """Builds a DuckDB UNION ALL BY NAME query across all provided CSV/Parquet dataset paths."""
+        """Builds a DuckDB UNION ALL BY NAME query across all provided CSV/Parquet dataset paths, tracking source files."""
         valid_readers = []
         for p in paths:
             if not p or not os.path.exists(p):
                 continue
             safe_path = str(p).replace('\\', '/')
+            filename = os.path.basename(safe_path)
             if safe_path.lower().endswith(".parquet"):
-                valid_readers.append(f"SELECT * FROM read_parquet('{safe_path}')")
+                valid_readers.append(f"SELECT *, '{filename}' AS source_file FROM read_parquet('{safe_path}')")
             else:
-                valid_readers.append(f"SELECT * FROM read_csv_auto('{safe_path}', sample_size=10000, nullstr='NULL')")
+                valid_readers.append(f"SELECT *, '{filename}' AS source_file FROM read_csv_auto('{safe_path}', sample_size=10000, nullstr='NULL')")
         if not valid_readers:
             return "SELECT 1 WHERE FALSE"
         union_sql = " UNION ALL BY NAME ".join(valid_readers)
         if with_row_id:
             return f"SELECT row_number() OVER () AS row_id, * FROM ({union_sql})"
         return f"SELECT * FROM ({union_sql})"
+
 
     def get_schema_columns(self, data_path: Optional[str] = None) -> List[str]:
         """Fast helper to retrieve columns of the active dataset(s) for schema-aware intent routing."""
@@ -230,9 +236,10 @@ class PandasQueryEngine:
                  "You are an enterprise data engine and SQL expert. Convert the user's natural language question into a clean, read-only DuckDB SELECT SQL query on the view named 'dataset'.\n\n"
                  "Available columns in 'dataset':\n{columns}\n\n"
                  "CRITICAL RULES FOR DUCKDB SQL:\n"
+                 "0. EXTREMELY IMPORTANT: EVERY SINGLE COLUMN IN 'dataset' IS OF TYPE VARCHAR (STRING)! There are NO integers or doubles. If you do NOT use TRY_CAST(...) on a column before doing math or comparisons (>, <, =), the query WILL CRASH with a BinderException.\n"
                  "1. Table name MUST ALWAYS be 'dataset'.\n"
-                 "2. COLUMN NAMES WITH SPACES OR SYMBOLS: You MUST ALWAYS wrap column names containing spaces, punctuation, or special characters in DOUBLE QUOTES (e.g., \"Customer ID\", \"Customer Name\", \"Total Amount\"). NEVER write unquoted multi-word column names like Customer ID.\n"
-                 "3. When performing mathematical calculations (SUM, AVG, arithmetic) on string/varchar columns, ALWAYS wrap the column in TRY_CAST(\"col\" AS DOUBLE), e.g., SUM(TRY_CAST(\"exchange_rate\" AS DOUBLE)), AVG(TRY_CAST(\"exchange_rate\" AS DOUBLE)), to prevent type conversion issues.\n"
+                 "2. COLUMN NAMES WITH SPACES OR SYMBOLS: You MUST ALWAYS wrap column names containing spaces, punctuation, or special characters in DOUBLE QUOTES.\n"
+                 "3. MATH & COMPARISONS: When performing ANY mathematical calculation (SUM, AVG, arithmetic) OR numerical comparison (>, <, =, <=, >=), you MUST wrap the column in TRY_CAST(\"col\" AS DOUBLE). Example: AVG(TRY_CAST(\"DistanceFromHome\" AS DOUBLE)) or TRY_CAST(\"JobSatisfaction\" AS DOUBLE) < 3.\n"
                  "4. For counting total records, use SELECT COUNT(*) AS total_records FROM dataset;\n"
                  "5. For most frequent items or duplicate checks, use GROUP BY \"col\" ORDER BY COUNT(*) DESC LIMIT N (always quote column names if they contain spaces);\n"
                  "6. For boolean columns (like mb_part), NEVER use '= TRUE' or '= FALSE' directly. ALWAYS compare as uppercase string: UPPER(TRY_CAST(\"col\" AS VARCHAR)) = 'TRUE' or UPPER(TRY_CAST(\"col\" AS VARCHAR)) = 'FALSE' because boolean columns may contain string 'NULL' values.\n"
@@ -252,6 +259,7 @@ class PandasQueryEngine:
                  "   - If comparing by JOINING DATE / HIRE DATE / START DATE: A senior employee joined EARLIEST in time. You MUST cast string dates to date/timestamp and order ASCENDING (ORDER BY TRY_CAST(\"Joining Date\" AS DATE) ASC) so the earliest date (earliest year, e.g. 2018 before 2022) is ranked FIRST.\n"
                  "   - If comparing by YEARS OF EXPERIENCE / TENURE / AGE: A senior employee has more years. You MUST order DESCENDING (ORDER BY TRY_CAST(\"Experience\" AS DOUBLE) DESC).\n"
                  "   - If selecting among specific people (e.g. 'between John and Jane'), always use case-insensitive fuzzy matching (LOWER(\"col\") LIKE '%name%') for the WHERE clause. If selecting 'among both', DO NOT filter by the word 'both'.\n"
+                 "18. MULTI-DATASET / SOURCE FILE FILTERING: 'source_file' is a special string column injected automatically that contains the original CSV or Parquet filename (e.g., 'employees.csv', 'payroll_2.csv'). If the user's query mentions or implies a specific file or dataset (e.g., '1st CSV file', 'second dataset', or matches a specific filename pattern), you MUST filter on the 'source_file' column using ILIKE (e.g., source_file ILIKE '%1%' or source_file ILIKE '%payroll%').\n"
                  "IMPORTANT: DO NOT generate any <think> tags or internal reasoning steps. Output ONLY valid JSON immediately without any thinking."),
                 ("user", "{question}")
             ])
