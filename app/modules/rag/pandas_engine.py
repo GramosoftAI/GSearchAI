@@ -34,10 +34,12 @@ def parse_json_from_thinking(text: str) -> dict:
         
     if not text:
         logger.error(f"LLM returned empty text after stripping think tags: {raw_text}")
-        return {"intents": ["aggregation"], "sql": "SELECT COUNT(*) AS total_records FROM dataset;", "explanation": "Total records in dataset"}
+        return {"intents": ["row_lookup"], "sql": "SELECT * FROM dataset LIMIT 10;", "explanation": "Retrieved sample records from dataset"}
         
     try:
-        return json.loads(text)
+        cleaned = re.sub(r',\s*}', '}', text)
+        cleaned = re.sub(r',\s*\]', ']', cleaned)
+        return json.loads(cleaned)
     except Exception as e:
         logger.warning(f"json.loads failed on text, trying yaml.safe_load: {e}")
         try:
@@ -48,7 +50,7 @@ def parse_json_from_thinking(text: str) -> dict:
         except Exception as e_yaml:
             logger.error(f"Both json.loads and yaml.safe_load failed on text: {text} | error: {e_yaml}")
             
-        return {"intents": ["aggregation"], "sql": "SELECT COUNT(*) AS total_records FROM dataset;", "explanation": "Total records in dataset"}
+        return {"intents": ["row_lookup"], "sql": "SELECT * FROM dataset LIMIT 10;", "explanation": "Retrieved sample records from dataset"}
 
 class IntentClassification(BaseModel):
     """Classifies the user query into one or more execution engines."""
@@ -85,14 +87,22 @@ class PandasQueryEngine:
         
         api_key = getattr(settings, "deepinfra_api_key", "")
         base_url = getattr(settings, "deepinfra_api_url", "https://api.deepinfra.com/v1/openai")
-        model_name = getattr(settings, "deepinfra_llm_model", "Qwen/Qwen2.5-72B-Instruct")
-        
+        model_name = settings.model_answer
         self.llm = ChatOpenAI(
             model=model_name,
             api_key=api_key,
             base_url=base_url,
             temperature=0.0,
             max_tokens=2048,
+            extra_body={"enable_thinking": False}
+        )
+        router_model_name = getattr(settings, "model_intent", model_name)
+        self.router_llm = ChatOpenAI(
+            model=router_model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=0.0,
+            max_tokens=512,
             extra_body={"enable_thinking": False}
         )
 
@@ -145,7 +155,8 @@ class PandasQueryEngine:
                  "3. FOR SENIORITY / TENURE QUESTIONS: Remember that an employee who joined EARLIER in time (earliest year/date, e.g. 2018 vs 2021) or has MORE years of experience is MORE SENIOR.\n"
                  "4. Respond naturally, concisely, and use bolding formatting for key names, figures, dates, and comparisons.\n"
                  "5. Include the formatted Markdown table below your explanation as supporting evidence.\n"
-                 "6. IMPORTANT: Do NOT output any <think> tags or internal reasoning. Output ONLY the final answer directly."),
+                 "6. FOR FULL DETAILS OR MOVIE/ENTITY QUERIES: Give the complete details of the movie/entity (Title, Release Date, Overview/Plot, Popularity, Vote Average, Genre, etc.) from the table clearly and accurately. If multiple records are returned, summarize the top items clearly and concisely so the response remains focused and does not exceed token length limits.\n"
+                 "7. IMPORTANT: Do NOT output any <think> tags or internal reasoning. Output ONLY the final answer directly."),
                 ("user", "User Question: {question}\n\nSQL Explanation: {explanation}\n\nRetrieved Database Result Table:\n{table}")
             ])
             from langchain_core.output_parsers import StrOutputParser
@@ -159,6 +170,8 @@ class PandasQueryEngine:
             synthesis = re.sub(r'<think>.*?</think>', '', synthesis, flags=re.DOTALL).strip()
             if '<think>' in synthesis:
                 synthesis = synthesis[:synthesis.index('<think>')].strip()
+            if not synthesis:
+                return table_md
             return synthesis
         except Exception as e:
             logger.warning(f"Analytical synthesis failed ({e}), returning formatted table.")
@@ -225,6 +238,15 @@ class PandasQueryEngine:
                  "   - If comparing by JOINING DATE / HIRE DATE / START DATE: A senior employee joined EARLIEST in time. You MUST cast string dates to date/timestamp and order ASCENDING (ORDER BY TRY_CAST(\"Joining Date\" AS DATE) ASC) so the earliest date (earliest year, e.g. 2018 before 2022) is ranked FIRST.\n"
                  "   - If comparing by YEARS OF EXPERIENCE / TENURE / AGE: A senior employee has more years. You MUST order DESCENDING (ORDER BY TRY_CAST(\"Experience\" AS DOUBLE) DESC).\n"
                  "   - If selecting among specific people (e.g. 'between John and Jane'), always use case-insensitive fuzzy matching (LOWER(\"col\") LIKE '%name%') for the WHERE clause. If selecting 'among both', DO NOT filter by the word 'both'.\n"
+                 "18. POSITIONAL & CHRONOLOGICAL ROW ORDERING (first, last, top, bottom, latest, oldest):\n"
+                 "   - When the user asks for the 'last row(s)', 'last N rows', 'last record(s)', 'last entry', or 'last movie/item in the dataset/excel/table' without a specific date filter, you MUST use ANSI OFFSET from total count: SELECT * FROM dataset OFFSET (SELECT COUNT(*) FROM dataset) - N LIMIT N; (e.g. OFFSET (SELECT COUNT(*) FROM dataset) - 1 LIMIT 1; for the last row). NEVER rely on row_id ordering alone as parallel ingestion can make row_id order non-deterministic.\n"
+                 "   - When the user asks for the 'first row(s)', 'first N rows', 'first record(s)', 'first entry', or 'first movie/item in the dataset/excel/table', select directly from top: SELECT * FROM dataset LIMIT N;\n"
+                 "   - When the user asks for 'latest', 'newest', or 'most recent' by date/release date, cast date strings to DATE and order DESCENDING: ORDER BY TRY_CAST(\"Release_Date\" AS DATE) DESC LIMIT N;\n"
+                 "   - When the user asks for 'oldest' or 'earliest' by date, order ASCENDING: ORDER BY TRY_CAST(\"Release_Date\" AS DATE) ASC LIMIT N;\n"
+                 "19. SPECIFIC RECORD DETAILS LOOKUP, STRING APOSTROPHES & LENGTH GUARDS:\n"
+                 "   - When asking for 'details', 'full details', or information about a specific movie, person, or title (e.g. 'Ron''s Gone Wrong full details', 'details of King''s Man'), generate a SELECT * FROM dataset WHERE LOWER(\"Title\") LIKE '%ron%gone%wrong%'; (or corresponding name column). NEVER generate a COUNT(*) aggregation query when the user asks for details of a specific item!\n"
+                 "   - When a title or search string contains an apostrophe or single quote (''), you MUST escape it by doubling the single quote in SQL (e.g., '%ron''s gone wrong%') OR omit the apostrophe using wildcards (e.g., '%ron%gone%wrong%').\n"
+                 "   - When querying general details without an explicit WHERE name/title filter (e.g. 'show me all movies' or general overview), ALWAYS append LIMIT 10 to prevent large result sets from causing token overflow.\n"
                  "IMPORTANT: DO NOT generate any <think> tags or internal reasoning steps. Output ONLY valid JSON immediately without any thinking."),
                 ("user", "{question}")
             ])
@@ -271,7 +293,8 @@ class PandasQueryEngine:
                              "CRITICAL RULES:\n"
                              "1. Return ONLY valid JSON with 'sql' and 'explanation'. No markdown, no <think> tags.\n"
                              "2. ALWAYS enclose column names containing spaces or symbols in DOUBLE QUOTES (e.g. \"Customer ID\").\n"
-                             "3. The query MUST be a read-only DuckDB SELECT on table 'dataset'."),
+                             "3. When searching for strings containing apostrophes or single quotes (e.g. 'Ron''s Gone Wrong'), double the single quotes in SQL ('%ron''s gone wrong%') or use wildcards ('%ron%gone%wrong%').\n"
+                             "4. The query MUST be a read-only DuckDB SELECT on table 'dataset'."),
                             ("user",
                              "User Question: {question}\n\nFailed SQL Query:\n{sql}\n\nDuckDB Error Message:\n{error}\n\nProvide the corrected DuckDB SQL query in valid JSON.")
                         ])
@@ -298,8 +321,11 @@ class PandasQueryEngine:
                 try:
                     fuzzy_prompt = ChatPromptTemplate.from_messages([
                         ("system",
-                         "You are an enterprise DuckDB SQL expert. The previous SQL query returned 0 rows because the WHERE filter was too strict.\n"
-                         "Rewrite the DuckDB SELECT query on table 'dataset' using case-insensitive partial string matching (ILIKE or LOWER(\"col\") LIKE '%val%') so matching rows are found.\n\n"
+                         "You are an enterprise DuckDB SQL expert. The previous SQL query returned 0 rows because the WHERE filter was too strict or queried the wrong column.\n"
+                         "CRITICAL RECOVERY RULES:\n"
+                         "1. Rewrite the DuckDB SELECT query on table 'dataset' using case-insensitive partial string matching (ILIKE or LOWER(\"col\") LIKE '%val%') so matching rows are found.\n"
+                         "2. If searching for an entity or movie title, check across candidate text columns using OR (e.g., LOWER(\"Title\") LIKE '%val%' OR LOWER(\"Overview\") LIKE '%val%').\n"
+                         "3. Omit apostrophes and punctuation by inserting wildcards between words (e.g. '%ron%gone%wrong%').\n\n"
                          "Available columns in 'dataset':\n{columns}\n\n"
                          "Return ONLY valid JSON with 'sql' and 'explanation' without markdown fences."),
                         ("user",
