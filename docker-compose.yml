@@ -28,9 +28,6 @@ services:
   neo4j:
     image: neo4j:5.26.0
     container_name: graphmind-neo4j
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     environment:
       NEO4J_AUTH: neo4j/graphmind_password
       NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
@@ -79,9 +76,6 @@ services:
   api:
     build: .
     container_name: graphmind-api
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app
@@ -128,9 +122,6 @@ services:
       context: ./app/memory/app   
       dockerfile: Dockerfile
     container_name: graphmind-memory-api
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     command: python -m uvicorn main:app --host 0.0.0.0 --port 8001 --reload
     ports:
       - "8002:8001"
