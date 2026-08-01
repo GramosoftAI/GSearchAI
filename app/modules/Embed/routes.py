@@ -699,3 +699,138 @@ async def websocket_chat_endpoint(
         logger.info(f" WebSocket disconnected: agent={agent_id}")
     except Exception as e:
         logger.error(f"WebSocket uncaught exception: {e}", exc_info=True)
+
+
+# ============================================================================
+# PUBLIC AGENT KNOWLEDGE BASE SOURCES ENDPOINT FOR WIDGET
+# ============================================================================
+
+from fastapi.responses import StreamingResponse
+import urllib.parse
+from ..knowledge_bases.models import KnowledgeBase
+from ...core.s3 import S3StorageService
+from ...core.config import get_settings
+
+CONTENT_TYPE_MAP = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".csv": "text/csv",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xls": "application/vnd.ms-excel",
+    ".txt": "text/plain",
+    ".html": "text/html",
+    ".md": "text/markdown",
+    ".json": "application/json"
+}
+
+
+@router.get("/agents/{agent_id}/sources")
+async def get_agent_embed_sources(
+    agent_id: str,
+    tenant_id: Optional[str] = Query(None, description="Optional tenant UUID")
+):
+    """
+    Public endpoint for embedded chat widgets to fetch knowledge base sources
+    attached to an agent. Requires no JWT authentication.
+    """
+    try:
+        agent_uuid = uuid.UUID(agent_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid agent_id UUID format")
+
+    async with AsyncSessionLocal() as db:
+        if tenant_id:
+            valid = await verify_agent_belongs_to_tenant(db, tenant_id, agent_id)
+            if not valid:
+                raise HTTPException(status_code=404, detail="Agent not found or unauthorized access")
+
+        query = select(KnowledgeBase).where(
+            KnowledgeBase.agent_id == agent_uuid,
+            KnowledgeBase.is_active == True
+        )
+        result = await db.execute(query)
+        kbs = result.scalars().all()
+
+        sources = []
+        for kb in kbs:
+            kb_id_str = str(kb.id)
+            preview_url = f"/api/v1/embed/files/{kb_id_str}/preview"
+            sources.append({
+                "id": kb_id_str,
+                "kb_id": kb_id_str,
+                "name": kb.name,
+                "source": kb.source or kb.name,
+                "s3_path": kb.s3_path,
+                "url": preview_url
+            })
+
+        return format_success(sources)
+
+
+# ============================================================================
+# PUBLIC FILE PREVIEW ENDPOINT FOR EMBEDDABLE WIDGET
+# ============================================================================
+
+@router.get("/files/{kb_id}/preview")
+async def preview_embed_file(kb_id: str):
+    """
+    Public endpoint to stream file preview for embedded chat widget users.
+    Bypasses JWT authentication and streams binary file content directly from S3.
+    """
+    try:
+        file_uuid = uuid.UUID(kb_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid kb_id UUID format")
+
+    async with AsyncSessionLocal() as db:
+        query = select(KnowledgeBase).where(
+            KnowledgeBase.id == file_uuid,
+            KnowledgeBase.is_active == True
+        )
+        result = await db.execute(query)
+        kb = result.scalar_one_or_none()
+
+        if not kb:
+            raise HTTPException(status_code=404, detail="Knowledge base file not found")
+
+        filename = kb.name
+        file_ext = os.path.splitext(filename.lower())[1]
+        content_type = CONTENT_TYPE_MAP.get(file_ext, "application/octet-stream")
+
+        s3_service = S3StorageService()
+        
+        # Resolve S3 Key
+        s3_key = None
+        if kb.s3_path:
+            s3_key = s3_service._parse_s3_key_from_url(kb.s3_path)
+            if not s3_key and kb.s3_path.startswith("s3://"):
+                parts = kb.s3_path.split("/", 3)
+                if len(parts) >= 4:
+                    s3_key = parts[3]
+        
+        if not s3_key:
+            settings_cfg = get_settings()
+            bucket_parts = (settings_cfg.aws_s3_bucket or "").split('/', 1)
+            base_prefix = bucket_parts[1] + '/' if len(bucket_parts) > 1 else ''
+            s3_key = f"{base_prefix}uploads/{kb.tenant_id}/{filename}"
+
+        try:
+            stream_body = s3_service.get_file_stream(s3_key)
+        except Exception as s3_err:
+            logger.error(f"S3 fetch failed for key {s3_key}: {s3_err}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to fetch file from S3 storage")
+
+        encoded_filename = urllib.parse.quote(filename)
+        headers = {
+            "Content-Disposition": f'inline; filename="{filename}"; filename*=UTF-8\'\'{encoded_filename}'
+        }
+
+        return StreamingResponse(
+            stream_body,
+            media_type=content_type,
+            headers=headers
+        )
