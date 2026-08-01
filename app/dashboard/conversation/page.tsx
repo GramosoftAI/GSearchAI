@@ -1088,6 +1088,13 @@ export default function ChatPlaygroundPage() {
   const connectWs = useCallback(function connectSocket() {
     if (!agent?.id) return;
 
+    const token = getCookie(AUTH_COOKIE_KEY);
+    if (!token || token === "null" || token === "undefined") {
+      console.warn("WebSocket connection aborted: auth token missing or not ready");
+      setWsStatus("closed");
+      return;
+    }
+
     if (ws.current) {
       ws.current.close();
     }
@@ -1106,7 +1113,7 @@ export default function ChatPlaygroundPage() {
       }
     }
 
-    const wsUrl = `${wsBaseUrl}/rag/ws/${agent.id}?token=${getCookie(AUTH_COOKIE_KEY)}`;
+    const wsUrl = `${wsBaseUrl}/rag/ws/${agent.id}?token=${token}`;
 
     const socket = new WebSocket(wsUrl);
     ws.current = socket;

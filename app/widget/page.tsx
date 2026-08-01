@@ -964,7 +964,7 @@ function WidgetContent() {
   }, [messages, isTyping]);
 
   const connectWs = useCallback(() => {
-    if (!agentId) return;
+    if (!agentId || !tenantId || tenantId === "null" || tenantId === "undefined") return;
 
     const wsHost = (process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:4915").replace(/\/$/, "");
     const wsBaseUrl = wsHost.includes("/api/v1") ? wsHost : `${wsHost}/api/v1`;
