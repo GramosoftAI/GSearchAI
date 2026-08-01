@@ -13,7 +13,7 @@ const { Title, Text, Paragraph } = Typography;
 // Helper functions for citations extraction and display
 const getCleanCitationName = (citation: string): string => {
   if (!citation) return "Unknown Source";
-  
+
   if (citation.startsWith("http://") || citation.startsWith("https://")) {
     try {
       const decoded = decodeURIComponent(citation);
@@ -24,12 +24,12 @@ const getCleanCitationName = (citation: string): string => {
       return parts[parts.length - 1] || citation;
     }
   }
-  
+
   const prefixMatch = citation.match(/^[a-zA-Z0-9\s]+:\s*(.*)$/);
   if (prefixMatch && prefixMatch[1]) {
     return prefixMatch[1].trim();
   }
-  
+
   return citation;
 };
 
@@ -38,7 +38,7 @@ const getCitationUrl = (citation: string, allCitations: string[]): string | null
   if (citation.startsWith("http://") || citation.startsWith("https://")) {
     return citation;
   }
-  
+
   const cleanName = getCleanCitationName(citation).toLowerCase();
   const matchingUrl = allCitations.find(c => {
     if (c.startsWith("http://") || c.startsWith("https://")) {
@@ -47,7 +47,7 @@ const getCitationUrl = (citation: string, allCitations: string[]): string | null
     }
     return false;
   });
-  
+
   return matchingUrl || null;
 };
 
@@ -65,7 +65,7 @@ const getRecordCitations = (record: any): CitationInfo[] => {
   const addCitation = (rawSource: string, kbId?: string) => {
     if (!rawSource || typeof rawSource !== 'string') return;
     const cleanName = getCleanCitationName(rawSource);
-    
+
     // Find if already added
     if (addedNames.has(cleanName.toLowerCase())) {
       // If the existing one doesn't have kbId but this one does, update it
@@ -146,9 +146,9 @@ const MOCK_MESSAGES_DATA = {
     // 7 Correct responses (Thumbs Up)
     ...Array(7).fill(null).map((_, i) => ({
       time: `2026-07-16T06:${10 + i}:12.124512+00:00`,
-      user: { id: `u-${i}`, email: "srivishnus@gramosoft.in", first_name: "sri", last_name: "vishnuraj" },
+      user: { id: `u-${i}`, email: "user@gramosoft.in", first_name: "Admin", last_name: "User" },
       tenant: { id: "t-1", name: "44444ddddd" },
-      agent: { id: "a-1", name: "vishnubot" },
+      agent: { id: "a-1", name: "GSearch Assistant" },
       feedback_type: "thumbs_up",
       feedback_reason: "Correct response",
       question: `Summarize technical overview question ${i + 1}`,
@@ -163,9 +163,9 @@ const MOCK_MESSAGES_DATA = {
     // 2 Irrelevant Answer (Thumbs Down)
     {
       time: "2026-07-16T05:41:46.730612+00:00",
-      user: { id: "u-7", email: "srivishnus@gramosoft.in", first_name: "sri", last_name: "vishnuraj" },
+      user: { id: "u-7", email: "user@gramosoft.in", first_name: "Admin", last_name: "User" },
       tenant: { id: "t-1", name: "44444ddddd" },
-      agent: { id: "a-1", name: "vishnubot" },
+      agent: { id: "a-1", name: "GSearch Assistant" },
       feedback_type: "thumbs_down",
       feedback_reason: "Irrelevant Answer",
       question: "summrize what u know ",
@@ -202,9 +202,9 @@ const MOCK_MESSAGES_DATA = {
     },
     {
       time: "2026-07-16T05:44:10.730612+00:00",
-      user: { id: "u-8", email: "srivishnus@gramosoft.in", first_name: "sri", last_name: "vishnuraj" },
+      user: { id: "u-8", email: "user@gramosoft.in", first_name: "Admin", last_name: "User" },
       tenant: { id: "t-1", name: "44444ddddd" },
-      agent: { id: "a-1", name: "vishnubot" },
+      agent: { id: "a-1", name: "GSearch Assistant" },
       feedback_type: "thumbs_down",
       feedback_reason: "Irrelevant Answer",
       question: "What is your primary design logic?",
@@ -218,9 +218,9 @@ const MOCK_MESSAGES_DATA = {
     // 2 Missing Information (Thumbs Down)
     {
       time: "2026-07-16T05:50:12.730612+00:00",
-      user: { id: "u-9", email: "srivishnus@gramosoft.in", first_name: "sri", last_name: "vishnuraj" },
+      user: { id: "u-9", email: "user@gramosoft.in", first_name: "Admin", last_name: "User" },
       tenant: { id: "t-1", name: "44444ddddd" },
-      agent: { id: "a-1", name: "vishnubot" },
+      agent: { id: "a-1", name: "GSearch Assistant" },
       feedback_type: "thumbs_down",
       feedback_reason: "Missing Information",
       question: "Where is the budget details?",
@@ -234,9 +234,9 @@ const MOCK_MESSAGES_DATA = {
     },
     {
       time: "2026-07-16T05:52:12.730612+00:00",
-      user: { id: "u-10", email: "srivishnus@gramosoft.in", first_name: "sri", last_name: "vishnuraj" },
+      user: { id: "u-10", email: "user@gramosoft.in", first_name: "Admin", last_name: "User" },
       tenant: { id: "t-1", name: "44444ddddd" },
-      agent: { id: "a-1", name: "vishnubot" },
+      agent: { id: "a-1", name: "GSearch Assistant" },
       feedback_type: "thumbs_down",
       feedback_reason: "Missing Information",
       question: "Which page contains invoice details?",
@@ -250,13 +250,13 @@ const MOCK_MESSAGES_DATA = {
     // 1 Hallucination (Thumbs Down)
     {
       time: "2026-07-16T06:01:10.730612+00:00",
-      user: { id: "u-11", email: "srivishnus@gramosoft.in", first_name: "sri", last_name: "vishnuraj" },
+      user: { id: "u-11", email: "user@gramosoft.in", first_name: "Admin", last_name: "User" },
       tenant: { id: "t-1", name: "44444ddddd" },
-      agent: { id: "a-1", name: "vishnubot" },
+      agent: { id: "a-1", name: "GSearch Assistant" },
       feedback_type: "thumbs_down",
       feedback_reason: "Hallucination",
       question: "Who is the primary administrator?",
-      ai_response: "The document indicates srivishnus is the main database administrator (this is hallucinated from email metadata).",
+      ai_response: "The document indicates the admin user is the main database administrator (this is hallucinated from email metadata).",
       citations: [
         "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/4ff69ed2-49d0-4b1d-9abf-0c769bd36965/SU01B0825INC228144.pdf",
         "PDF: SU01B0825INC228144.pdf"
@@ -319,7 +319,7 @@ function AnimatedCounter({
       if (!startTimestamp) startTimestamp = timestamp;
       const progress = timestamp - startTimestamp;
       const progressPercent = Math.min(progress / duration, 1);
-      
+
       const currentVal = progressPercent * value;
       setCount(currentVal);
 
@@ -353,11 +353,11 @@ export default function AdminFeedbackPage() {
 
   const [refreshKey, setRefreshKey] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
-  
+
   // Modal states
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [selectedRecordForDetail, setSelectedRecordForDetail] = useState<any>(null);
-  
+
   const [chunksModalOpen, setChunksModalOpen] = useState(false);
   const [selectedRecordForChunks, setSelectedRecordForChunks] = useState<any>(null);
 
@@ -557,28 +557,26 @@ export default function AdminFeedbackPage() {
                 </div>
                 <div class="tabs">
                   ${sheetNames
-                    .map(
-                      (name, idx) => `
-                    <button class="tab ${
-                      idx === 0 ? "active" : ""
-                    }" onclick="switchSheet('${name}', this)">
+              .map(
+                (name, idx) => `
+                    <button class="tab ${idx === 0 ? "active" : ""
+                  }" onclick="switchSheet('${name}', this)">
                       ${name}
                     </button>
                   `
-                    )
-                    .join("")}
+              )
+              .join("")}
                 </div>
               </div>
               <div class="content">
                 ${sheetNames
-                  .map((name, idx) => {
-                    const rows = sheetsData[name] || [];
-                    const hasData = rows.length > 0;
-                    return `
+              .map((name, idx) => {
+                const rows = sheetsData[name] || [];
+                const hasData = rows.length > 0;
+                return `
                     <div id="sheet-${name}" class="sheet-content ${idx === 0 ? "active" : ""}">
-                      ${
-                        hasData
-                          ? `
+                      ${hasData
+                    ? `
                         <table>
                           <thead>
                             <tr>
@@ -587,24 +585,24 @@ export default function AdminFeedbackPage() {
                           </thead>
                           <tbody>
                             ${rows
-                              .slice(1)
-                              .map(
-                                (row) => `
+                      .slice(1)
+                      .map(
+                        (row) => `
                               <tr>
                                 ${row.map((cell) => `<td>${cell || ""}</td>`).join("")}
                               </tr>
                             `
-                              )
-                              .join("")}
+                      )
+                      .join("")}
                           </tbody>
                         </table>
                       `
-                          : `<p style="padding: 24px; text-align: center; color: #9ca3af;">No data in this sheet</p>`
-                      }
+                    : `<p style="padding: 24px; text-align: center; color: #9ca3af;">No data in this sheet</p>`
+                  }
                     </div>
                   `;
-                  })
-                  .join("")}
+              })
+              .join("")}
               </div>
               <script>
                 function switchSheet(name, btn) {
@@ -672,7 +670,7 @@ export default function AdminFeedbackPage() {
       const reason = (item.feedback_reason || "").toLowerCase();
       const feedbackType = (item.feedback_type || "").toLowerCase();
       const question = (item.question || "").toLowerCase();
-      
+
       return (
         fullName.includes(query) ||
         email.includes(query) ||
@@ -785,13 +783,12 @@ export default function AdminFeedbackPage() {
       render: (type: string) => {
         const isUp = type === "thumbs_up";
         return (
-          <Tag 
+          <Tag
             color={isUp ? "success" : "processing"}
-            className={`font-extrabold uppercase text-[10px] tracking-wider rounded-lg px-2 py-0.5 border-none flex items-center gap-1.5 w-fit ${
-              isUp 
-                ? "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400" 
+            className={`font-extrabold uppercase text-[10px] tracking-wider rounded-lg px-2 py-0.5 border-none flex items-center gap-1.5 w-fit ${isUp
+                ? "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400"
                 : "bg-violet-50 dark:bg-violet-950/20 text-violet-600 dark:text-violet-400"
-            }`}
+              }`}
           >
             {isUp ? <ThumbsUp size={10} /> : <ThumbsDown size={10} />}
             {isUp ? "Thumbs Up" : "Thumbs Down"}
@@ -865,7 +862,7 @@ export default function AdminFeedbackPage() {
       render: (source: string) => {
         if (!source) return "N/A";
         const isUrl = source.startsWith("http://") || source.startsWith("https://");
-        
+
         return (
           <div className="flex items-center gap-2 max-w-[280px]">
             <FileText size={16} className="text-[#0fb5a1] flex-shrink-0" />
@@ -896,14 +893,13 @@ export default function AdminFeedbackPage() {
       render: (score: number) => {
         const color = score > 1.2 ? "emerald" : score > 0.6 ? "amber" : "gray";
         return (
-          <span 
-            className={`px-2 py-0.5 rounded-md text-xs font-black leading-none ${
-              color === "emerald" 
-                ? "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400" 
-                : color === "amber" 
-                ? "bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400" 
-                : "bg-gray-50 dark:bg-gray-900/20 text-gray-500"
-            }`}
+          <span
+            className={`px-2 py-0.5 rounded-md text-xs font-black leading-none ${color === "emerald"
+                ? "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400"
+                : color === "amber"
+                  ? "bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400"
+                  : "bg-gray-50 dark:bg-gray-900/20 text-gray-500"
+              }`}
           >
             {score !== undefined ? score.toFixed(2) : "0.00"}
           </span>
@@ -1124,8 +1120,8 @@ export default function AdminFeedbackPage() {
           setSelectedRecordForDetail(null);
         }}
         footer={[
-          <Button 
-            key="close" 
+          <Button
+            key="close"
             type="primary"
             onClick={() => {
               setDetailModalOpen(false);
@@ -1195,7 +1191,7 @@ export default function AdminFeedbackPage() {
                     {detailCitations.map((citation, index) => {
                       const cleanName = getCleanCitationName(citation.rawSource);
                       const fileIcon = getIconForFile(cleanName);
-                      
+
                       return (
                         <div
                           key={index}
@@ -1243,8 +1239,8 @@ export default function AdminFeedbackPage() {
           setSelectedRecordForChunks(null);
         }}
         footer={[
-          <Button 
-            key="close" 
+          <Button
+            key="close"
             type="primary"
             onClick={() => {
               setChunksModalOpen(false);

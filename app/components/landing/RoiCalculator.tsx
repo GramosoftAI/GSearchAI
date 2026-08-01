@@ -1,6 +1,6 @@
 "use client";
-import React, { useMemo, useState } from "react";
-import { Slider, Typography, Row, Col } from "antd";
+import { useMemo, useState } from "react";
+import { Slider, Typography} from "antd";
 
 const { Title, Paragraph, Text } = Typography;
 

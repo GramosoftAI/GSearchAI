@@ -69,8 +69,8 @@ export default function LoginForm() {
 
             <div className="password-group">
               <div className="checkbox-group">
-                <input type="checkbox" id="remember" className="mr-2 h-4 w-4" />
-                <label className="label" htmlFor="remember">Remember Me</label>
+                {/* <input type="checkbox" id="remember" className="mr-2 h-4 w-4" />
+                <label className="label" htmlFor="remember">Remember Me</label> */}
               </div>
               <a 
                 onClick={() => router.push(routes.forgotPassword)} 

@@ -7,7 +7,22 @@
   const position = script.getAttribute("data-position") || "center"; // "center" or "right"
   const placeholder = script.getAttribute("data-placeholder") || "Ask about anything...";
   const themeColor = script.getAttribute("data-theme-color") || "#0fb5a1";
-  
+
+  // Custom design & branding attributes
+  const headerLogo = script.getAttribute("data-header-logo") || "";
+  const headerAlign = script.getAttribute("data-header-align") || "center";
+  const botAvatar = script.getAttribute("data-bot-avatar") || "";
+  const buttonIcon = script.getAttribute("data-button-icon") || "";
+  const buttonAlign = script.getAttribute("data-button-align") || "right";
+  const showButtonText = script.getAttribute("data-show-button-text") === "true";
+  const buttonText = script.getAttribute("data-button-text") || "";
+  const initialMessage = script.getAttribute("data-initial-message") || "";
+  const displaySources = script.getAttribute("data-display-sources") || "true";
+  const allowDownloads = script.getAttribute("data-allow-downloads") || "false";
+  const displayCopy = script.getAttribute("data-display-copy") || "true";
+  const displayFeedback = script.getAttribute("data-display-feedback") || "true";
+  const linkSafety = script.getAttribute("data-link-safety") || "false";
+
   // Dynamically detect base URL of the hosting widget
   let baseUrl = "";
   try {
@@ -71,8 +86,8 @@
     .grag-icon-btn {
       position: fixed;
       bottom: 20px;
-      right: 20px;
-      width: 60px;
+      ${buttonAlign === "left" ? "left: 20px; right: auto;" : "right: 20px; left: auto;"}
+      min-width: 60px;
       height: 60px;
       border-radius: 50%;
       cursor: pointer;
@@ -87,7 +102,7 @@
       animation: floatPulse 3s ease-in-out infinite;
     }
     .grag-icon-btn:hover {
-      transform: scale(1.1) rotate(6deg) !important;
+      transform: scale(1.05) !important;
       box-shadow: 0 10px 30px ${themeColor}65;
     }
     @keyframes floatPulse {
@@ -124,11 +139,12 @@
   iframe.style.borderRadius = "24px";
   iframe.style.zIndex = "2147483647";
   iframe.setAttribute("allowtransparency", "true");
-  iframe.src = `${baseUrl}/widget?agentId=${agentId}&tenantId=${tenantId}&chatType=${chatType}&themeColor=${encodeURIComponent(themeColor)}`;
-  
+  iframe.src = `${baseUrl}/widget?agentId=${agentId}&tenantId=${tenantId}&chatType=${chatType}&themeColor=${encodeURIComponent(themeColor)}&headerLogo=${encodeURIComponent(headerLogo)}&headerAlign=${encodeURIComponent(headerAlign)}&botAvatar=${encodeURIComponent(botAvatar)}&buttonIcon=${encodeURIComponent(buttonIcon)}&buttonAlign=${encodeURIComponent(buttonAlign)}&showButtonText=${showButtonText}&buttonText=${encodeURIComponent(buttonText)}&initialMessage=${encodeURIComponent(initialMessage)}&displaySources=${displaySources}&allowDownloads=${allowDownloads}&displayCopy=${displayCopy}&displayFeedback=${displayFeedback}&linkSafety=${linkSafety}`;
+
+
   // Declared search wrapper reference
   let searchWrapper = null;
-  
+
   // Global window resize and responsive dimensions
   const updateIframeDimensions = () => {
     const isMobile = window.innerWidth <= 640;
@@ -216,9 +232,9 @@
     if (chatType === "search" && searchWrapper) {
       searchWrapper.style.display = "none";
     }
-    
+
     iframe.classList.add("show");
-    
+
     // Send initial query via postMessage to avoid slow reloads
     if (initialQuery) {
       setTimeout(() => {
@@ -251,7 +267,7 @@
     searchWrapper.style.zIndex = "999998";
     searchWrapper.style.boxSizing = "border-box";
     searchWrapper.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-    
+
     updateSearchWrapperDimensions();
 
     // Outer glow container (which handles brand gradient outline on focus/hover)
@@ -385,16 +401,58 @@
     searchWrapper.appendChild(poweredBy);
     document.body.appendChild(searchWrapper);
   } else {
-    // --- Style 1: Classic Icon Style Chat (Current Style) ---
+    // --- Style 1: Classic Icon Style Chat ---
     const button = document.createElement("button");
     button.className = "grag-icon-btn";
-    button.innerHTML = `
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M21 11.5C21 16.7467 16.9706 21 12 21C10.1302 21 8.39632 20.3992 6.97743 19.3722L3 20.5L4.15064 16.6329C3.41732 15.1543 3 13.4754 3 11.5C3 6.25329 7.02944 2 12 2C16.9706 2 21 6.25329 21 11.5Z" fill="${themeColor}" stroke="${themeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M8 10H16M8 14H14" stroke="white" stroke-width="2" stroke-linecap="round"/>
-      </svg>
-    `;
+    if (showButtonText && buttonText) {
+      button.style.width = "auto";
+      button.style.borderRadius = "30px";
+      button.style.padding = "0 18px";
+      button.style.gap = "8px";
+    }
+
+    let iconHtml = "";
+    if (buttonIcon && (buttonIcon.startsWith("http") || buttonIcon.startsWith("blob:") || buttonIcon.startsWith("data:"))) {
+      iconHtml = `<img src="${buttonIcon}" style="width: 28px; height: 28px; border-radius: 50%; object-fit: contain;" />`;
+    } else if (buttonIcon === "robot") {
+      iconHtml = `<div style="width: 28px; height: 28px; border-radius: 50%; background: ${themeColor}; display: flex; items-center: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2" fill="none"/><circle cx="8.5" cy="15.5" r="1.5" fill="white"/><circle cx="15.5" cy="15.5" r="1.5" fill="white"/><path d="M12 2v6M9 5h6"/></svg></div>`;
+    } else if (buttonIcon === "setting") {
+      iconHtml = `<div style="width: 28px; height: 28px; border-radius: 50%; background: ${themeColor}; display: flex; items-center: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>`;
+    } else if (buttonIcon === "question") {
+      iconHtml = `<div style="width: 28px; height: 28px; border-radius: 50%; background: ${themeColor}; display: flex; items-center: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>`;
+    } else if (buttonIcon === "book") {
+      iconHtml = `<div style="width: 28px; height: 28px; border-radius: 50%; background: ${themeColor}; display: flex; items-center: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div>`;
+    } else {
+      iconHtml = `
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M21 11.5C21 16.7467 16.9706 21 12 21C10.1302 21 8.39632 20.3992 6.97743 19.3722L3 20.5L4.15064 16.6329C3.41732 15.1543 3 13.4754 3 11.5C3 6.25329 7.02944 2 12 2C16.9706 2 21 6.25329 21 11.5Z" fill="${themeColor}" stroke="${themeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="8" cy="11.5" r="1.3" fill="white"/>
+          <circle cx="12" cy="11.5" r="1.3" fill="white"/>
+          <circle cx="16" cy="11.5" r="1.3" fill="white"/>
+        </svg>
+      `;
+    }
+
+    button.innerHTML = iconHtml + (showButtonText && buttonText ? `<span style="font-weight: 700; font-size: 14px; color: ${themeColor}; font-family: sans-serif;">${buttonText}</span>` : "");
+
     document.body.appendChild(button);
+
+    // Fetch Customization API if tenantId exists to apply logo_url to embed launch button if show_in_embed is true
+    if (tenantId) {
+      try {
+        const custApiUrl = `${baseUrl.endsWith("/api/v1") ? baseUrl : baseUrl + "/api/v1"}/embed/customization?tenant_id=${tenantId}`;
+        fetch(custApiUrl)
+          .then(res => res.json())
+          .then(result => {
+            const data = result.data || result;
+            if (data && data.logo_url && data.show_in_embed && button) {
+              const imgHtml = `<img src="${data.logo_url}" style="width: 28px; height: 28px; border-radius: 50%; object-fit: contain;" />`;
+              button.innerHTML = imgHtml + (showButtonText && buttonText ? `<span style="font-weight: 700; font-size: 14px; color: ${themeColor}; font-family: sans-serif;">${buttonText}</span>` : "");
+            }
+          })
+          .catch(e => console.warn("GragWidget: Customization fetch error", e));
+      } catch (e) {}
+    }
 
     // Toggle click trigger
     button.onclick = () => {

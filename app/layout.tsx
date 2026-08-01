@@ -22,11 +22,14 @@ const geistMono = Geist_Mono({
 //   description: "Gsearch connects every tool your team uses, remembers how everything relates, and answers any question instantly — so your team stops searching and starts knowing.",
 // };
 export const metadata: Metadata = {
+  icons: {
+    icon: "/512_512.png",
+  },
   title:
-    "Gsearch — AI Enterprise Search & Chat for Your Company Data | Ask Anything, Get Instant Answers",
+    "Gsearch — AI Enterprise Search & Chat Platform",
 
   description:
-    "Gsearch is an AI-powered enterprise search and chat platform that connects your tools, documents, and databases. Ask questions in natural language and get instant, accurate answers from your company knowledge — like chatting with your organization's brain.",
+    "Gsearch connects your tools, docs, and databases with AI search. Ask questions in plain language and get instant answers from your company data.",
 
   keywords: [
   "AI enterprise search",

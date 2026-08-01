@@ -453,10 +453,10 @@ type AgentListResponse = {
 const GSearchLogoAvatar = ({ size = 32 }: { size?: number }) => {
   return (
     <div
-      className="rounded-xl flex items-center justify-center bg-[#0fb5a1] text-white shrink-0 border border-[#0fb5a1]/20 shadow-none font-bold"
+      className="rounded-xl flex items-center justify-center shrink-0 shadow-none overflow-hidden"
       style={{ width: `${size}px`, height: `${size}px` }}
     >
-      <FaBrain size={size * 0.55} />
+      <img src="/512_512.png" alt="GSearch" className="w-full h-full object-contain" />
     </div>
   );
 };
@@ -802,7 +802,7 @@ export default function ChatPlaygroundPage() {
   const [selectedReason, setSelectedReason] = useState<string>("Incorrect Answer");
   const [customReason, setCustomReason] = useState<string>("");
   const { data: sessionData } = useSession();
-  const [userName, setUserName] = useState("Srivishnus");
+  const [userName, setUserName] = useState("User");
 
   useEffect(() => {
     const storedName = localStorage.getItem("userName");
@@ -1499,7 +1499,8 @@ export default function ChatPlaygroundPage() {
     ws.current?.send(JSON.stringify({
       query: userMsg.content,
       file: userMsg.file ? { name: userMsg.file.name, type: userMsg.file.type } : null,
-      session_id: currentSessionId && !currentSessionId.startsWith("session_") ? currentSessionId : null
+      session_id: currentSessionId && !currentSessionId.startsWith("session_") ? currentSessionId : null,
+      embed: false
     }));
 
     wsSourcesRef.current = [];
@@ -1610,7 +1611,8 @@ export default function ChatPlaygroundPage() {
     ws.current?.send(JSON.stringify({
       query: trimmed,
       file: payloadFile ? { name: payloadFile.name, type: payloadFile.type } : null,
-      session_id: targetSessionId && !targetSessionId.startsWith("session_") ? targetSessionId : null
+      session_id: targetSessionId && !targetSessionId.startsWith("session_") ? targetSessionId : null,
+      embed: false
     }));
 
     setInput("");
@@ -1714,21 +1716,21 @@ export default function ChatPlaygroundPage() {
             const XLSX = await import("xlsx");
             const workbook = XLSX.read(arrayBuffer, { type: "array" });
 
-          const sheetsData: { [sheetName: string]: string[][] } = {};
-          workbook.SheetNames.forEach((sheetName) => {
-            const worksheet = workbook.Sheets[sheetName];
-            const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
-            sheetsData[sheetName] = jsonData.map((row: any) =>
-              Array.isArray(row)
-                ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
-                : []
-            );
-          });
-          const sheetNames = workbook.SheetNames;
-          const viewBlobUrl = URL.createObjectURL(blob);
+            const sheetsData: { [sheetName: string]: string[][] } = {};
+            workbook.SheetNames.forEach((sheetName) => {
+              const worksheet = workbook.Sheets[sheetName];
+              const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+              sheetsData[sheetName] = jsonData.map((row: any) =>
+                Array.isArray(row)
+                  ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+                  : []
+              );
+            });
+            const sheetNames = workbook.SheetNames;
+            const viewBlobUrl = URL.createObjectURL(blob);
 
-          newWindow.document.open();
-          newWindow.document.write(`
+            newWindow.document.open();
+            newWindow.document.write(`
             <!DOCTYPE html>
             <html>
             <head>
@@ -1929,7 +1931,7 @@ export default function ChatPlaygroundPage() {
             </body>
             </html>
           `);
-          newWindow.document.close();
+            newWindow.document.close();
           } catch (xlsxErr) {
             console.warn("Spreadsheet parsing failed, downloading:", xlsxErr);
             newWindow.close();
@@ -2013,7 +2015,8 @@ export default function ChatPlaygroundPage() {
     ws.current?.send(JSON.stringify({
       query: tempEditText.trim(),
       file: null,
-      session_id: currentSessionId && !currentSessionId.startsWith("session_") ? currentSessionId : null
+      session_id: currentSessionId && !currentSessionId.startsWith("session_") ? currentSessionId : null,
+      embed: false
     }));
 
     wsSourcesRef.current = [];
@@ -2910,8 +2913,8 @@ export default function ChatPlaygroundPage() {
                     onClick={handleSend}
                     disabled={!agent || (!input.trim() && !attachedFile) || wsStatus !== "open"}
                     className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer border-none outline-none ${(!agent || (!input.trim() && !attachedFile) || wsStatus !== "open")
-                        ? "bg-gray-200 dark:bg-gray-800 text-[var(--app-text-soft)] opacity-40 cursor-not-allowed"
-                        : "bg-[#0fb5a1] text-white hover:bg-[#0da18f] hover:opacity-90 active:scale-95"
+                      ? "bg-gray-200 dark:bg-gray-800 text-[var(--app-text-soft)] opacity-40 cursor-not-allowed"
+                      : "bg-[#0fb5a1] text-white hover:bg-[#0da18f] hover:opacity-90 active:scale-95"
                       }`}
                   >
                     <LuArrowRight size={16} strokeWidth={2.5} />

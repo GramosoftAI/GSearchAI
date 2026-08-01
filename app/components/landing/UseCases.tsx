@@ -1,5 +1,5 @@
 "use client";
-import React from "react";
+
 import { Row, Col, Card, Typography } from "antd";
 
 const { Title, Paragraph } = Typography;

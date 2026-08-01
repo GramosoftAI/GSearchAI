@@ -26,17 +26,11 @@ export const GithubStarsProvider = ({ children }: { children: React.ReactNode })
         })
         .catch(() => {});
     };
-
-    // Fetch immediately on load
     fetchStars();
-
-    // Fetch again every 60 seconds to keep the count updated without manual refresh
     const interval = setInterval(fetchStars, 120000);
 
-    // Clean up interval on component unmount
     return () => clearInterval(interval);
-  }, []); // Run once on mount and set up periodic interval
-
+  }, []);
   return (
     <GithubStarsContext.Provider value={stars}>
       {children}

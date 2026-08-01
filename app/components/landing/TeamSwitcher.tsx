@@ -1,71 +1,115 @@
 "use client";
-import React from "react";
-import { Row, Col, Tag, Typography } from "antd";
-import { Tabs } from "antd";
-import type { TabsProps } from "antd";
-import { teamTabs } from "../lib/content";
-import { motion } from "framer-motion";
-import { useState } from "react";
 
-const { Title, Paragraph, Link } = Typography;
+import React, { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 
-
+const teamsData = [
+  {
+    id: "support",
+    label: "Support",
+    title: "Resolve tickets before they escalate",
+    description: "Connect a customer issue to past resolutions, product logs, and the right expert — in one answer your reps can trust.",
+    pills: ["help desk", "knowledge base", "product logs"],
+    example: '"Has this customer hit this issue before?" → answered in seconds, with the past fix attached.',
+  },
+  {
+    id: "sales",
+    label: "Sales",
+    title: "Walk into every call prepared",
+    description: "Connect a contact to their threads, contracts, and open issues across CRM, email, and docs — without the pre-call scramble.",
+    pills: ["CRM", "email", "contracts", "tickets"],
+    example: "The full relationship in one view — not just the last note.",
+  },
+  {
+    id: "ops",
+    label: "Operations",
+    title: "Find the record, not the haystack",
+    description: "Surface the service record, manual, and approval chain for any asset — connected across every system instead of searched ten times.",
+    pills: ["service records", "manuals", "approvals"],
+    example: "One asset, one connected view across every tool.",
+  },
+  {
+    id: "eng",
+    label: "Engineering",
+    title: "Resolve blockers with less disruption",
+    description: "Connect code, runbooks, and past incidents to get the decision and the reasoning behind it — without digging through wikis.",
+    pills: ["codebase", "runbooks", "incidents", "code reviews"],
+    example: '"Why did checkout fail last release?" → answered across services and past incidents.',
+  },
+  {
+    id: "hr",
+    label: "HR",
+    title: "Answer policy questions in your voice",
+    description: "Connect employees to policies, benefits, and people resources instantly — with the source and effective date attached.",
+    pills: ["policies", "benefits", "people data"],
+    example: "Fewer repeat questions; answers that cite the real document.",
+  },
+];
 
 export default function TeamSwitcher() {
-   const [activeKey, setActiveKey] = useState("support");
-   const items: TabsProps["items"] = teamTabs.map((team) => ({
-  key: team.key,
-  label: team.label,
-  children: (
-    <motion.div
-      key={activeKey}
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5 }}
-    >
+  const [activeTab, setActiveTab] = useState("support");
 
-    <Row gutter={[50, 32]} align="middle" style={{ marginTop: 10 }} className="gs-team-panel">
-      <Col xs={24} md={12}>
-        <Title level={3} style={{ fontSize: 25, marginBottom: 12 }}>{team.heading}</Title>
-        <Paragraph style={{ fontSize: 16.5, color: "var(--muted)" }}>{team.body}</Paragraph>
-        <Link href="#cta" style={{ color: "var(--teal-deep)", fontWeight: 700, marginTop: 14, display: "inline-flex" }}>
-          {team.ctaLabel}
-        </Link>
-      </Col>
-      <Col xs={24} md={12}>
-        <div className="gs-team-mock">
-          {team.pills.map((pill) => (
-            <Tag
-              key={pill}
-              style={{ fontSize: 12.5, fontWeight: 600, color: "var(--teal-deep)", background: "var(--teal-soft)", border: "none", borderRadius: 9, padding: "6px 12px", margin: "0 8px 10px 0" }}
-            >
-              {pill}
-            </Tag>
-          ))}
-          <Paragraph style={{ fontSize: 14, color: "var(--muted)", marginTop: 8 }}>
-            {team.example}
-          </Paragraph>
-        </div>
-      </Col>
-    </Row>
+  const currentTeam = teamsData.find((t) => t.id === activeTab) || teamsData[0];
 
-    </motion.div>
-  ),
-}));
   return (
-  <section className="gs-block" id="teams">
-    <div className="wrap">
-      <div className="gs-sec-center">
-        <div className="gs-eyebrow">For every team</div>
-        <Title level={2} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>Real value for every team, every day.</Title>
+    <section className="block alt gs-teams-section" id="teams" aria-labelledby="teams-h">
+      <div className="wrap">
+        <div className="sec-center">
+          <p className="eyebrow">For every team</p>
+          <h2 className="sec-h" id="teams-h">
+            Who uses Gsearch?
+          </h2>
+          <p className="answer">
+            Support, sales, operations, engineering, and HR teams all use Gsearch on the same connected knowledge. Each team sees answers drawn from the tools relevant to their work, filtered by the permissions they already hold.
+          </p>
+        </div>
+
+        {/* Tab switcher buttons */}
+        <div className="team-head" role="tablist" aria-label="Teams">
+          {teamsData.map((team) => (
+            <button
+              key={team.id}
+              className={`team-btn ${activeTab === team.id ? "active" : ""}`}
+              role="tab"
+              aria-selected={activeTab === team.id}
+              onClick={() => setActiveTab(team.id)}
+            >
+              {team.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Active Panel with Framer Motion Animation */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={currentTeam.id}
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -15 }}
+            transition={{ duration: 0.35, ease: "easeOut" }}
+            className="team-panel active"
+          >
+            <div className="team-panel-copy">
+              <h3>{currentTeam.title}</h3>
+              <p>{currentTeam.description}</p>
+              <a href="#cta" className="link">
+                Book a demo →
+              </a>
+            </div>
+
+            <div className="team-mock">
+              <div className="team-pills">
+                {currentTeam.pills.map((pill) => (
+                  <span className="pill" key={pill}>
+                    {pill}
+                  </span>
+                ))}
+              </div>
+              <p className="ex">{currentTeam.example}</p>
+            </div>
+          </motion.div>
+        </AnimatePresence>
       </div>
-      <Tabs  activeKey={activeKey}
-        onChange={setActiveKey} 
-        // defaultActiveKey="support" 
-        centered items={items} 
-        size="large" 
-        className="gs-team-tabs" />
-    </div>
-  </section>
+    </section>
   );
 }

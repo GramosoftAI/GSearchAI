@@ -45,7 +45,7 @@ export default function OnboardingTour({
     setMounted(true);
   }, []);
 
-  // Update target rect on intervals, window resize, or scroll to handle layout shifts dynamically
+  
   useEffect(() => {
     if (!isActive || !mounted || !step) {
       setTargetRect(null);
@@ -56,7 +56,7 @@ export default function OnboardingTour({
       const el = document.getElementById(step.targetId);
       if (el) {
         const rect = el.getBoundingClientRect();
-        // Only update if dimensions changed to avoid infinite re-renders
+        
         setTargetRect((prev) => {
           if (
             prev &&
@@ -70,7 +70,7 @@ export default function OnboardingTour({
           return rect;
         });
       } else {
-        // If element is not in DOM yet (e.g. waiting for selection), retry or keep null
+       
         setTargetRect(null);
       }
     };
@@ -87,12 +87,10 @@ export default function OnboardingTour({
     };
   }, [isActive, mounted, step, activeStep]);
 
-  // Position the popover and arrow relative to the target rect
   useEffect(() => {
     if (!targetRect || !step || !popoverRef.current) return;
 
     const popoverWidth = 320;
-    // Get actual layout height of the card
     const popoverHeight = popoverRef.current.getBoundingClientRect().height || 180;
     const offset = 16;
 
@@ -124,7 +122,6 @@ export default function OnboardingTour({
         break;
     }
 
-    // Constrain within viewport boundaries
     const padding = 16;
     if (left < padding) {
       left = padding;
@@ -138,7 +135,7 @@ export default function OnboardingTour({
       top = window.innerHeight - popoverHeight - padding;
     }
 
-    // Calculate Arrow position relative to the popover
+    
     let arrowLeft: React.CSSProperties["left"] = "50%";
     let arrowTop: React.CSSProperties["top"] = "auto";
     let arrowRight: React.CSSProperties["right"] = "auto";
@@ -146,7 +143,6 @@ export default function OnboardingTour({
 
     if (arrowDir === "up" || arrowDir === "down") {
       const calculatedArrowLeft = targetCenterX - left;
-      // Constrain arrow to popover bounds
       const arrowPadding = 24;
       arrowLeft = Math.max(arrowPadding, Math.min(popoverWidth - arrowPadding, calculatedArrowLeft));
       if (arrowDir === "up") {
@@ -201,10 +197,10 @@ export default function OnboardingTour({
 
   if (!isActive || !mounted || !step) return null;
 
-  // Render four overlay segments to create a clickable spotlight window
+ 
   const renderBackdrops = () => {
     if (!targetRect) {
-      // Fallback fullscreen overlay if target not visible/loaded
+      
       return (
         <div
           onClick={onClose}
@@ -227,11 +223,10 @@ export default function OnboardingTour({
     const l = targetRect.left;
     const h = targetRect.height;
     const w = targetRect.width;
-    const padding = 1;
+    // const padding = 1;
 
     return (
       <>
-        {/* Fullscreen click-to-close listener backdrop */}
         <div
           onClick={onClose}
           style={{
@@ -245,7 +240,7 @@ export default function OnboardingTour({
           }}
         />
 
-        {/* Dynamic Spotlight Overlay with theme color border #0fb5a1 */}
+        
         <div
           style={{
             position: "fixed",
@@ -283,7 +278,7 @@ export default function OnboardingTour({
     <>
       {renderBackdrops()}
 
-      {/* Guided Popover Card with glassmorphism styling */}
+     
       <div
         ref={popoverRef}
         style={popoverStyle}

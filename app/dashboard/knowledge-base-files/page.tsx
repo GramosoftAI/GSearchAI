@@ -247,7 +247,7 @@ export default function KnowledgeBaseFilesPage() {
     } catch (err) {
       console.error("Failed to fetch knowledge base files:", err);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeUserId, limit, offset, dateRange, selectedAgent, searchQuery]);
 
   // Debounce API calls for search query, and trigger on other filter updates immediately

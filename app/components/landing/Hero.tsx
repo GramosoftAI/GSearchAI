@@ -1,12 +1,12 @@
 "use client";
-import React, { useEffect, useRef, useState } from "react";
-import { Button, Space, Tag, Typography } from "antd";
+import { useEffect, useRef, useState } from "react";
+import { Button, Space,  Typography } from "antd";
 import { heroRotationItems } from "../lib/content";
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Paragraph } = Typography;
 
 const TYPE_SPEED_MS = 38;
-const ANSWER_DELAY_MS = 350;
+// const ANSWER_DELAY_MS = 350;
 const CYCLE_PAUSE_MS = 3600;
 const INITIAL_DELAY_MS = 2200;
 
@@ -59,7 +59,7 @@ export default function Hero() {
           return;
         }
 
-        // HTML-safe tag insertion: append the full tag instantly to prevent rendering broken tags
+        
         if (text[index] === "<") {
           const closingIndex = text.indexOf(">", index);
           if (closingIndex !== -1) {
@@ -75,7 +75,7 @@ export default function Hero() {
         }
 
         setAnswerHtml(currentText);
-      }, 15); // Slightly faster typing rate for answer text
+      }, 15); 
       timeoutsRef.current.push(iv);
     };
 
@@ -91,7 +91,6 @@ export default function Hero() {
           setIsSearching(false);
           
           typeInAnswer(item.a, () => {
-            // Display source citations and tags only after the answer typing has finished
             setSource(item.s);
             setTags(item.tags);
             
@@ -99,7 +98,7 @@ export default function Hero() {
             const next = setTimeout(cycle, CYCLE_PAUSE_MS);
             timeoutsRef.current.push(next);
           });
-        }, 800); // Wait in searching state before writing the answer
+        }, 800);
         timeoutsRef.current.push(t);
       });
     };
@@ -125,8 +124,8 @@ export default function Hero() {
             color:"var(--ink)"
           }}
         >
-          Meet your company's{" "}
-          <span style={{ color: "var(--teal-deep)" }}>second brain.</span>
+          Gsearch is your{" "}
+          <span style={{ color: "var(--teal-deep)" }}>second brain</span> at work
         </Title>
 
         <Paragraph
@@ -138,7 +137,7 @@ export default function Hero() {
             textAlign: "center",
           }}
         >
-          Gsearch connects every tool your team uses, remembers how everything relates, and answers any question instantly — so your team stops searching and starts knowing.
+          Gsearch is an AI search platform that connects every tool you use, understands how your information relates, and answers any question instantly with a citation on every answer. Start on your own in minutes, or roll it out to your whole company.
         </Paragraph>
 
         <Space size={14} wrap style={{ justifyContent: "center", display: "flex" }}>
@@ -172,19 +171,10 @@ export default function Hero() {
             Start for free
           </Button>
         </Space>
-
-        {/* <div className="gs-ratings">
-          <span className="r">
-            <Text strong style={{ color: "var(--ink)" }}>G2</Text>{" "}
-            <span className="stars" style={{ color: "var(--gold)" }}>★★★★★</span>{" "}
-            <Text style={{ color: "var(--muted)", fontSize: 14, fontWeight: 600 }}>4.7</Text>
-          </span>
-          <span className="r">
-            <Text strong style={{ color: "var(--ink)" }}>Capterra</Text>{" "}
-            <span className="stars" style={{ color: "var(--gold)" }}>★★★★★</span>{" "}
-            <Text style={{ color: "var(--muted)", fontSize: 14, fontWeight: 600 }}>5.0</Text>
-          </span>
-        </div> */}
+         <div className="ratings">
+          <span className="r"><strong>Cited answers</strong> on every response</span>
+          <span className="r"><strong>100+</strong> connected tools</span>
+        </div>
 
         <div className="gs-gradient-stage" aria-hidden="true">
           <div className="gs-search-card">
@@ -224,6 +214,11 @@ export default function Hero() {
             </div>
           </div>
         </div>
+        <p className="meta-dates">
+            Published <time dateTime="2026-07-30">30 July 2026</time> ·
+            Last updated <time dateTime="2026-07-30">30 July 2026</time> ·
+            By the <a href="/about">Gsearch team at Gramosoft</a>
+        </p>
       </div>
     </header>
   );

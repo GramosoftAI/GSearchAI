@@ -21,7 +21,6 @@ import { LuCloud } from "react-icons/lu";
 
 const { Title, Paragraph, Link } = Typography;
 
-// Custom logo for AssemblyAI (Purple striped circle logo)
 const AssemblyAILogo = ({ size = 32, ...props }: any) => (
   <svg viewBox="0 0 32 32" width={size} height={size} fill="none" {...props}>
     <circle cx="16" cy="16" r="15" fill="#f3ebff" />
@@ -32,7 +31,6 @@ const AssemblyAILogo = ({ size = 32, ...props }: any) => (
   </svg>
 );
 
-// Custom logo for Microsoft Fabric (Blue grid logo)
 const MicrosoftFabricLogo = ({ size = 32, ...props }: any) => (
   <svg viewBox="0 0 32 32" width={size} height={size} fill="none" {...props}>
     <rect x="4" y="4" width="10" height="10" rx="2.5" fill="#0078d4" />
@@ -67,9 +65,9 @@ export default function Connectors() {
     <div className="wrap">
       <div className="gs-sec-center">
         <div className="gs-eyebrow">100+ integrations</div>
-        <Title level={1} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>Gsearch connects to every tool your team uses.</Title>
-        <Paragraph className="gs-sec-lede" style={{fontSize:"18px"}}>
-          Set up in minutes, always current, with permissions that carry over automatically.
+        <Title level={1} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:900}}>Which tools does Gsearch connect to?</Title>
+        <Paragraph className="gs-sec-lede" style={{fontSize:"16px"}}>
+          Gsearch connects to more than 100 workplace apps, including document stores, chat platforms, ticketing systems, CRMs, and wikis. Setup takes minutes per tool, content stays current automatically, and the permissions already configured in each app carry over unchanged.
         </Paragraph>
       </div>
       <div className="gs-conn-grid" aria-hidden="true">

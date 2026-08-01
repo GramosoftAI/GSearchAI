@@ -660,25 +660,58 @@ export default function KnowledgeBasePage() {
 
     if (activeTab === 'pdf') {
       if (!selectedFile) { console.warn("No file selected"); return }
-      const formData = new FormData()
-      formData.append('agent_id', agent.id)
-      formData.append('agent_name', agent.name)
-      formData.append('file', selectedFile)
-      const res = await request({ data: formData, path: `/${agent.id}/sources/pdf`, isFormData: true, transformRequest: [(data: unknown) => data] }) as any
-      const jobId = res?.jobId || res?.job_id || res?.data?.jobId || res?.data?.job_id || res?.result?.jobId || res?.result?.job_id;
-      if (jobId) {
-        setActiveJobs(prev => [...prev, {
-          id: jobId,
-          name: selectedFile.name,
-          type: 'pdf',
+      const tempId = `temp_${Date.now()}`;
+      const fileName = selectedFile.name;
+      const fileToUpload = selectedFile;
+      setSelectedFile(null);
+
+      // Instantly show progress card at bottom
+      setActiveJobs(prev => [...prev, {
+        id: tempId,
+        name: fileName,
+        type: 'pdf',
+        progress: 5,
+        status: 'uploading'
+      }]);
+
+      const formData = new FormData();
+      formData.append('agent_id', agent.id);
+      formData.append('agent_name', agent.name);
+      formData.append('file', fileToUpload);
+
+      try {
+        const res = await request({ data: formData, path: `/${agent.id}/sources/pdf`, isFormData: true, transformRequest: [(data: unknown) => data] }) as any;
+        const jobId = res?.jobId || res?.job_id || res?.data?.jobId || res?.data?.job_id || res?.result?.jobId || res?.result?.job_id;
+
+        if (jobId) {
+          setActiveJobs(prev => prev.map(j => j.id === tempId ? {
+            id: jobId,
+            name: fileName,
+            type: 'pdf',
+            progress: 10,
+            status: 'processing'
+          } : j));
+        } else {
+          setActiveJobs(prev => prev.map(j => j.id === tempId ? {
+            ...j,
+            progress: 100,
+            status: 'completed'
+          } : j));
+          setTimeout(() => {
+            setActiveJobs(prev => prev.filter(j => j.id !== tempId));
+          }, 3000);
+        }
+      } catch (err) {
+        setActiveJobs(prev => prev.map(j => j.id === tempId ? {
+          ...j,
           progress: 0,
-          status: 'pending'
-        }]);
+          status: 'failed'
+        } : j));
       }
+
       await agentlist({
         path: `/agents/${agent.id}?limit=50&offset=0`,
       });
-      setSelectedFile(null)
       return
     }
 
