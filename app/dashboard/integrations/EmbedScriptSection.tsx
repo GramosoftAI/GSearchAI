@@ -77,6 +77,21 @@ const AVATAR_PRESET_INFO = "";
 const AVATAR_PRESET_BOOK = "";
 const AVATAR_PRESET_QUESTION = "";
 
+// Convert S3 logo URLs to backend proxy render URLs (S3 returns 403 Forbidden)
+const toProxyLogoUrl = (url: string): string => {
+  if (!url) return url;
+  const cleanUrl = url.split("?")[0];
+  const s3Match = cleanUrl.match(/amazonaws\.com\/grag\/logos\/(.+)/);
+  const proxyMatch = cleanUrl.match(/\/embed\/logo\/render\/(.+)/);
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "";
+  if (s3Match) {
+    return `${apiBase}/embed/logo/render/${s3Match[1]}`;
+  } else if (proxyMatch) {
+    return `${apiBase}/embed/logo/render/${proxyMatch[1]}`;
+  }
+  return url;
+};
+
 
 export default function EmbedScriptSection() {
   const { notification } = App.useApp();
@@ -171,21 +186,11 @@ export default function EmbedScriptSection() {
     return token;
   };
 
-  // Helper to resolve exact API Base URL
-  const getApiBaseUrl = (): string => {
-    const envUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
-    let base = (envUrl && envUrl.trim() ? envUrl : "http://192.168.31.62:4915/api/v1").trim().replace(/\/+$/, "");
-    if (!base.endsWith("/api/v1")) {
-      base = `${base}/api/v1`;
-    }
-    return base;
-  };
-
   // Fetch Stored Embed Customization (GET API)
   useEffect(() => {
     const fetchEmbedCustomization = async () => {
       try {
-        const baseUrl = getApiBaseUrl();
+        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
         const token = getAuthToken();
         const authHeader = token ? (token.startsWith("Bearer ") ? token : `Bearer ${token}`) : "";
 
@@ -200,8 +205,9 @@ export default function EmbedScriptSection() {
           const data = result.data ?? result;
           if (data) {
             if (data.logo_url) {
-              setHeaderLogo(data.logo_url);
-              setDraftHeaderLogo(data.logo_url);
+              const proxyUrl = toProxyLogoUrl(data.logo_url);
+              setHeaderLogo(proxyUrl);
+              setDraftHeaderLogo(proxyUrl);
             }
             if (typeof data.show_in_header === "boolean") {
               setShowInHeader(data.show_in_header);
@@ -344,7 +350,7 @@ export default function EmbedScriptSection() {
 
     // Call PUT /api/v1/embed/customization to persist backend configuration
     try {
-      const baseUrl = getApiBaseUrl();
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
       const token = getAuthToken();
       const authHeader = token ? (token.startsWith("Bearer ") ? token : `Bearer ${token}`) : "";
       const tenantId = localStorage.getItem("tenantId") || agentresp?.[0]?.tenant_id || "default_tenant";
@@ -353,7 +359,7 @@ export default function EmbedScriptSection() {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          ...(authHeader ? { Authorization: authHeader } : {})
+          Authorization: authHeader,
         },
         credentials: "include",
         body: JSON.stringify({
@@ -377,8 +383,9 @@ export default function EmbedScriptSection() {
         const data = result.data ?? result;
         if (data) {
           if (data.logo_url) {
-            setHeaderLogo(data.logo_url);
-            setDraftHeaderLogo(data.logo_url);
+            const proxyUrl = toProxyLogoUrl(data.logo_url);
+            setHeaderLogo(proxyUrl);
+            setDraftHeaderLogo(proxyUrl);
           }
           if (typeof data.show_in_header === "boolean") {
             setShowInHeader(data.show_in_header);
@@ -440,7 +447,7 @@ export default function EmbedScriptSection() {
     formData.append("logo", file);
 
     const token = getAuthToken();
-    const apiBase = getApiBaseUrl();
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL;
     const tenantId = localStorage.getItem("tenantId") || agentresp?.[0]?.tenant_id || "default_tenant";
 
     const headers: Record<string, string> = {};
@@ -459,7 +466,7 @@ export default function EmbedScriptSection() {
       response.data?.url ||
       response.data?.image_url;
 
-    if (logoUrl) return logoUrl;
+    if (logoUrl) return toProxyLogoUrl(logoUrl);
     throw new Error("logo_url not returned by backend logo upload API");
   };
 
@@ -484,7 +491,7 @@ export default function EmbedScriptSection() {
       setDraftShowInEmbed(targetShowEmbed);
 
       try {
-        const apiBase = getApiBaseUrl();
+        const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL;
         const token = getAuthToken();
         const authHeader = token ? (token.startsWith("Bearer ") ? token : `Bearer ${token}`) : "";
         const tenantId = localStorage.getItem("tenantId") || agentresp?.[0]?.tenant_id || "default_tenant";
@@ -520,8 +527,8 @@ export default function EmbedScriptSection() {
       if (target === "buttonIcon") setDraftButtonIcon(fallbackUrl);
 
       notification.info({
-        message: "Image Selected (Preview Mode)",
-        description: "Local preview updated.",
+        message: "Image Selected",
+        description: "",
         placement: "topRight",
       });
     } finally {

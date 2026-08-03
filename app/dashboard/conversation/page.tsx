@@ -376,6 +376,46 @@ function getFileName(sourceUrlOrName: string | any): string {
   }
 }
 
+function getCleanSourceName(rawName: string): string {
+  if (!rawName) return "";
+  let cleaned = rawName;
+  cleaned = cleaned.replace(/^text source:\s*/i, "").trim();
+  
+  if (cleaned.startsWith("http://") || cleaned.startsWith("https://")) {
+    if (cleaned.endsWith("...")) {
+      return cleaned;
+    }
+    const parts = cleaned.split(/[/\\]/);
+    const lastPart = parts[parts.length - 1] || cleaned;
+    if (lastPart.length > 3) return lastPart;
+    return cleaned;
+  }
+  
+  if (cleaned.includes("/") || cleaned.includes("\\")) {
+    const parts = cleaned.split(/[/\\]/);
+    cleaned = parts[parts.length - 1] || cleaned;
+  }
+  return cleaned.replace(/^(pdf|doc|docx|csv|xlsx|image|img|txt):\s*/i, "").trim();
+}
+
+function getCleanFileName(src: any): string {
+  if (!src) return "";
+  const rawName = src.name || src.file_name || src.s3_path || src.source || "Source";
+  return getCleanSourceName(rawName);
+}
+
+function deduplicateSources(sources: any[]): any[] {
+  if (!sources || !Array.isArray(sources)) return [];
+  const seen = new Set<string>();
+  return sources.filter((src) => {
+    const cleanName = getCleanFileName(src).toLowerCase().trim();
+    if (!cleanName) return false;
+    if (seen.has(cleanName)) return false;
+    seen.add(cleanName);
+    return true;
+  });
+}
+
 // Classify a source by its extension / URL pattern
 // If the source object has a kb_id it's always a downloadable file (clickable)
 function getSourceType(source: string, kb_id?: string): 'url' | 'pdf' | 'excel' | 'csv' | 'image' | 'text' {
@@ -396,19 +436,40 @@ function extractCitedFilenames(text: string): string[] {
   const filenames = new Set<string>();
   let match;
   while ((match = regex.exec(text)) !== null) {
-    let sourceStr = match[1].trim();
-    // Extract anything that looks like a filename (e.g. file.pdf, file name.docx)
-    const fileMatches = sourceStr.match(/[a-zA-Z0-9_\\-\\s]+\\.[a-zA-Z0-9]+/g);
-    if (fileMatches && fileMatches.length > 0) {
-      fileMatches.forEach(f => filenames.add(getFileName(f.trim()).toLowerCase()));
-    } else {
-      if (sourceStr.includes(" - Position")) {
-        sourceStr = sourceStr.split(" - Position")[0].trim();
+    const rawCitation = match[1];
+    const parts = rawCitation.split(",");
+    parts.forEach(p => {
+      let partClean = p.trim();
+      if (partClean.includes(" - Position")) {
+        partClean = partClean.split(" - Position")[0].trim();
       }
-      filenames.add(getFileName(sourceStr).toLowerCase());
-    }
+      if (partClean) {
+        filenames.add(partClean.toLowerCase());
+      }
+    });
   }
   return Array.from(filenames);
+}
+
+function matchesCitation(src: any, citedFilenames: string[]): boolean {
+  if (citedFilenames.length === 0) return false;
+  const candidates = [
+    src.name,
+    src.file_name,
+    src.s3_path,
+    src.source
+  ].filter(Boolean).map(val => String(val).toLowerCase());
+
+  return candidates.some(candidate => {
+    let cleanCandidate = candidate;
+    if (cleanCandidate.includes("/") || cleanCandidate.includes("\\")) {
+      const parts = cleanCandidate.split(/[/\\]/);
+      cleanCandidate = parts[parts.length - 1] || cleanCandidate;
+    }
+    cleanCandidate = cleanCandidate.replace(/^(pdf|doc|docx|csv|xlsx|image|img|txt):\s*/i, "").trim();
+    if (!cleanCandidate) return false;
+    return citedFilenames.some(cf => cleanCandidate.includes(cf) || cf.includes(cleanCandidate));
+  });
 }
 
 function stripThinking(content: string): string {
@@ -1182,15 +1243,7 @@ export default function ChatPlaygroundPage() {
           const citedFilenames = extractCitedFilenames(accumulated);
           let finalSources: SourceMetadata[] = [];
           if (wsSourcesRef.current.length > 0) {
-            // Filter wsSourcesRef: keep it if the AI mentioned the filename ANYWHERE, or if it matched the extraction
-            const matchedSources = wsSourcesRef.current.filter(src => {
-              if (!src.source) return false;
-              const srcName = getFileName(src.source).toLowerCase();
-              if (!srcName) return false;
-              const inText = accumulated.toLowerCase().includes(srcName);
-              const inCitations = citedFilenames.some(cf => srcName.includes(cf) || cf.includes(srcName));
-              return inText || inCitations;
-            });
+            const matchedSources = wsSourcesRef.current.filter((src: any) => matchesCitation(src, citedFilenames));
 
             // If we found specific matches, use them. Else, fallback to all backend sources.
             if (matchedSources.length > 0) {
@@ -1650,7 +1703,7 @@ export default function ChatPlaygroundPage() {
 
     let kbId = src.kb_id;
     if (!kbId && currentSources.length > 0) {
-      const fname = getFileName(src.source).toLowerCase();
+      const fname = getCleanFileName(src).toLowerCase();
       const matched = currentSources.find(as => {
         const asName = (as.name || as.source || as.filename || '').toLowerCase();
         return asName.includes(fname) || fname.includes(asName) || cleanCompare(asName, fname);
@@ -1680,7 +1733,7 @@ export default function ChatPlaygroundPage() {
     if (kbId) {
       try {
         const blobUrl = await getFilePreview(kbId);
-        const filename = getFileName(src.source);
+        const filename = getCleanFileName(src);
         const fullSourceStr = `${src.source || ''} ${src.name || ''} ${src.file_name || ''} ${src.title || ''} ${src.s3_path || ''} ${src.url || ''} ${filename}`.toLowerCase();
 
         // 1. Fetch blob to determine content type and parse binary spreadsheets
@@ -2422,6 +2475,32 @@ export default function ChatPlaygroundPage() {
 
   return (
     <div className="h-[calc(100vh-96px)] w-full flex bg-[var(--app-surface)] antialiased selection:bg-[#0fb5a1] selection:text-white overflow-hidden relative">
+      <style>{`
+        @keyframes blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
+        }
+        .typing-cursor {
+          display: inline-block;
+          animation: blink 1s infinite;
+          vertical-align: middle;
+          font-size: 14px;
+        }
+        @keyframes bounce {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-4px); }
+        }
+        .typing-dot {
+          display: inline-block;
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background-color: currentColor;
+          animation: bounce 1.4s infinite ease-in-out;
+        }
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+      `}</style>
       {/* Desktop Left Sidebar */}
       {screen.md && (
         <div
@@ -2606,38 +2685,40 @@ export default function ChatPlaygroundPage() {
                                 <FiRotateCw size={16} strokeWidth={2} />
                               </button>
                             </Tooltip>
-                            {showSources && msg.sources && msg.sources.length > 0 && (
-                              <div className="ml-auto flex items-center">
-                                {msg.sources.length === 1 ? (
-                                  <button
-                                    onClick={() => handleOpenSource(msg.sources![0])}
-                                    className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0"
-                                  >
-                                    {/* <LuBookOpen size={16} strokeWidth={2} /> */}
-                                    <SiCrowdsource />
-                                    <span>Source</span>
-                                  </button>
-                                ) : (
-                                  <Dropdown
-                                    menu={{
-                                      items: msg.sources.map((src: any, idx: number) => ({
-                                        key: idx.toString(),
-                                        label: getFileName(src.source),
-                                        onClick: () => handleOpenSource(src),
-                                      })),
-                                    }}
-                                    placement="bottomLeft"
-                                    trigger={['click']}
-                                  >
-                                    <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0">
-                                      {/* <LuBookOpen size={16} strokeWidth={2} /> */}
+                            {(() => {
+                              const uniqueSources = deduplicateSources(msg.sources || []);
+                              if (!showSources || uniqueSources.length === 0 || msg.content?.includes("Something went wrong") || msg.content?.includes("trouble connecting")) return null;
+                              return (
+                                <div className="ml-auto flex items-center">
+                                  {uniqueSources.length === 1 ? (
+                                    <button
+                                      onClick={() => handleOpenSource(uniqueSources[0])}
+                                      className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0"
+                                    >
                                       <SiCrowdsource />
-                                      <span>Sources</span>
+                                      <span>Source</span>
                                     </button>
-                                  </Dropdown>
-                                )}
-                              </div>
-                            )}
+                                  ) : (
+                                    <Dropdown
+                                      menu={{
+                                        items: uniqueSources.map((src: any, idx: number) => ({
+                                          key: idx.toString(),
+                                          label: getCleanFileName(src),
+                                          onClick: () => handleOpenSource(src),
+                                        })),
+                                      }}
+                                      placement="bottomLeft"
+                                      trigger={['click']}
+                                    >
+                                      <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0">
+                                        <SiCrowdsource />
+                                        <span>Sources</span>
+                                      </button>
+                                    </Dropdown>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </>
                         )}
                       </div>

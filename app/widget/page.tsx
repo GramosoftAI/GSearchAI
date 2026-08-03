@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, Suspense } from "react";
+import { useCallback, useEffect, useRef, useState, Suspense, useMemo } from "react";
 import { FaBrain } from "react-icons/fa";
 import { SiCrowdsource } from "react-icons/si";
 
@@ -38,6 +38,82 @@ function stripThinking(content: string): string {
     cleaned = cleaned.substring(0, openThinkIndex);
   }
   return cleaned;
+}
+
+function getCitedFilenames(text: string): string[] {
+  const regex = /(?:\[Source:\s*|\(Source:\s*)([^\]\)]+)[\]\)]/gi;
+  const filenames: string[] = [];
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const rawCitation = match[1];
+    const parts = rawCitation.split(",");
+    parts.forEach(p => {
+      let partClean = p.trim();
+      if (partClean.includes(" - Position")) {
+        partClean = partClean.split(" - Position")[0].trim();
+      }
+      if (partClean) {
+        filenames.push(partClean.toLowerCase());
+      }
+    });
+  }
+  return filenames;
+}
+
+function matchesCitation(src: any, citedFilenames: string[]): boolean {
+  if (citedFilenames.length === 0) return false;
+  const candidates = [
+    src.name,
+    src.file_name,
+    src.s3_path,
+    src.source
+  ].filter(Boolean).map(val => String(val).toLowerCase());
+
+  return candidates.some(candidate => {
+    let cleanCandidate = candidate;
+    if (cleanCandidate.includes("/") || cleanCandidate.includes("\\")) {
+      const parts = cleanCandidate.split(/[/\\]/);
+      cleanCandidate = parts[parts.length - 1] || cleanCandidate;
+    }
+    cleanCandidate = cleanCandidate.replace(/^(pdf|doc|docx|csv|xlsx|image|img|txt):\s*/i, "").trim();
+    if (!cleanCandidate) return false;
+    return citedFilenames.some(cf => cleanCandidate.includes(cf) || cf.includes(cleanCandidate));
+  });
+}
+
+function getCleanSourceName(rawName: string): string {
+  if (!rawName) return "";
+  let cleaned = rawName;
+  cleaned = cleaned.replace(/^text source:\s*/i, "").trim();
+  
+  if (cleaned.startsWith("http://") || cleaned.startsWith("https://")) {
+    if (cleaned.endsWith("...")) {
+      return cleaned;
+    }
+    const parts = cleaned.split(/[/\\]/);
+    const lastPart = parts[parts.length - 1] || cleaned;
+    if (lastPart.length > 3) return lastPart;
+    return cleaned;
+  }
+  
+  if (cleaned.includes("/") || cleaned.includes("\\")) {
+    const parts = cleaned.split(/[/\\]/);
+    cleaned = parts[parts.length - 1] || cleaned;
+  }
+  return cleaned.replace(/^(pdf|doc|docx|csv|xlsx|image|img|txt):\s*/i, "").trim();
+}
+
+function deduplicateSources(sources: SourceItem[]): SourceItem[] {
+  if (!sources || !Array.isArray(sources)) return [];
+  const seen = new Set<string>();
+  return sources.filter((src) => {
+    const rawName = src.name || src.source || src.file_name || src.s3_path || "";
+    const cleanName = getCleanSourceName(rawName).toLowerCase().trim();
+    if (!cleanName) return false;
+    if (seen.has(cleanName)) return false;
+    seen.add(cleanName);
+    return true;
+  });
 }
 
 const renderBoldText = (text: string, key: any, isUser: boolean) => {
@@ -507,6 +583,40 @@ function WidgetContent() {
   const [input, setInput] = useState("");
   const [wsStatus, setWsStatus] = useState<"connecting" | "open" | "closed" | "error">("closed");
   const [isTyping, setIsTyping] = useState(false);
+  const isTypingRef = useRef(false);
+  useEffect(() => {
+    isTypingRef.current = isTyping;
+  }, [isTyping]);
+
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const resetTypingTimeout = useCallback(() => {
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+  }, []);
+
+  const startTypingTimeout = useCallback(() => {
+    resetTypingTimeout();
+    typingTimeoutRef.current = setTimeout(() => {
+      if (isTypingRef.current) {
+        setIsTyping(false);
+        isTypingRef.current = false;
+        const friendlyError = "Something went wrong. Please try again later.";
+        setMessages((prev) => {
+          const lastMsg = prev[prev.length - 1];
+          if (lastMsg && lastMsg.role === "assistant") {
+            if (!lastMsg.content) {
+              return [...prev.slice(0, -1), { ...lastMsg, content: friendlyError }];
+            }
+            return prev;
+          }
+          return [...prev, { role: "assistant", content: friendlyError }];
+        });
+      }
+    }, 15000); // 15 seconds timeout
+  }, [resetTypingTimeout]);
 
   const getApiBaseUrl = (): string => {
     let raw = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASES_URL || "http://192.168.31.62:4915/api/v1";
@@ -532,7 +642,25 @@ function WidgetContent() {
     return `${rootBase}${urlStr.startsWith("/") ? "" : "/"}${urlStr}`;
   };
 
-  const [customizationLogoUrl, setCustomizationLogoUrl] = useState<string>(headerLogo || "");
+  const toProxyUrl = useCallback((url: string): string => {
+    if (!url) return url;
+    const cleanUrl = url.split("?")[0];
+    const s3Match = cleanUrl.match(/amazonaws\.com\/grag\/logos\/(.+)/);
+    const proxyMatch = cleanUrl.match(/\/embed\/logo\/render\/(.+)/);
+    const baseUrl = getApiBaseUrl();
+    if (s3Match) {
+      return `${baseUrl}/embed/logo/render/${s3Match[1]}`;
+    } else if (proxyMatch) {
+      return `${baseUrl}/embed/logo/render/${proxyMatch[1]}`;
+    }
+    return url;
+  }, []);
+
+  const resolvedHeaderLogo = useMemo(() => toProxyUrl(headerLogo), [headerLogo, toProxyUrl]);
+  const resolvedBotAvatar = useMemo(() => toProxyUrl(botAvatar), [botAvatar, toProxyUrl]);
+  const resolvedButtonIcon = useMemo(() => toProxyUrl(buttonIcon), [buttonIcon, toProxyUrl]);
+
+  const [customizationLogoUrl, setCustomizationLogoUrl] = useState<string>(resolvedHeaderLogo || "");
   const [showInHeader, setShowInHeader] = useState<boolean>(true);
   const [showInChat, setShowInChat] = useState<boolean>(true);
   const [showInEmbed, setShowInEmbed] = useState<boolean>(false);
@@ -547,7 +675,9 @@ function WidgetContent() {
           const result = await res.json();
           const data = result.data ?? result;
           if (data) {
-            if (data.logo_url) setCustomizationLogoUrl(data.logo_url);
+            if (data.logo_url) {
+              setCustomizationLogoUrl(toProxyUrl(data.logo_url));
+            }
             if (typeof data.show_in_header === "boolean") setShowInHeader(data.show_in_header);
             if (typeof data.show_in_chat === "boolean") setShowInChat(data.show_in_chat);
             if (typeof data.show_in_embed === "boolean") setShowInEmbed(data.show_in_embed);
@@ -920,12 +1050,13 @@ function WidgetContent() {
         if (query) {
           bufferRef.current = "";
           setMessages((prev) => [...prev, { role: "user", content: query }]);
-          setIsTyping(true);
-          if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-            ws.current.send(JSON.stringify({ message: query, query: query, embed: true }));
-          } else {
-            pendingQueryRef.current = query;
-          }
+           setIsTyping(true);
+           startTypingTimeout();
+           if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+             ws.current.send(JSON.stringify({ message: query, query: query, embed: true, is_embed: true }));
+           } else {
+             pendingQueryRef.current = query;
+           }
         }
       }
     };
@@ -949,6 +1080,16 @@ function WidgetContent() {
         }
         .line-anim {
           animation: lineFadeIn 0.3s ease-out forwards;
+        }
+        @keyframes blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
+        }
+        .typing-cursor {
+          display: inline-block;
+          animation: blink 1s infinite;
+          vertical-align: middle;
+          font-size: 14px;
         }
       `;
       document.head.appendChild(style);
@@ -978,7 +1119,8 @@ function WidgetContent() {
       if (pendingQuery) {
         pendingQueryRef.current = "";
         initialQuerySentRef.current = true;
-        socket.send(JSON.stringify({ message: pendingQuery, query: pendingQuery, embed: true }));
+        startTypingTimeout();
+        socket.send(JSON.stringify({ message: pendingQuery, query: pendingQuery, embed: true, is_embed: true }));
         return;
       }
 
@@ -987,7 +1129,8 @@ function WidgetContent() {
         initialQuerySentRef.current = true;
         setMessages((prev) => [...prev, { role: "user", content: initialQuery }]);
         setIsTyping(true);
-        socket.send(JSON.stringify({ message: initialQuery, query: initialQuery, embed: true }));
+        startTypingTimeout();
+        socket.send(JSON.stringify({ message: initialQuery, query: initialQuery, embed: true, is_embed: true }));
       }
     };
 
@@ -995,6 +1138,8 @@ function WidgetContent() {
       try {
         const data = JSON.parse(event.data);
 
+        // Reset inactivity timer on every message chunk received
+        startTypingTimeout();
 
         if (data.type === "start") {
           setIsTyping(true);
@@ -1012,8 +1157,12 @@ function WidgetContent() {
         }
 
         if ((data.type === "sources" || data.sources || data.source_documents) && (data.sources || data.source_documents)) {
-          const rawSources = Array.isArray(data.sources) ? data.sources : Array.isArray(data.source_documents) ? data.source_documents : [];
-          if (rawSources.length > 0) {
+          // Handle nested formats: {sources: [...]}, {sources: {data: [...]}}, {source_documents: [...]}
+          let rawSources = data.sources || data.source_documents;
+          if (rawSources && !Array.isArray(rawSources)) {
+            rawSources = Array.isArray(rawSources.data) ? rawSources.data : [];
+          }
+          if (Array.isArray(rawSources) && rawSources.length > 0) {
             setMessages((prev) => {
               const lastMsg = prev[prev.length - 1];
               if (lastMsg && lastMsg.role === "assistant") {
@@ -1027,6 +1176,7 @@ function WidgetContent() {
         if (data.type === "content" && data.delta) {
           if (data.delta.includes("LLM streaming failed") || data.delta.startsWith("Error:")) {
             setIsTyping(false);
+            resetTypingTimeout();
             const friendlyError = "Sorry, I am having trouble connecting to the AI model right now. Please try again in a moment.";
             setMessages((prev) => {
               const lastMsg = prev[prev.length - 1];
@@ -1064,10 +1214,21 @@ function WidgetContent() {
           setIsTyping(true);
           setMessages((prev) => {
             const lastMsg = prev[prev.length - 1];
-            const backendSources = data.sources || data.source_documents || (lastMsg ? lastMsg.sources : undefined);
-            const finalSources = (backendSources && backendSources.length > 0)
+            const backendSources = data.sources || data.source_documents;
+            const existingSources = lastMsg?.sources;
+            // Priority: backend sources from this delta > existing sources from 'sources' event > inline citations
+            let finalSources = (backendSources && backendSources.length > 0)
               ? backendSources
-              : (extractedCitations.length > 0 ? extractedCitations : (lastMsg?.sources || undefined));
+              : (existingSources && existingSources.length > 0)
+                ? existingSources
+                : (extractedCitations.length > 0 ? extractedCitations : undefined);
+
+            if (finalSources && finalSources.length > 0) {
+              const citedFilenames = getCitedFilenames(rawStream);
+              if (citedFilenames.length > 0) {
+                finalSources = finalSources.filter((src: any) => matchesCitation(src, citedFilenames));
+              }
+            }
 
             if (lastMsg && lastMsg.role === "assistant") {
               return [
@@ -1082,16 +1243,47 @@ function WidgetContent() {
 
         if (data.type === "done" || data.type === "end") {
           setIsTyping(false);
+          resetTypingTimeout();
         }
       } catch (err) {
         setIsTyping(false);
+        resetTypingTimeout();
         const text = String(event.data);
         setMessages((prev) => [...prev, { role: "assistant", content: text }]);
       }
     };
 
-    socket.onclose = () => { setWsStatus("closed"); setIsTyping(false); };
-    socket.onerror = () => { setWsStatus("error"); setIsTyping(false); };
+    socket.onclose = () => {
+      setWsStatus("closed");
+      resetTypingTimeout();
+      if (isTypingRef.current && !bufferRef.current) {
+        const friendlyError = "Something went wrong. Please try again later.";
+        setMessages((prev) => {
+          const lastMsg = prev[prev.length - 1];
+          if (lastMsg && lastMsg.role === "assistant") {
+            return [...prev.slice(0, -1), { ...lastMsg, content: friendlyError }];
+          }
+          return [...prev, { role: "assistant", content: friendlyError }];
+        });
+      }
+      setIsTyping(false);
+    };
+
+    socket.onerror = () => {
+      setWsStatus("error");
+      resetTypingTimeout();
+      if (isTypingRef.current && !bufferRef.current) {
+        const friendlyError = "Something went wrong. Please try again later.";
+        setMessages((prev) => {
+          const lastMsg = prev[prev.length - 1];
+          if (lastMsg && lastMsg.role === "assistant") {
+            return [...prev.slice(0, -1), { ...lastMsg, content: friendlyError }];
+          }
+          return [...prev, { role: "assistant", content: friendlyError }];
+        });
+      }
+      setIsTyping(false);
+    };
   }, [agentId, tenantId, searchParams]);
 
   useEffect(() => {
@@ -1105,7 +1297,8 @@ function WidgetContent() {
     bufferRef.current = ""; // reset old response
     setMessages((prev) => [...prev, { role: "user", content: message }]);
     setIsTyping(true);
-    ws.current?.send(JSON.stringify({ message: message, query: message, embed: true }));
+    startTypingTimeout();
+    ws.current?.send(JSON.stringify({ message: message, query: message, embed: true, is_embed: true }));
     setInput("");
   };
 
@@ -1228,9 +1421,9 @@ function WidgetContent() {
             width: "100%",
             justifyContent: headerAlign === "center" ? "center" : "flex-start"
           }}>
-            {showInHeader && (customizationLogoUrl || headerLogo) ? (
+            {showInHeader && (customizationLogoUrl || resolvedHeaderLogo) ? (
               <div style={{ height: "36px", display: "flex", alignItems: "center" }}>
-                <img src={customizationLogoUrl || headerLogo} alt="Header Logo" style={{ maxHeight: "36px", maxWidth: "120px", objectFit: "contain" }} />
+                <img src={customizationLogoUrl || resolvedHeaderLogo} alt="Header Logo" style={{ maxHeight: "36px", maxWidth: "120px", objectFit: "contain" }} />
               </div>
             ) : (
               <div style={{
@@ -1316,7 +1509,7 @@ function WidgetContent() {
                     {showInChat && customizationLogoUrl ? (
                       <img src={customizationLogoUrl} alt="Bot Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     ) : (
-                      renderBotAvatar(botAvatar, themeColor)
+                      renderBotAvatar(resolvedBotAvatar, themeColor)
                     )}
                   </div>
                 )}
@@ -1347,7 +1540,20 @@ function WidgetContent() {
                       wordBreak: "break-word",
                     }}
                   >
-                    {renderFormattedContent(msg.content, isUser, themeColor, linkSafety ? (url) => setSafetyModalUrl(url) : undefined)}
+                    {!isUser && msg.content === "" && isTyping ? (
+                      <div style={{ display: "flex", gap: "4px" }}>
+                        <span className="typing-dot"></span>
+                        <span className="typing-dot"></span>
+                        <span className="typing-dot"></span>
+                      </div>
+                    ) : (
+                      <>
+                        {renderFormattedContent(msg.content, isUser, themeColor, linkSafety ? (url) => setSafetyModalUrl(url) : undefined)}
+                        {!isUser && isTyping && index === messages.length - 1 && (
+                          <span className="typing-cursor" style={{ color: themeColor, marginLeft: "4px" }}>▋</span>
+                        )}
+                      </>
+                    )}
                   </div>
 
                   {/* Action Toolbar: Copy, Thumbs Up, Thumbs Down, Regenerate, Source (Far Right) */}
@@ -1423,16 +1629,23 @@ function WidgetContent() {
                         </>
                       )}
 
-                      {/* 4. Regenerate Button */}
-                      <button
-                        onClick={() => {
-                          const prevUserMsg = messages.slice(0, index).reverse().find(m => m.role === "user");
-                          if (prevUserMsg && ws.current && ws.current.readyState === WebSocket.OPEN) {
-                            bufferRef.current = "";
-                            setIsTyping(true);
-                            ws.current.send(JSON.stringify({ message: prevUserMsg.content, query: prevUserMsg.content, embed: true }));
-                          }
-                        }}
+                       <button
+                         onClick={() => {
+                           const prevUserMsg = messages.slice(0, index).reverse().find(m => m.role === "user");
+                           if (prevUserMsg && ws.current && ws.current.readyState === WebSocket.OPEN) {
+                             bufferRef.current = "";
+                             setIsTyping(true);
+                             startTypingTimeout();
+                             setMessages((prev) => {
+                               const updated = [...prev];
+                               if (updated[index]) {
+                                 updated[index] = { ...updated[index], content: "", sources: undefined };
+                               }
+                               return updated;
+                             });
+                             ws.current.send(JSON.stringify({ message: prevUserMsg.content, query: prevUserMsg.content, embed: true, is_embed: true }));
+                           }
+                         }}
                         style={{
                           background: "transparent",
                           border: "none",
@@ -1450,10 +1663,10 @@ function WidgetContent() {
                       </button>
 
                       {/* 5. Source Link Button (Only when msg.sources has items) */}
-                      {displaySources && msg.sources && msg.sources.length > 0 && (
+                      {displaySources && msg.sources && msg.sources.length > 0 && !msg.content.includes("Something went wrong") && !msg.content.includes("trouble connecting") && (
                         <div style={{ position: "relative", display: "flex", alignItems: "center", marginLeft: "25px" }}>
                           {(() => {
-                            const effectiveSources = msg.sources || [];
+                            const effectiveSources = deduplicateSources(msg.sources);
                             const hasMultiple = effectiveSources.length > 1;
 
                             return (
@@ -1497,27 +1710,35 @@ function WidgetContent() {
                                       position: "absolute",
                                       bottom: "100%",
                                       left: 0,
-                                      marginBottom: "6px",
-                                      background: "#ffffff",
-                                      border: "1px solid #e2e8f0",
-                                      borderRadius: "10px",
-                                      boxShadow: "0 10px 25px rgba(0,0,0,0.15)",
-                                      padding: "4px 0",
+                                      marginBottom: "8px",
+                                      background: "rgba(255, 255, 255, 0.95)",
+                                      backdropFilter: "blur(12px)",
+                                      WebkitBackdropFilter: "blur(12px)",
+                                      border: "1px solid rgba(226, 232, 240, 0.8)",
+                                      borderRadius: "14px",
+                                      boxShadow: "0 12px 30px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.03)",
+                                      padding: "6px 0",
                                       zIndex: 999,
-                                      minWidth: "160px",
-                                      maxWidth: "240px"
+                                      minWidth: "180px",
+                                      maxWidth: "260px",
+                                      animation: "lineFadeIn 0.2s ease-out"
                                     }}
                                   >
-                                    <div style={{ padding: "4px 10px", fontSize: "10px", fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", borderBottom: "1px solid #f1f5f9" }}>
+                                    <div style={{
+                                      padding: "6px 12px",
+                                      fontSize: "9px",
+                                      fontWeight: "800",
+                                      color: "#94a3b8",
+                                      letterSpacing: "0.05em",
+                                      textTransform: "uppercase",
+                                      borderBottom: "1px solid #f1f5f9",
+                                      marginBottom: "4px"
+                                    }}>
                                       Cited Sources ({effectiveSources.length})
                                     </div>
                                     {effectiveSources.map((src, sIdx) => {
-                                      let rawName = src.name || src.source || src.file_name || src.s3_path || `Source ${sIdx + 1}`;
-                                      if (rawName.includes("/") || rawName.includes("\\")) {
-                                        const parts = rawName.split(/[/\\]/);
-                                        rawName = parts[parts.length - 1] || rawName;
-                                      }
-                                      const cleanName = rawName.replace(/^(pdf|doc|docx|csv|xlsx|image|img|txt):\s*/i, "");
+                                      const rawName = src.name || src.source || src.file_name || src.s3_path || `Source ${sIdx + 1}`;
+                                      const cleanName = getCleanSourceName(rawName);
 
                                       return (
                                         <div
@@ -1530,18 +1751,37 @@ function WidgetContent() {
                                           style={{
                                             padding: "6px 12px",
                                             fontSize: "11px",
-                                            color: "#0f172a",
+                                            color: "#334155",
                                             fontWeight: "600",
                                             cursor: "pointer",
                                             display: "flex",
                                             alignItems: "center",
-                                            gap: "6px",
-                                            transition: "background 0.15s"
+                                            gap: "8px",
+                                            borderRadius: "8px",
+                                            margin: "2px 6px",
+                                            transition: "all 0.15s ease-in-out"
                                           }}
-                                          onMouseEnter={(e) => (e.currentTarget.style.background = "#f0f9ff")}
-                                          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                                          onMouseEnter={(e) => {
+                                            e.currentTarget.style.background = "#eff6ff";
+                                            e.currentTarget.style.color = "#3b82f6";
+                                          }}
+                                          onMouseLeave={(e) => {
+                                            e.currentTarget.style.background = "transparent";
+                                            e.currentTarget.style.color = "#334155";
+                                          }}
                                         >
-                                          <span style={{ color: "#0066cc" }}>📄</span>
+                                          <div style={{
+                                            width: "22px",
+                                            height: "22px",
+                                            borderRadius: "5px",
+                                            background: "#eff6ff",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            flexShrink: 0
+                                          }}>
+                                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                          </div>
                                           <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cleanName}</span>
                                         </div>
                                       );
@@ -1563,13 +1803,17 @@ function WidgetContent() {
           {/* Typing Indicator (Only when waiting for first token) */}
           {isTyping && (!messages.length || messages[messages.length - 1].role === "user") && (
             <div style={{ display: "flex", gap: "8px", alignItems: "flex-start", width: "100%" }}>
-              {botAvatar && botAvatar !== "none" && (
+              {showInChat && (customizationLogoUrl || (resolvedBotAvatar && resolvedBotAvatar !== "none")) && (
                 <div style={{
                   width: "28px", height: "28px", borderRadius: "50%", background: themeColor,
                   display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
                   flexShrink: 0, marginTop: "16px"
                 }}>
-                  {renderBotAvatar(botAvatar, themeColor)}
+                  {showInChat && customizationLogoUrl ? (
+                    <img src={customizationLogoUrl} alt="Bot Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : (
+                    renderBotAvatar(resolvedBotAvatar, themeColor)
+                  )}
                 </div>
               )}
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
