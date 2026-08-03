@@ -342,6 +342,7 @@ async def init_rls_policies():
         "document_entities",
         "document_sections",
         "document_ingestion_runs",
+        "widget_customizations",
     ]
 
 
@@ -596,6 +597,7 @@ async def verify_rls_enabled():
         "document_entities",
         "document_sections",
         "document_ingestion_runs",
+        "widget_customizations",
      ]
 
 
@@ -730,6 +732,7 @@ async def init_db():
 
         from ..modules.connectors.google.models import GmailMessage, GmailSyncState
         from ..modules.jobs.models import ProcessingJob
+        from ..modules.Embed.models import WidgetCustomization
         try:
             from ..memory.app.schema.database import EpisodicMemory, UserPreference, init_db as init_memory_db
             await init_memory_db()

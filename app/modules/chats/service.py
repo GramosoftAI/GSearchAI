@@ -444,8 +444,9 @@ class ChatService:
             memory_api_base = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
             candidate_urls = [
                 f"{memory_api_base}/api/v1/memory/save-turn",
+                "http://localhost:8003/api/v1/memory/save-turn",
+                "http://127.0.0.1:8003/api/v1/memory/save-turn",
                 "http://localhost:8002/api/v1/memory/save-turn",
-                "http://127.0.0.1:8002/api/v1/memory/save-turn",
                 "http://memory-api:8001/api/v1/memory/save-turn"
             ]
             urls = list(dict.fromkeys(candidate_urls))
