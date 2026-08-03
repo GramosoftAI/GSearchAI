@@ -293,12 +293,49 @@ class ChatService:
         )
         logger.debug(f"Saved user message at position {user_msg.position}")
 
-        # ============= STEP 3: LOAD MEMORY (CONVERSATION HISTORY) =============
+        # ============= STEP 3: LOAD MEMORY (CONVERSATION HISTORY & USER PREFERENCES) =============
         memory_used = False
         augmented_query = message
         conversation_turns = 0
 
-        # Only inject memory if there are previous messages
+        # 3a. Load long-term persistent user preferences and episodic memory from memory-api
+        episodic_guidance = ""
+        try:
+            import httpx
+            import os
+            memory_api_base = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
+            candidate_urls = [
+                f"{memory_api_base}/api/v1/memory/process-turn",
+                "http://localhost:8003/api/v1/memory/process-turn",
+                "http://127.0.0.1:8003/api/v1/memory/process-turn",
+                "http://localhost:8002/api/v1/memory/process-turn",
+                "http://memory-api:8001/api/v1/memory/process-turn"
+            ]
+            urls = list(dict.fromkeys(candidate_urls))
+            async with httpx.AsyncClient() as client:
+                for url in urls:
+                    try:
+                        resp = await client.post(
+                            url,
+                            json={
+                                "query": message,
+                                "session_id": session_id,
+                                "agent_id": agent_id,
+                                "user_id": user_id,
+                                "tenant_id": self.tenant_id
+                            },
+                            timeout=5.0
+                        )
+                        if resp.status_code == 200:
+                            mem_data = resp.json()
+                            episodic_guidance = mem_data.get("guidance_context") or ""
+                            break
+                    except Exception as e:
+                        logger.debug(f"Memory API process-turn attempt {url} failed: {e}")
+        except Exception as pe:
+            logger.warning(f"Memory API process-turn failed: {pe}")
+
+        # 3b. Load in-session recent conversation turns
         if session.message_count > 1:  # >1 because we just added the user message
             try:
                 memory_messages = await self.chat_repo.get_recent_messages(
@@ -333,6 +370,15 @@ class ChatService:
                 )
                 augmented_query = message
                 memory_used = False
+
+        # 3c. Prepend persistent user profile & preference context if available
+        if episodic_guidance:
+            guidance_block = (
+                "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
+                f"{episodic_guidance}\n\n"
+            )
+            augmented_query = guidance_block + augmented_query
+            memory_used = True
 
         # ============= STEP 4: RESOLVE KBs (Agent can own multiple KBs) =============
         kbs, _ = await self.kb_repo.list_by_agent(agent_id, limit=10)
@@ -447,6 +493,7 @@ class ChatService:
                 "http://localhost:8003/api/v1/memory/save-turn",
                 "http://127.0.0.1:8003/api/v1/memory/save-turn",
                 "http://localhost:8002/api/v1/memory/save-turn",
+                "http://127.0.0.1:8002/api/v1/memory/save-turn",
                 "http://memory-api:8001/api/v1/memory/save-turn"
             ]
             urls = list(dict.fromkeys(candidate_urls))
