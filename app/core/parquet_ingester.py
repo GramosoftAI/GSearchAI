@@ -97,3 +97,40 @@ class ParquetIngester:
                 if dataset_name in registry:
                     return os.path.join(output_dir, registry[dataset_name])
         return None
+
+    @staticmethod
+    def delete_active_dataset(dataset_name: str, output_dir: str = "data/parquet") -> bool:
+        """Deletes the physical Parquet file and its registry entry from active_datasets.json."""
+        if not os.path.isabs(output_dir):
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            output_dir = os.path.join(base_dir, output_dir)
+            
+        registry_path = os.path.join(output_dir, "active_datasets.json")
+        if not os.path.exists(registry_path):
+            return False
+            
+        try:
+            with open(registry_path, 'r') as f:
+                registry = json.load(f)
+                
+            if dataset_name in registry:
+                filename = registry[dataset_name]
+                file_path = os.path.join(output_dir, filename)
+                
+                # Delete physical file
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.info(f"Deleted physical Parquet file: {file_path}")
+                else:
+                    logger.warning(f"Physical Parquet file not found to delete: {file_path}")
+                
+                # Remove from registry
+                del registry[dataset_name]
+                with open(registry_path, 'w') as f:
+                    json.dump(registry, f, indent=4)
+                logger.info(f"Removed registry entry for {dataset_name}")
+                return True
+        except Exception as e:
+            logger.error(f"Failed to delete active dataset {dataset_name}: {e}")
+        return False
+

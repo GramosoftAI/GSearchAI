@@ -223,7 +223,7 @@ class DeepInfraLLMClient:
             self.gateway_base_url = f"{base_url}/v1/chat/completions" if not base_url.endswith("/v1/chat/completions") else base_url
         self.gateway_model = os.environ.get("LLM_GATEWAY_MODEL") or getattr(settings, "llm_gateway_model", "qwen2.5:3b")
 
-        self.timeout = 25.0  # Enterprise timeout cap against stalled sockets
+        self.timeout = 90.0  # Enterprise timeout cap against stalled sockets
         self.max_retries = 3  # Number of retry attempts
         self.max_tokens = 4000  # Max output tokens (GUARD: prevent very long responses)
         self.max_answer_length = 2000  # Max chars in answer (latency + cost guard)
@@ -433,6 +433,7 @@ class DeepInfraLLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         enable_thinking: Optional[bool] = False,
+        timeout: Optional[float] = None,
     ) -> str:
         """
         Equivalent to generate() but explicitly routes to the cloud DeepInfra model 
@@ -462,7 +463,7 @@ class DeepInfraLLMClient:
             try:
                 client = await self.get_client()
                 async with _llm_semaphore:
-                    response = await client.post(self.deepinfra_base_url, headers=headers, json=payload, timeout=self.timeout)
+                    response = await client.post(self.deepinfra_base_url, headers=headers, json=payload, timeout=timeout or self.timeout)
                 response.raise_for_status()
                 data = response.json()
                 content = data["choices"][0]["message"]["content"].strip()

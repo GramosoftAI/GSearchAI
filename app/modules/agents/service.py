@@ -675,11 +675,14 @@ class AgentService:
 
             # Explicit cascade delete with all relationships and tenant_id validation:
             # Agent → KB → Chunk → Entity
+            # Also clean up Session and MemoryEntity nodes from the memory-api microservice.
             delete_query = """
             MATCH (a:Agent {tenant_id: $tenant_id, id: $agent_id})
             OPTIONAL MATCH (a)-[:OWNS_KB]->(kb:KnowledgeBase {tenant_id: $tenant_id})
             OPTIONAL MATCH (kb)-[:HAS_CHUNK]->(c:Chunk {tenant_id: $tenant_id})
-            DETACH DELETE a, kb, c
+            OPTIONAL MATCH (s:Session {tenant_id: $tenant_id, agent_id: $agent_id})
+            OPTIONAL MATCH (m:MemoryEntity {tenant_id: $tenant_id, agent_id: $agent_id})
+            DETACH DELETE a, kb, c, s, m
             RETURN count(a) as deleted_agents
             """
 
@@ -718,16 +721,29 @@ class AgentService:
             
             agent_uuid = uuid.UUID(agent_id) if isinstance(agent_id, str) else agent_id
             
-            # Find KBs to delete their chunks
-            kbs_query = select(KnowledgeBase.id).where(
+            # Find KBs to delete their chunks, local parquet files, and soft-delete KBs
+            kbs_select_query = select(KnowledgeBase).where(
                 KnowledgeBase.agent_id == agent_uuid,
                 KnowledgeBase.tenant_id == self.tenant_id
             )
+            kbs_res = await self.db.execute(kbs_select_query)
+            kbs_list = kbs_res.scalars().all()
+            kb_ids_list = [kb.id for kb in kbs_list]
+            
+            # Clean up local parquet files
+            for kb in kbs_list:
+                if getattr(kb, "description", "") == "excel_parquet" and kb.parsed_path:
+                    try:
+                        from app.core.parquet_ingester import ParquetIngester
+                        ParquetIngester.delete_active_dataset(kb.parsed_path)
+                    except Exception as parquet_err:
+                        logger.error(f"Failed to delete local parquet file for KB {kb.id} during agent deletion: {parquet_err}")
             
             # Hard-delete chunks (frees up pgvector space and prevents zombie retrieval)
-            await self.db.execute(
-                delete(DocumentChunk).where(DocumentChunk.kb_id.in_(kbs_query))
-            )
+            if kb_ids_list:
+                await self.db.execute(
+                    delete(DocumentChunk).where(DocumentChunk.kb_id.in_(kb_ids_list))
+                )
             
             # Soft-delete KnowledgeBases
             await self.db.execute(
@@ -738,6 +754,18 @@ class AgentService:
                 )
                 .values(is_active=False, deleted_at=datetime.utcnow())
             )
+
+            # Hard-delete memory records from episodic_memories and user_preferences tables
+            from sqlalchemy import text
+            await self.db.execute(
+                text("DELETE FROM episodic_memories WHERE agent_id = :agent_id"),
+                {"agent_id": str(agent_id)}
+            )
+            await self.db.execute(
+                text("DELETE FROM user_preferences WHERE agent_id = :agent_id"),
+                {"agent_id": str(agent_id)}
+            )
+
 
             if not deleted:
                 # Rare case: agent not found in PostgreSQL

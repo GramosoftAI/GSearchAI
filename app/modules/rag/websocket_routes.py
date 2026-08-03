@@ -355,6 +355,7 @@ async def rag_websocket(
                     on_usage_callback=capture_usage,
                     chat_history=chat_history_str,
                     skip_search=skip_search,
+                    memory_enabled=(not disable_memory),
                 ):
                     is_control_frame = False
                     try:

@@ -73,7 +73,7 @@ class PandasQueryEngine:
     Hybrid Execution Engine for 1M+ rows.
     Implements Intent Routing, Parquet querying, and strict Semantic SQL building.
     """
-    def __init__(self, data_path_or_client=None, llm_client=None, all_dataset_paths: Optional[List[str]] = None):
+    def __init__(self, data_path_or_client=None, llm_client=None, all_dataset_paths: Optional[List[str]] = None, path_mapping: Optional[Dict[str, str]] = None):
         if isinstance(data_path_or_client, str):
             self.data_path = data_path_or_client
             self.llm_client = llm_client
@@ -81,6 +81,7 @@ class PandasQueryEngine:
             self.data_path = None
             self.llm_client = data_path_or_client
         self.all_dataset_paths = all_dataset_paths or ([self.data_path] if self.data_path else [])
+        self.path_mapping = path_mapping or {}
         
         if not self.llm_client:
             from app.core.llm.deepinfra_llm import DeepInfraLLMClient
@@ -106,10 +107,11 @@ class PandasQueryEngine:
                 continue
             safe_path = str(p).replace('\\', '/')
             filename = os.path.basename(safe_path)
+            display_name = self.path_mapping.get(filename, filename)
             if safe_path.lower().endswith(".parquet"):
-                valid_readers.append(f"SELECT *, '{filename}' AS source_file FROM read_parquet('{safe_path}')")
+                valid_readers.append(f"SELECT *, '{display_name}' AS source_file FROM read_parquet('{safe_path}')")
             else:
-                valid_readers.append(f"SELECT *, '{filename}' AS source_file FROM read_csv_auto('{safe_path}', sample_size=10000, nullstr='NULL')")
+                valid_readers.append(f"SELECT *, '{display_name}' AS source_file FROM read_csv_auto('{safe_path}', sample_size=10000, nullstr='NULL')")
         if not valid_readers:
             return "SELECT 1 WHERE FALSE"
         union_sql = " UNION ALL BY NAME ".join(valid_readers)
@@ -137,28 +139,28 @@ class PandasQueryEngine:
             logger.warning(f"Failed fetching schema columns for routing: {e}")
             return []
 
-    async def _synthesize_analytical_response(self, question: str, table_md: str, explanation: str) -> str:
+    async def _synthesize_analytical_response(self, question: str, table_md: str, explanation: str, episodic_guidance: str = "") -> str:
         """Synthesizes an executive natural-language answer from SQL table results for comparative or analytical queries."""
         try:
-            synth_prompt = ChatPromptTemplate.from_messages([
-                ("system",
-                 "You are an Executive Data Analyst. Given a user's question and the retrieved database result from an enterprise spreadsheet dataset, write a clear, fluent, natural-language executive answer.\n"
-                 "CRITICAL RULES:\n"
-                 "1. Answer ONLY using the retrieved data. Do not invent or assume information.\n"
-                 "2. Answer the user's specific question DIRECTLY in the very first sentence.\n"
-                 "3. FOR SENIORITY / TENURE QUESTIONS: Remember that an employee who joined EARLIER in time (earliest year/date, e.g. 2018 vs 2021) or has MORE years of experience is MORE SENIOR.\n"
-                 "4. Respond naturally, concisely, and use bolding formatting for key names, figures, dates, and comparisons.\n"
-                 "5. Include the formatted Markdown table below your explanation as supporting evidence.\n"
-                 "6. IMPORTANT: Do NOT output any <think> tags or internal reasoning. Output ONLY the final answer directly."),
-                ("user", "User Question: {question}\n\nSQL Explanation: {explanation}\n\nRetrieved Database Result Table:\n{table}")
-            ])
-            from langchain_core.output_parsers import StrOutputParser
-            synth_chain = synth_prompt | self.llm | StrOutputParser()
-            synthesis = await synth_chain.ainvoke({
-                "question": question,
-                "explanation": explanation,
-                "table": table_md
-            })
+            system_instruction = (
+                "You are an Executive Data Analyst. Given a user's question and the retrieved database result from an enterprise spreadsheet dataset, write a clear, fluent, natural-language executive answer.\n"
+                "CRITICAL RULES:\n"
+                "1. Answer ONLY using the retrieved data. Do not invent or assume information.\n"
+                "2. Answer the user's specific question DIRECTLY in the very first sentence.\n"
+                "3. FOR SENIORITY / TENURE QUESTIONS: Remember that an employee who joined EARLIER in time (earliest year/date, e.g. 2018 vs 2021) or has MORE years of experience is MORE SENIOR.\n"
+                "4. ALWAYS format the explanation and findings in clear, concise bullet points instead of a continuous paragraph/passage. Each key metric, value, or comparative detail must be a separate bullet point.\n"
+                "5. Include the formatted Markdown table below your explanation as supporting evidence.\n"
+                "6. IMPORTANT: Do NOT output any <think> tags or internal reasoning. Output ONLY the final answer directly."
+            )
+            if episodic_guidance:
+                system_instruction += f"\n7. STRICT USER PREFERENCES: You must strictly format the response to adhere to the following user instructions:\n{episodic_guidance}\n"
+                
+            prompt_str = f"User Question: {question}\n\nSQL Explanation: {explanation}\n\nRetrieved Database Result Table:\n{table_md}"
+            synthesis = await self.llm_client.generate_cloud(
+                prompt=prompt_str,
+                system_prompt=system_instruction,
+                timeout=25.0
+            )
             # Strip any <think> tags the LLM may have injected
             synthesis = re.sub(r'<think>.*?</think>', '', synthesis, flags=re.DOTALL).strip()
             if '<think>' in synthesis:
@@ -194,7 +196,7 @@ class PandasQueryEngine:
                 return path  # Return original — caller will catch os.path.exists failure
         return path
 
-    async def execute_query(self, query: str, data_path: Optional[str] = None) -> Optional[str]:
+    async def execute_query(self, query: str, data_path: Optional[str] = None, synthesize: bool = False, episodic_guidance: str = "") -> Optional[str]:
         raw_path = data_path or getattr(self, "data_path", None)
         # Resolve S3/HTTPS URLs to local temp files before DuckDB can read them
         target_path = await self._resolve_to_local_path(raw_path) if raw_path else None
@@ -230,13 +232,24 @@ class PandasQueryEngine:
                 result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dataset';"))
                 columns = [row[0] for row in result.fetchall()]
 
+                schema_desc_parts = []
+                for idx, path_item in enumerate(paths_to_register):
+                    filename = os.path.basename(path_item)
+                    display_name = self.path_mapping.get(filename, filename)
+                    view_name = f"dataset_{idx+1}"
+                    res = conn.execute(text(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{view_name}';"))
+                    view_cols = [r[0] for r in res.fetchall() if r[0] not in ('row_id', 'source_file') and not r[0].startswith('_duplicated') and not re.match(r'^C\d+$', r[0])]
+                    schema_desc_parts.append(f"- View '{view_name}' maps to '{display_name}' (contains columns: {', '.join(view_cols)})")
+                schema_description = "\n".join(schema_desc_parts)
+
             # 3. GENERATE DUCKDB SQL DIRECTLY
             prompt = ChatPromptTemplate.from_messages([
                 ("system", 
                  "You are an enterprise data engine and SQL expert. Convert the user's natural language question into a clean, read-only DuckDB SELECT SQL query on the view named 'dataset'.\n\n"
                  "Available columns in 'dataset':\n{columns}\n\n"
+                 "Registered Source Files:\n{schema_description}\n\n"
                  "CRITICAL RULES FOR DUCKDB SQL:\n"
-                 "1. Table name MUST ALWAYS be 'dataset'.\n"
+                 "1. Table name MUST ALWAYS be 'dataset' (unless querying schema metadata from 'information_schema.columns' as described in Rule 20).\n"
                  "2. COLUMN NAMES WITH SPACES OR SYMBOLS: You MUST ALWAYS wrap column names containing spaces, punctuation, or special characters in DOUBLE QUOTES (e.g., \"Customer ID\", \"Customer Name\", \"Total Amount\"). NEVER write unquoted multi-word column names like Customer ID.\n"
                  "3. When performing mathematical calculations (SUM, AVG, arithmetic) on string/varchar columns, ALWAYS wrap the column in TRY_CAST(\"col\" AS DOUBLE), e.g., SUM(TRY_CAST(\"exchange_rate\" AS DOUBLE)), AVG(TRY_CAST(\"exchange_rate\" AS DOUBLE)), to prevent type conversion issues.\n"
                  "4. For counting total records, use SELECT COUNT(*) AS total_records FROM dataset;\n"
@@ -260,6 +273,15 @@ class PandasQueryEngine:
                  "   - If selecting among specific people (e.g. 'between John and Jane'), always use case-insensitive fuzzy matching (LOWER(\"col\") LIKE '%name%') for the WHERE clause. If selecting 'among both', DO NOT filter by the word 'both'.\n"
                  "18. MULTI-DATASET / SOURCE FILE FILTERING: 'source_file' is a special string column injected automatically that contains the original CSV or Parquet filename (e.g., 'employees.csv', 'payroll_2.csv'). If the user's query mentions or implies a specific file or dataset (e.g., '1st CSV file', 'second dataset', or matches a specific filename pattern), you MUST filter on the 'source_file' column using ILIKE (e.g., source_file ILIKE '%1%' or source_file ILIKE '%payroll%').\n"
                  "19. MULTI-COLUMN KEYWORD SEARCH: If the query contains search terms/keywords (e.g. 'zuni', 'glitz') and it is ambiguous which column they belong to, you MUST search across all potentially relevant text/identifying columns using OR (e.g., LOWER(TRY_CAST(\"COMPANY NAME\" AS VARCHAR)) ILIKE '%zuni%' OR LOWER(TRY_CAST(\"CITY\" AS VARCHAR)) ILIKE '%zuni%' OR LOWER(TRY_CAST(\"ADD\" AS VARCHAR)) ILIKE '%zuni%') so that you do not miss the record due to a wrong guess.\n"
+                 "20. METADATA, COLUMN LISTS, AND SCHEMA QUERIES: If the user asks about the schema, the number of columns, column names, or column types:\n"
+                 "   - The system automatically injects `row_id` (at position 1) and `source_file` (at the end). Also, dirty CSVs might contain auto-generated empty columns like `_duplicated_X` or `C7` (represented as columns starting with `_duplicated` or a single 'C' followed by digits).\n"
+                 "   - You MUST FILTER OUT these internal/duplicate columns: `'row_id'`, `'source_file'`, `'_duplicated_%'`, and `regexp_matches(column_name, '^C\\d+$')` when counting or listing columns.\n"
+                 "   - If the user asks to count or list columns per individual file/dataset, you MUST query the columns of each individual view (`dataset_1` for the first file, `dataset_2` for the second file, etc.).\n"
+                 "   - E.g., to count the number of columns in the first file: SELECT COUNT(*) AS column_count FROM information_schema.columns WHERE table_name = 'dataset_1' AND column_name NOT IN ('row_id', 'source_file') AND column_name NOT LIKE '_duplicated_%' AND NOT regexp_matches(column_name, '^C\\d+$');\n"
+                 "   - E.g., to list columns for each individual file: SELECT table_name, column_name FROM information_schema.columns WHERE table_name LIKE 'dataset_%' AND column_name NOT IN ('row_id', 'source_file') AND column_name NOT LIKE '_duplicated_%' AND NOT regexp_matches(column_name, '^C\\d+$') ORDER BY table_name, ordinal_position;\n"
+                 "   - E.g., to count columns for each individual file: SELECT table_name, COUNT(*) AS column_count FROM information_schema.columns WHERE table_name LIKE 'dataset_%' AND column_name NOT IN ('row_id', 'source_file') AND column_name NOT LIKE '_duplicated_%' AND NOT regexp_matches(column_name, '^C\\d+$') GROUP BY table_name ORDER BY table_name;\n"
+                 "   - E.g., to find the name of column X (1-indexed CSV column): calculate its offset by ignoring `row_id` (e.g. column 1 in CSV is position 2 in DB, column 2 in CSV is position 3 in DB). To get column 2: SELECT column_name FROM information_schema.columns WHERE table_name = 'dataset' AND column_name NOT IN ('row_id', 'source_file') AND column_name NOT LIKE '_duplicated_%' AND NOT regexp_matches(column_name, '^C\\d+$') ORDER BY ordinal_position LIMIT 1 OFFSET 1;\n"
+                 "21. NUMERICAL SORTING: When ordering/sorting (ORDER BY) a column containing numeric values (such as 'S.No', serial numbers, employee IDs, counts, sums, or ages), you MUST wrap the column name in TRY_CAST(\"col\" AS INTEGER) or TRY_CAST(\"col\" AS DOUBLE) (e.g., ORDER BY TRY_CAST(\"S.No\" AS INTEGER) ASC) to prevent alphabetical string sorting (which places '10' before '2').\n"
                  "IMPORTANT: DO NOT generate any <think> tags or internal reasoning steps. Output ONLY valid JSON immediately without any thinking."),
                 ("user", "{question}")
             ])
@@ -269,11 +291,16 @@ class PandasQueryEngine:
             
             query_plan_dict = await chain.ainvoke({
                 "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns), 
+                "schema_description": schema_description,
                 "question": query
             })
             query_plan = DuckDBSemanticQuery(**query_plan_dict)
             
             sql_query = query_plan.sql.strip().rstrip(";") + ";"
+            
+            # Enforce safety limit on SELECT queries without LIMIT (OOM protection)
+            if "LIMIT " not in sql_query.upper() and "SELECT " in sql_query.upper() and "COUNT(" not in sql_query.upper() and "SUM(" not in sql_query.upper():
+                sql_query = sql_query.rstrip(";").strip() + " LIMIT 100;"
             
             # 4. DETERMINISTIC COLUMN AUTO-QUOTING (Layer 1 Protection)
             # Automatically wrap multi-word or special column names in double quotes if left unquoted by the LLM
@@ -306,7 +333,7 @@ class PandasQueryEngine:
                              "CRITICAL RULES:\n"
                              "1. Return ONLY valid JSON with 'sql' and 'explanation'. No markdown, no <think> tags.\n"
                              "2. ALWAYS enclose column names containing spaces or symbols in DOUBLE QUOTES (e.g. \"Customer ID\").\n"
-                             "3. The query MUST be a read-only DuckDB SELECT on table 'dataset'."),
+                             "3. The query MUST be a read-only DuckDB SELECT on table 'dataset' (or information_schema.columns for metadata queries)."),
                             ("user",
                              "User Question: {question}\n\nFailed SQL Query:\n{sql}\n\nDuckDB Error Message:\n{error}\n\nProvide the corrected DuckDB SQL query in valid JSON.")
                         ])
@@ -327,34 +354,6 @@ class PandasQueryEngine:
                     except Exception as e_retry:
                         logger.error(f"Self-healing SQL retry failed: {e_retry}", exc_info=True)
                         return f"Error executing SQL ({sql_query}): {str(e)}"
-                        
-                if not rows and "WHERE " in sql_query.upper():
-                    logger.warning(f"Query returned 0 rows with WHERE filter ({sql_query}). Attempting Layer 3 fuzzy string matching retry...")
-                    try:
-                        fuzzy_prompt = ChatPromptTemplate.from_messages([
-                            ("system",
-                             "You are an enterprise DuckDB SQL expert. The previous SQL query returned 0 rows because the WHERE filter was too strict.\n"
-                             "Rewrite the DuckDB SELECT query on table 'dataset' using case-insensitive partial string matching (ILIKE or LOWER(\"col\") LIKE '%val%') so matching rows are found.\n\n"
-                             "Available columns in 'dataset':\n{columns}\n\n"
-                             "Return ONLY valid JSON with 'sql' and 'explanation' without markdown fences."),
-                            ("user",
-                             "User Question: {question}\nPrevious SQL that returned 0 rows:\n{sql}")
-                        ])
-                        fuzzy_chain = fuzzy_prompt | self.llm | StrOutputParser() | parse_json_from_thinking
-                        fuzzy_dict = await fuzzy_chain.ainvoke({
-                            "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns),
-                            "question": query,
-                            "sql": sql_query
-                        })
-                        fuzzy_plan = DuckDBSemanticQuery(**fuzzy_dict)
-                        sql_query = fuzzy_plan.sql.strip().rstrip(";") + ";"
-                        logger.info(f"Layer 3 Healed DuckDB SQL: {sql_query} | Explanation: {fuzzy_plan.explanation}")
-                        result = conn.execute(text(sql_query))
-                        rows = result.fetchall()
-                        col_names = list(result.keys())
-                        query_plan = fuzzy_plan
-                    except Exception as fuzzy_err:
-                        logger.warning(f"Fuzzy retry failed: {fuzzy_err}")
 
             if not rows:
                 return f"{query_plan.explanation}\nNo records matched your query."
@@ -378,7 +377,26 @@ class PandasQueryEngine:
                     formatted += f"| {row_str} |\n"
                     
             # 6. UNIVERSAL NATURAL-LANGUAGE SYNTHESIS
-            # (Removed redundant synthesis step. The final RAG LLM will read the formatted Markdown table directly, saving 20-60 seconds.)
+            if synthesize:
+                try:
+                    table_for_synth = ""
+                    if len(rows) == 1 and len(col_names) == 1:
+                        table_for_synth = str(rows[0][0])
+                    elif len(rows) == 1:
+                        table_for_synth = "\n".join(f"- {k}: {v if v is not None else 'NULL'}" for k, v in zip(col_names, rows[0]))
+                    else:
+                        table_for_synth = f"| {' | '.join(str(c) for c in col_names)} |\n| {' | '.join('---' for _ in col_names)} |\n"
+                        for r in rows[:100]:
+                            table_for_synth += f"| {' | '.join(str(item) if item is not None else 'NULL' for item in r)} |\n"
+                    
+                    synthesized = await self._synthesize_analytical_response(query, table_for_synth, query_plan.explanation, episodic_guidance)
+                    # Clean up thinking tags
+                    synthesized = re.sub(r'<think>.*?</think>', '', synthesized, flags=re.DOTALL).strip()
+                    if '<think>' in synthesized:
+                        synthesized = synthesized[:synthesized.index('<think>')].strip()
+                    return synthesized
+                except Exception as synth_err:
+                    logger.warning(f"Synthesis failed, falling back to formatted table: {synth_err}")
 
             # For large result sets (>50 rows): strip <think> and return formatted table
             formatted = re.sub(r'<think>.*?</think>', '', formatted, flags=re.DOTALL).strip()

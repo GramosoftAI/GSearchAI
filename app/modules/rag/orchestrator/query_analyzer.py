@@ -36,6 +36,7 @@ class QueryMetadata(BaseModel):
 class AnalysisResult(BaseModel):
     intent: QueryIntent
     metadata: QueryMetadata
+    is_tabular: bool = Field(False, description="Set to true if query asks for data likely stored in structured tabular format/spreadsheet. Set to false for text/PDF lookup or conversational greetings.")
     confidence: float
     reasoning: str
 
@@ -61,6 +62,11 @@ You must output a `corrected_query` field.
 - Fix any obvious typos in named entities or concepts (e.g. "Jon Sno" -> "Jon Snow", "justce" -> "justice").
 - If the query is already perfect, `corrected_query` should just be the original query.
 
+CRITICAL TASK: TABULAR VS VECTOR CLASSIFICATION
+You must output an `is_tabular` boolean field in the JSON root.
+- Set `is_tabular` to true if the query is seeking structured data, lists of entities, counts, aggregates, sums, averages, or specific database records (e.g. "how many rows", "what is David's email", "list of companies in Chennai", "what is the total salary", "how many columns").
+- Set `is_tabular` to false if the query is purely conversational, seeking unstructured text, biography, background info, or asking about a topic not stored in spreadsheet columns (e.g. "who is vijay", "tell me about Smackcoders", "what did we discuss", "explain quantum computing").
+
 CRITICAL TASK: COMPOSITE QUERY DECOMPOSITION & CO-REFERENCE RESOLUTION
 If the query is composite (asking multiple distinct questions where some apply to spreadsheets/tables and others to documents/resumes/text), you must decompose it:
 - `tabular_subquery`: Extract the portion meant for structured tabular/spreadsheet data (like salary, age, count, sums, employee rosters). RESOLVE pronouns (like "he", "she", "his", "her") to the actual subject name (e.g., "Arun's salary" instead of "his salary").
@@ -81,6 +87,7 @@ INTENTS:
 Return ONLY valid JSON:
 {{
   "intent": "FACT",
+  "is_tabular": false,
   "metadata": {{
     "quarter": null,
     "year": null,
@@ -101,6 +108,7 @@ QUERY: "tell me about arun and what is his salary from the 1st CSV file"
 JSON:
 {{
   "intent": "COMPARISON",
+  "is_tabular": true,
   "metadata": {{
     "quarter": null,
     "year": null,
@@ -125,7 +133,8 @@ QUERY:
                 system_prompt="You are an expert financial query analyzer. Return only JSON.",
                 temperature=0.0,
                 max_tokens=1024,
-                enable_thinking=False
+                enable_thinking=False,
+                timeout=8.0
             )
             
             # Extract JSON block
@@ -161,10 +170,12 @@ QUERY:
                 vector_subquery=metadata_dict.get("vector_subquery")
             )
 
-            
+            is_tabular = bool(data.get("is_tabular", False))
+
             return AnalysisResult(
                 intent=intent,
                 metadata=metadata,
+                is_tabular=is_tabular,
                 confidence=float(data.get("confidence", 0.5)),
                 reasoning=data.get("reasoning", "LLM determined")
             )
@@ -174,6 +185,7 @@ QUERY:
             return AnalysisResult(
                 intent=QueryIntent.UNKNOWN,
                 metadata=QueryMetadata(keywords=[]),
+                is_tabular=False,
                 confidence=0.0,
                 reasoning=f"Failed to parse: {e}"
             )
