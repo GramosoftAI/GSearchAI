@@ -165,7 +165,7 @@ class RAGService:
                             query=query,
                             columns=cols_list,
                             doc_kbs_count=len(doc_kbs),
-                            llm=engine.llm,
+                            llm=getattr(engine, "router_llm", engine.llm),
                         )
                         logger.info(
                             f"[EnterpriseHybridRouter] Engine={decision.target_engine} | Conf={decision.confidence:.2f} | Cols={decision.matched_columns} | Reason={decision.reasoning}"
@@ -222,6 +222,10 @@ class RAGService:
                             "total of",
                             "how many rows",
                             "group by",
+                            "calculate the",
+                            "what is the average",
+                            "what is the sum",
+                            "what is the total",
                         ]
                         is_pure_math = any(
                             kw in query.lower() for kw in explicit_math_keywords
@@ -484,7 +488,8 @@ If you'd like, I can also:
         )
 
         if is_extractive or is_table_analytics:
-            logger.info(f"Bypassing LLM stream for {context.search_type} mode.")
+            logger.info(f"Checking direct extraction for {context.search_type} mode.")
+            has_direct_output = False
             if getattr(context, "authoritative_entities", None):
                 for ent in context.authoritative_entities:
                     clean_name = ent["entity_type"].replace("_", " ").title()
@@ -492,7 +497,9 @@ If you'd like, I can also:
                         ent.get("source", "document_entities")
                     )
                     yield f"**{clean_name}:** {ent['value']} (Page {ent.get('page', 1)}) [Source: {clean_src}]\n"
-                yield "\n"
+                    has_direct_output = True
+                if has_direct_output:
+                    yield "\n"
 
             # Strip any <think> tags from triplet_context (gateway LLM leak guard)
             import re as _re
@@ -504,22 +511,29 @@ If you'd like, I can also:
             if "<think>" in clean_triplet:
                 clean_triplet = clean_triplet[: clean_triplet.index("<think>")].strip()
 
-            yield clean_triplet
+            if clean_triplet:
+                yield clean_triplet
+                has_direct_output = True
 
-            # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
-            # Use the kb object already fetched for metadata (line 661 scope)
-            try:
-                _src_name = (
-                    kb.name
-                    if len(kb_ids) == 1
-                    else (kb_ids[0] if kb_ids else "Dataset")
+            if has_direct_output:
+                # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
+                # Use the kb object already fetched for metadata (line 661 scope)
+                try:
+                    _src_name = (
+                        kb.name
+                        if len(kb_ids) == 1
+                        else (kb_ids[0] if kb_ids else "Dataset")
+                    )
+                    yield f"\n\n[Source: {_src_name}]"
+                except Exception:
+                    pass
+                return
+            else:
+                logger.warning(
+                    f"[{context.search_type}] mode yielded no direct entities or triplets. Falling through to standard LLM chunk generation!"
                 )
-                yield f"\n\n[Source: {_src_name}]"
-            except Exception:
-                pass
-            return
 
-        if (not context or not context.chunks) and not chat_history:
+        if (not context or not context.chunks) and not chat_history and not hybrid_merge_context:
             logger.info(
                 "Empty context retrieved for stream, returning fallback message."
             )
@@ -686,6 +700,10 @@ If you'd like, I can also:
                         "total of",
                         "how many rows",
                         "group by",
+                        "calculate the",
+                        "what is the average",
+                        "what is the sum",
+                        "what is the total",
                     ]
                     is_pure_math = any(
                         kw in query.lower() for kw in explicit_math_keywords
@@ -981,7 +999,7 @@ If you'd like, I can also:
             self._cache_response(cache_key, result)
             return result
 
-        if (not context or not context.chunks) and not is_social:
+        if (not context or not context.chunks) and not is_social and not hybrid_merge_context:
             if agent.agent_type == "integrated":
                 if agent.fallback_message_enabled:
                     org_name = agent.organization_name or "our organization"

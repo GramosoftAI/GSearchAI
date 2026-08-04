@@ -17,6 +17,7 @@ config.yaml
 venv/
 env/
 ENV/
+/mind/
 mind/
 gsearch/
 test_docling_env/
@@ -244,3 +245,38 @@ rename_key.py
 !app/memory/app/schema/
 !app/memory/app/main.py
 server.py
+
+# ==========================================================
+# Strict Security, Credentials, Datasets & Tests Exclusion
+# ==========================================================
+# Hide all credentials & secrets
+.env*
+!.env.example
+*.pem
+*.key
+*.cert
+*deploy_key*
+*secret*
+*credential*
+
+# No datasets (PDFs, Excels, CSVs, Images)
+*.pdf
+*.csv
+*.CSV
+*.xlsx
+*.xls
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+dataset/
+datasets/
+wffvgr.csv
+
+# No test scripts or testing folders
+tests/
+testing/
+test_*.py
+*_test.py
+*cleanup*
