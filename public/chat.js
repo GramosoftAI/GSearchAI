@@ -458,7 +458,7 @@
             }
           })
           .catch(e => console.warn("GragWidget: Customization fetch error", e));
-      } catch (e) {}
+      } catch (e) { }
     }
 
     // Toggle click trigger

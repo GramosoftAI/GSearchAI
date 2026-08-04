@@ -112,6 +112,14 @@ export const endpoints = {
   USER_COSTS: {
     url: "/analytics/governance/costs/users",
     method: methods.get,
+  },
+  URL_DISCOVER: {
+    url: "/agents",
+    method: methods.post,
+  },
+  URL_SELECT: {
+    url: "/agents",
+    method: methods.post,
   }
 } as const;
 

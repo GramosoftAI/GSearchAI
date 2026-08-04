@@ -86,7 +86,7 @@ function getCleanSourceName(rawName: string): string {
   if (!rawName) return "";
   let cleaned = rawName;
   cleaned = cleaned.replace(/^text source:\s*/i, "").trim();
-  
+
   if (cleaned.startsWith("http://") || cleaned.startsWith("https://")) {
     if (cleaned.endsWith("...")) {
       return cleaned;
@@ -96,7 +96,7 @@ function getCleanSourceName(rawName: string): string {
     if (lastPart.length > 3) return lastPart;
     return cleaned;
   }
-  
+
   if (cleaned.includes("/") || cleaned.includes("\\")) {
     const parts = cleaned.split(/[/\\]/);
     cleaned = parts[parts.length - 1] || cleaned;
@@ -541,42 +541,42 @@ function WidgetContent() {
     if (avatar === "robot") {
       return (
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="3" y="11" width="18" height="10" rx="2" fill="none"/>
-          <circle cx="8.5" cy="15.5" r="1.5" fill="#fff"/>
-          <circle cx="15.5" cy="15.5" r="1.5" fill="#fff"/>
-          <path d="M12 2v6M9 5h6"/>
+          <rect x="3" y="11" width="18" height="10" rx="2" fill="none" />
+          <circle cx="8.5" cy="15.5" r="1.5" fill="#fff" />
+          <circle cx="15.5" cy="15.5" r="1.5" fill="#fff" />
+          <path d="M12 2v6M9 5h6" />
         </svg>
       );
     }
     if (avatar === "setting") {
       return (
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/>
+          <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" />
         </svg>
       );
     }
     if (avatar === "info") {
       return (
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="10"/>
-          <line x1="12" y1="16" x2="12" y2="12"/>
-          <circle cx="12" cy="8" r="1" fill="#fff"/>
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" y1="16" x2="12" y2="12" />
+          <circle cx="12" cy="8" r="1" fill="#fff" />
         </svg>
       );
     }
     if (avatar === "book") {
       return (
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
         </svg>
       );
     }
     return (
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M21 11.5C21 16.75 16.97 21 12 21C10.13 21 8.4 20.4 6.98 19.37L3 20.5L4.15 16.63C3.42 15.15 3 13.48 3 11.5C3 6.25 7.03 2 12 2C16.97 2 21 6.25 21 11.5Z" fill="#fff" stroke="#fff" strokeWidth="1.5"/>
-        <circle cx="8" cy="11.5" r="1.3" fill={theme}/>
-        <circle cx="12" cy="11.5" r="1.3" fill={theme}/>
-        <circle cx="16" cy="11.5" r="1.3" fill={theme}/>
+        <path d="M21 11.5C21 16.75 16.97 21 12 21C10.13 21 8.4 20.4 6.98 19.37L3 20.5L4.15 16.63C3.42 15.15 3 13.48 3 11.5C3 6.25 7.03 2 12 2C16.97 2 21 6.25 21 11.5Z" fill="#fff" stroke="#fff" strokeWidth="1.5" />
+        <circle cx="8" cy="11.5" r="1.3" fill={theme} />
+        <circle cx="12" cy="11.5" r="1.3" fill={theme} />
+        <circle cx="16" cy="11.5" r="1.3" fill={theme} />
       </svg>
     );
   };
@@ -605,7 +605,7 @@ function WidgetContent() {
   const [wsStatus, setWsStatus] = useState<"connecting" | "open" | "closed" | "error">("closed");
   const [isTyping, setIsTyping] = useState(false);
   const isTypingRef = useRef(false);
-  
+
   // Lead Collection State
   const [leadSubmitted, setLeadSubmitted] = useState<boolean>(false);
   const [leadFormValues, setLeadFormValues] = useState<Record<string, string>>({});
@@ -1076,13 +1076,13 @@ function WidgetContent() {
         if (query) {
           bufferRef.current = "";
           setMessages((prev) => [...prev, { role: "user", content: query }]);
-           setIsTyping(true);
-           startTypingTimeout();
-           if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-             ws.current.send(JSON.stringify({ message: query, query: query, embed: true, is_embed: true }));
-           } else {
-             pendingQueryRef.current = query;
-           }
+          setIsTyping(true);
+          startTypingTimeout();
+          if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+            ws.current.send(JSON.stringify({ message: query, query: query, embed: true, is_embed: true }));
+          } else {
+            pendingQueryRef.current = query;
+          }
         }
       }
     };
@@ -1216,7 +1216,7 @@ function WidgetContent() {
 
           bufferRef.current += data.delta;
           const rawStream = bufferRef.current;
-          
+
           // Extract citations if present in stream text e.g. [Source: file.pdf]
           const citationRegex = /(?:\[Source:\s*|\(Source:\s*)([^\]\)]+)[\]\)]/gi;
           const extractedCitations: SourceItem[] = [];
@@ -1590,7 +1590,7 @@ function WidgetContent() {
                   justifyContent: "center",
                   margin: "0 auto 12px auto"
                 }}>
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
                 </div>
                 <h3 style={{ margin: "0 0 6px 0", fontSize: "16px", fontWeight: "700", color: "#18181b" }}>Before we start</h3>
                 <p style={{ margin: 0, fontSize: "12px", color: "#71717a", lineHeight: "1.4" }}>
@@ -1602,7 +1602,7 @@ function WidgetContent() {
                 const label = field.charAt(0).toUpperCase() + field.slice(1);
                 const isEmail = field.toLowerCase() === "email";
                 const isPhone = field.toLowerCase() === "phone" || field.toLowerCase() === "mobile";
-                
+
                 return (
                   <div key={field} style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                     <label style={{ fontSize: "11px", fontWeight: "700", color: "#4b5563", textTransform: "uppercase", letterSpacing: "0.02em" }}>
@@ -1676,22 +1676,355 @@ function WidgetContent() {
               gap: "16px",
             }}
           >
-          {messages.map((msg, index) => {
-            const isUser = msg.role === "user";
-            return (
-              <div
-                key={index}
-                onMouseEnter={() => setHoveredIndex(index)}
-                onMouseLeave={() => setHoveredIndex(null)}
-                style={{
-                  display: "flex",
-                  gap: "8px",
-                  alignItems: "flex-start",
-                  flexDirection: isUser ? "row-reverse" : "row",
-                  width: "100%",
-                }}
-              >
-                {!isUser && (
+            {messages.map((msg, index) => {
+              const isUser = msg.role === "user";
+              return (
+                <div
+                  key={index}
+                  onMouseEnter={() => setHoveredIndex(index)}
+                  onMouseLeave={() => setHoveredIndex(null)}
+                  style={{
+                    display: "flex",
+                    gap: "8px",
+                    alignItems: "flex-start",
+                    flexDirection: isUser ? "row-reverse" : "row",
+                    width: "100%",
+                  }}
+                >
+                  {!isUser && (
+                    <div style={{
+                      width: "28px", height: "28px", borderRadius: "50%", background: themeColor,
+                      display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
+                      flexShrink: 0, marginTop: "16px"
+                    }}>
+                      {showInChat && customizationLogoUrl ? (
+                        <img src={customizationLogoUrl} alt="Bot Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      ) : (
+                        renderBotAvatar(resolvedBotAvatar, themeColor)
+                      )}
+                    </div>
+                  )}
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: isUser ? "flex-end" : "flex-start",
+                      width: "100%",
+                    }}
+                  >
+                    <div style={{ fontSize: "11px", color: "#a3a3a3", marginBottom: "4px" }}>
+                      {isUser ? "You" : "Gsearch • AI Agent"}
+                    </div>
+
+                    <div
+                      style={{
+                        padding: "12px 16px",
+                        borderRadius: "18px",
+                        background: isUser ? "#f4f4f5" : "#ffffff",
+                        border: "1px solid #e4e4e7",
+                        color: "#18181b",
+                        fontSize: "14px",
+                        lineHeight: "1.45",
+                        maxWidth: "85%",
+                        width: isUser ? "auto" : "100%",
+                        boxSizing: "border-box",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {!isUser && msg.content === "" && isTyping ? (
+                        <div style={{ display: "flex", gap: "4px" }}>
+                          <span className="typing-dot"></span>
+                          <span className="typing-dot"></span>
+                          <span className="typing-dot"></span>
+                        </div>
+                      ) : (
+                        <>
+                          {renderFormattedContent(msg.content, isUser, themeColor, linkSafety ? (url) => setSafetyModalUrl(url) : undefined)}
+                          {!isUser && isTyping && index === messages.length - 1 && (
+                            <span className="typing-cursor" style={{ color: themeColor, marginLeft: "4px" }}>▋</span>
+                          )}
+                          {!isUser && escalationEnabled && msg.escalation_detected && (
+                            <div style={{ marginTop: "12px" }}>
+                              <button
+                                onClick={() => {
+                                  if (escalationLink) {
+                                    window.open(escalationLink, "_blank", "noopener,noreferrer");
+                                  }
+                                }}
+                                style={{
+                                  background: themeColor,
+                                  color: "#ffffff",
+                                  border: "none",
+                                  borderRadius: "10px",
+                                  padding: "8px 16px",
+                                  fontSize: "12px",
+                                  fontWeight: "700",
+                                  cursor: "pointer",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "6px",
+                                  transition: "opacity 0.2s",
+                                  fontFamily: CHAT_FONT_FAMILY
+                                }}
+                                onMouseEnter={(e) => e.currentTarget.style.opacity = "0.9"}
+                                onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
+                              >
+                                <span>🧑💼</span> Talk to Human Agent
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+
+                    {/* Action Toolbar: Copy, Thumbs Up, Thumbs Down, Regenerate, Source (Far Right) */}
+                    {!isUser && (!isTyping || index < messages.length - 1) && (
+                      <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "6px", width: "100%", flexWrap: "wrap" }}>
+                        {/* 1. Copy Button */}
+                        {displayCopy && (
+                          <button
+                            onClick={() => {
+                              navigator.clipboard?.writeText(msg.content);
+                              setCopiedIndex(index);
+                              setTimeout(() => setCopiedIndex(null), 2000);
+                            }}
+                            style={{
+                              background: "transparent",
+                              border: "none",
+                              cursor: "pointer",
+                              color: copiedIndex === index ? themeColor : "#71717a",
+                              padding: "4px",
+                              display: "flex",
+                              alignItems: "center",
+                              borderRadius: "6px",
+                              transition: "color 0.2s"
+                            }}
+                            title="Copy answer"
+                          >
+                            {copiedIndex === index ? (
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={themeColor} strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
+                            ) : (
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+                            )}
+                          </button>
+                        )}
+
+                        {/* 2. Thumbs Up & 3. Thumbs Down (Helpful / Not helpful) */}
+                        {displayFeedback && (
+                          <>
+                            <button
+                              onClick={() => handleFeedback(index, msg.id, "thumbs_up")}
+                              style={{
+                                background: "transparent",
+                                border: "none",
+                                cursor: "pointer",
+                                color: feedbackMap[index] === "thumbs_up" ? "#10b981" : "#71717a",
+                                padding: "4px",
+                                display: "flex",
+                                alignItems: "center",
+                                borderRadius: "6px",
+                                transition: "color 0.2s"
+                              }}
+                              title="Helpful"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill={feedbackMap[index] === "thumbs_up" ? "#10b981" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" /></svg>
+                            </button>
+
+                            <button
+                              onClick={() => handleFeedback(index, msg.id, "thumbs_down")}
+                              style={{
+                                background: "transparent",
+                                border: "none",
+                                cursor: "pointer",
+                                color: feedbackMap[index] === "thumbs_down" ? "#f43f5e" : "#71717a",
+                                padding: "4px",
+                                display: "flex",
+                                alignItems: "center",
+                                borderRadius: "6px",
+                                transition: "color 0.2s"
+                              }}
+                              title="Not helpful"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill={feedbackMap[index] === "thumbs_down" ? "#f43f5e" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" /></svg>
+                            </button>
+                          </>
+                        )}
+
+                        <button
+                          onClick={() => {
+                            const prevUserMsg = messages.slice(0, index).reverse().find(m => m.role === "user");
+                            if (prevUserMsg && ws.current && ws.current.readyState === WebSocket.OPEN) {
+                              bufferRef.current = "";
+                              setIsTyping(true);
+                              startTypingTimeout();
+                              setMessages((prev) => {
+                                const updated = [...prev];
+                                if (updated[index]) {
+                                  updated[index] = { ...updated[index], content: "", sources: undefined };
+                                }
+                                return updated;
+                              });
+                              ws.current.send(JSON.stringify({ message: prevUserMsg.content, query: prevUserMsg.content, embed: true, is_embed: true }));
+                            }
+                          }}
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            cursor: "pointer",
+                            color: "#71717a",
+                            padding: "4px",
+                            display: "flex",
+                            alignItems: "center",
+                            borderRadius: "6px",
+                            transition: "color 0.2s"
+                          }}
+                          title="Regenerate response"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" /></svg>
+                        </button>
+
+                        {/* 5. Source Link Button (Only when msg.sources has items) */}
+                        {displaySources && msg.sources && msg.sources.length > 0 && !msg.content.includes("Something went wrong") && !msg.content.includes("trouble connecting") && (
+                          <div style={{ position: "relative", display: "flex", alignItems: "center", marginLeft: "25px" }}>
+                            {(() => {
+                              const effectiveSources = deduplicateSources(msg.sources);
+                              const hasMultiple = effectiveSources.length > 1;
+
+                              return (
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      if (hasMultiple) {
+                                        setActiveSourceMenuIndex(activeSourceMenuIndex === index ? null : index);
+                                      } else if (effectiveSources.length === 1) {
+                                        handleOpenSource(effectiveSources[0], effectiveSources, 0);
+                                      } else {
+                                        handleOpenSource({}, [], 0);
+                                      }
+                                    }}
+                                    style={{
+                                      background: "transparent",
+                                      border: "none",
+                                      cursor: "pointer",
+                                      fontSize: "12px",
+                                      fontWeight: "700",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: "4px",
+                                      padding: "4px"
+                                    }}
+                                    title={hasMultiple ? `${effectiveSources.length} Sources available` : "View Source"}
+                                  >
+                                    <SiCrowdsource size={14} style={{ color: "#1e293b" }} />
+                                    <span style={{ color: "#0066cc", fontWeight: "700" }}>
+                                      {hasMultiple ? `Sources (${effectiveSources.length})` : "Source"}
+                                    </span>
+                                    {hasMultiple && (
+                                      <span style={{ fontSize: "9px", color: "#64748b", marginLeft: "1px" }}>▼</span>
+                                    )}
+                                  </button>
+
+                                  {/* Dropdown menu for multiple sources */}
+                                  {activeSourceMenuIndex === index && hasMultiple && (
+                                    <div
+                                      style={{
+                                        position: "absolute",
+                                        bottom: "100%",
+                                        left: 0,
+                                        marginBottom: "8px",
+                                        background: "rgba(255, 255, 255, 0.95)",
+                                        backdropFilter: "blur(12px)",
+                                        WebkitBackdropFilter: "blur(12px)",
+                                        border: "1px solid rgba(226, 232, 240, 0.8)",
+                                        borderRadius: "14px",
+                                        boxShadow: "0 12px 30px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.03)",
+                                        padding: "6px 0",
+                                        zIndex: 999,
+                                        minWidth: "180px",
+                                        maxWidth: "260px",
+                                        animation: "lineFadeIn 0.2s ease-out"
+                                      }}
+                                    >
+                                      <div style={{
+                                        padding: "6px 12px",
+                                        fontSize: "9px",
+                                        fontWeight: "800",
+                                        color: "#94a3b8",
+                                        letterSpacing: "0.05em",
+                                        textTransform: "uppercase",
+                                        borderBottom: "1px solid #f1f5f9",
+                                        marginBottom: "4px"
+                                      }}>
+                                        Cited Sources ({effectiveSources.length})
+                                      </div>
+                                      {effectiveSources.map((src, sIdx) => {
+                                        const rawName = src.name || src.source || src.file_name || src.s3_path || `Source ${sIdx + 1}`;
+                                        const cleanName = getCleanSourceName(rawName);
+
+                                        return (
+                                          <div
+                                            key={sIdx}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setActiveSourceMenuIndex(null);
+                                              handleOpenSource(src, effectiveSources, sIdx);
+                                            }}
+                                            style={{
+                                              padding: "6px 12px",
+                                              fontSize: "11px",
+                                              color: "#334155",
+                                              fontWeight: "600",
+                                              cursor: "pointer",
+                                              display: "flex",
+                                              alignItems: "center",
+                                              gap: "8px",
+                                              borderRadius: "8px",
+                                              margin: "2px 6px",
+                                              transition: "all 0.15s ease-in-out"
+                                            }}
+                                            onMouseEnter={(e) => {
+                                              e.currentTarget.style.background = "#eff6ff";
+                                              e.currentTarget.style.color = "#3b82f6";
+                                            }}
+                                            onMouseLeave={(e) => {
+                                              e.currentTarget.style.background = "transparent";
+                                              e.currentTarget.style.color = "#334155";
+                                            }}
+                                          >
+                                            <div style={{
+                                              width: "22px",
+                                              height: "22px",
+                                              borderRadius: "5px",
+                                              background: "#eff6ff",
+                                              display: "flex",
+                                              alignItems: "center",
+                                              justifyContent: "center",
+                                              flexShrink: 0
+                                            }}>
+                                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
+                                            </div>
+                                            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cleanName}</span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Typing Indicator (Only when waiting for first token) */}
+            {isTyping && (!messages.length || messages[messages.length - 1].role === "user") && (
+              <div style={{ display: "flex", gap: "8px", alignItems: "flex-start", width: "100%" }}>
+                {showInChat && (customizationLogoUrl || (resolvedBotAvatar && resolvedBotAvatar !== "none")) && (
                   <div style={{
                     width: "28px", height: "28px", borderRadius: "50%", background: themeColor,
                     display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
@@ -1704,353 +2037,20 @@ function WidgetContent() {
                     )}
                   </div>
                 )}
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: isUser ? "flex-end" : "flex-start",
-                    width: "100%",
-                  }}
-                >
-                  <div style={{ fontSize: "11px", color: "#a3a3a3", marginBottom: "4px" }}>
-                    {isUser ? "You" : "Gsearch • AI Agent"}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                  <div style={{ fontSize: "11px", color: "#a3a3a3", marginBottom: "4px" }}>Gsearch is typing...</div>
+                  <div style={{ padding: "12px 16px", borderRadius: "18px", background: "#ffffff", border: "1px solid #e4e4e7", display: "flex", gap: "4px" }}>
+                    <span className="typing-dot"></span>
+                    <span className="typing-dot"></span>
+                    <span className="typing-dot"></span>
                   </div>
-
-                  <div
-                    style={{
-                      padding: "12px 16px",
-                      borderRadius: "18px",
-                      background: isUser ? "#f4f4f5" : "#ffffff",
-                      border: "1px solid #e4e4e7",
-                      color: "#18181b",
-                      fontSize: "14px",
-                      lineHeight: "1.45",
-                      maxWidth: "85%",
-                      width: isUser ? "auto" : "100%",
-                      boxSizing: "border-box",
-                      wordBreak: "break-word",
-                    }}
-                  >
-                    {!isUser && msg.content === "" && isTyping ? (
-                      <div style={{ display: "flex", gap: "4px" }}>
-                        <span className="typing-dot"></span>
-                        <span className="typing-dot"></span>
-                        <span className="typing-dot"></span>
-                      </div>
-                    ) : (
-                      <>
-                        {renderFormattedContent(msg.content, isUser, themeColor, linkSafety ? (url) => setSafetyModalUrl(url) : undefined)}
-                        {!isUser && isTyping && index === messages.length - 1 && (
-                          <span className="typing-cursor" style={{ color: themeColor, marginLeft: "4px" }}>▋</span>
-                        )}
-                        {!isUser && escalationEnabled && msg.escalation_detected && (
-                          <div style={{ marginTop: "12px" }}>
-                            <button
-                              onClick={() => {
-                                if (escalationLink) {
-                                  window.open(escalationLink, "_blank", "noopener,noreferrer");
-                                }
-                              }}
-                              style={{
-                                background: themeColor,
-                                color: "#ffffff",
-                                border: "none",
-                                borderRadius: "10px",
-                                padding: "8px 16px",
-                                fontSize: "12px",
-                                fontWeight: "700",
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "6px",
-                                transition: "opacity 0.2s",
-                                fontFamily: CHAT_FONT_FAMILY
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.opacity = "0.9"}
-                              onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
-                            >
-                              <span>🧑💼</span> Talk to Human Agent
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-
-                  {/* Action Toolbar: Copy, Thumbs Up, Thumbs Down, Regenerate, Source (Far Right) */}
-                  {!isUser && (!isTyping || index < messages.length - 1) && (
-                    <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "6px", width: "100%", flexWrap: "wrap" }}>
-                      {/* 1. Copy Button */}
-                      {displayCopy && (
-                        <button
-                          onClick={() => {
-                            navigator.clipboard?.writeText(msg.content);
-                            setCopiedIndex(index);
-                            setTimeout(() => setCopiedIndex(null), 2000);
-                          }}
-                          style={{
-                            background: "transparent",
-                            border: "none",
-                            cursor: "pointer",
-                            color: copiedIndex === index ? themeColor : "#71717a",
-                            padding: "4px",
-                            display: "flex",
-                            alignItems: "center",
-                            borderRadius: "6px",
-                            transition: "color 0.2s"
-                          }}
-                          title="Copy answer"
-                        >
-                          {copiedIndex === index ? (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={themeColor} strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                          ) : (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                          )}
-                        </button>
-                      )}
-
-                      {/* 2. Thumbs Up & 3. Thumbs Down (Helpful / Not helpful) */}
-                      {displayFeedback && (
-                        <>
-                          <button
-                            onClick={() => handleFeedback(index, msg.id, "thumbs_up")}
-                            style={{
-                              background: "transparent",
-                              border: "none",
-                              cursor: "pointer",
-                              color: feedbackMap[index] === "thumbs_up" ? "#10b981" : "#71717a",
-                              padding: "4px",
-                              display: "flex",
-                              alignItems: "center",
-                              borderRadius: "6px",
-                              transition: "color 0.2s"
-                            }}
-                            title="Helpful"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill={feedbackMap[index] === "thumbs_up" ? "#10b981" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
-                          </button>
-
-                          <button
-                            onClick={() => handleFeedback(index, msg.id, "thumbs_down")}
-                            style={{
-                              background: "transparent",
-                              border: "none",
-                              cursor: "pointer",
-                              color: feedbackMap[index] === "thumbs_down" ? "#f43f5e" : "#71717a",
-                              padding: "4px",
-                              display: "flex",
-                              alignItems: "center",
-                              borderRadius: "6px",
-                              transition: "color 0.2s"
-                            }}
-                            title="Not helpful"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill={feedbackMap[index] === "thumbs_down" ? "#f43f5e" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
-                          </button>
-                        </>
-                      )}
-
-                       <button
-                         onClick={() => {
-                           const prevUserMsg = messages.slice(0, index).reverse().find(m => m.role === "user");
-                           if (prevUserMsg && ws.current && ws.current.readyState === WebSocket.OPEN) {
-                             bufferRef.current = "";
-                             setIsTyping(true);
-                             startTypingTimeout();
-                             setMessages((prev) => {
-                               const updated = [...prev];
-                               if (updated[index]) {
-                                 updated[index] = { ...updated[index], content: "", sources: undefined };
-                               }
-                               return updated;
-                             });
-                             ws.current.send(JSON.stringify({ message: prevUserMsg.content, query: prevUserMsg.content, embed: true, is_embed: true }));
-                           }
-                         }}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          cursor: "pointer",
-                          color: "#71717a",
-                          padding: "4px",
-                          display: "flex",
-                          alignItems: "center",
-                          borderRadius: "6px",
-                          transition: "color 0.2s"
-                        }}
-                        title="Regenerate response"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-                      </button>
-
-                      {/* 5. Source Link Button (Only when msg.sources has items) */}
-                      {displaySources && msg.sources && msg.sources.length > 0 && !msg.content.includes("Something went wrong") && !msg.content.includes("trouble connecting") && (
-                        <div style={{ position: "relative", display: "flex", alignItems: "center", marginLeft: "25px" }}>
-                          {(() => {
-                            const effectiveSources = deduplicateSources(msg.sources);
-                            const hasMultiple = effectiveSources.length > 1;
-
-                            return (
-                              <>
-                                <button
-                                  onClick={() => {
-                                    if (hasMultiple) {
-                                      setActiveSourceMenuIndex(activeSourceMenuIndex === index ? null : index);
-                                    } else if (effectiveSources.length === 1) {
-                                      handleOpenSource(effectiveSources[0], effectiveSources, 0);
-                                    } else {
-                                      handleOpenSource({}, [], 0);
-                                    }
-                                  }}
-                                  style={{
-                                    background: "transparent",
-                                    border: "none",
-                                    cursor: "pointer",
-                                    fontSize: "12px",
-                                    fontWeight: "700",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: "4px",
-                                    padding: "4px"
-                                  }}
-                                  title={hasMultiple ? `${effectiveSources.length} Sources available` : "View Source"}
-                                >
-                                  <SiCrowdsource size={14} style={{ color: "#1e293b" }} />
-                                  <span style={{ color: "#0066cc", fontWeight: "700" }}>
-                                    {hasMultiple ? `Sources (${effectiveSources.length})` : "Source"}
-                                  </span>
-                                  {hasMultiple && (
-                                    <span style={{ fontSize: "9px", color: "#64748b", marginLeft: "1px" }}>▼</span>
-                                  )}
-                                </button>
-
-                                {/* Dropdown menu for multiple sources */}
-                                {activeSourceMenuIndex === index && hasMultiple && (
-                                  <div
-                                    style={{
-                                      position: "absolute",
-                                      bottom: "100%",
-                                      left: 0,
-                                      marginBottom: "8px",
-                                      background: "rgba(255, 255, 255, 0.95)",
-                                      backdropFilter: "blur(12px)",
-                                      WebkitBackdropFilter: "blur(12px)",
-                                      border: "1px solid rgba(226, 232, 240, 0.8)",
-                                      borderRadius: "14px",
-                                      boxShadow: "0 12px 30px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.03)",
-                                      padding: "6px 0",
-                                      zIndex: 999,
-                                      minWidth: "180px",
-                                      maxWidth: "260px",
-                                      animation: "lineFadeIn 0.2s ease-out"
-                                    }}
-                                  >
-                                    <div style={{
-                                      padding: "6px 12px",
-                                      fontSize: "9px",
-                                      fontWeight: "800",
-                                      color: "#94a3b8",
-                                      letterSpacing: "0.05em",
-                                      textTransform: "uppercase",
-                                      borderBottom: "1px solid #f1f5f9",
-                                      marginBottom: "4px"
-                                    }}>
-                                      Cited Sources ({effectiveSources.length})
-                                    </div>
-                                    {effectiveSources.map((src, sIdx) => {
-                                      const rawName = src.name || src.source || src.file_name || src.s3_path || `Source ${sIdx + 1}`;
-                                      const cleanName = getCleanSourceName(rawName);
-
-                                      return (
-                                        <div
-                                          key={sIdx}
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setActiveSourceMenuIndex(null);
-                                            handleOpenSource(src, effectiveSources, sIdx);
-                                          }}
-                                          style={{
-                                            padding: "6px 12px",
-                                            fontSize: "11px",
-                                            color: "#334155",
-                                            fontWeight: "600",
-                                            cursor: "pointer",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: "8px",
-                                            borderRadius: "8px",
-                                            margin: "2px 6px",
-                                            transition: "all 0.15s ease-in-out"
-                                          }}
-                                          onMouseEnter={(e) => {
-                                            e.currentTarget.style.background = "#eff6ff";
-                                            e.currentTarget.style.color = "#3b82f6";
-                                          }}
-                                          onMouseLeave={(e) => {
-                                            e.currentTarget.style.background = "transparent";
-                                            e.currentTarget.style.color = "#334155";
-                                          }}
-                                        >
-                                          <div style={{
-                                            width: "22px",
-                                            height: "22px",
-                                            borderRadius: "5px",
-                                            background: "#eff6ff",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "center",
-                                            flexShrink: 0
-                                          }}>
-                                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                                          </div>
-                                          <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cleanName}</span>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </>
-                            );
-                          })()}
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
-            );
-          })}
+            )}
 
-          {/* Typing Indicator (Only when waiting for first token) */}
-          {isTyping && (!messages.length || messages[messages.length - 1].role === "user") && (
-            <div style={{ display: "flex", gap: "8px", alignItems: "flex-start", width: "100%" }}>
-              {showInChat && (customizationLogoUrl || (resolvedBotAvatar && resolvedBotAvatar !== "none")) && (
-                <div style={{
-                  width: "28px", height: "28px", borderRadius: "50%", background: themeColor,
-                  display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
-                  flexShrink: 0, marginTop: "16px"
-                }}>
-                  {showInChat && customizationLogoUrl ? (
-                    <img src={customizationLogoUrl} alt="Bot Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  ) : (
-                    renderBotAvatar(resolvedBotAvatar, themeColor)
-                  )}
-                </div>
-              )}
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-                <div style={{ fontSize: "11px", color: "#a3a3a3", marginBottom: "4px" }}>Gsearch is typing...</div>
-                <div style={{ padding: "12px 16px", borderRadius: "18px", background: "#ffffff", border: "1px solid #e4e4e7", display: "flex", gap: "4px" }}>
-                  <span className="typing-dot"></span>
-                  <span className="typing-dot"></span>
-                  <span className="typing-dot"></span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div ref={messagesEndRef} />
-        </div>
-      )}
+            <div ref={messagesEndRef} />
+          </div>
+        )}
       </div>
 
       {/* Input Bar */}
@@ -2066,79 +2066,79 @@ function WidgetContent() {
             flexShrink: 0,
           }}
         >
-        {/* Inner Input Wrapper */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            background: "#ffffff",
-            borderRadius: "22px",
-            padding: "4px 6px 4px 16px",
-            gap: "10px",
-          }}
-        >
-          {/* Left Clock/History Icon */}
-          <span style={{ display: "flex", alignItems: "center", color: "#71717a", cursor: "default" }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <polyline points="12 6 12 12 16 14" />
-            </svg>
-          </span>
-
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !isTyping) handleSend(); }}
-            placeholder="Ask a question..."
-            disabled={isTyping}
+          {/* Inner Input Wrapper */}
+          <div
             style={{
-              flex: 1,
-              padding: "8px 0",
-              background: "transparent",
-              border: "none",
-              color: isTyping ? "#71717a" : "#18181b",
-              fontSize: "14px",
-              outline: "none",
-              cursor: isTyping ? "not-allowed" : "text",
-            }}
-          />
-
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || isTyping}
-            className="widget-send-btn"
-            style={{
-              background: (input.trim() && !isTyping) ? themeColor : "#e4e4e7",
-              color: (input.trim() && !isTyping) ? "#ffffff" : "#a3a3a3",
-              border: "none",
-              borderRadius: "50%",
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
-              cursor: (input.trim() && !isTyping) ? "pointer" : "default",
-              transition: "background 0.2s, transform 0.1s active",
-              padding: 0,
+              background: "#ffffff",
+              borderRadius: "22px",
+              padding: "4px 6px 4px 16px",
+              gap: "10px",
             }}
           >
-            {isTyping ? (
-              <span style={{
-                width: "12px",
-                height: "12px",
-                border: "2px solid #a3a3a3",
-                borderTop: "2px solid transparent",
-                borderRadius: "50%",
-                animation: "spin 1s linear infinite",
-                display: "inline-block"
-              }} />
-            ) : (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="19" x2="12" y2="5" />
-                <polyline points="5 12 12 5 19 12" />
+            {/* Left Clock/History Icon */}
+            <span style={{ display: "flex", alignItems: "center", color: "#71717a", cursor: "default" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
               </svg>
-            )}
-          </button>
+            </span>
+
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !isTyping) handleSend(); }}
+              placeholder="Ask a question..."
+              disabled={isTyping}
+              style={{
+                flex: 1,
+                padding: "8px 0",
+                background: "transparent",
+                border: "none",
+                color: isTyping ? "#71717a" : "#18181b",
+                fontSize: "14px",
+                outline: "none",
+                cursor: isTyping ? "not-allowed" : "text",
+              }}
+            />
+
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() || isTyping}
+              className="widget-send-btn"
+              style={{
+                background: (input.trim() && !isTyping) ? themeColor : "#e4e4e7",
+                color: (input.trim() && !isTyping) ? "#ffffff" : "#a3a3a3",
+                border: "none",
+                borderRadius: "50%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: (input.trim() && !isTyping) ? "pointer" : "default",
+                transition: "background 0.2s, transform 0.1s active",
+                padding: 0,
+              }}
+            >
+              {isTyping ? (
+                <span style={{
+                  width: "12px",
+                  height: "12px",
+                  border: "2px solid #a3a3a3",
+                  borderTop: "2px solid transparent",
+                  borderRadius: "50%",
+                  animation: "spin 1s linear infinite",
+                  display: "inline-block"
+                }} />
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="19" x2="12" y2="5" />
+                  <polyline points="5 12 12 5 19 12" />
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
-      </div>
       )}
 
       {/* Powered by Gramosoft */}
@@ -2188,11 +2188,11 @@ function WidgetContent() {
             textAlign: "center"
           }}>
             <div style={{ width: "40px", height: "40px", borderRadius: "50%", background: "#fef3c7", color: "#d97706", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 1 1.71-3L13.71 3.86a2 2 0 0 1-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 1 1.71-3L13.71 3.86a2 2 0 0 1-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
             </div>
             <div style={{ fontWeight: "700", fontSize: "14px", color: "#18181b" }}>External Link Warning</div>
             <div style={{ fontSize: "11px", color: "#71717a", wordBreak: "break-all" }}>
-              You are leaving this site to visit:<br/>
+              You are leaving this site to visit:<br />
               <strong style={{ color: themeColor }}>{safetyModalUrl}</strong>
             </div>
             <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
@@ -2418,7 +2418,7 @@ function WidgetContent() {
                 }}
                 title="Open file in new tab"
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
                 View
               </button>
 
@@ -2441,7 +2441,7 @@ function WidgetContent() {
                     gap: "4px"
                   }}
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
                   Download
                 </button>
               ) : (

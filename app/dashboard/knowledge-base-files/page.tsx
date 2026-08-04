@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Typography,
   Card,
@@ -217,6 +217,7 @@ export default function KnowledgeBaseFilesPage() {
   const [spreadsheetSheets, setSpreadsheetSheets] = useState<string[]>([]);
   const [activeSheet, setActiveSheet] = useState<string>("");
   const [excelPage, setExcelPage] = useState<number>(1);
+  const excelArrayBufferRef = useRef<ArrayBuffer | null>(null);
 
   const [request, , loading] = useAxios({
     endpoint: "GET_USER_KBS",
@@ -366,22 +367,36 @@ export default function KnowledgeBaseFilesPage() {
           } else if (isCSV || isExcel) {
             try {
               const arrayBuffer = await blob.arrayBuffer();
-              const XLSX = await import("xlsx");
-              const workbook = XLSX.read(arrayBuffer, { type: "array" });
+              excelArrayBufferRef.current = arrayBuffer;
 
-              const sheetsData: { [sheetName: string]: string[][] } = {};
-              workbook.SheetNames.forEach((sheetName) => {
-                const worksheet = workbook.Sheets[sheetName];
+              const XLSX = await import("xlsx");
+              // 1. Read sheet names first (extremely fast!)
+              const workbook = XLSX.read(arrayBuffer, { type: "array", bookSheets: true });
+              setSpreadsheetSheets(workbook.SheetNames);
+
+              if (workbook.SheetNames.length > 0) {
+                const firstSheet = workbook.SheetNames[0];
+                setActiveSheet(firstSheet);
+
+                // 2. Parse only the active sheet on load (skips all other sheets)
+                const partialWorkbook = XLSX.read(arrayBuffer, {
+                  type: "array",
+                  sheets: [firstSheet],
+                  cellFormula: false,
+                  cellHTML: false,
+                  cellText: false,
+                  cellDates: true
+                });
+
+                const worksheet = partialWorkbook.Sheets[firstSheet];
                 const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
-                sheetsData[sheetName] = jsonData.map((row: any) =>
+                const formattedData = jsonData.map((row: any) =>
                   Array.isArray(row)
                     ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
                     : []
                 );
-              });
-              setSpreadsheetData(sheetsData);
-              setSpreadsheetSheets(workbook.SheetNames);
-              setActiveSheet(workbook.SheetNames[0] || "");
+                setSpreadsheetData({ [firstSheet]: formattedData });
+              }
               setExcelPage(1);
               setPreviewType("excel");
             } catch (err) {
@@ -746,7 +761,33 @@ export default function KnowledgeBaseFilesPage() {
                         {spreadsheetSheets.map((sheet) => (
                           <button
                             key={sheet}
-                            onClick={() => {
+                            onClick={async () => {
+                              if ((!spreadsheetData || !spreadsheetData[sheet]) && excelArrayBufferRef.current) {
+                                setPreviewLoading(true);
+                                try {
+                                  const XLSX = await import("xlsx");
+                                  const partialWorkbook = XLSX.read(excelArrayBufferRef.current, {
+                                    type: "array",
+                                    sheets: [sheet],
+                                    cellFormula: false,
+                                    cellHTML: false,
+                                    cellText: false,
+                                    cellDates: true
+                                  });
+                                  const worksheet = partialWorkbook.Sheets[sheet];
+                                  const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+                                  const formattedData = jsonData.map((row: any) =>
+                                    Array.isArray(row)
+                                      ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+                                      : []
+                                  );
+                                  setSpreadsheetData(prev => ({ ...(prev || {}), [sheet]: formattedData }));
+                                } catch (err) {
+                                  console.error("Failed to parse sheet:", sheet, err);
+                                } finally {
+                                  setPreviewLoading(false);
+                                }
+                              }
                               setActiveSheet(sheet);
                               setExcelPage(1);
                             }}

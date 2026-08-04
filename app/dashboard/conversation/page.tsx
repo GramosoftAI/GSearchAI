@@ -989,6 +989,7 @@ export default function ChatPlaygroundPage() {
   const [excelSheetNames, setExcelSheetNames] = useState<string[]>([]);
   const [activeExcelSheet, setActiveExcelSheet] = useState<string>("");
   const [excelPage, setExcelPage] = useState<number>(1);
+  const excelArrayBufferRef = useRef<ArrayBuffer | null>(null);
 
   const resetChatStates = () => {
     setIsTyping(false);
@@ -2307,23 +2308,36 @@ export default function ChatPlaygroundPage() {
       } else if (isCSV || isExcel) {
         setSourcesDrawerPreviewType(isCSV ? "csv" : "excel");
         const arrayBuffer = await blob.arrayBuffer();
-        const XLSX = await import("xlsx");
-        const workbook = XLSX.read(arrayBuffer, { type: "array" });
+        excelArrayBufferRef.current = arrayBuffer;
 
-        const sheetsData: { [sheetName: string]: string[][] } = {};
-        workbook.SheetNames.forEach((sheetName) => {
-          const worksheet = workbook.Sheets[sheetName];
+        const XLSX = await import("xlsx");
+        // 1. Read sheet names first (extremely fast!)
+        const workbook = XLSX.read(arrayBuffer, { type: "array", bookSheets: true });
+        setExcelSheetNames(workbook.SheetNames);
+
+        if (workbook.SheetNames.length > 0) {
+          const firstSheet = workbook.SheetNames[0];
+          setActiveExcelSheet(firstSheet);
+
+          // 2. Parse only the active sheet on load (skips all other sheets)
+          const partialWorkbook = XLSX.read(arrayBuffer, {
+            type: "array",
+            sheets: [firstSheet],
+            cellFormula: false,
+            cellHTML: false,
+            cellText: false,
+            cellDates: true
+          });
+
+          const worksheet = partialWorkbook.Sheets[firstSheet];
           const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
-          sheetsData[sheetName] = jsonData.map((row: any) =>
+          const formattedData = jsonData.map((row: any) =>
             Array.isArray(row)
               ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
               : []
           );
-        });
-
-        setExcelSheets(sheetsData);
-        setExcelSheetNames(workbook.SheetNames);
-        setActiveExcelSheet(workbook.SheetNames[0] || "");
+          setExcelSheets({ [firstSheet]: formattedData });
+        }
         setExcelPage(1);
       } else {
         setSourcesDrawerPreviewType("other");
@@ -3191,7 +3205,33 @@ export default function ChatPlaygroundPage() {
                           return (
                             <button
                               key={sheetName}
-                              onClick={() => {
+                              onClick={async () => {
+                                if (!excelSheets[sheetName] && excelArrayBufferRef.current) {
+                                  setSourcesDrawerPreviewLoading(true);
+                                  try {
+                                    const XLSX = await import("xlsx");
+                                    const partialWorkbook = XLSX.read(excelArrayBufferRef.current, {
+                                      type: "array",
+                                      sheets: [sheetName],
+                                      cellFormula: false,
+                                      cellHTML: false,
+                                      cellText: false,
+                                      cellDates: true
+                                    });
+                                    const worksheet = partialWorkbook.Sheets[sheetName];
+                                    const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+                                    const formattedData = jsonData.map((row: any) =>
+                                      Array.isArray(row)
+                                        ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+                                        : []
+                                    );
+                                    setExcelSheets(prev => ({ ...prev, [sheetName]: formattedData }));
+                                  } catch (err) {
+                                    console.error("Failed to parse sheet:", sheetName, err);
+                                  } finally {
+                                    setSourcesDrawerPreviewLoading(false);
+                                  }
+                                }
                                 setActiveExcelSheet(sheetName);
                                 setExcelPage(1);
                               }}

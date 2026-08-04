@@ -139,13 +139,13 @@ export default function EmbedScriptSection() {
   const [leadFields, setLeadFields] = useState<string>("name,email");
   const [leadTiming, setLeadTiming] = useState<string>("pre-chat");
   const [escalationEnabled, setEscalationEnabled] = useState<boolean>(false);
-  const [escalationLink, setEscalationLink] = useState<string>("https://docsbot.ai/");
+  const [escalationLink, setEscalationLink] = useState<string>("");
 
   const [draftLeadCollection, setDraftLeadCollection] = useState<boolean>(false);
   const [draftLeadFields, setDraftLeadFields] = useState<string>("name,email");
   const [draftLeadTiming, setDraftLeadTiming] = useState<string>("pre-chat");
   const [draftEscalationEnabled, setDraftEscalationEnabled] = useState<boolean>(false);
-  const [draftEscalationLink, setDraftEscalationLink] = useState<string>("https://docsbot.ai/");
+  const [draftEscalationLink, setDraftEscalationLink] = useState<string>("");
 
   // Modal Customizer Draft States
   const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
@@ -1103,17 +1103,17 @@ export default function EmbedScriptSection() {
                       </div>
 
                       {/* Divider */}
-                      <div className="border-t border-slate-200 dark:border-slate-800 my-4" />
+                      {/* <div className="border-t border-slate-200 dark:border-slate-800 my-4" /> */}
 
                       {/* Lead & Support Escalation Section */}
                       <div className="space-y-3.5 pb-2">
-                        <div>
+                        {/* <div>
                           <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 m-0">Lead & Support Escalation</h4>
                           <p className="text-[10px] text-slate-400 m-0">Configure lead collection forms and support escalation links.</p>
-                        </div>
+                        </div> */}
 
                         {/* Lead Collection Toggle */}
-                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
+                        {/* <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
                           <div className="flex items-start gap-2.5">
                             <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
                               <UserOutlined className="text-xs" />
@@ -1131,9 +1131,9 @@ export default function EmbedScriptSection() {
                             }}
                             style={{ backgroundColor: draftLeadCollection ? draftThemeColor : undefined }}
                           />
-                        </div>
+                        </div> */}
 
-                        {draftLeadCollection && (
+                        {/* {draftLeadCollection && (
                           <div className="space-y-3 pl-2.5 border-l-2 border-slate-200 dark:border-slate-800 ml-3.5 animate-in fade-in slide-in-from-left duration-200">
                             <div className="space-y-1">
                               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
@@ -1162,10 +1162,10 @@ export default function EmbedScriptSection() {
                               />
                             </div>
                           </div>
-                        )}
+                        )} */}
 
                         {/* Escalation Toggle */}
-                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
+                        {/* <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
                           <div className="flex items-start gap-2.5">
                             <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
                               <CustomerServiceOutlined className="text-xs" />
@@ -1180,9 +1180,9 @@ export default function EmbedScriptSection() {
                             onChange={(checked) => setDraftEscalationEnabled(checked)}
                             style={{ backgroundColor: draftEscalationEnabled ? draftThemeColor : undefined }}
                           />
-                        </div>
+                        </div> */}
 
-                        {draftEscalationEnabled && (
+                        {/* {draftEscalationEnabled && (
                           <div className="space-y-3 pl-2.5 border-l-2 border-slate-200 dark:border-slate-800 ml-3.5 animate-in fade-in slide-in-from-left duration-200">
                             <div className="space-y-1">
                               <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
@@ -1191,12 +1191,12 @@ export default function EmbedScriptSection() {
                               <Input
                                 value={draftEscalationLink}
                                 onChange={(e) => setDraftEscalationLink(e.target.value)}
-                                placeholder="e.g. https://docsbot.ai/"
+                                placeholder="e.g. https://example.ai/"
                                 className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
                               />
                             </div>
                           </div>
-                        )}
+                        )} */}
                       </div>
                     </div>
                   ),

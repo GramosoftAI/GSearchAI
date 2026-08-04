@@ -1,6 +1,6 @@
 "use client"
 
-import { Button, Flex, Input, Typography, Card, Row, Col, Segmented, Modal, Spin, Divider, Progress, message } from 'antd'
+import { Button, Flex, Input, Typography, Card, Row, Col, Segmented, Modal, Spin, Divider, Progress, message, Checkbox } from 'antd'
 import { useState, useEffect, useRef } from 'react'
 import { Globe, FileText, Type, Upload, X, Image as ImageIcon, Clock } from 'lucide-react'
 import AgentList from "../../components/ui/AgentList";
@@ -203,6 +203,8 @@ export default function KnowledgeBasePage() {
   const [request, , loading] = useAxios<unknown, Record<string, unknown> | FormData>({ endpoint: "KNOWLEDGEBASE", showSuccessMsg: true })
   const [getAgents] = useAxios<AgentListResponse>({ endpoint: "GETAGENTLIST" });
   const [agentlist, agentlistres] = useAxios<any>({ endpoint: "GET_LIST" })
+  const [urlDiscover] = useAxios<any>({ endpoint: "URL_DISCOVER" })
+  const [urlSelect] = useAxios<any>({ endpoint: "URL_SELECT", showSuccessMsg: true })
 
   const activeJobs = useStore((state) => state.activeJobs);
   const setActiveJobs = useStore((state) => state.setActiveJobs);
@@ -317,6 +319,13 @@ export default function KnowledgeBasePage() {
   const [excelSheetNames, setExcelSheetNames] = useState<string[]>([]);
   const [activeExcelSheet, setActiveExcelSheet] = useState<string>("");
   const [excelPage, setExcelPage] = useState<number>(1);
+  const excelArrayBufferRef = useRef<ArrayBuffer | null>(null);
+
+  // gcrawlai link crawler states
+  const [crawlerModalVisible, setCrawlerModalVisible] = useState(false);
+  const [crawlerLoading, setCrawlerLoading] = useState(false);
+  const [crawledUrls, setCrawledUrls] = useState<string[]>([]);
+  const [selectedUrls, setSelectedUrls] = useState<string[]>([]);
 
   const sourcesList = Array.isArray(agentlistres)
     ? agentlistres
@@ -416,24 +425,35 @@ export default function KnowledgeBasePage() {
           } else if (isCSV || isExcel) {
             setPreviewType(isCSV ? "csv" : "excel");
             const arrayBuffer = await blob.arrayBuffer();
-            const XLSX = await import("xlsx");
-            const workbook = XLSX.read(arrayBuffer, { type: "array" });
+            excelArrayBufferRef.current = arrayBuffer;
 
-            const sheetsData: { [sheetName: string]: string[][] } = {};
-            workbook.SheetNames.forEach((sheetName) => {
-              const worksheet = workbook.Sheets[sheetName];
+            const XLSX = await import("xlsx");
+            // 1. Read sheet names first (extremely fast!)
+            const workbook = XLSX.read(arrayBuffer, { type: "array", bookSheets: true });
+            setExcelSheetNames(workbook.SheetNames);
+
+            if (workbook.SheetNames.length > 0) {
+              const firstSheet = workbook.SheetNames[0];
+              setActiveExcelSheet(firstSheet);
+
+              // 2. Parse only the active sheet on load (skips all other sheets)
+              const partialWorkbook = XLSX.read(arrayBuffer, {
+                type: "array",
+                sheets: [firstSheet],
+                cellFormula: false,
+                cellHTML: false,
+                cellText: false,
+                cellDates: true
+              });
+
+              const worksheet = partialWorkbook.Sheets[firstSheet];
               const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
-              sheetsData[sheetName] = jsonData.map((row: any) =>
+              const formattedData = jsonData.map((row: any) =>
                 Array.isArray(row)
                   ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
                   : []
               );
-            });
-
-            setExcelSheets(sheetsData);
-            setExcelSheetNames(workbook.SheetNames);
-            if (workbook.SheetNames.length > 0) {
-              setActiveExcelSheet(workbook.SheetNames[0]);
+              setExcelSheets({ [firstSheet]: formattedData });
             }
           }
         } else {
@@ -635,6 +655,41 @@ export default function KnowledgeBasePage() {
   }, [])
 
 
+  const handleConfirmCrawlerLinks = async () => {
+    if (selectedUrls.length === 0) {
+      message.warning("Please select at least one URL to import");
+      return;
+    }
+    
+    setCrawlerLoading(true);
+
+    try {
+      // Call urlSelect API to import selected URLs
+      await urlSelect({
+        path: `/${agent?.id}/sources/url/select`,
+        data: {
+          urls: selectedUrls
+        }
+      });
+      
+      message.success("Successfully imported selected URLs to knowledge base");
+      setCrawlerModalVisible(false);
+      setUrl(''); // clear URL input
+      
+      // Refresh source list
+      if (agent?.id) {
+        await agentlist({
+          path: `/agents/${agent.id}?limit=50&offset=0`,
+        });
+      }
+    } catch (err) {
+      console.error("Bulk URL import failed:", err);
+      message.error("Failed to import selected URLs");
+    } finally {
+      setCrawlerLoading(false);
+    }
+  };
+
   async function handleSubmit() {
     if (!agent?.id) {
       message.warning("No agent selected")
@@ -642,22 +697,40 @@ export default function KnowledgeBasePage() {
     }
 
     if (activeTab === 'url') {
-      const res = await request({ data: { agent_id: agent.id, agent_name: agent.name, url }, path: `/${agent.id}/sources/url` }) as any
-      const jobId = res?.jobId || res?.job_id || res?.data?.jobId || res?.data?.job_id || res?.result?.jobId || res?.result?.job_id;
-      if (jobId) {
-        setActiveJobs(prev => [...prev, {
-          id: jobId,
-          name: url,
-          type: 'url',
-          progress: 0,
-          status: 'pending'
-        }]);
+      if (!url.trim()) {
+        message.warning("Please enter a URL to discover");
+        return;
       }
-      await agentlist({
-        path: `/agents/${agent.id}?limit=50&offset=0`,
-      });
-      setUrl('')
-      return
+      setCrawlerModalVisible(true);
+      setCrawlerLoading(true);
+      setCrawledUrls([]);
+      setSelectedUrls([]);
+
+      try {
+        // Call urlDiscover API to get sub-links
+        const response = await urlDiscover({
+          path: `/${agent.id}/sources/url/discover`,
+          data: {
+            url: url.trim()
+          }
+        });
+
+        // Backend response directly contains data: [urls] or data: { links: [urls] }
+        const linksList = response?.data || response?.data?.links || response?.links || [];
+
+        if (Array.isArray(linksList)) {
+          setCrawledUrls(linksList);
+          setSelectedUrls([]); // Empty by default
+        } else {
+          throw new Error("No URL list returned from discovery API");
+        }
+      } catch (err: any) {
+        setCrawlerModalVisible(false);
+        message.error(err.message || "Failed to discover links");
+      } finally {
+        setCrawlerLoading(false);
+      }
+      return;
     }
 
     if (activeTab === 'pdf') {
@@ -1368,7 +1441,33 @@ export default function KnowledgeBasePage() {
                           return (
                             <button
                               key={sheetName}
-                              onClick={() => {
+                              onClick={async () => {
+                                if (!excelSheets[sheetName] && excelArrayBufferRef.current) {
+                                  setPreviewLoading(true);
+                                  try {
+                                    const XLSX = await import("xlsx");
+                                    const partialWorkbook = XLSX.read(excelArrayBufferRef.current, {
+                                      type: "array",
+                                      sheets: [sheetName],
+                                      cellFormula: false,
+                                      cellHTML: false,
+                                      cellText: false,
+                                      cellDates: true
+                                    });
+                                    const worksheet = partialWorkbook.Sheets[sheetName];
+                                    const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+                                    const formattedData = jsonData.map((row: any) =>
+                                      Array.isArray(row)
+                                        ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+                                        : []
+                                    );
+                                    setExcelSheets(prev => ({ ...prev, [sheetName]: formattedData }));
+                                  } catch (err) {
+                                    console.error("Failed to parse sheet:", sheetName, err);
+                                  } finally {
+                                    setPreviewLoading(false);
+                                  }
+                                }
                                 setActiveExcelSheet(sheetName);
                                 setExcelPage(1);
                               }}
@@ -1477,6 +1576,109 @@ export default function KnowledgeBasePage() {
               </div>
             )}
           </div>
+        )}
+      </Modal>
+
+      <Modal
+        title={
+          <Flex align="center" gap={8}>
+            <Globe className="text-[#0fb5a1]" size={18} />
+            <Text className="font-bold text-slate-800 dark:text-slate-200">Import Crawler Links</Text>
+          </Flex>
+        }
+        open={crawlerModalVisible}
+        onCancel={() => setCrawlerModalVisible(false)}
+        footer={
+          !crawlerLoading && crawledUrls.length > 0 ? (
+            <Flex justify="end" gap={8}>
+              <Button onClick={() => setCrawlerModalVisible(false)}>Cancel</Button>
+              <Button
+                type="primary"
+                onClick={handleConfirmCrawlerLinks}
+                style={{ backgroundColor: "#0fb5a1", borderColor: "#0fb5a1" }}
+              >
+                Import {selectedUrls.length} links
+              </Button>
+            </Flex>
+          ) : null
+        }
+        width={600}
+        centered
+        destroyOnClose
+      >
+        {crawlerLoading ? (
+          <Flex vertical align="center" justify="center" className="py-12 gap-3">
+            <Spin size="large" />
+            <Text className="text-sm font-medium text-slate-500">Crawling web pages and extracting links, please wait...</Text>
+          </Flex>
+        ) : crawledUrls.length > 0 ? (
+          <div className="space-y-4 py-2">
+            <Text className="text-xs text-slate-500 block">
+              We crawled the domain and found the following links. Select the pages you want to add to your knowledge base.
+            </Text>
+            
+            {/* Select All Checkbox */}
+            <div className="flex justify-between items-center bg-slate-100 dark:bg-slate-900/50 p-2.5 rounded-lg border border-slate-200/50 dark:border-slate-800/50">
+              <Checkbox
+                checked={selectedUrls.length === crawledUrls.length}
+                indeterminate={selectedUrls.length > 0 && selectedUrls.length < crawledUrls.length}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    setSelectedUrls(crawledUrls);
+                  } else {
+                    setSelectedUrls([]);
+                  }
+                }}
+              >
+                <span className="font-semibold text-xs text-slate-700 dark:text-slate-300">Select all links</span>
+              </Checkbox>
+              <span className="text-[10px] font-bold text-[#0fb5a1] bg-[#0fb5a1]/10 px-2.5 py-0.5 rounded-full">
+                {selectedUrls.length} / {crawledUrls.length} selected
+              </span>
+            </div>
+
+            {/* List scrollbox */}
+            <div className="max-h-72 overflow-y-auto space-y-2.5 border border-slate-200 dark:border-slate-800 rounded-xl p-3 bg-slate-50 dark:bg-slate-955/50 custom-scrollbar">
+              {crawledUrls.map((link) => {
+                const isSelected = selectedUrls.includes(link);
+                return (
+                  <div
+                    key={link}
+                    onClick={() => {
+                      if (isSelected) {
+                        setSelectedUrls(prev => prev.filter(u => u !== link));
+                      } else {
+                        setSelectedUrls(prev => [...prev, link]);
+                      }
+                    }}
+                    className={`flex items-start p-2.5 rounded-lg border transition-all cursor-pointer select-none ${
+                      isSelected
+                        ? "bg-[#0fb5a1]/5 border-[#0fb5a1]/30 text-slate-800 dark:text-slate-100"
+                        : "bg-white dark:bg-slate-900 border-slate-200/60 dark:border-slate-800/60 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700"
+                    }`}
+                  >
+                    <Checkbox
+                      checked={isSelected}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedUrls(prev => [...prev, link]);
+                        } else {
+                          setSelectedUrls(prev => prev.filter(u => u !== link));
+                        }
+                      }}
+                      className="mt-0.5 shrink-0"
+                    />
+                    <span className="ml-2.5 text-xs font-mono break-all leading-tight">{link}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <Flex vertical align="center" justify="center" className="py-12">
+            <Empty description="No links found on this domain" />
+          </Flex>
         )}
       </Modal>
     </>
