@@ -203,7 +203,7 @@ export default function KnowledgeBasePage() {
   const [request, , loading] = useAxios<unknown, Record<string, unknown> | FormData>({ endpoint: "KNOWLEDGEBASE", showSuccessMsg: true })
   const [getAgents] = useAxios<AgentListResponse>({ endpoint: "GETAGENTLIST" });
   const [agentlist, agentlistres] = useAxios<any>({ endpoint: "GET_LIST" })
-  const [urlDiscover] = useAxios<any>({ endpoint: "URL_DISCOVER" })
+  const [urlDiscover] = useAxios<any>({ endpoint: "URL_DISCOVER", hideGlobalLoader: true })
   const [urlSelect] = useAxios<any>({ endpoint: "URL_SELECT", showSuccessMsg: true })
 
   const activeJobs = useStore((state) => state.activeJobs);
@@ -715,8 +715,8 @@ export default function KnowledgeBasePage() {
           }
         });
 
-        // Backend response directly contains data: [urls] or data: { links: [urls] }
-        const linksList = response?.data || response?.data?.urls || response?.links || [];
+        // Backend response directly contains data: { urls: [urls] } or data: [urls]
+        const linksList = response?.data?.urls || response?.data || response?.links || [];
 
         if (Array.isArray(linksList)) {
           setCrawledUrls(linksList);
