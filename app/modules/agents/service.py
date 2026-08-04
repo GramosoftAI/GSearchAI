@@ -683,6 +683,37 @@ class AgentService:
 
             # ============= STEP 1: NEO4J GRAPH HARD DELETE FIRST =============
             neo4j_repo = Neo4jRepository(str(self.tenant_id))
+            
+            # Explicit cascade delete with all relationships and tenant_id validation:
+            # Agent → KB → Chunk → Entity
+            # Also clean up Session and MemoryEntity nodes from the memory-api microservice.
+            delete_query = """
+            MATCH (a:Agent {tenant_id: $tenant_id, id: $agent_id})
+            OPTIONAL MATCH (a)-[:OWNS_KB]->(kb:KnowledgeBase {tenant_id: $tenant_id})
+            OPTIONAL MATCH (kb)-[:HAS_CHUNK]->(c:Chunk {tenant_id: $tenant_id})
+            OPTIONAL MATCH (s:Session {tenant_id: $tenant_id, agent_id: $agent_id})
+            OPTIONAL MATCH (m:MemoryEntity {tenant_id: $tenant_id, agent_id: $agent_id})
+            DETACH DELETE a, kb, c, s, m
+            RETURN count(a) as deleted_agents
+            """
+            try:
+                await retry_neo4j_operation(
+                    lambda: neo4j_repo.execute_write(
+                        delete_query,
+                        {
+                            "agent_id": str(agent_id),
+                            "tenant_id": str(self.tenant_id),
+                        },
+                    )
+                )
+                logger.info(f"✅ Neo4j: Hard-deleted agent {agent_id} + cascade graph nodes")
+            except Exception as neo4j_error:
+                logger.error(f"❌ Neo4j hard-deletion failed: {neo4j_error}")
+                return format_error(
+                    f"Failed to delete agent from graph: {neo4j_error}",
+                    meta={"error_code": "NEO4J_ERROR"},
+                )
+
             # ============= STEP 2: POSTGRES SOFT-DELETE (AFTER NEO4J SUCCESS) =============
             # Only soft-delete if Neo4j succeeded
             deleted = await self.repository.soft_delete(agent_id)
@@ -719,7 +750,7 @@ class AgentService:
             # Soft-delete KnowledgeBases
             await self.db.execute(
                 update(KnowledgeBase)
-                .values(deleted=True)
+                .values(is_active=False, deleted_at=func.now())
                 .where(
                     KnowledgeBase.agent_id == agent_uuid,
                     KnowledgeBase.tenant_id == self.tenant_id
@@ -749,6 +780,8 @@ class AgentService:
                 )
 
 
+            s3_service = S3StorageService()
+            for kb in kbs_list:
                 # 2. Clean original uploaded source file from S3 if not shared
                 if kb.s3_path:
                     try:
@@ -764,15 +797,15 @@ class AgentService:
                         logger.warning(f"Failed to delete s3_path S3 file for KB {kb.id}: {s3_err}")
 
             # ============= STEP 3: POSTGRES HARD DELETE (CASCADE) =============
-            if kb_ids:
-                await self.db.execute(delete(DocumentChunk).where(DocumentChunk.kb_id.in_(kb_ids)))
-                await self.db.execute(delete(DocumentTableRow).where(DocumentTableRow.kb_id.in_(kb_ids)))
-                await self.db.execute(delete(DocumentEntity).where(DocumentEntity.document_id.in_(kb_ids)))
-                await self.db.execute(delete(DocumentSection).where(DocumentSection.document_id.in_(kb_ids)))
-                await self.db.execute(delete(DocumentIngestionRun).where(DocumentIngestionRun.document_id.in_(kb_ids)))
-                await self.db.execute(delete(DatabaseConnection).where(DatabaseConnection.kb_id.in_(kb_ids)))
-                await self.db.execute(delete(AnalyticsQueryLog).where(AnalyticsQueryLog.kb_id.in_(kb_ids)))
-                await self.db.execute(delete(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids)))
+            if kb_ids_list:
+                await self.db.execute(delete(DocumentChunk).where(DocumentChunk.kb_id.in_(kb_ids_list)))
+                await self.db.execute(delete(DocumentTableRow).where(DocumentTableRow.kb_id.in_(kb_ids_list)))
+                await self.db.execute(delete(DocumentEntity).where(DocumentEntity.document_id.in_(kb_ids_list)))
+                await self.db.execute(delete(DocumentSection).where(DocumentSection.document_id.in_(kb_ids_list)))
+                await self.db.execute(delete(DocumentIngestionRun).where(DocumentIngestionRun.document_id.in_(kb_ids_list)))
+                await self.db.execute(delete(DatabaseConnection).where(DatabaseConnection.kb_id.in_(kb_ids_list)))
+                await self.db.execute(delete(AnalyticsQueryLog).where(AnalyticsQueryLog.kb_id.in_(kb_ids_list)))
+                await self.db.execute(delete(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids_list)))
 
             from app.modules.chats.models import ChatSession
             await self.db.execute(delete(ChatSession).where(ChatSession.agent_id == agent_uuid, ChatSession.tenant_id == self.tenant_id))
