@@ -683,53 +683,67 @@ class AgentService:
 
             # ============= STEP 1: NEO4J GRAPH HARD DELETE FIRST =============
             neo4j_repo = Neo4jRepository(str(self.tenant_id))
-            delete_query = """
-            MATCH (a:Agent {tenant_id: $tenant_id, id: $agent_id})
-            OPTIONAL MATCH (a)-[:OWNS_KB]->(kb:KnowledgeBase)
-            OPTIONAL MATCH (kb)-[:HAS_CHUNK]->(c:Chunk)
-            DETACH DELETE a, kb, c
-            RETURN count(a) as deleted_agents
-            """
-            try:
-                await retry_neo4j_operation(
-                    lambda: neo4j_repo.execute_write(
-                        delete_query,
-                        {
-                            "agent_id": str(agent_id),
-                            "tenant_id": str(self.tenant_id),
-                        },
-                    )
-                )
-                logger.info(f"✅ Neo4j: Hard-deleted agent {agent_id} + cascade graph nodes")
-            except Exception as neo4j_error:
-                logger.error(f"❌ Neo4j hard-deletion failed: {neo4j_error}")
-                return format_error(
-                    f"Failed to delete agent from graph: {neo4j_error}",
-                    meta={"error_code": "NEO4J_ERROR"},
-                )
-
-            # ============= STEP 2: S3 & PARQUET DATASET CLEANUP =============
-            kbs_res = await self.db.execute(
-                select(KnowledgeBase).where(
-                    KnowledgeBase.agent_id == agent_uuid,
-                    KnowledgeBase.tenant_id == self.tenant_id
-                )
+            # ============= STEP 2: POSTGRES SOFT-DELETE (AFTER NEO4J SUCCESS) =============
+            # Only soft-delete if Neo4j succeeded
+            deleted = await self.repository.soft_delete(agent_id)
+            
+            # CRITICAL: Cascade delete KnowledgeBases and DocumentChunks from Postgres
+            from sqlalchemy import update, delete, select
+            import uuid
+            from app.modules.knowledge_bases.models import KnowledgeBase, DocumentChunk
+            
+            # Find KBs to delete their chunks, local parquet files, and soft-delete KBs
+            kbs_select_query = select(KnowledgeBase).where(
+                KnowledgeBase.agent_id == agent_uuid,
+                KnowledgeBase.tenant_id == self.tenant_id
             )
-            kbs = kbs_res.scalars().all()
-            kb_ids = [kb.id for kb in kbs]
+            kbs_res = await self.db.execute(kbs_select_query)
+            kbs_list = kbs_res.scalars().all()
+            kb_ids_list = [kb.id for kb in kbs_list]
+            
+            # Clean up local parquet files
+            for kb in kbs_list:
+                if getattr(kb, "description", "") == "excel_parquet" and kb.parsed_path:
+                    try:
+                        from app.core.parquet_ingester import ParquetIngester
+                        ParquetIngester.delete_active_dataset(kb.parsed_path)
+                    except Exception as parquet_err:
+                        logger.error(f"Failed to delete local parquet file for KB {kb.id} during agent deletion: {parquet_err}")
+            
+            # Hard-delete chunks (frees up pgvector space and prevents zombie retrieval)
+            if kb_ids_list:
+                await self.db.execute(
+                    delete(DocumentChunk).where(DocumentChunk.kb_id.in_(kb_ids_list))
+                )
+            
+            # Soft-delete KnowledgeBases
+            await self.db.execute(
+                update(KnowledgeBase)
+                .where(
+=======
+            # Hard-delete memory records from episodic_memories and user_preferences tables
+            from sqlalchemy import text
+            await self.db.execute(
+                text("DELETE FROM episodic_memories WHERE agent_id = :agent_id"),
+                {"agent_id": str(agent_id)}
+            )
+            await self.db.execute(
+                text("DELETE FROM user_preferences WHERE agent_id = :agent_id"),
+                {"agent_id": str(agent_id)}
+            )
 
-            s3_service = S3StorageService()
-            for kb in kbs:
-                # 1. Clean parsed content from S3 / Parquet disk storage
-                if kb.parsed_path:
-                    try:
-                        await s3_service.delete_file_by_url(kb.parsed_path)
-                    except Exception as s3_err:
-                        logger.warning(f"Failed to delete parsed_path S3 file for KB {kb.id}: {s3_err}")
-                    try:
-                        ParquetIngester.unregister_dataset(kb.parsed_path)
-                    except Exception as pq_err:
-                        logger.warning(f"Failed to unregister Parquet dataset for KB {kb.id}: {pq_err}")
+            if not deleted:
+                # Rare case: agent not found in PostgreSQL
+                # (Could happen if already deleted, or race condition)
+                logger.warning(f"⚠️ Agent not found in PostgreSQL: {agent_id}")
+                logger.warning(f"   Neo4j was deleted but PG has no record")
+                # This is OK - Neo4j is clean, PG is still consistent
+                await self.db.commit()
+                return format_error(
+                    f"Agent not found in PostgreSQL (may already be deleted): {agent_id}",
+                    meta={"status_code": 404},
+                )
+
 
                 # 2. Clean original uploaded source file from S3 if not shared
                 if kb.s3_path:

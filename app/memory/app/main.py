@@ -350,7 +350,9 @@ def _extract_entity_names(raw_json_text: str) -> List[str]:
 
 PREFERENCE_EXTRACTION_PROMPT = (
     "You are a strict JSON extractor for preference/fact updates and corrections.\n"
-    "Extract the updated preference or fact into EXACTLY ONE JSON object with two keys: 'key' and 'value'.\n"
+    "CRITICAL INSTRUCTION: DO NOT extract anything for standard search queries, questions, or one-off commands (e.g. 'i need full detail about this company pincode 110025'). ONLY extract persistent personal facts or explicit preferences.\n"
+    "If the query is just a search question or command, return an empty JSON object: {}\n"
+    "Otherwise, extract the updated preference or fact into EXACTLY ONE JSON object with two keys: 'key' and 'value'.\n"
     "CRITICAL: The 'key' MUST be a clean canonical attribute name (e.g. 'wife_name', 'user_name', 'grade_10_mark').\n"
     "NEVER append action words like '_update', '_change', '_correction', or '_error' to the key name.\n"
     "DO NOT use keys like 'context', 'name', 'details', or 'instruction'. ONLY use 'key' and 'value'.\n\n"
@@ -364,7 +366,9 @@ PREFERENCE_EXTRACTION_PROMPT = (
     "3. Query: 'sorry, my 10th mark is not 70% it is 86%, please upgrade'\n"
     "   JSON: {\"key\": \"grade_10_mark\", \"value\": \"86%\"}\n"
     "4. Query: 'I prefer using PostgreSQL over MongoDB'\n"
-    "   JSON: {\"key\": \"database_preference\", \"value\": \"PostgreSQL over MongoDB\"}\n\n"
+    "   JSON: {\"key\": \"database_preference\", \"value\": \"PostgreSQL over MongoDB\"}\n"
+    "5. Query: 'i need full detail about this company pincode 110025'\n"
+    "   JSON: {}\n\n"
     "Return ONLY valid JSON. No explanations, no markdown block syntax."
 )
 
@@ -722,8 +726,17 @@ async def process_turn(payload: MemoryProcessRequest):
     elif _is_deterministic_preference_statement(payload.query):
         is_feedback_only = True
     else:
-        # Default to NORMAL_QUERY unless explicit preference or delete pattern matched
-        is_feedback_only = False
+        triage_prompt = (
+            "You are an agent memory router. Analyze the user's message. "
+            "CRITICAL: If the message is a standard search query, a request for information (e.g. 'i need full detail...'), or a question, reply with EXACTLY 'NORMAL_QUERY'.\n"
+            "Reply with EXACTLY 'FEEDBACK_ONLY' ONLY if the user is explicitly:\n"
+            "- Giving corrective feedback/adjustments about your behavior or deleting facts\n"
+            "- Setting, updating, or stating a long-term personal PREFERENCE or FACT for you to remember\n"
+            "- Giving a simple acknowledgement ('got it', 'thanks')\n"
+            "Otherwise, reply with EXACTLY 'NORMAL_QUERY'."
+        )
+        triage_decision = await run_llm_completion(triage_prompt, payload.query, priority="live")
+        is_feedback_only = "FEEDBACK_ONLY" in triage_decision
 
     if is_feedback_only:
         return {
@@ -738,27 +751,81 @@ async def process_turn(payload: MemoryProcessRequest):
     guidance_blocks = []
     graph_context_elements = []
 
-    if is_history_query:
-        async with AsyncSessionLocal() as db:
-            query_stmt = (
-                select(EpisodicMemory.summarization)
-                .filter(
-                    EpisodicMemory.tenant_id == payload.tenant_id,
-                    EpisodicMemory.user_id == payload.user_id,
-                    EpisodicMemory.agent_id == payload.agent_id
-                )
-                .order_by(EpisodicMemory.created_at.desc())
-                .limit(5)
-            )
-            result = await db.execute(query_stmt)
-            matched = result.scalars().all()
-            guidance_blocks = list(reversed([s for s in matched if s]))
+    # 1. Hoist entity extraction so we can use it for both History and RAG routing
+    entity_extraction_prompt = (
+        "You are a strict data parsing tool. Extract named entities, key concepts, or topics "
+        "from the user query. Do NOT answer the question. Do NOT chat. "
+        "Return ONLY a JSON object: {\"entities\": [\"entity1\", \"entity2\"]}\n"
+        "Example Query: 'what is my 10th grade mark?' -> JSON: {\"entities\": [\"10th grade mark\", \"10th grade\", \"mark\"]}"
+    )
+    entities_raw = await run_llm_completion(entity_extraction_prompt, payload.query, priority="live")
+    entity_names = _extract_entity_names(entities_raw)
 
+    if is_history_query:
+        # Filter out generic history words to see if they asked about a specific topic
+        # Use substring checking so phrases like "last chat" or "previous conversation" are properly identified as generic
+        generic_markers = ["discussion", "chat", "session", "last time", "conversation", "turn", "talk", "what", "previous", "history"]
+        specific_entities = [
+            e for e in entity_names 
+            if not any(marker in e.lower() for marker in generic_markers)
+        ]
+
+        if specific_entities:
+            # 2a. Hybrid Topic-History Routing: Use Vector Search strictly on history
+            logger.info(f"Topic-Specific History Query detected. Searching history for entities: {specific_entities}")
+            query_embedding = await get_embedding(payload.query, priority="live")
+            async with AsyncSessionLocal() as db:
+                query_stmt = (
+                    select(EpisodicMemory.summarization)
+                    .filter(
+                        EpisodicMemory.tenant_id == payload.tenant_id,
+                        EpisodicMemory.user_id == payload.user_id,
+                        EpisodicMemory.agent_id == payload.agent_id,
+                        EpisodicMemory.summary_vector.cosine_distance(query_embedding) < 0.35
+                    )
+                    .order_by(EpisodicMemory.summary_vector.cosine_distance(query_embedding))
+                    .limit(10)
+                )
+                result = await db.execute(query_stmt)
+                guidance_blocks = [s for s in result.scalars().all() if s]
+        else:
+            # 2b. Generic History Routing: Session-Scoped Rollup
+            logger.info("Generic History Query detected. Performing Session-Scoped Rollup.")
+            async with AsyncSessionLocal() as db:
+                # Find the most recent session_id that is NOT the current one
+                prev_session_stmt = (
+                    select(EpisodicMemory.session_id)
+                    .filter(
+                        EpisodicMemory.tenant_id == payload.tenant_id,
+                        EpisodicMemory.user_id == payload.user_id,
+                        EpisodicMemory.agent_id == payload.agent_id,
+                        EpisodicMemory.session_id != payload.session_id
+                    )
+                    .order_by(EpisodicMemory.created_at.desc())
+                    .limit(1)
+                )
+                prev_session_res = await db.execute(prev_session_stmt)
+                last_session_id = prev_session_res.scalar()
+
+                if last_session_id:
+                    # Fetch all summaries for that exact session chronologically
+                    query_stmt = (
+                        select(EpisodicMemory.summarization)
+                        .filter(EpisodicMemory.session_id == last_session_id)
+                        .order_by(EpisodicMemory.created_at.asc())
+                    )
+                    result = await db.execute(query_stmt)
+                    guidance_blocks = list(result.scalars().all())
+                else:
+                    guidance_blocks = []
+
+        # Graph query remains identical for history
         graph_context_elements = await query_session_history_graph(
             payload.tenant_id, payload.user_id, payload.agent_id, payload.session_id
         )
 
     else:
+        # 3. Normal Vector RAG Memory Routing
         query_embedding = await get_embedding(payload.query, priority="live")
         async with AsyncSessionLocal() as db:
             query_stmt = (
@@ -766,22 +833,14 @@ async def process_turn(payload: MemoryProcessRequest):
                 .filter(
                     EpisodicMemory.tenant_id == payload.tenant_id,
                     EpisodicMemory.user_id == payload.user_id,
-                    EpisodicMemory.agent_id == payload.agent_id
+                    EpisodicMemory.agent_id == payload.agent_id,
+                    EpisodicMemory.summary_vector.cosine_distance(query_embedding) < 0.35
                 )
                 .order_by(EpisodicMemory.summary_vector.cosine_distance(query_embedding))
                 .limit(4)
             )
             result = await db.execute(query_stmt)
             guidance_blocks = [s for s in result.scalars().all() if s]
-
-        entity_extraction_prompt = (
-            "You are a strict data parsing tool. Extract named entities, key concepts, or topics "
-            "from the user query. Do NOT answer the question. Do NOT chat. "
-            "Return ONLY a JSON object: {\"entities\": [\"entity1\", \"entity2\"]}\n"
-            "Example Query: 'what is my 10th grade mark?' -> JSON: {\"entities\": [\"10th grade mark\", \"10th grade\", \"mark\"]}"
-        )
-        entities_raw = await run_llm_completion(entity_extraction_prompt, payload.query, priority="live")
-        entity_names = _extract_entity_names(entities_raw)
 
         if entity_names:
             graph_context_elements = await _query_graph_relations(
@@ -841,6 +900,18 @@ async def async_ingest_turn(payload: MemorySaveRequest):
         if payload.is_feedback_only or _is_delete_statement(payload.query):
             logger.info(f"[INGEST] Turn classified as feedback/deletion statement. Invoking save_user_preference.")
             await save_user_preference(payload)
+            return
+
+        # Check if the AI response indicates a failure to find information or missing data
+        negative_indicators = [
+            "couldn't find", "could not find", "don't know", "do not know",
+            "no mention", "no information", "not present in dataset",
+            "not found", "unable to find", "no matching record",
+            "does not exist", "unanswered"
+        ]
+        ai_resp_lower = payload.ai_response.lower()
+        if any(indicator in ai_resp_lower for indicator in negative_indicators):
+            logger.info(f"[INGEST BYPASS] Skipping memory storage because AI response indicates info is missing or not found: {payload.ai_response!r}")
             return
 
         user_interaction = f"User: {payload.query}\nAssistant: {payload.ai_response}"

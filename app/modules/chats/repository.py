@@ -61,6 +61,7 @@ class ChatRepository(BaseRepository):
         agent_id: str,
         user_id: str,
         title: str = "New Conversation",
+        session_id: Optional[str] = None,
     ) -> ChatSession:
         """
         Create a new chat session.
@@ -69,12 +70,13 @@ class ChatRepository(BaseRepository):
             agent_id: Agent UUID this session is with
             user_id: User UUID who started the conversation
             title: Session title (auto-generated from first message if default)
+            session_id: Optional custom session UUID
 
         Returns:
             Created ChatSession model instance
         """
         session = ChatSession(
-            id=uuid.uuid4(),
+            id=safe_uuid(session_id) if session_id else uuid.uuid4(),
             tenant_id=self.tenant_id,
             user_id=safe_uuid(user_id),
             agent_id=safe_uuid(agent_id),

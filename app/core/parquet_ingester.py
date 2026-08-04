@@ -37,10 +37,21 @@ class ParquetIngester:
         
         try:
             if file_path.lower().endswith('.csv'):
+                # Automatically detect separator (comma or tab) by inspecting the first line
+                separator = ","
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        first_line = f.readline()
+                        if "\t" in first_line and first_line.count("\t") > first_line.count(","):
+                            separator = "\t"
+                            logger.info(f"Detected tab delimiter for {file_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to auto-detect delimiter: {e}")
+                    
                 # PRODUCTION FIX: Schema Evolution (Dirty Data)
                 # infer_schema_length=0 forces all columns to String (Utf8).
                 # DuckDB will handle strict typing/casting at the semantic SQL layer.
-                lf = pl.scan_csv(file_path, ignore_errors=True, infer_schema_length=0)
+                lf = pl.scan_csv(file_path, separator=separator, ignore_errors=True, infer_schema_length=0)
                 lf.sink_parquet(output_path, row_group_size=100_000)
                 logger.info(f"Successfully streamed CSV to {output_path}")
                 
@@ -88,32 +99,37 @@ class ParquetIngester:
         return None
 
     @staticmethod
-    def unregister_dataset(dataset_name: str, output_dir: str = "data/parquet") -> bool:
-        """Removes a dataset from active_datasets.json registry and deletes its parquet files from disk."""
-        if not dataset_name:
-            return False
+    def delete_active_dataset(dataset_name: str, output_dir: str = "data/parquet") -> bool:
+        """Deletes the physical Parquet file and its registry entry from active_datasets.json."""
         if not os.path.isabs(output_dir):
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             output_dir = os.path.join(base_dir, output_dir)
             
         registry_path = os.path.join(output_dir, "active_datasets.json")
-        deleted = False
-        if os.path.exists(registry_path):
-            try:
-                with open(registry_path, 'r') as f:
-                    registry = json.load(f)
-                if dataset_name in registry:
-                    filename = registry.pop(dataset_name)
-                    file_path = os.path.join(output_dir, filename)
-                    if os.path.exists(file_path):
-                        try:
-                            os.remove(file_path)
-                            deleted = True
-                            logger.info(f"Deleted parquet file: {file_path}")
-                        except Exception as e:
-                            logger.warning(f"Failed to remove parquet file {file_path}: {e}")
-                    with open(registry_path, 'w') as f:
-                        json.dump(registry, f, indent=4)
-            except Exception as reg_err:
-                logger.warning(f"Failed to unregister dataset '{dataset_name}': {reg_err}")
-        return deleted
+        if not os.path.exists(registry_path):
+            return False
+            
+        try:
+            with open(registry_path, 'r') as f:
+                registry = json.load(f)
+                
+            if dataset_name in registry:
+                filename = registry[dataset_name]
+                file_path = os.path.join(output_dir, filename)
+                
+                # Delete physical file
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.info(f"Deleted physical Parquet file: {file_path}")
+                else:
+                    logger.warning(f"Physical Parquet file not found to delete: {file_path}")
+                
+                # Remove from registry
+                del registry[dataset_name]
+                with open(registry_path, 'w') as f:
+                    json.dump(registry, f, indent=4)
+                logger.info(f"Removed registry entry for {dataset_name}")
+                return True
+        except Exception as e:
+            logger.error(f"Failed to delete active dataset {dataset_name}: {e}")
+        return False

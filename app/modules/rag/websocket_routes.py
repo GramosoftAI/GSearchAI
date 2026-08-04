@@ -123,6 +123,7 @@ async def rag_websocket(
                     query = msg.get("query", "").strip() if msg.get("query") else ""
                     session_id = msg.get("session_id")
                     enhance_prompt = msg.get("prompt_enhancer", False) or msg.get("enhance_prompt", False)
+                    disable_memory = msg.get("disable_memory", False)
                 except json.JSONDecodeError:
                     await websocket.send_text(json.dumps({"type": "error", "message": "Invalid JSON format"}))
                     continue
@@ -140,7 +141,8 @@ async def rag_websocket(
                 if session is None:
                     session = await chat_service.chat_repo.create_session(
                         agent_id=agent_id,
-                        user_id=user_id
+                        user_id=user_id,
+                        session_id=session_id
                     )
 
                 active_session_id = str(session.id)
@@ -154,9 +156,13 @@ async def rag_websocket(
                 router_category = None
 
                 try:
-                    mem_resp = await call_memory_api(
-                        "/process-turn",
-                        json_data={
+                    if disable_memory:
+                        logger.info("Memory API bypassed via disable_memory test flag.")
+                        mem_resp = None
+                    else:
+                        mem_resp = await call_memory_api(
+                            "/process-turn",
+                            json_data={
                             "query": query,
                             "session_id": active_session_id,
                             "agent_id": agent_id,
@@ -365,6 +371,7 @@ async def rag_websocket(
                     on_usage_callback=capture_usage,
                     chat_history=chat_history_str,
                     skip_search=skip_search,
+                    memory_enabled=(not disable_memory),
                 ):
                     is_control_frame = False
                     try:
@@ -424,7 +431,7 @@ async def rag_websocket(
                 await db.commit()
 
                 # 12. SAVE TURN TO MEMORY API
-                if not has_error and full_response_text:
+                if not has_error and full_response_text and not disable_memory:
                     try:
                         await call_memory_api(
                             "/save-turn",

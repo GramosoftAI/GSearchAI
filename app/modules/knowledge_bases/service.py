@@ -1676,6 +1676,16 @@ class KnowledgeBaseService:
             logger.error(f"Failed to clean up S3 files during KB deletion: {s3_err}")
 
         # ----------------------------------------------------
+        # LOCAL PARQUET CLEANUP
+        # ----------------------------------------------------
+        if getattr(kb, "description", "") == "excel_parquet" and kb.parsed_path:
+            try:
+                from app.core.parquet_ingester import ParquetIngester
+                ParquetIngester.delete_active_dataset(kb.parsed_path)
+            except Exception as parquet_err:
+                logger.error(f"Failed to delete local parquet file for KB {kb.id}: {parquet_err}")
+
+        # ----------------------------------------------------
         # NEO4J GRAPH CLEANUP
         # ----------------------------------------------------
         await retry_neo4j_operation(
@@ -1878,6 +1888,39 @@ class KnowledgeBaseService:
                 "error": "Access denied.",
                 "status_code": 403
             }
+
+        # If it's a spreadsheet KB, dynamically generate a markdown table preview from the parquet file
+        if getattr(kb, "description", "") == "excel_parquet":
+            try:
+                from app.core.parquet_ingester import ParquetIngester
+                import duckdb
+                import os
+                
+                dataset_name = kb.parsed_path or os.path.splitext(kb.name)[0]
+                path = ParquetIngester.get_active_dataset(dataset_name)
+                if path and os.path.exists(path):
+                    conn = duckdb.connect(':memory:')
+                    safe_path = path.replace('\\', '/')
+                    res = conn.execute(f"SELECT * FROM read_parquet('{safe_path}') LIMIT 100")
+                    rows = res.fetchall()
+                    col_names = [desc[0] for desc in res.description]
+                    
+                    # Format as markdown table
+                    headers = " | ".join(str(c) for c in col_names)
+                    sep = " | ".join("---" for _ in col_names)
+                    md_table = f"### Dataset Preview (First 100 rows)\n\n| {headers} |\n| {sep} |\n"
+                    for r in rows:
+                        row_str = " | ".join(str(item) if item is not None else "NULL" for item in r)
+                        md_table += f"| {row_str} |\n"
+                    
+                    return {
+                        "success": True,
+                        "data": {
+                            "content": md_table
+                        }
+                    }
+            except Exception as e:
+                logger.error(f"Failed to generate tabular preview for {kb_id}: {e}", exc_info=True)
 
         if not kb.parsed_path:
             return {
