@@ -486,34 +486,8 @@ class RAGPipeline:
 
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
 
-        # --- EXCLUSIVE PANDAS BYPASS ---
-        # If the target KB is a bypassed CSV, immediately intercept and run Table Analytics
-        try:
-            from sqlalchemy import text
-            if getattr(self, "db", None):
-                kb_query = "SELECT parsed_path FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[]));"
-                result = await self.db.execute(text(kb_query), {"kb_ids": kb_ids})
-                kb_rows = result.all()
-                is_csv = False
-                for row in kb_rows:
-                    if row.parsed_path and str(row.parsed_path).lower().endswith('.csv'):
-                        is_csv = True
-                        break
-                        
-                if is_csv:
-                    logger.info(" CSV Dataset detected at start of pipeline! Intercepting query directly to Pandas Engine.")
-                    pandas_result = await self._execute_table_analytics(query, kb_ids)
-                    if pandas_result:
-                        return RAGContext(
-                            query=query,
-                            chunks=[],
-                            entity_mentions={},
-                            total_tokens=len(pandas_result.split()),
-                            triplet_context=pandas_result,
-                            search_type="TABLE_ANALYTICS"
-                        )
-        except Exception as e:
-            logger.error(f"Failed early CSV intercept check: {e}")
+        # --- EXCLUSIVE PANDAS BYPASS REMOVED ---
+        # Table analytics is handled purely via router intent and _execute_table_analytics.
         # -------------------------------
 
         # Populate KB metadata (names, total chunks)
@@ -537,21 +511,17 @@ class RAGPipeline:
 
         # STAGE 0.1: EARLY INTERCEPT FOR TABLE ANALYTICS (Deterministic SQL Execution)
         table_analytics_attempted = False
+        extractive_context_text = ""
         try:
             route_result = await self.router.route_query(query, tenant_id=str(self.tenant_id))
+            # If the user uploads CSV/Excel, we want to try executing table analytics if the intent matches
             if route_result.intent == SearchType.TABLE_ANALYTICS:
                 table_analytics_attempted = True
                 logger.info("   -> Intercepting query for SQL Table Analytics engine BEFORE Adaptive Planner!")
                 table_results = await self._execute_table_analytics(query, kb_ids)
                 if table_results and "validation error" not in table_results.lower():
-                    return RAGContext(
-                        query=query,
-                        chunks=[],
-                        entity_mentions={},
-                        total_tokens=0,
-                        triplet_context=f"### Table Analytics Results\n\n{table_results}",
-                        search_type=route_result.intent.name
-                    )
+                    extractive_context_text = f"### Table Analytics Results\n\n{table_results}\n\n"
+                    logger.info("   -> Table analytics successful. Appended to extractive context. Continuing to Adaptive Planner for cross-source retrieval.")
                 else:
                     logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to Adaptive Planner.")
         except Exception as e:
@@ -2074,21 +2044,13 @@ class RAGPipeline:
             return None
             
         kb_names = {str(r.id): r.name for r in kb_rows}
-        dataset_schema = kb_rows[0].dataset_schema
-        parsed_path = kb_rows[0].parsed_path
-        source = kb_rows[0].source
-            
-        # 1.5. HYBRID PANDAS ENGINE ROUTING FOR CSV FILES
-        if parsed_path and str(parsed_path).lower().endswith('.csv'):
-            logger.info(" CSV File detected! Routing TABLE_ANALYTICS to PandasQueryEngine.")
-            from .pandas_engine import PandasQueryEngine
-            engine = PandasQueryEngine(self.llm_client)
-            query_str = "PANDAS PandasQueryEngine.execute_query"
-            res = await engine.execute_query(query, str(parsed_path))
-            await log_attempt(1 if res else 0)
-            return res
+        
+        dataset_schema = {}
+        for r in kb_rows:
+            if r.dataset_schema:
+                dataset_schema.update(r.dataset_schema)
 
-        # (If not CSV, fallback to standard SQL generation)
+        # Fallback to standard SQL generation over document_table_rows
         if not dataset_schema:
             sample_query = "SELECT row_data FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id LIMIT 300;"
             result = await self.db.execute(text(sample_query), {"kb_ids": kb_ids, "tenant_id": uuid.UUID(str(self.tenant_id))})

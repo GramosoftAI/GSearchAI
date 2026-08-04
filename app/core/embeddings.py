@@ -84,7 +84,7 @@ class EmbeddingGenerator:
 
     # In production: use sentence-transformers hosted endpoint
 
-    EMBEDDING_API = "https://api.deepinfra.com/v1/openai"
+    EMBEDDING_API = getattr(settings, "deepinfra_api_url", "https://api.deepinfra.com/v1/openai")
 
 
 

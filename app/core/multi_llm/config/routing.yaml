@@ -1,104 +1,58 @@
-llm:
-  pipeline:
-    - capability
-    - constraint
-    - circuit_breaker
-    - retry
-    - telemetry
-  routes:
-    user_query_response:
-      primary:
-        provider: deepinfra
-        model: qwen3-32b
-        constraints:
-          max_latency_ms: 5000
-          max_cost_per_1k_tokens: 0.002
-          require_json_mode: false
-          require_streaming: true
-      fallback:
-        - provider: ollama
-          model: qwen2.5:14b
-          constraints:
-            max_latency_ms: 8000
-        - provider: deepinfra
-          model: mistral-large
+# app/core/multi_llm/config/routing.yaml
+# All routes point to DeepInfra. No Ollama entries.
 
-    query_rewrite:
-      primary:
-        provider: ollama
-        model: llama3.1:8b
-      fallback:
-        - provider: deepinfra
-          model: mistral-small
+default_provider: deepinfra
 
-    default:
-      primary:
-        provider: ollama
-        model: llama3.1:8b
+routes:
+  embedding:
+    primary:
+      provider: deepinfra
+      model: ${MODEL_EMBEDDING}
 
-    intent_detection:
-      primary:
-        provider: ollama
-        model: ${LLM_MODEL_INTENT_DETECTION}
+  intent:
+    primary:
+      provider: deepinfra
+      model: ${MODEL_INTENT}
 
-    query_classification:
-      primary:
-        provider: ollama
-        model: ${LLM_MODEL_QUERY_CLASSIFICATION}
+  extraction:
+    primary:
+      provider: deepinfra
+      model: ${MODEL_EXTRACTION}
 
-    planner:
-      primary:
-        provider: ollama
-        model: ${LLM_MODEL_PLANNER}
+  nl_to_cypher:
+    primary:
+      provider: deepinfra
+      model: ${MODEL_NL_TO_CYPHER}
 
-    metadata_extraction:
-      primary:
-        provider: ollama
-        model: ${LLM_MODEL_METADATA_EXTRACTION}
+  reranking:
+    primary:
+      provider: deepinfra
+      model: ${MODEL_RERANKER}
 
-    json_repair:
-      primary:
-        provider: ollama
-        model: ${LLM_MODEL_JSON_REPAIR}
+  memory:
+    primary:
+      provider: deepinfra
+      model: ${MODEL_MEMORY}
 
-    hallucination_validation:
-      primary:
-        provider: ollama
-        model: ${LLM_MODEL_HALLUCINATION_VALIDATION}
+  answer:
+    primary:
+      provider: deepinfra
+      model: ${MODEL_ANSWER}
 
-    entity_extraction:
-      primary:
-        provider: ollama
-        model: ${LLM_MODEL_ENTITY_EXTRACTION}
+  vision:
+    primary:
+      provider: deepinfra
+      model: ${MODEL_VISION}
 
-    relationship_extraction:
-      primary:
-        provider: ollama
-        model: ${LLM_MODEL_RELATIONSHIP_EXTRACTION}
+  default:
+    primary:
+      provider: deepinfra
+      model: ${MODEL_ANSWER}
 
-    ingestion_pipeline:
-      primary:
-        provider: ollama
-        model: ${LLM_MODEL_INGESTION_PIPELINE}
-
-    embeddings:
-      primary:
-        provider: ollama
-        model: ${LLM_MODEL_EMBEDDINGS}
-
-    final_answer_generation:
-      primary:
-        provider: deepinfra
-        model: ${LLM_MODEL_FINAL_ANSWER}
-
-  providers:
-    ollama:
-      base_url: ${OLLAMA_BASE_URL}
-      timeout_s: 60
-      max_retries: 2
-      keep_alive: "5m"
-    deepinfra:
-      base_url: https://api.deepinfra.com/v1/openai
-      api_key_env: DEEPINFRA_API_KEY
-      timeout_s: 30
-      max_retries: 3
+providers:
+  deepinfra:
+    base_url: ${DEEPINFRA_API_URL}
+    api_key_env: DEEPINFRA_API_KEY
+    timeout_s: 120
+    max_retries: 3
+  # ollama: REMOVED — do not re-add

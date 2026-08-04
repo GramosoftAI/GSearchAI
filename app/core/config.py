@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     gcrawl_timeout: int = 60
     gcrawl_retry: int = 3
     gcrawl_enabled: bool = True
+    website_acquisition_provider: str = "gcrawl_v2"
     # ============= REDIS (ARQ) =============
     redis_url: str = "redis://localhost:6379"
 
@@ -78,9 +79,7 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
 
     postgres_db: str = "graphmind"
-    
-    # ============= LLM GATEWAY =============
-    llm_base_url: str = "http://103.191.132.28:7218"
+    postgres_uri: Optional[str] = None
 
 
 
@@ -190,19 +189,60 @@ class Settings(BaseSettings):
 
 
 
-    # ============= EMBEDDINGS CONFIGURATION =============
+    # ============= DEEPINFRA & LLM CONFIGURATION =============
+    deepinfra_api_key: str = ""
+    deepinfra_api_url: str = "https://api.deepinfra.com/v1/openai"
 
-    # Dimension must match your embedding model
+    # --- Primary Model Stack ---
+    model_embedding: str = "Qwen/Qwen3-Embedding-8B"
+    embedding_dimension: int = 4096
 
-    # OpenAI text-embedding-3-small: 1536
+    model_intent: str = "google/gemma-4-E4B-it"
+    max_tokens_intent: int = 64
 
-    # OpenAI text-embedding-3-large: 3072
+    model_extraction: str = "deepseek-ai/DeepSeek-V4-Flash"
+    max_tokens_extraction: int = 512
 
-    # Open-source models (BERT, etc.): 768-1024
+    model_nl_to_cypher: str = "deepinfra/gpt-oss-120b"
+    max_tokens_nl_to_cypher: int = 256
 
-    embedding_dimension: int = 1024  # Standard for BAAI/bge-large-en-v1.5
+    model_reranker: str = "Qwen/Qwen3-Reranker-4B"
+    max_tokens_reranker: int = 8
 
-    embedding_model: str = "BAAI/bge-large-en-v1.5"
+    model_memory: str = "meta-llama/Llama-3.1-8B-Instruct-Turbo"
+    max_tokens_memory: int = 512
+
+    model_answer: str = "deepseek-ai/DeepSeek-V3-2"
+    max_tokens_answer: int = 1024
+
+    model_vision: str = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+    max_tokens_vision: int = 1024
+
+    # --- Budget Fallbacks ---
+    fallback_mode: bool = False
+    model_extraction_fallback: str = "meta-llama/Llama-3.1-8B-Instruct-Turbo"
+    model_nl_to_cypher_fallback: str = "deepinfra/gpt-oss-20b"
+    model_reranker_fallback: str = "Qwen/Qwen3-Reranker-0.6B"
+
+    # --- Concurrency ---
+    llm_live_concurrency: int = 10
+    llm_background_concurrency: int = 5
+
+    # --- Legacy properties for backwards compatibility ---
+    @property
+    def embedding_model(self) -> str:
+        return self.model_embedding
+
+    @property
+    def deepinfra_llm_model(self) -> str:
+        return self.model_answer
+
+    # Helper: resolve active model for a stage, honouring fallback mode
+    def active_model(self, stage: str) -> str:
+        fallback_stages = {"extraction", "nl_to_cypher", "reranker"}
+        if self.fallback_mode and stage in fallback_stages:
+            return getattr(self, f"model_{stage}_fallback")
+        return getattr(self, f"model_{stage}")
 
 
 
@@ -221,14 +261,6 @@ class Settings(BaseSettings):
 
 
     # ============= EXTERNAL SERVICES =============
-
-    deepinfra_api_key: Optional[str] = None  # For LLM inference
-
-    deepinfra_api_url: str = "https://api.deepinfra.com/v1/openai"
-    
-    deepinfra_llm_model: str = "Qwen/Qwen2.5-7B-Instruct"
-
-    llm_gateway_api_key: Optional[str] = None
 
     gdocz_api_key: Optional[str] = None  # For PDF  Markdown extraction (primary)
 

@@ -85,7 +85,7 @@ class PandasQueryEngine:
         
         api_key = getattr(settings, "deepinfra_api_key", "")
         base_url = getattr(settings, "deepinfra_api_url", "https://api.deepinfra.com/v1/openai")
-        model_name = getattr(settings, "deepinfra_llm_model", "Qwen/Qwen2.5-72B-Instruct")
+        model_name = settings.model_answer
         
         self.llm = ChatOpenAI(
             model=model_name,

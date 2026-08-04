@@ -52,11 +52,22 @@ from dataclasses import dataclass
 
 from ..config import get_settings
 
+import re
 from ..billing.utils import is_billing_enabled
 
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+
+def strip_think_tags(text: str) -> str:
+    """
+    Remove <think>...</think> reasoning blocks from model output.
+    Must be applied to ALL model responses before any downstream use.
+    """
+    if not text:
+        return ""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
 
 # Prompt versioning (for A/B testing and rollout tracking)
 PROMPT_VERSION = "v1"
@@ -194,39 +205,47 @@ class DeepInfraLLMClient:
 
 
     def __init__(self):
-
         """
-
-        Initialize DeepInfra LLM client with API key and config.
-
-
-
-        Reads from settings.deepinfra_api_key (required)
-
+        Initialize DeepInfra LLM client with API key and stage model config from Settings.
         """
-        import os
-        # RAG / Answer Generation Configuration (Cloud DeepInfra)
-        self.deepinfra_api_key = getattr(settings, "deepinfra_api_key", "")
-        self.gateway_api_key = getattr(settings, 'llm_gateway_api_key', None) or os.environ.get("LLM_GATEWAY_API_KEY", "")
-        self.deepinfra_base_url = f"{getattr(settings, 'deepinfra_api_url', 'https://api.deepinfra.com/v1/openai')}/chat/completions"
-        self.deepinfra_model = getattr(settings, "deepinfra_llm_model", "Qwen/Qwen3.5-9B")
+        settings = get_settings()
+        self.api_key = settings.deepinfra_api_key
+        self.base_url = settings.deepinfra_api_url
 
-        # Ingestion / Extraction Configuration (now using DeepInfra instead of local gateway)
-        import os
-        from dotenv import load_dotenv
-        load_dotenv()
-        self.gateway_api_key = os.environ.get("LLM_GATEWAY_API_KEY") or getattr(settings, 'llm_gateway_api_key', "")
-        self.gateway_base_url = f"{getattr(settings, 'llm_base_url', 'http://103.191.132.28:7218')}/v1/chat/completions"
-        self.gateway_model = os.environ.get("LLM_GATEWAY_MODEL") or getattr(settings, "llm_gateway_model", "qwen2.5:3b")
+        # Task-specific model assignments — all from settings, never hardcoded
+        self.model_answer      = settings.model_answer
+        self.model_extraction  = settings.active_model("extraction")
+        self.model_intent      = settings.model_intent
+        self.model_nl_to_cypher = settings.active_model("nl_to_cypher")
+        self.model_reranker    = settings.active_model("reranker")
+        self.model_memory      = settings.model_memory
+        self.model_vision      = settings.model_vision
 
-        self.timeout = 25.0  # Enterprise timeout cap against stalled sockets
+        # Token limits — all from settings
+        self.max_tokens_answer       = settings.max_tokens_answer
+        self.max_tokens_extraction   = settings.max_tokens_extraction
+        self.max_tokens_intent       = settings.max_tokens_intent
+        self.max_tokens_nl_to_cypher = settings.max_tokens_nl_to_cypher
+        self.max_tokens_reranker     = settings.max_tokens_reranker
+        self.max_tokens_memory       = settings.max_tokens_memory
+        self.max_tokens_vision       = settings.max_tokens_vision
+
+        # Backwards compatibility attributes
+        self.deepinfra_model = self.model_answer
+        self.gateway_model = self.model_extraction
+        self.deepinfra_base_url = f"{self.base_url}/chat/completions"
+        self.gateway_base_url = f"{self.base_url}/chat/completions"
+        self.deepinfra_api_key = self.api_key
+        self.gateway_api_key = self.api_key
+
+        self.timeout = 60.0  # Enterprise timeout cap against stalled sockets (60s for high-concurrency extraction)
         self.max_retries = 3  # Number of retry attempts
-        self.max_tokens = 4000  # Max output tokens (GUARD: prevent very long responses)
-        self.max_answer_length = 2000  # Max chars in answer (latency + cost guard)
-        self.temperature = 0.0  # Maximize consistency and minimize hallucinations for RAG and extraction tasks
+        self.max_tokens = self.max_tokens_answer  # Max output tokens
+        self.max_answer_length = 2000  # Max chars in answer
+        self.temperature = 0.0
 
         logger.info(
-            f" LLM Client init: RAG -> {self.deepinfra_model} (Cloud), Ingestion -> {self.gateway_model} (Cloud)"
+            f"LLM Client init: Answer -> {self.model_answer}, Extraction -> {self.model_extraction}"
         )
 
 
@@ -269,42 +288,27 @@ class DeepInfraLLMClient:
 
         """
 
-        model = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+        model = self.model_vision
 
         base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
-        
-
         payload = {
-
             "model": model,
-
             "messages": [
-
                 {
-
                     "role": "user",
-
                     "content": [
-
                         {"type": "text", "text": "Extract all text from this image exactly as it appears. Maintains the layout if possible. Do not add any commentary."},
-
                         {
-
                             "type": "image_url",
-
                             "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-
                         }
-
                     ]
-
                 }
-
             ],
-
-            "max_tokens": 2048,
-
+            "max_tokens": self.max_tokens_vision,
+            "enable_thinking": False,
+            "reasoning_effort": "none",
         }
 
 
@@ -329,17 +333,11 @@ class DeepInfraLLMClient:
 
             text = data["choices"][0]["message"]["content"].strip()
 
-            
-
             # Track usage (estimated)
-
             cost = (1000 / 1_000_000) * PRICE_PER_1M_INPUT_TOKENS # Rough estimation
-
             self._track_billing(tenant_id, agent_id, cost, 1000)
 
-            
-
-            return text
+            return strip_think_tags(text)
 
 
 
@@ -368,26 +366,21 @@ class DeepInfraLLMClient:
         """
 
         headers = {
+            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        print(f"DEBUG KEY: {repr(self.gateway_api_key)}")
-        if self.gateway_api_key:
-            headers["Authorization"] = f"Bearer {self.gateway_api_key}"
-        print(f"DEBUG HEADERS: {headers}")
-        
 
         payload = {
-            "model": self.gateway_model,
+            "model": self.model_extraction,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
             "temperature": temperature if temperature is not None else self.temperature,
-            "max_tokens": max_tokens or self.max_tokens,
-            "enable_thinking": enable_thinking,
+            "max_tokens": max_tokens or self.max_tokens_extraction,
+            "enable_thinking": False,
+            "reasoning_effort": "none",
         }
-        if not enable_thinking:
-            payload["reasoning_effort"] = "none"
         
         # Retry logic (3 attempts with backoff)
         last_error = None
@@ -395,16 +388,14 @@ class DeepInfraLLMClient:
             try:
                 client = await self.get_client()
                 async with _llm_semaphore:
-                    response = await client.post(self.gateway_base_url, headers=headers, json=payload, timeout=self.timeout)
+                    response = await client.post(self.deepinfra_base_url, headers=headers, json=payload, timeout=self.timeout)
 
                 response.raise_for_status()
 
                 data = response.json()
 
                 content = data["choices"][0]["message"]["content"].strip()
-                if "<think>" in content and "</think>" in content:
-                    content = content.split("</think>", 1)[1].strip()
-                return content
+                return strip_think_tags(content)
 
             except Exception as e:
 
@@ -442,13 +433,13 @@ class DeepInfraLLMClient:
         }
         
         payload = {
-            "model": self.deepinfra_model,
+            "model": self.model_answer,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
             "temperature": temperature if temperature is not None else self.temperature,
-            "max_tokens": max_tokens or self.max_tokens,
+            "max_tokens": max_tokens or self.max_tokens_answer,
             "enable_thinking": False,
             "reasoning_effort": "none"
         }
@@ -462,7 +453,7 @@ class DeepInfraLLMClient:
                 response.raise_for_status()
                 data = response.json()
                 content = data["choices"][0]["message"]["content"].strip()
-                return content
+                return strip_think_tags(content)
             except Exception as e:
                 last_error = e
                 logger.warning(f"generate_cloud() attempt {attempt+1}/3 failed: {e}")
@@ -485,36 +476,32 @@ class DeepInfraLLMClient:
         Similar to generate() but returns token usage alongside content.
         """
         headers = {
-            "Authorization": f"Bearer {self.gateway_api_key}",
+            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
         
-        enable_thinking = settings.enable_thinking
-        
         payload = {
-            "model": self.gateway_model,
+            "model": self.model_extraction,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
             "temperature": temperature if temperature is not None else self.temperature,
-            "max_tokens": max_tokens or self.max_tokens,
-            "enable_thinking": enable_thinking,
+            "max_tokens": max_tokens or self.max_tokens_extraction,
+            "enable_thinking": False,
+            "reasoning_effort": "none",
         }
-        if not enable_thinking:
-            payload["reasoning_effort"] = "none"
         
         last_error = None
         for attempt in range(self.max_retries):
             try:
                 client = await self.get_client()
                 async with _llm_semaphore:
-                    response = await client.post(self.gateway_base_url, headers=headers, json=payload, timeout=self.timeout)
+                    response = await client.post(self.deepinfra_base_url, headers=headers, json=payload, timeout=self.timeout)
                 response.raise_for_status()
                 data = response.json()
                 content = data["choices"][0]["message"]["content"].strip()
-                if "<think>" in content and "</think>" in content:
-                    content = content.split("</think>", 1)[1].strip()
+                content = strip_think_tags(content)
                     
                 usage = data.get("usage", {})
                 return {
@@ -592,13 +579,13 @@ class DeepInfraLLMClient:
             )
 
         payload = {
-            "model": self.deepinfra_model,
+            "model": self.model_answer,
             "messages": [
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": prompt},
             ],
             "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
+            "max_tokens": self.max_tokens_answer,
             "stream": True,
             "stream_options": {"include_usage": True},
         }
@@ -661,7 +648,7 @@ class DeepInfraLLMClient:
                                         clean_delta = think_buf.split("</think>", 1)[1].lstrip("\n")
                                         think_buf = ""
                                 elif "<think>".startswith(b):
-                                    pass # wait
+                                    clean_delta = ""
                                 else:
                                     think_state = 2
                                     clean_delta = think_buf
@@ -927,7 +914,7 @@ class DeepInfraLLMClient:
 
         payload = {
 
-            "model": self.deepinfra_model,
+            "model": self.model_answer,
 
             "messages": [
 
@@ -939,7 +926,7 @@ class DeepInfraLLMClient:
 
             "temperature": self.temperature,
 
-            "max_tokens": self.max_tokens,
+            "max_tokens": self.max_tokens_answer,
 
         }
 

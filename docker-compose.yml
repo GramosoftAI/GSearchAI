@@ -1,159 +1,21 @@
+version: "3.9"
+
 services:
-  # ============================================================================
-  # PostgreSQL: Primary relational database (Users, Tenants, API Keys, Billing)
-  # ============================================================================
-  db:
-    image: pgvector/pgvector:pg16
-    container_name: graphmind-db
+  postgres:
+    image: pgvector/pgvector:pg18
+    container_name: gsearchai-postgres
+    restart: unless-stopped
+
     environment:
-      POSTGRES_USER: graphmind
-      POSTGRES_PASSWORD: graphmind_password
-      POSTGRES_DB: graphmind
-      POSTGRES_INITDB_ARGS: "-c ssl=off"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: gsearch
+
     ports:
       - "5433:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U graphmind"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - graphmind-network
 
-  # ============================================================================
-  # Neo4j: Graph database (Agents, Knowledge Bases, Chunks, Relationships)
-  # ============================================================================
-  neo4j:
-    image: neo4j:5.26.0
-    container_name: graphmind-neo4j
-    environment:
-      NEO4J_AUTH: neo4j/graphmind_password
-      NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
-      NEO4J_dbms_memory_heap_initial__size: "1G"
-      NEO4J_dbms_memory_heap_max__size: "2G"
-      NEO4J_dbms_memory_pagecache_size: "1G"
-      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
-      NEO4J_PLUGINS: '["apoc"]'
     volumes:
-      - neo4j_data:/var/lib/neo4j/data
-    ports:
-      - "7687:7687"
-      - "7474:7474"
-    healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "graphmind_password", "RETURN 1"]
-      interval: 15s
-      timeout: 20s
-      retries: 10
-      start_period: 60s
-    networks:
-      - graphmind-network
-
-  # ============================================================================
-  # Redis: Cache and session management
-  # ============================================================================
-  redis:
-    image: redis:7-alpine
-    container_name: graphmind-redis
-    command: redis-server --requirepass graphmind_redis_password --appendonly yes
-    volumes:
-      - redis_data:/data
-    ports:
-      - "6380:6379"  
-    healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - graphmind-network
-
-  # ============================================================================
-  # FastAPI Backend Application
-  # ============================================================================
-  api:
-    build: .
-    container_name: graphmind-api
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - .:/app
-    ports:
-      - "8000:8000"
-    healthcheck:
-      disable: true
-    environment:
-      - POSTGRES_USER=graphmind
-      - POSTGRES_PASSWORD=graphmind_password
-      - POSTGRES_HOST=db
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=graphmind
-      - NEO4J_URI=bolt://neo4j:7687
-      - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=graphmind_password
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=graphmind_redis_password
-      - REDIS_DB=0
-      - DEBUG=true
-      - APP_ENV=development
-      - JWT_SECRET_KEY=your-secret-key-change-in-production-at-least-32-chars
-      - DEEPINFRA_API_KEY=${DEEPINFRA_API_KEY:-}
-      - MEMORY_API_BASE_URL=http://memory-api:8001
-      - WATCHFILES_FORCE_POLLING=true
-    depends_on:
-      db:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      memory-api:
-        condition: service_started
-    networks:
-      - graphmind-network
-
-  # ============================================================================
-  # Memory API Microservice: Free, Local CPU Vector Storage Pipeline
-  # ============================================================================
-  memory-api:
-    build:
-      context: ./app/memory/app   
-      dockerfile: Dockerfile
-    container_name: graphmind-memory-api
-    command: python -m uvicorn main:app --host 0.0.0.0 --port 8001 --reload
-    ports:
-      - "8002:8001"
-    volumes:
-      - ./app/memory/app:/app    
-      - hf_model_cache:/root/.cache/huggingface
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    environment:
-      - APP_ENV=development
-      - REDIS_URL=${REDIS_URL}
-      - POSTGRES_URL=${POSTGRES_URL}
-      - WATCHFILES_FORCE_POLLING=true
-      - LLM_BASE_URL=${LLM_BASE_URL}
-      - LLM_GATEWAY_API_KEY=${LLM_GATEWAY_API_KEY}
-      - OLLAMA_CHAT_MODEL=${OLLAMA_CHAT_MODEL}
-      - OLLAMA_EMBED_MODEL=${DEEPINFRA_EMBEDDING_MODEL}
-      - EMBEDDING_BASE_URL=${DEEPINFRA_API_URL:-https://api.deepinfra.com/v1/openai}
-      - EMBEDDING_API_KEY=${DEEPINFRA_API_KEY}
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - graphmind-network
-
-networks:
-  graphmind-network:
-    driver: bridge
+      - postgres_data:/var/lib/postgresql
 
 volumes:
   postgres_data:
-  neo4j_data:
-  redis_data:
-  hf_model_cache:

@@ -18,6 +18,11 @@ venv/
 env/
 ENV/
 mind/
+gsearch/
+test_docling_env/
+*.db
+*.parquet
+tmp_ws_probe.py
 
 # ==========================================================
 # Python Cache & Build

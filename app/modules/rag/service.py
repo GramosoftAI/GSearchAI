@@ -40,7 +40,7 @@ def clean_source_name(source: str) -> str:
     if ":" in source and not source.startswith("http"):
         parts = source.split(":", 1)
         source = parts[1].strip()
-    
+
     try:
         parsed = urlparse(source)
         if parsed.scheme and parsed.netloc:
@@ -49,7 +49,7 @@ def clean_source_name(source: str) -> str:
                 return path_part
     except Exception:
         pass
-        
+
     return os.path.basename(source)
 
 
@@ -107,7 +107,7 @@ class RAGService:
 
         # 1. Validate KB ownership
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
-        
+
         # 1. Validate KB ownership and separate Excel vs Document KBs
         excel_kbs = []
         doc_kbs = []
@@ -117,7 +117,9 @@ class RAGService:
                 yield json.dumps({"error": f"Knowledge Base {kid} not found"})
                 return
             if str(kb.agent_id) != str(agent_id):
-                yield json.dumps({"error": "Unauthorized: Agent does not own this Knowledge Base"})
+                yield json.dumps(
+                    {"error": "Unauthorized: Agent does not own this Knowledge Base"}
+                )
                 return
             if getattr(kb, "description", "") == "excel_parquet":
                 excel_kbs.append(kb)
@@ -129,70 +131,123 @@ class RAGService:
         if excel_kbs:
             from app.core.parquet_ingester import ParquetIngester
             from app.modules.rag.pandas_engine import PandasQueryEngine
+
             active_paths = []
             for ekb in excel_kbs:
-                dataset_name = getattr(ekb, "parsed_path", None) or getattr(ekb, "s3_path", None)
+                dataset_name = getattr(ekb, "parsed_path", None) or getattr(
+                    ekb, "s3_path", None
+                )
                 if dataset_name:
                     p = ParquetIngester.get_active_dataset(dataset_name)
                     if p:
                         active_paths.append(p)
-                        
+
             if not active_paths and not doc_kbs:
-                yield json.dumps({"error": "Active parquet datasets for Excel Knowledge Bases not found."})
+                yield json.dumps(
+                    {
+                        "error": "Active parquet datasets for Excel Knowledge Bases not found."
+                    }
+                )
                 return
-                
+
             if active_paths:
-                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                engine = PandasQueryEngine(
+                    active_paths[0], all_dataset_paths=active_paths
+                )
                 # 1. Schema-Aware Enterprise Hybrid Routing (TABULAR_SQL vs VECTOR_DOCS vs HYBRID_MERGE)
                 route_to_excel = True
                 if doc_kbs:
                     try:
                         from app.modules.rag.hybrid_router import EnterpriseHybridRouter
+
                         cols_list = engine.get_schema_columns()
                         decision = await EnterpriseHybridRouter.classify(
                             query=query,
                             columns=cols_list,
                             doc_kbs_count=len(doc_kbs),
-                            llm=engine.llm
+                            llm=engine.llm,
                         )
-                        logger.info(f"[EnterpriseHybridRouter] Engine={decision.target_engine} | Conf={decision.confidence:.2f} | Cols={decision.matched_columns} | Reason={decision.reasoning}")
+                        logger.info(
+                            f"[EnterpriseHybridRouter] Engine={decision.target_engine} | Conf={decision.confidence:.2f} | Cols={decision.matched_columns} | Reason={decision.reasoning}"
+                        )
                         if decision.target_engine == "VECTOR_DOCS":
                             route_to_excel = False
                         elif decision.target_engine == "HYBRID_MERGE":
-                            logger.info("[EnterpriseHybridRouter] Executing HYBRID_MERGE: Gathering tabular SQL context to enrich Document RAG...")
+                            logger.info(
+                                "[EnterpriseHybridRouter] Executing HYBRID_MERGE: Gathering tabular SQL context to enrich Document RAG..."
+                            )
                             try:
                                 sql_res = await engine.execute_query(query)
-                                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                                if sql_res and not any(sig in str(sql_res).lower() for sig in unmatched_signals):
+                                unmatched_signals = [
+                                    "not present in dataset",
+                                    "no records matched",
+                                    "error",
+                                    "0 rows",
+                                    "empty dataframe",
+                                ]
+                                if sql_res and not any(
+                                    sig in str(sql_res).lower()
+                                    for sig in unmatched_signals
+                                ):
                                     hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
                             except Exception as merge_err:
-                                logger.warning(f"[EnterpriseHybridRouter] HYBRID_MERGE tabular step error: {merge_err}")
+                                logger.warning(
+                                    f"[EnterpriseHybridRouter] HYBRID_MERGE tabular step error: {merge_err}"
+                                )
                             route_to_excel = False  # Continue into doc_kbs vector retrieval with hybrid_merge_context injected!
                     except Exception as router_err:
-                        logger.warning(f"[EnterpriseHybridRouter] Enterprise router failed ({router_err}), defaulting to Excel check.")
-                
+                        logger.warning(
+                            f"[EnterpriseHybridRouter] Enterprise router failed ({router_err}), defaulting to Excel check."
+                        )
+
                 # 2. Execute Excel Engine if routed strictly to TABULAR_SQL
                 if route_to_excel:
                     try:
                         result = await engine.execute_query(query)
                         result_str = str(result)
-                        unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                        is_unmatched = any(sig in result_str.lower() for sig in unmatched_signals)
-                        explicit_math_keywords = ["sum of", "average of", "count of", "total of", "how many rows", "group by"]
-                        is_pure_math = any(kw in query.lower() for kw in explicit_math_keywords)
+                        unmatched_signals = [
+                            "not present in dataset",
+                            "no records matched",
+                            "error",
+                            "0 rows",
+                            "empty dataframe",
+                        ]
+                        is_unmatched = any(
+                            sig in result_str.lower() for sig in unmatched_signals
+                        )
+                        explicit_math_keywords = [
+                            "sum of",
+                            "average of",
+                            "count of",
+                            "total of",
+                            "how many rows",
+                            "group by",
+                        ]
+                        is_pure_math = any(
+                            kw in query.lower() for kw in explicit_math_keywords
+                        )
                         if doc_kbs and is_unmatched:
-                            logger.info(f"[EnterpriseHybridRouter] Excel dataset lacked answer ({result_str}). Falling back to PDF/URL knowledge bases...")
+                            logger.info(
+                                f"[EnterpriseHybridRouter] Excel dataset lacked answer ({result_str}). Falling back to PDF/URL knowledge bases..."
+                            )
                         elif doc_kbs and not is_pure_math:
-                            logger.info("[EnterpriseHybridRouter] Mixed sources: Injecting tabular result into hybrid context and also searching PDFs/URLs...")
+                            logger.info(
+                                "[EnterpriseHybridRouter] Mixed sources: Injecting tabular result into hybrid context and also searching PDFs/URLs..."
+                            )
                             hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{result_str}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
                             route_to_excel = False
                         else:
-                            yield json.dumps({
-                                "type": "metadata",
-                                "sources": [],
-                                "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
-                                "context_type": "duckdb_parquet"
-                            })
+                            yield json.dumps(
+                                {
+                                    "type": "metadata",
+                                    "sources": [],
+                                    "kb_name": ", ".join(
+                                        getattr(ek, "name", "Excel Parquet")
+                                        for ek in excel_kbs
+                                    ),
+                                    "context_type": "duckdb_parquet",
+                                }
+                            )
                             yield result_str
                             return
                     except Exception as e:
@@ -200,18 +255,29 @@ class RAGService:
                         if not doc_kbs:
                             yield json.dumps({"error": str(e)})
                             return
-                        logger.info("[EnterpriseHybridRouter] Excel execution failed, falling through to PDF/URL knowledge bases...")
-            
+                        logger.info(
+                            "[EnterpriseHybridRouter] Excel execution failed, falling through to PDF/URL knowledge bases..."
+                        )
+
         if len(kb_ids) > 1:
-            logger.info(f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}")
+            logger.info(
+                f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
+            )
 
         agent = await self.agent_repo.get_by_id(agent_id)
         if not agent:
-            yield json.dumps({"error": f"Agent {agent_id} not found or inactive under the current tenant"})
+            yield json.dumps(
+                {
+                    "error": f"Agent {agent_id} not found or inactive under the current tenant"
+                }
+            )
             return
-        
+
         base_prompt = agent.system_prompt or ""
-        personality_description = agent.personality or "You are a warm, approachable, and supportive assistant."
+        personality_description = (
+            agent.personality
+            or "You are a warm, approachable, and supportive assistant."
+        )
 
         if agent.personality_id:
             personality = await self.db.get(Personality, agent.personality_id)
@@ -228,14 +294,23 @@ class RAGService:
 
         # Ontology Grounding
         from ..ontology.service import OntologyService
+
         try:
             ont_svc = OntologyService(self.tenant_id)
             ontology = await ont_svc.get_ontology()
             ontology_rules_str = ""
             if ontology and ontology.get("rules"):
-                rules_list = [f"({r['source_class']})-[:{r['relation']}]->({r['target_class']})" for r in ontology["rules"] if r.get("source_class")]
+                rules_list = [
+                    f"({r['source_class']})-[:{r['relation']}]->({r['target_class']})"
+                    for r in ontology["rules"]
+                    if r.get("source_class")
+                ]
                 if rules_list:
-                    ontology_rules_str = "\n\n[ENTERPRISE ONTOLOGY RULES (STRICT GROUNDING)]\n" + "\n".join(rules_list) + "\nAlign your reasoning strictly with these established business relationships. Do not hallucinate relationships outside of this schema."
+                    ontology_rules_str = (
+                        "\n\n[ENTERPRISE ONTOLOGY RULES (STRICT GROUNDING)]\n"
+                        + "\n".join(rules_list)
+                        + "\nAlign your reasoning strictly with these established business relationships. Do not hallucinate relationships outside of this schema."
+                    )
         except Exception as e:
             logger.warning(f"Failed fetching active ontology for RAG prompt: {e}")
             ontology_rules_str = ""
@@ -321,11 +396,13 @@ If you'd like, I can also:
         agent_persona = {
             "name": agent.name if agent else "Assistant",
             "personality": personality_description,
-            "system_prompt": injected_system_prompt
+            "system_prompt": injected_system_prompt,
         }
 
         if chat_history:
-            agent_persona["system_prompt"] += f"\n\n==================================================\nCONVERSATION HISTORY\n==================================================\n{chat_history}\n\nCRITICAL INSTRUCTION: If the user's current question asks to filter, modify, or extract from the 'above' or 'previous' answer, you MUST use the CONVERSATION HISTORY as your primary source of truth and ignore any conflicting retrieved documents below."
+            agent_persona[
+                "system_prompt"
+            ] += f"\n\n==================================================\nCONVERSATION HISTORY\n==================================================\n{chat_history}\n\nCRITICAL INSTRUCTION: If the user's current question asks to filter, modify, or extract from the 'above' or 'previous' answer, you MUST use the CONVERSATION HISTORY as your primary source of truth and ignore any conflicting retrieved documents below."
 
         # 2. Retrieve Context
         context = None
@@ -344,7 +421,11 @@ If you'd like, I can also:
                 )
             except asyncio.TimeoutError:
                 logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
-                yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
+                yield json.dumps(
+                    {
+                        "error": "The AI provider is taking too long to respond. Please try again later."
+                    }
+                )
                 return
             except Exception as e:
                 error_msg = str(e) if str(e) else e.__class__.__name__
@@ -355,7 +436,9 @@ If you'd like, I can also:
         # 3. Yield metadata first
         if context:
             for c in context.chunks:
-                logger.info(f"Chunk={c.chunk_id} Source={c.source} Score={c.hybrid_score}")
+                logger.info(
+                    f"Chunk={c.chunk_id} Source={c.source} Score={c.hybrid_score}"
+                )
 
             metadata = {
                 "type": "metadata",
@@ -367,17 +450,21 @@ If you'd like, I can also:
                         "position": c.position,
                         "reason": c.reason,
                         "kb_id": c.kb_id,
-                        "content_type": getattr(c, "content_type", "original")
+                        "content_type": getattr(c, "content_type", "original"),
                     }
                     for c in context.chunks
                 ],
                 "triplets": [
-                    {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
+                    {
+                        "subject": t["subject"],
+                        "predicate": t["predicate"],
+                        "object": t["object"],
+                    }
                     for t in (context.triplets or [])
                 ],
                 "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
                 "augmented_query": query,
-                "authoritative_entities": context.authoritative_entities or []
+                "authoritative_entities": context.authoritative_entities or [],
             }
         else:
             metadata = {
@@ -386,59 +473,78 @@ If you'd like, I can also:
                 "triplets": [],
                 "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
                 "augmented_query": query,
-                "authoritative_entities": []
+                "authoritative_entities": [],
             }
 
         yield json.dumps(metadata)
 
         is_extractive = context.search_type == "EXTRACTIVE" if context else False
-        is_table_analytics = context.search_type == "TABLE_ANALYTICS" if context else False
+        is_table_analytics = (
+            context.search_type == "TABLE_ANALYTICS" if context else False
+        )
 
         if is_extractive or is_table_analytics:
             logger.info(f"Bypassing LLM stream for {context.search_type} mode.")
             if getattr(context, "authoritative_entities", None):
                 for ent in context.authoritative_entities:
-                    clean_name = ent['entity_type'].replace('_', ' ').title()
-                    clean_src = clean_source_name(ent.get('source', 'document_entities'))
+                    clean_name = ent["entity_type"].replace("_", " ").title()
+                    clean_src = clean_source_name(
+                        ent.get("source", "document_entities")
+                    )
                     yield f"**{clean_name}:** {ent['value']} (Page {ent.get('page', 1)}) [Source: {clean_src}]\n"
                 yield "\n"
 
             # Strip any <think> tags from triplet_context (gateway LLM leak guard)
             import re as _re
+
             clean_triplet = context.triplet_context or ""
-            clean_triplet = _re.sub(r'<think>.*?</think>', '', clean_triplet, flags=_re.DOTALL).strip()
-            if '<think>' in clean_triplet:
-                clean_triplet = clean_triplet[:clean_triplet.index('<think>')].strip()
+            clean_triplet = _re.sub(
+                r"<think>.*?</think>", "", clean_triplet, flags=_re.DOTALL
+            ).strip()
+            if "<think>" in clean_triplet:
+                clean_triplet = clean_triplet[: clean_triplet.index("<think>")].strip()
 
             yield clean_triplet
 
             # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
             # Use the kb object already fetched for metadata (line 661 scope)
             try:
-                _src_name = kb.name if len(kb_ids) == 1 else (kb_ids[0] if kb_ids else "Dataset")
+                _src_name = (
+                    kb.name
+                    if len(kb_ids) == 1
+                    else (kb_ids[0] if kb_ids else "Dataset")
+                )
                 yield f"\n\n[Source: {_src_name}]"
             except Exception:
                 pass
             return
 
         if (not context or not context.chunks) and not chat_history:
-            logger.info("Empty context retrieved for stream, returning fallback message.")
+            logger.info(
+                "Empty context retrieved for stream, returning fallback message."
+            )
             yield "I'm sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
             return
 
         # 4. Stream chunks
-        formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
+        formatted_context = (
+            self._format_context(context, hybrid_merge_context=hybrid_merge_context)
+            if context
+            else (hybrid_merge_context or "")
+        )
         start_time = datetime.now()
 
         full_answer = []
         token_usage = {}
+
         def handle_usage(usage_dict):
             token_usage.update(usage_dict)
             if on_usage_callback:
                 on_usage_callback(usage_dict)
+
         async for chunk in self.llm_client.stream_answer(
-            query, 
-            formatted_context, 
+            query,
+            formatted_context,
             agent_persona=agent_persona,
             enable_thinking=False,
             on_usage_callback=handle_usage,
@@ -447,40 +553,56 @@ If you'd like, I can also:
 
         # 5. ASYNC LOGGING (Background)
         latency_ms = (datetime.now() - start_time).total_seconds() * 1000
-        confidence = sum(c.hybrid_score for c in context.chunks) / len(context.chunks) if (context and context.chunks) else 0.0
-        status = ResponseStatus.SUCCESS if (context and context.chunks) else (ResponseStatus.SUCCESS if chat_history else ResponseStatus.UNANSWERED)
+        confidence = (
+            sum(c.hybrid_score for c in context.chunks) / len(context.chunks)
+            if (context and context.chunks)
+            else 0.0
+        )
+        status = (
+            ResponseStatus.SUCCESS
+            if (context and context.chunks)
+            else (ResponseStatus.SUCCESS if chat_history else ResponseStatus.UNANSWERED)
+        )
 
         llm_input_tokens = token_usage.get("prompt_tokens", 0)
         llm_output_tokens = token_usage.get("completion_tokens", 0)
-        embedding_tokens = getattr(context, "query_embedding_tokens", 0) or max(1, len(query) // 4)
+        embedding_tokens = getattr(context, "query_embedding_tokens", 0) or max(
+            1, len(query) // 4
+        )
 
-        llm_cost_usd = (llm_input_tokens / 1000000.0) * 0.10 + (llm_output_tokens / 1000000.0) * 0.15
+        llm_cost_usd = (llm_input_tokens / 1000000.0) * 0.10 + (
+            llm_output_tokens / 1000000.0
+        ) * 0.15
         embedding_cost_usd = (embedding_tokens / 1000000.0) * 0.01
         total_cost_usd = llm_cost_usd + embedding_cost_usd
 
         try:
             analytics_repo = AnalyticsRepository(self.db, UUID(self.tenant_id))
-            await analytics_repo.create_query_log({
-                "query": query,
-                "response_status": status,
-                "confidence_score": confidence,
-                "latency_ms": latency_ms,
-                "session_id": UUID(session_id) if session_id else None,
-                "user_id": UUID(user_id) if user_id else None,
-                "llm_input_tokens": llm_input_tokens,
-                "llm_output_tokens": llm_output_tokens,
-                "embedding_tokens": embedding_tokens,
-                "llm_cost_usd": llm_cost_usd,
-                "embedding_cost_usd": embedding_cost_usd,
-                "total_cost_usd": total_cost_usd
-            })
+            await analytics_repo.create_query_log(
+                {
+                    "query": query,
+                    "response_status": status,
+                    "confidence_score": confidence,
+                    "latency_ms": latency_ms,
+                    "session_id": UUID(session_id) if session_id else None,
+                    "user_id": UUID(user_id) if user_id else None,
+                    "llm_input_tokens": llm_input_tokens,
+                    "llm_output_tokens": llm_output_tokens,
+                    "embedding_tokens": embedding_tokens,
+                    "llm_cost_usd": llm_cost_usd,
+                    "embedding_cost_usd": embedding_cost_usd,
+                    "total_cost_usd": total_cost_usd,
+                }
+            )
             await self.db.commit()
         except Exception as ae:
             logger.warning(f"Failed to log analytics for stream: {ae}")
             try:
                 await self.db.rollback()
             except Exception as rollback_err:
-                logger.error(f"Failed to rollback analytics transaction: {rollback_err}")
+                logger.error(
+                    f"Failed to rollback analytics transaction: {rollback_err}"
+                )
 
     async def generate_answer(
         self,
@@ -498,7 +620,7 @@ If you'd like, I can also:
 
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
         hybrid_merge_context = ""
-        
+
         excel_kbs = []
         doc_kbs = []
         for kid in kb_ids:
@@ -507,69 +629,105 @@ If you'd like, I can also:
                 continue
             if str(k_obj.agent_id) != str(agent_id):
                 logger.error(f"Agent {agent_id} does not own KB {kid}")
-                return {"error": f"Agent {agent_id} does not own Knowledge Base {kid}", "answer": None, "sources": []}
+                return {
+                    "error": f"Agent {agent_id} does not own Knowledge Base {kid}",
+                    "answer": None,
+                    "sources": [],
+                }
             if getattr(k_obj, "description", "") == "excel_parquet":
                 excel_kbs.append(k_obj)
             else:
                 doc_kbs.append(k_obj)
 
         if not excel_kbs and not doc_kbs:
-            return {"error": "No valid Knowledge Bases found", "answer": None, "sources": []}
+            return {
+                "error": "No valid Knowledge Bases found",
+                "answer": None,
+                "sources": [],
+            }
 
         # ============= HYBRID RAG: INTERCEPT EXCEL/PARQUET QUERIES =============
         if excel_kbs:
             from app.core.parquet_ingester import ParquetIngester
             from app.modules.rag.pandas_engine import PandasQueryEngine
+
             active_paths = []
             for ek in excel_kbs:
-                dataset_name = getattr(ek, "parsed_path", None) or getattr(ek, "s3_path", None)
+                dataset_name = getattr(ek, "parsed_path", None) or getattr(
+                    ek, "s3_path", None
+                )
                 if dataset_name:
                     p = ParquetIngester.get_active_dataset(dataset_name)
                     if p:
                         active_paths.append(p)
             if active_paths:
-                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                engine = PandasQueryEngine(
+                    active_paths[0], all_dataset_paths=active_paths
+                )
                 try:
                     result = await engine.execute_query(query)
                     result_str = str(result)
                     unmatched_signals = [
-                        "not present in dataset", "no records matched", "error", 
-                        "0 rows", "empty dataframe", "could not find", "no matching"
+                        "not present in dataset",
+                        "no records matched",
+                        "error",
+                        "0 rows",
+                        "empty dataframe",
+                        "could not find",
+                        "no matching",
                     ]
-                    is_unmatched = any(sig in result_str.lower() for sig in unmatched_signals)
-                    explicit_math_keywords = ["sum of", "average of", "count of", "total of", "how many rows", "group by"]
-                    is_pure_math = any(kw in query.lower() for kw in explicit_math_keywords)
+                    is_unmatched = any(
+                        sig in result_str.lower() for sig in unmatched_signals
+                    )
+                    explicit_math_keywords = [
+                        "sum of",
+                        "average of",
+                        "count of",
+                        "total of",
+                        "how many rows",
+                        "group by",
+                    ]
+                    is_pure_math = any(
+                        kw in query.lower() for kw in explicit_math_keywords
+                    )
                     if doc_kbs and is_unmatched:
-                        logger.info(f"[generate_answer] Excel dataset lacked answer ({result_str}). Falling back to PDF/URL knowledge bases...")
+                        logger.info(
+                            f"[generate_answer] Excel dataset lacked answer ({result_str}). Falling back to PDF/URL knowledge bases..."
+                        )
                     elif doc_kbs and not is_pure_math:
-                        logger.info("[generate_answer] Mixed sources: Injecting tabular result and searching PDFs/URLs...")
+                        logger.info(
+                            "[generate_answer] Mixed sources: Injecting tabular result and searching PDFs/URLs..."
+                        )
                         hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{result_str}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
                     else:
                         return {
                             "answer": result_str,
                             "sources": [],
                             "context": {"type": "duckdb_parquet"},
-                            "stats": {}
+                            "stats": {},
                         }
                 except Exception as e:
                     logger.error(f"PandasQueryEngine failed in generate_answer: {e}")
                     if not doc_kbs:
                         return {"error": str(e), "answer": None, "sources": []}
 
-
-
         logger.info(f" KB ownership verified: {kb.name}")
-
-
 
         # Fetch Agent details for persona branding (system_prompt, description)
 
         agent = await self.agent_repo.get_by_id(agent_id)
         if not agent:
-            return {"error": f"Agent {agent_id} not found or inactive under the current tenant", "answer": None, "sources": []}
+            return {
+                "error": f"Agent {agent_id} not found or inactive under the current tenant",
+                "answer": None,
+                "sources": [],
+            }
 
         base_prompt = agent.system_prompt or ""
-        personality_description = agent.personality or "You are a warm, approachable, and supportive assistant."
+        personality_description = (
+            agent.personality
+            or "You are a warm, approachable, and supportive assistant."
+        )
 
         if agent.personality_id:
             personality = await self.db.get(Personality, agent.personality_id)
@@ -586,14 +744,23 @@ If you'd like, I can also:
 
         # Ontology Grounding
         from ..ontology.service import OntologyService
+
         try:
             ont_svc = OntologyService(self.tenant_id)
             ontology = await ont_svc.get_ontology()
             ontology_rules_str = ""
             if ontology and ontology.get("rules"):
-                rules_list = [f"({r['source_class']})-[:{r['relation']}]->({r['target_class']})" for r in ontology["rules"] if r.get("source_class")]
+                rules_list = [
+                    f"({r['source_class']})-[:{r['relation']}]->({r['target_class']})"
+                    for r in ontology["rules"]
+                    if r.get("source_class")
+                ]
                 if rules_list:
-                    ontology_rules_str = "\n\n[ENTERPRISE ONTOLOGY RULES (STRICT GROUNDING)]\n" + "\n".join(rules_list) + "\nAlign your reasoning strictly with these established business relationships. Do not hallucinate relationships outside of this schema."
+                    ontology_rules_str = (
+                        "\n\n[ENTERPRISE ONTOLOGY RULES (STRICT GROUNDING)]\n"
+                        + "\n".join(rules_list)
+                        + "\nAlign your reasoning strictly with these established business relationships. Do not hallucinate relationships outside of this schema."
+                    )
         except Exception as e:
             logger.warning(f"Failed fetching active ontology for RAG prompt: {e}")
             ontology_rules_str = ""
@@ -654,14 +821,19 @@ If you'd like, I can also:
         agent_persona = {
             "name": agent.name if agent else "Assistant",
             "personality": personality_description,
-            "system_prompt": injected_system_prompt
+            "system_prompt": injected_system_prompt,
         }
 
         # Step 2: Cache check
-        cache_key = self._make_cache_key(query, agent_id, "|".join(kb_ids), kb_version=kb.total_chunks)
+        cache_key = self._make_cache_key(
+            query, agent_id, "|".join(kb_ids), kb_version=kb.total_chunks
+        )
         cached_response = self._get_cached_response(cache_key)
         if cached_response:
-            self._track_metrics(cache_hit=True, seed_chunks_count=len(cached_response.get("sources", [])))
+            self._track_metrics(
+                cache_hit=True,
+                seed_chunks_count=len(cached_response.get("sources", [])),
+            )
             return cached_response
 
         # Step 3: Retrieve context
@@ -707,31 +879,50 @@ If you'd like, I can also:
                         query=query,
                         chunks=retrieved_chunks,
                         entity_mentions={},
-                        total_tokens=sum(len(c.text.split()) * 1.3 for c in retrieved_chunks),
+                        total_tokens=sum(
+                            len(c.text.split()) * 1.3 for c in retrieved_chunks
+                        ),
                     )
                 else:
-                    return {"error": "RAG retrieval timed out (query too complex)", "answer": None, "sources": []}
+                    return {
+                        "error": "RAG retrieval timed out (query too complex)",
+                        "answer": None,
+                        "sources": [],
+                    }
             except Exception as fallback_e:
-                return {"error": "RAG retrieval timed out and fallback failed", "answer": None, "sources": []}
+                return {
+                    "error": "RAG retrieval timed out and fallback failed",
+                    "answer": None,
+                    "sources": [],
+                }
         except Exception as e:
-            return {"error": f"RAG retrieval failed: {str(e)}", "answer": None, "sources": []}
+            return {
+                "error": f"RAG retrieval failed: {str(e)}",
+                "answer": None,
+                "sources": [],
+            }
 
         is_social = context.search_type == "SOCIAL" if context else False
         is_support = context.search_type == "SUPPORT_INTENT" if context else False
-        
+
         if is_support and agent.agent_type == "integrated":
             contact_info = []
-            if agent.contact_phone: contact_info.append(f"Phone: {agent.contact_phone}")
-            if agent.contact_email: contact_info.append(f"Email: {agent.contact_email}")
-            if agent.website_url: contact_info.append(f"Website: {agent.website_url}")
-            
+            if agent.contact_phone:
+                contact_info.append(f"Phone: {agent.contact_phone}")
+            if agent.contact_email:
+                contact_info.append(f"Email: {agent.contact_email}")
+            if agent.website_url:
+                contact_info.append(f"Website: {agent.website_url}")
+
             contact_str = " | ".join(contact_info)
             org_name = agent.organization_name or "our organization"
-            
-            msg = f"For support or human assistance, please contact {org_name} directly."
+
+            msg = (
+                f"For support or human assistance, please contact {org_name} directly."
+            )
             if contact_str:
                 msg += f" You can reach us at: {contact_str}"
-                
+
             return {
                 "answer": msg,
                 "sources": [],
@@ -756,9 +947,11 @@ If you'd like, I can also:
                 "nodes_used": 0,
                 "reasoning_path": "Bypassed retrieval for integrated support intent.",
             }
-        
+
         is_extractive = context.search_type == "EXTRACTIVE" if context else False
-        is_table_analytics = context.search_type == "TABLE_ANALYTICS" if context else False
+        is_table_analytics = (
+            context.search_type == "TABLE_ANALYTICS" if context else False
+        )
 
         if is_extractive or is_table_analytics:
             result = {
@@ -793,11 +986,14 @@ If you'd like, I can also:
                 if agent.fallback_message_enabled:
                     org_name = agent.organization_name or "our organization"
                     contact_info = []
-                    if agent.contact_phone: contact_info.append(f"Phone: {agent.contact_phone}")
-                    if agent.contact_email: contact_info.append(f"Email: {agent.contact_email}")
-                    if agent.website_url: contact_info.append(f"Website: {agent.website_url}")
+                    if agent.contact_phone:
+                        contact_info.append(f"Phone: {agent.contact_phone}")
+                    if agent.contact_email:
+                        contact_info.append(f"Email: {agent.contact_email}")
+                    if agent.website_url:
+                        contact_info.append(f"Website: {agent.website_url}")
                     contact_str = " | ".join(contact_info)
-                    
+
                     fallback_msg = f"I am unable to find information regarding your query. Please contact {org_name} for more details."
                     if contact_str:
                         fallback_msg += f" You can reach us at: {contact_str}"
@@ -805,7 +1001,7 @@ If you'd like, I can also:
                     fallback_msg = "I'm sorry, but I don't have enough information to answer that question."
             else:
                 fallback_msg = "I'm sorry, but I don't have that specific information in my current knowledge base."
-            
+
             return {
                 "answer": fallback_msg,
                 "sources": [],
@@ -832,7 +1028,11 @@ If you'd like, I can also:
             }
 
         # Step 4: Format Context & LLM Generation
-        formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
+        formatted_context = (
+            self._format_context(context, hybrid_merge_context=hybrid_merge_context)
+            if context
+            else (hybrid_merge_context or "")
+        )
         llm_response = await self._generate_answer_llm(
             query=query,
             context=formatted_context,
@@ -843,6 +1043,7 @@ If you'd like, I can also:
         answer = llm_response.answer
 
         from app.modules.rag.orchestrator.validator import NumericValidator
+
         validator = NumericValidator()
         if not validator.validate(answer, context):
             answer += "\n\n> [!WARNING]\n> Some numbers in this response could not be strictly verified against the retrieved context. Please double check the source documents."
@@ -855,21 +1056,25 @@ If you'd like, I can also:
                 "reason": chunk.reason,
                 "source": chunk.source,
                 "kb_id": chunk.kb_id,
-                "content_type": getattr(chunk, "content_type", "original")
+                "content_type": getattr(chunk, "content_type", "original"),
             }
             for chunk in context.chunks
         ]
 
         nodes_used = len(context.chunks) + len(context.entity_mentions)
-        confidence = sum(c.hybrid_score for c in context.chunks) / len(context.chunks) if context.chunks else 0.0
+        confidence = (
+            sum(c.hybrid_score for c in context.chunks) / len(context.chunks)
+            if context.chunks
+            else 0.0
+        )
 
         seed_count = sum(1 for c in context.chunks if "seed" in c.reason.lower())
         exp_count = sum(1 for c in context.chunks if "expanded" in c.reason.lower())
 
         reasoning_path = (
             "No relevant knowledge found in graph to answer this question."
-            if nodes_used == 0 else
-            f"Found {seed_count} semantic seed chunks. Expanded via graph relationships to find {exp_count} additional chunks and {len(context.entity_mentions)} relevant entities."
+            if nodes_used == 0
+            else f"Found {seed_count} semantic seed chunks. Expanded via graph relationships to find {exp_count} additional chunks and {len(context.entity_mentions)} relevant entities."
         )
 
         response = {
@@ -896,27 +1101,42 @@ If you'd like, I can also:
             },
             "confidence": confidence,
             "nodes_used": nodes_used,
-            "reasoning_path": reasoning_path if reasoning_enabled else "Reasoning path hidden by user request.",
+            "reasoning_path": (
+                reasoning_path
+                if reasoning_enabled
+                else "Reasoning path hidden by user request."
+            ),
         }
 
         if is_billing_enabled():
-            response["stats"]["llm_cost_estimate"] = round(llm_response.cost_estimate, 6)
+            response["stats"]["llm_cost_estimate"] = round(
+                llm_response.cost_estimate, 6
+            )
 
         try:
             analytics_repo = AnalyticsRepository(self.db, UUID(self.tenant_id))
-            await analytics_repo.create_query_log({
-                "query": query,
-                "response_status": ResponseStatus.SUCCESS if context.chunks else ResponseStatus.UNANSWERED,
-                "confidence_score": confidence,
-                "latency_ms": (datetime.now() - start_time_total).total_seconds() * 1000
-            })
+            await analytics_repo.create_query_log(
+                {
+                    "query": query,
+                    "response_status": (
+                        ResponseStatus.SUCCESS
+                        if context.chunks
+                        else ResponseStatus.UNANSWERED
+                    ),
+                    "confidence_score": confidence,
+                    "latency_ms": (datetime.now() - start_time_total).total_seconds()
+                    * 1000,
+                }
+            )
         except Exception as ae:
             logger.warning(f"Failed to log query to analytics: {ae}")
 
         self._cache_response(cache_key, response)
         return response
 
-    def _make_cache_key(self, query: str, agent_id: str, kb_id: str, kb_version: int = 0) -> str:
+    def _make_cache_key(
+        self, query: str, agent_id: str, kb_id: str, kb_version: int = 0
+    ) -> str:
         key_str = f"{query}|{agent_id}|{kb_id}|v{kb_version}"
         return hashlib.sha256(key_str.encode()).hexdigest()
 
@@ -944,13 +1164,21 @@ If you'd like, I can also:
             if oldest_key in _rag_cache:
                 del _rag_cache[oldest_key]
 
-    def _format_context(self, context: RAGContext, hybrid_merge_context: Optional[str] = None) -> str:
-        context_text = f"QUERY: {context.query}\n" + "=" * 60 + "\nCONTEXT (from Knowledge Base):\n"
+    def _format_context(
+        self, context: RAGContext, hybrid_merge_context: Optional[str] = None
+    ) -> str:
+        context_text = (
+            f"QUERY: {context.query}\n"
+            + "=" * 60
+            + "\nCONTEXT (from Knowledge Base):\n"
+        )
         if hybrid_merge_context:
             context_text += f"{hybrid_merge_context}\n" + "=" * 60 + "\n"
 
         for i, chunk in enumerate(context.chunks, 1):
-            source_info = clean_source_name(chunk.source) if chunk.source else "Unknown Source"
+            source_info = (
+                clean_source_name(chunk.source) if chunk.source else "Unknown Source"
+            )
             context_text += f"\n[Chunk {i}/{len(context.chunks)} - Source: {source_info} - Position {chunk.position}]"
             context_text += f"\nScore: {chunk.hybrid_score:.3f} (Semantic: {chunk.embedding_similarity:.3f}, Graph: {chunk.graph_score:.3f})"
             context_text += f"\n{'-' * 40}\n{chunk.text}\n"
@@ -961,12 +1189,16 @@ If you'd like, I can also:
                 context_text += f"- {entity} (mentioned in {len(chunk_ids)} chunks)\n"
 
         if context.triplet_context:
-            context_text += f"\n[KNOWLEDGE GRAPH RELATIONSHIPS]:\n{context.triplet_context}\n"
+            context_text += (
+                f"\n[KNOWLEDGE GRAPH RELATIONSHIPS]:\n{context.triplet_context}\n"
+            )
         if getattr(context, "authoritative_entities", None):
-            context_text += "\n" + "=" * 60 + "\n[VERIFIED DATA ENTITIES (HIGH TRUST)]\n"
+            context_text += (
+                "\n" + "=" * 60 + "\n[VERIFIED DATA ENTITIES (HIGH TRUST)]\n"
+            )
             context_text += "The following entities are verified from the document/database. Use these values to answer the user's query if they are relevant:\n"
             for ent in context.authoritative_entities:
-                clean_src = clean_source_name(ent.get('source', 'document_entities'))
+                clean_src = clean_source_name(ent.get("source", "document_entities"))
                 context_text += f"- {ent['entity_type']}: {ent['value']} (Page: {ent.get('page', 1)}, Source: {clean_src})\n"
             context_text += "=" * 60 + "\n"
 
@@ -979,9 +1211,9 @@ If you'd like, I can also:
     async def process_feedback(self, chunk_ids: list[str], rating: int) -> None:
         if not chunk_ids:
             return
-            
+
         weight_delta = 0.1 if rating > 0 else -0.1
-        
+
         query = """
         UNWIND $chunk_ids AS chunk_id
         MATCH (c:Chunk {id: chunk_id, tenant_id: $tenant_id})
@@ -991,17 +1223,19 @@ If you'd like, I can also:
             ELSE coalesce(c.weight, 1.0) + $delta 
         END
         """
-        
+
         try:
             await self.pipeline.neo4j_repo.execute_write(
                 query,
                 {
                     "chunk_ids": chunk_ids,
                     "tenant_id": self.tenant_id,
-                    "delta": weight_delta
-                }
+                    "delta": weight_delta,
+                },
             )
-            logger.info(f" Updated feedback weight ({weight_delta}) for {len(chunk_ids)} chunks")
+            logger.info(
+                f" Updated feedback weight ({weight_delta}) for {len(chunk_ids)} chunks"
+            )
         except Exception as e:
             logger.error(f" Failed to update feedback weights: {e}")
             raise
@@ -1025,30 +1259,58 @@ If you'd like, I can also:
             )
             return llm_response
         except Exception as e:
-            logger.warning(f"Phase 3 failed ({e}). Falling back to template generation...")
+            logger.warning(
+                f"Phase 3 failed ({e}). Falling back to template generation..."
+            )
             return self._generate_answer_template(query, context, tenant_id, agent_id)
 
     def _generate_answer_template(
         self, query: str, context: str, tenant_id: str, agent_id: str
     ) -> LLMResponse:
-        lines = context.split("\n")
-        relevant_lines = [line for line in lines if line.strip() and not line.startswith("[")]
+        if not context or not context.strip():
+            answer = (
+                "I couldn't find enough grounded information to answer that question."
+            )
+        else:
+            answer_lines = []
+            for line in context.splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if (
+                    stripped.startswith("QUERY:")
+                    or stripped.startswith("CONTEXT")
+                    or stripped.startswith("=")
+                ):
+                    continue
+                if stripped.startswith("[") and stripped.endswith("]"):
+                    continue
+                if stripped.startswith("Chunk") or stripped.startswith("Score"):
+                    continue
+                if (
+                    stripped.startswith("ENTITIES")
+                    or stripped.startswith("KNOWLEDGE GRAPH")
+                    or stripped.startswith("VERIFIED")
+                ):
+                    continue
+                answer_lines.append(stripped)
 
-        answer_parts = ["Based on the knowledge base, here's what I found:\n\n"]
-        chunk_count = 0
-        for line in relevant_lines:
-            if line.startswith("Chunk") or line.startswith("Score"):
-                chunk_count += 1
-                continue
-            if line.startswith("-"):
-                answer_parts.append(f" {line[1:].strip()}\n")
-            elif line.strip() and chunk_count < 3:
-                answer_parts.append(line + "\n")
-
-        answer = "".join(answer_parts)
+            answer = (
+                "\n".join(answer_lines[:8])
+                if answer_lines
+                else "I couldn't find enough grounded information to answer that question."
+            )
+            if not answer:
+                answer = "I couldn't find enough grounded information to answer that question."
+            elif not answer.lower().startswith(
+                ("based on", "i couldn't", "the following")
+            ):
+                answer = (
+                    f"Based on the retrieved context, here is what I found:\n\n{answer}"
+                )
 
         return LLMResponse(
-            answer=answer or "No answer could be generated from the knowledge base.",
+            answer=answer,
             prompt_tokens=0,
             completion_tokens=0,
             total_tokens=0,

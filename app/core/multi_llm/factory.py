@@ -5,8 +5,6 @@ from pydantic import BaseModel
 from .base import LLMProvider
 from .config.schema import LLMConfigModel
 from .providers.deepinfra_provider import DeepInfraProvider
-from .providers.ollama_provider import OllamaProvider
-from .providers.ollama_gateway_provider import OllamaGatewayProvider
 
 log = logging.getLogger(__name__)
 
@@ -23,18 +21,7 @@ PROVIDER_REGISTRY: Dict[str, ProviderDescriptor] = {
         supports_stream=True, 
         supports_embeddings=True
     ),
-    "ollama": ProviderDescriptor(
-        name="ollama", 
-        provider_class=OllamaProvider,
-        supports_stream=True, 
-        supports_embeddings=True
-    ),
-    "ollama_gateway": ProviderDescriptor(
-        name="ollama_gateway", 
-        provider_class=OllamaGatewayProvider,
-        supports_stream=True, 
-        supports_embeddings=True
-    ),
+    # Ollama providers: REMOVED — do not re-add
 }
 
 class LLMProviderFactory:

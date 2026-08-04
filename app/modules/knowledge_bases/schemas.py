@@ -1,7 +1,7 @@
 """Pydantic schemas for Knowledge Base request/response validation"""
 
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from uuid import UUID
 from datetime import datetime
 
@@ -196,6 +196,21 @@ class KBURLIngest(BaseModel):
                 "crawl_type": "all"
             }
         }
+
+
+class URLDiscoverRequest(BaseModel):
+    """
+    Schema for link discovery request from a root website URL.
+    """
+    url: str = Field(..., description="Root website URL to discover internal links from")
+    max_pages: int = Field(50, description="Maximum number of links to return after filtering")
+
+
+class URLSelectIngestRequest(BaseModel):
+    """
+    Schema to bulk scrape and ingest a user-selected list of URLs.
+    """
+    urls: List[str] = Field(..., description="List of specific user-selected URLs to scrape and ingest")
 
 
 class DatabaseConnectionRegister(BaseModel):
