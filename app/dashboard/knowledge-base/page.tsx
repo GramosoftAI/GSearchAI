@@ -716,7 +716,7 @@ export default function KnowledgeBasePage() {
         });
 
         // Backend response directly contains data: [urls] or data: { links: [urls] }
-        const linksList = response?.data || response?.data?.links || response?.links || [];
+        const linksList = response?.data || response?.data?.urls || response?.links || [];
 
         if (Array.isArray(linksList)) {
           setCrawledUrls(linksList);
