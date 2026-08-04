@@ -23,6 +23,13 @@
   const displayFeedback = script.getAttribute("data-display-feedback") || "true";
   const linkSafety = script.getAttribute("data-link-safety") || "false";
 
+  // Lead Collection & Support Escalation Attributes
+  const leadCollection = script.getAttribute("data-lead-collection") || "false";
+  const leadFields = script.getAttribute("data-lead-fields") || "";
+  const leadTiming = script.getAttribute("data-lead-timing") || "pre-chat";
+  const escalationEnabled = script.getAttribute("data-escalation-enabled") || "false";
+  const escalationLink = script.getAttribute("data-escalation-link") || "";
+
   // Dynamically detect base URL of the hosting widget
   let baseUrl = "";
   try {
@@ -139,7 +146,7 @@
   iframe.style.borderRadius = "24px";
   iframe.style.zIndex = "2147483647";
   iframe.setAttribute("allowtransparency", "true");
-  iframe.src = `${baseUrl}/widget?agentId=${agentId}&tenantId=${tenantId}&chatType=${chatType}&themeColor=${encodeURIComponent(themeColor)}&headerLogo=${encodeURIComponent(headerLogo)}&headerAlign=${encodeURIComponent(headerAlign)}&botAvatar=${encodeURIComponent(botAvatar)}&buttonIcon=${encodeURIComponent(buttonIcon)}&buttonAlign=${encodeURIComponent(buttonAlign)}&showButtonText=${showButtonText}&buttonText=${encodeURIComponent(buttonText)}&initialMessage=${encodeURIComponent(initialMessage)}&displaySources=${displaySources}&allowDownloads=${allowDownloads}&displayCopy=${displayCopy}&displayFeedback=${displayFeedback}&linkSafety=${linkSafety}`;
+  iframe.src = `${baseUrl}/widget?agentId=${agentId}&tenantId=${tenantId}&chatType=${chatType}&themeColor=${encodeURIComponent(themeColor)}&headerLogo=${encodeURIComponent(headerLogo)}&headerAlign=${encodeURIComponent(headerAlign)}&botAvatar=${encodeURIComponent(botAvatar)}&buttonIcon=${encodeURIComponent(buttonIcon)}&buttonAlign=${encodeURIComponent(buttonAlign)}&showButtonText=${showButtonText}&buttonText=${encodeURIComponent(buttonText)}&initialMessage=${encodeURIComponent(initialMessage)}&displaySources=${displaySources}&allowDownloads=${allowDownloads}&displayCopy=${displayCopy}&displayFeedback=${displayFeedback}&linkSafety=${linkSafety}&leadCollection=${leadCollection}&leadFields=${encodeURIComponent(leadFields)}&leadTiming=${leadTiming}&escalationEnabled=${escalationEnabled}&escalationLink=${encodeURIComponent(escalationLink)}`;
 
 
   // Declared search wrapper reference

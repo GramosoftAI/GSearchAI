@@ -75,7 +75,7 @@ export default function Navbar() {
           <Button
             // type="text"
             className="signin"
-            onClick={() => router.push("/login")}
+            href="/login"
             style={{ fontWeight: 600, color: "var(--body)", padding: 10 }}
           >
             Log in

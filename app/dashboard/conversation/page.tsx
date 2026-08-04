@@ -988,6 +988,7 @@ export default function ChatPlaygroundPage() {
   const [excelSheets, setExcelSheets] = useState<{ [sheetName: string]: string[][] }>({});
   const [excelSheetNames, setExcelSheetNames] = useState<string[]>([]);
   const [activeExcelSheet, setActiveExcelSheet] = useState<string>("");
+  const [excelPage, setExcelPage] = useState<number>(1);
 
   const resetChatStates = () => {
     setIsTyping(false);
@@ -2259,6 +2260,7 @@ export default function ChatPlaygroundPage() {
       setExcelSheets({});
       setExcelSheetNames([]);
       setActiveExcelSheet("");
+      setExcelPage(1);
       if (sourcesDrawerPreviewUrl) {
         URL.revokeObjectURL(sourcesDrawerPreviewUrl);
       }
@@ -2322,6 +2324,7 @@ export default function ChatPlaygroundPage() {
         setExcelSheets(sheetsData);
         setExcelSheetNames(workbook.SheetNames);
         setActiveExcelSheet(workbook.SheetNames[0] || "");
+        setExcelPage(1);
       } else {
         setSourcesDrawerPreviewType("other");
       }
@@ -3180,54 +3183,100 @@ export default function ChatPlaygroundPage() {
 
                     {(sourcesDrawerPreviewType === "excel" || sourcesDrawerPreviewType === "csv") && excelSheetNames.length > 0 && (
                       <div className="w-full h-full flex flex-col overflow-hidden bg-[var(--app-surface)]">
-                        {/* Excel Multi-sheet Switcher */}
-                        {sourcesDrawerPreviewType === "excel" && excelSheetNames.length > 1 && (
-                          <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
-                            {excelSheetNames.map(sheetName => {
-                              const isActive = activeExcelSheet === sheetName;
-                              return (
-                                <button
-                                  key={sheetName}
-                                  onClick={() => setActiveExcelSheet(sheetName)}
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
-                                    ? "bg-[#0fb5a1] text-white shadow-sm"
-                                    : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
-                                    }`}
-                                >
-                                  {sheetName}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
+                    {/* Excel Multi-sheet Switcher */}
+                    {sourcesDrawerPreviewType === "excel" && excelSheetNames.length > 1 && (
+                      <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
+                        {excelSheetNames.map(sheetName => {
+                          const isActive = activeExcelSheet === sheetName;
+                          return (
+                            <button
+                              key={sheetName}
+                              onClick={() => {
+                                setActiveExcelSheet(sheetName);
+                                setExcelPage(1);
+                              }}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
+                                ? "bg-[#0fb5a1] text-white shadow-sm"
+                                : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
+                                }`}
+                            >
+                              {sheetName}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
 
-                        {/* Spreadsheet Grid */}
-                        <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
-                          {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
-                            <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
-                              <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
-                                <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
-                                  <tr>
-                                    {excelSheets[activeExcelSheet][0].map((cell, idx) => (
-                                      <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
-                                        {cell || `Column ${idx + 1}`}
-                                      </th>
-                                    ))}
-                                  </tr>
-                                </thead>
-                                <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
-                                  {excelSheets[activeExcelSheet].slice(1).map((row, rowIdx) => (
-                                    <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
-                                      {excelSheets[activeExcelSheet][0].map((_, colIdx) => (
-                                        <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
-                                          {row[colIdx] || ""}
-                                        </td>
+                    {/* Spreadsheet Grid */}
+                    <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
+                      {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
+                        (() => {
+                          const activeSheetData = excelSheets[activeExcelSheet];
+                          const totalRows = activeSheetData.length > 0 ? activeSheetData.length - 1 : 0;
+                          const PAGE_SIZE = 100;
+                          const totalPages = Math.ceil(totalRows / PAGE_SIZE);
+                          const displayedRows = activeSheetData.slice(
+                            1 + (excelPage - 1) * PAGE_SIZE,
+                            1 + excelPage * PAGE_SIZE
+                          );
+
+                          return (
+                            <div className="flex flex-col gap-4">
+                              <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
+                                <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
+                                  <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
+                                    <tr>
+                                      {activeSheetData[0].map((cell, idx) => (
+                                        <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
+                                          {cell || `Column ${idx + 1}`}
+                                        </th>
                                       ))}
                                     </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+                                  </thead>
+                                  <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
+                                    {displayedRows.map((row, rowIdx) => (
+                                      <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
+                                        {activeSheetData[0].map((_, colIdx) => (
+                                          <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
+                                            {row[colIdx] || ""}
+                                          </td>
+                                        ))}
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              
+                              {/* Pagination footer */}
+                              {totalPages > 1 && (
+                                <div className="flex items-center justify-between p-3 border border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 select-none rounded-xl">
+                                  <span className="text-xs text-[var(--app-text-soft)] font-bold">
+                                    Showing {1 + (excelPage - 1) * PAGE_SIZE} - {Math.min(excelPage * PAGE_SIZE, totalRows)} of {totalRows} rows
+                                  </span>
+                                  <div className="flex gap-2">
+                                    <button
+                                      disabled={excelPage === 1}
+                                      onClick={() => setExcelPage(prev => Math.max(prev - 1, 1))}
+                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                    >
+                                      Previous
+                                    </button>
+                                    <span className="text-xs self-center px-1 font-bold text-[var(--app-text)]">
+                                      Page {excelPage} of {totalPages}
+                                    </span>
+                                    <button
+                                      disabled={excelPage === totalPages}
+                                      onClick={() => setExcelPage(prev => Math.min(prev + 1, totalPages))}
+                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                    >
+                                      Next
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
+                          );
+                        })()
                           ) : (
                             <Flex vertical align="center" justify="center" className="py-20 text-[var(--app-text-soft)] h-full">
                               <LuFileText size={32} className="mb-2 opacity-55" />

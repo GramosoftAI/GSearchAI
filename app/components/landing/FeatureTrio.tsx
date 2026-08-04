@@ -27,7 +27,7 @@ export default function FeatureTrio() {
       <div className="wrap">
         <div className="gs-sec-center">
           <div className="gs-eyebrow">One place for everything</div>
-          <Title level={1} className="gs-sec-h" style={{color:"var(--ink)",lineHeight:1.12,fontWeight:800}}>What does Gsearch actually do?</Title>
+          <Title level={2} className="gs-sec-h" style={{color:"var(--ink)",lineHeight:1.12,fontWeight:800}}>What does Gsearch actually do?</Title>
           <Paragraph className="gs-sec-lede" style={{fontSize:"16px",paddingBottom:30,color:"var(--muted)"}}>
             Gsearch brings every tool your company uses into one searchable brain. It reads your documents, tickets, chats, and files where they already live, understands how they relate, and returns a single cited answer instead of a list of links you still have to read.
           </Paragraph>

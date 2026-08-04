@@ -65,7 +65,7 @@ export default function Connectors() {
     <div className="wrap">
       <div className="gs-sec-center">
         <div className="gs-eyebrow">100+ integrations</div>
-        <Title level={1} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:900}}>Which tools does Gsearch connect to?</Title>
+        <Title level={2} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:900}}>Which tools does Gsearch connect to?</Title>
         <Paragraph className="gs-sec-lede" style={{fontSize:"16px"}}>
           Gsearch connects to more than 100 workplace apps, including document stores, chat platforms, ticketing systems, CRMs, and wikis. Setup takes minutes per tool, content stays current automatically, and the permissions already configured in each app carry over unchanged.
         </Paragraph>

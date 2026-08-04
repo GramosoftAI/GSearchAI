@@ -26,7 +26,7 @@ export const metadata: Metadata = {
     icon: "/512_512.png",
   },
   title:
-    "Gsearch — AI Enterprise Search & Chat Platform",
+    "Gsearch — Meet your company's second brain. AI Enterprise Search & Chat Platform",
 
   description:
     "Gsearch connects your tools, docs, and databases with AI search. Ask questions in plain language and get instant answers from your company data.",
@@ -58,7 +58,7 @@ export const metadata: Metadata = {
   },
 
   alternates: {
-    canonical: "https://gramosoft.tech/gsearch",
+    canonical: "https://gramosoft.tech",
   },
 
   openGraph: {

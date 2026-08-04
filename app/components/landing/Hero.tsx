@@ -112,6 +112,9 @@ export default function Hero() {
   return (
     <header className="gs-hero">
       <div className="wrap">
+        <p className="sr-only">
+          Summary: Gsearch is an AI enterprise search platform designed for teams, organizations, and knowledge workers to search and access knowledge instantly across all workplace applications with full security.
+        </p>
         <Title
           level={1}
           style={{
@@ -139,6 +142,32 @@ export default function Hero() {
         >
           Gsearch is an AI search platform that connects every tool you use, understands how your information relates, and answers any question instantly with a citation on every answer. Start on your own in minutes, or roll it out to your whole company.
         </Paragraph>
+
+        {/* AEO Top Summary Answer & Key Takeaways */}
+        {/* <div 
+          style={{
+            maxWidth: "680px",
+            margin: "0 auto 36px",
+            padding: "22px 26px",
+            background: "var(--teal-soft, #e3f7f3)",
+            border: "1px solid rgba(15, 181, 161, 0.2)",
+            borderRadius: "16px",
+            textAlign: "left"
+          }}
+        >
+          <h2 style={{ fontSize: "16px", fontWeight: 800, color: "var(--teal-deep)", margin: "0 0 10px 0", display: "flex", alignItems: "center", gap: "8px" }}>
+            <span>💡</span> Key Takeaway: What is Gsearch?
+          </h2>
+          <p style={{ fontSize: "14.5px", color: "var(--body, #1e293b)", margin: "0 0 14px 0", lineHeight: "1.6" }}>
+            <strong>Gsearch</strong> is an AI-powered enterprise search platform that connects all your company's tools, databases, and chats into a single searchable brain, allowing teams to ask natural-language questions and get instant, cited answers.
+          </p>
+          <ul style={{ margin: 0, paddingLeft: "20px", fontSize: "13.5px", color: "var(--muted, #475569)", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "8px" }}>
+            <li style={{ listStyleType: "disc" }}><strong>Instant Answers:</strong> Natural-language replies with source citations.</li>
+            <li style={{ listStyleType: "disc" }}><strong>100+ Integrations:</strong> Works with Slack, Notion, Jira, Drive, and more.</li>
+            <li style={{ listStyleType: "disc" }}><strong>No Data Migration:</strong> Crawls data where it lives in real time.</li>
+            <li style={{ listStyleType: "disc" }}><strong>Security First:</strong> Respects existing enterprise permission rules.</li>
+          </ul>
+        </div> */}
 
         <Space size={14} wrap style={{ justifyContent: "center", display: "flex" }}>
           <Button

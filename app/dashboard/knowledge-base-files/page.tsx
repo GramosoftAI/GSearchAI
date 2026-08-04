@@ -216,6 +216,7 @@ export default function KnowledgeBaseFilesPage() {
   const [spreadsheetData, setSpreadsheetData] = useState<{ [sheetName: string]: string[][] } | null>(null);
   const [spreadsheetSheets, setSpreadsheetSheets] = useState<string[]>([]);
   const [activeSheet, setActiveSheet] = useState<string>("");
+  const [excelPage, setExcelPage] = useState<number>(1);
 
   const [request, , loading] = useAxios({
     endpoint: "GET_USER_KBS",
@@ -381,6 +382,7 @@ export default function KnowledgeBaseFilesPage() {
               setSpreadsheetData(sheetsData);
               setSpreadsheetSheets(workbook.SheetNames);
               setActiveSheet(workbook.SheetNames[0] || "");
+              setExcelPage(1);
               setPreviewType("excel");
             } catch (err) {
               console.error("Failed to parse spreadsheet:", err);
@@ -438,6 +440,7 @@ export default function KnowledgeBaseFilesPage() {
     setSpreadsheetData(null);
     setSpreadsheetSheets([]);
     setActiveSheet("");
+    setExcelPage(1);
   };
 
   // Perform client-side filter on top of server data
@@ -743,8 +746,11 @@ export default function KnowledgeBaseFilesPage() {
                         {spreadsheetSheets.map((sheet) => (
                           <button
                             key={sheet}
-                            onClick={() => setActiveSheet(sheet)}
-                            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all \${
+                            onClick={() => {
+                              setActiveSheet(sheet);
+                              setExcelPage(1);
+                            }}
+                            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
                               activeSheet === sheet
                                 ? "bg-[#0fb5a1] text-white border-[#0fb5a1]"
                                 : "bg-[var(--app-surface)] text-[var(--app-text-soft)] border-[var(--app-border)] hover:bg-[var(--app-hover)]"
@@ -757,32 +763,81 @@ export default function KnowledgeBaseFilesPage() {
                     )}
                     {/* Sheet Table */}
                     <div className="flex-1 overflow-auto p-4">
-                      <table className="w-full border-collapse bg-[var(--app-surface)] text-xs text-[var(--app-text)] border border-[var(--app-border)]">
-                        <thead>
-                          <tr className="bg-[var(--app-surface-muted)]">
-                            <th className="border border-[var(--app-border)] p-2 text-center font-bold w-10 bg-[var(--app-surface-muted)] text-[var(--app-text-soft)]">#</th>
-                            {spreadsheetData[activeSheet]?.[0]?.map((colHeader, idx) => (
-                              <th key={idx} className="border border-[var(--app-border)] p-2 text-left font-bold bg-[var(--app-surface-muted)] text-[var(--app-text-soft)]">
-                                {colHeader || `Column \${idx + 1}`}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {spreadsheetData[activeSheet]?.slice(1).map((row, rIdx) => (
-                            <tr key={rIdx} className="hover:bg-[var(--app-hover)]">
-                              <td className="border border-[var(--app-border)] p-2 text-center text-[var(--app-text-soft)] font-medium bg-[var(--app-surface-muted)]/30">
-                                {rIdx + 1}
-                              </td>
-                              {row.map((cell, cIdx) => (
-                                <td key={cIdx} className="border border-[var(--app-border)] p-2 text-left">
-                                  {cell}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                      {spreadsheetData[activeSheet] && spreadsheetData[activeSheet].length > 0 ? (
+                        (() => {
+                          const activeSheetData = spreadsheetData[activeSheet];
+                          const totalRows = activeSheetData.length > 0 ? activeSheetData.length - 1 : 0;
+                          const PAGE_SIZE = 100;
+                          const totalPages = Math.ceil(totalRows / PAGE_SIZE);
+                          const displayedRows = activeSheetData.slice(
+                            1 + (excelPage - 1) * PAGE_SIZE,
+                            1 + excelPage * PAGE_SIZE
+                          );
+
+                          return (
+                            <div className="flex flex-col gap-4">
+                              <table className="w-full border-collapse bg-[var(--app-surface)] text-xs text-[var(--app-text)] border border-[var(--app-border)]">
+                                <thead>
+                                  <tr className="bg-[var(--app-surface-muted)]">
+                                    <th className="border border-[var(--app-border)] p-2 text-center font-bold w-10 bg-[var(--app-surface-muted)] text-[var(--app-text-soft)]">#</th>
+                                    {activeSheetData[0]?.map((colHeader, idx) => (
+                                      <th key={idx} className="border border-[var(--app-border)] p-2 text-left font-bold bg-[var(--app-surface-muted)] text-[var(--app-text-soft)]">
+                                        {colHeader || `Column ${idx + 1}`}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {displayedRows.map((row, rIdx) => (
+                                    <tr key={rIdx} className="hover:bg-[var(--app-hover)]">
+                                      <td className="border border-[var(--app-border)] p-2 text-center text-[var(--app-text-soft)] font-medium bg-[var(--app-surface-muted)]/30">
+                                        {(excelPage - 1) * PAGE_SIZE + rIdx + 1}
+                                      </td>
+                                      {row.map((cell, cIdx) => (
+                                        <td key={cIdx} className="border border-[var(--app-border)] p-2 text-left">
+                                          {cell}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+
+                              {/* Pagination footer */}
+                              {totalPages > 1 && (
+                                <div className="flex items-center justify-between p-3 border border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 select-none rounded-xl">
+                                  <span className="text-xs text-[var(--app-text-soft)] font-bold">
+                                    Showing {1 + (excelPage - 1) * PAGE_SIZE} - {Math.min(excelPage * PAGE_SIZE, totalRows)} of {totalRows} rows
+                                  </span>
+                                  <div className="flex gap-2">
+                                    <button
+                                      disabled={excelPage === 1}
+                                      onClick={() => setExcelPage(prev => Math.max(prev - 1, 1))}
+                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                    >
+                                      Previous
+                                    </button>
+                                    <span className="text-xs self-center px-1 font-bold text-[var(--app-text)]">
+                                      Page {excelPage} of {totalPages}
+                                    </span>
+                                    <button
+                                      disabled={excelPage === totalPages}
+                                      onClick={() => setExcelPage(prev => Math.min(prev + 1, totalPages))}
+                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                    >
+                                      Next
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()
+                      ) : (
+                        <div className="py-20 text-[var(--app-text-soft)] text-center">
+                          <span className="text-xs">No data in this sheet</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : previewUrl ? (

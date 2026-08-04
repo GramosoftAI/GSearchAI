@@ -1,5 +1,5 @@
 "use client";
-import { Flex, Typography, Card, Button, Tooltip, App, Radio, Input, Modal, Switch, Spin, Tabs } from "antd";
+import { Flex, Typography, Card, Button, Tooltip, App, Radio, Input, Modal, Switch, Spin, Tabs, Select } from "antd";
 import {
   CopyOutlined,
   CheckCircleOutlined,
@@ -19,6 +19,9 @@ import {
   LinkOutlined,
   LikeOutlined,
   DislikeOutlined,
+  TeamOutlined,
+  UserOutlined,
+  CustomerServiceOutlined,
 } from "@ant-design/icons";
 import { useState, useEffect, useRef } from "react";
 import { SiCrowdsource } from "react-icons/si";
@@ -28,6 +31,7 @@ import useAxios from "../../hooks/useAxios";
 import { useStore } from "../../hooks/useStore";
 import { getCookie } from "../../config/cookies";
 import type { Agent } from "../../components/ui/type";
+import { LeadCaptureForm, EscalationHeaderLink, EscalationSystemMessage } from "./LeadEscalationComponents";
 
 const { Title, Text } = Typography;
 
@@ -129,6 +133,19 @@ export default function EmbedScriptSection() {
   const [displayCopyBtn, setDisplayCopyBtn] = useState<boolean>(true);
   const [displayFeedback, setDisplayFeedback] = useState<boolean>(true);
   const [linkSafety, setLinkSafety] = useState<boolean>(false);
+
+  // 6. Lead Collection & Support Escalation States
+  const [leadCollection, setLeadCollection] = useState<boolean>(false);
+  const [leadFields, setLeadFields] = useState<string>("name,email");
+  const [leadTiming, setLeadTiming] = useState<string>("pre-chat");
+  const [escalationEnabled, setEscalationEnabled] = useState<boolean>(false);
+  const [escalationLink, setEscalationLink] = useState<string>("https://docsbot.ai/");
+
+  const [draftLeadCollection, setDraftLeadCollection] = useState<boolean>(false);
+  const [draftLeadFields, setDraftLeadFields] = useState<string>("name,email");
+  const [draftLeadTiming, setDraftLeadTiming] = useState<string>("pre-chat");
+  const [draftEscalationEnabled, setDraftEscalationEnabled] = useState<boolean>(false);
+  const [draftEscalationLink, setDraftEscalationLink] = useState<string>("https://docsbot.ai/");
 
   // Modal Customizer Draft States
   const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
@@ -235,6 +252,7 @@ export default function EmbedScriptSection() {
   const [previewInput, setPreviewInput] = useState("");
   const [previewIsTyping, setPreviewIsTyping] = useState(false);
   const [previewIsOpen, setPreviewIsOpen] = useState(true);
+  const [previewLeadFormSubmitted, setPreviewLeadFormSubmitted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   // Auto-scroll chat body on new preview messages
@@ -320,6 +338,13 @@ export default function EmbedScriptSection() {
     setDraftDisplayFeedback(displayFeedback);
     setDraftLinkSafety(linkSafety);
 
+    setDraftLeadCollection(leadCollection);
+    setDraftLeadFields(leadFields);
+    setDraftLeadTiming(leadTiming);
+    setDraftEscalationEnabled(escalationEnabled);
+    setDraftEscalationLink(escalationLink);
+
+    setPreviewLeadFormSubmitted(false);
     setIsCustomizerOpen(true);
   };
 
@@ -347,6 +372,12 @@ export default function EmbedScriptSection() {
     setDisplayCopyBtn(draftDisplayCopyBtn);
     setDisplayFeedback(draftDisplayFeedback);
     setLinkSafety(draftLinkSafety);
+
+    setLeadCollection(draftLeadCollection);
+    setLeadFields(draftLeadFields);
+    setLeadTiming(draftLeadTiming);
+    setEscalationEnabled(draftEscalationEnabled);
+    setEscalationLink(draftEscalationLink);
 
     // Call PUT /api/v1/embed/customization to persist backend configuration
     try {
@@ -437,6 +468,12 @@ export default function EmbedScriptSection() {
     setDraftDisplayCopyBtn(displayCopyBtn);
     setDraftDisplayFeedback(displayFeedback);
     setDraftLinkSafety(linkSafety);
+
+    setDraftLeadCollection(leadCollection);
+    setDraftLeadFields(leadFields);
+    setDraftLeadTiming(leadTiming);
+    setDraftEscalationEnabled(escalationEnabled);
+    setDraftEscalationLink(escalationLink);
 
     setIsCustomizerOpen(false);
   };
@@ -556,6 +593,11 @@ export default function EmbedScriptSection() {
   data-display-copy="${displayCopyBtn}"
   data-display-feedback="${displayFeedback}"
   data-link-safety="${linkSafety}"
+  data-lead-collection="${leadCollection}"
+  data-lead-fields='${JSON.stringify(leadFields.split(",").map(f => f.trim()))}'
+  data-lead-timing="${leadTiming}"
+  data-escalation-enabled="${escalationEnabled}"
+  data-escalation-link="${escalationLink}"
 >
 </script>`;
 
@@ -791,6 +833,21 @@ export default function EmbedScriptSection() {
                 {"\n  "}
                 <span className="text-[#3b82f6]">data-link-safety=</span>
                 <span className="text-emerald-500">{`"${linkSafety}"`}</span>
+                {"\n  "}
+                <span className="text-[#3b82f6]">data-lead-collection=</span>
+                <span className="text-emerald-500">{`"${leadCollection}"`}</span>
+                {"\n  "}
+                <span className="text-[#3b82f6]">data-lead-fields=</span>
+                <span className="text-emerald-500">{`'${JSON.stringify(leadFields.split(",").map(f => f.trim()))}'`}</span>
+                {"\n  "}
+                <span className="text-[#3b82f6]">data-lead-timing=</span>
+                <span className="text-emerald-500">{`"${leadTiming}"`}</span>
+                {"\n  "}
+                <span className="text-[#3b82f6]">data-escalation-enabled=</span>
+                <span className="text-emerald-500">{`"${escalationEnabled}"`}</span>
+                {"\n  "}
+                <span className="text-[#3b82f6]">data-escalation-link=</span>
+                <span className="text-emerald-500">{`"${escalationLink}"`}</span>
                 <span className="text-[#0fb5a1] opacity-80">{">"}</span>
                 <span className="text-[#0fb5a1] opacity-80">{"</script>"}</span>
               </code>
@@ -931,7 +988,7 @@ export default function EmbedScriptSection() {
                     </span>
                   ),
                   children: (
-                    <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-3.5 min-h-[350px]">
+                    <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-3.5 min-h-[350px] max-h-[450px] overflow-y-auto custom-scrollbar">
                       {/* Initial Message Section */}
                       <div>
                         <label className="font-bold text-xs text-slate-800 dark:text-slate-200 block mb-0.5">
@@ -1026,7 +1083,7 @@ export default function EmbedScriptSection() {
                           />
                         </div>
 
-                        {/* 4. Link Safety */}
+                        {/* 5. Link Safety */}
                         <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
                           <div className="flex items-start gap-2.5">
                             <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
@@ -1043,6 +1100,103 @@ export default function EmbedScriptSection() {
                             style={{ backgroundColor: draftLinkSafety ? draftThemeColor : undefined }}
                           />
                         </div>
+                      </div>
+
+                      {/* Divider */}
+                      <div className="border-t border-slate-200 dark:border-slate-800 my-4" />
+
+                      {/* Lead & Support Escalation Section */}
+                      <div className="space-y-3.5 pb-2">
+                        <div>
+                          <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 m-0">Lead & Support Escalation</h4>
+                          <p className="text-[10px] text-slate-400 m-0">Configure lead collection forms and support escalation links.</p>
+                        </div>
+
+                        {/* Lead Collection Toggle */}
+                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
+                          <div className="flex items-start gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
+                              <UserOutlined className="text-xs" />
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Lead Collection Form</div>
+                              <div className="text-[10px] text-slate-400 leading-tight">Display a form to collect information from visitors.</div>
+                            </div>
+                          </div>
+                          <Switch
+                            checked={draftLeadCollection}
+                            onChange={(checked) => {
+                              setDraftLeadCollection(checked);
+                              setPreviewLeadFormSubmitted(false);
+                            }}
+                            style={{ backgroundColor: draftLeadCollection ? draftThemeColor : undefined }}
+                          />
+                        </div>
+
+                        {draftLeadCollection && (
+                          <div className="space-y-3 pl-2.5 border-l-2 border-slate-200 dark:border-slate-800 ml-3.5 animate-in fade-in slide-in-from-left duration-200">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                                Required Fields (Comma Separated)
+                              </label>
+                              <Input
+                                value={draftLeadFields}
+                                onChange={(e) => setDraftLeadFields(e.target.value)}
+                                placeholder="name, email"
+                                className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                                Lead Capture Timing
+                              </label>
+                              <Select
+                                value={draftLeadTiming}
+                                onChange={(val) => setDraftLeadTiming(val)}
+                                className="w-full text-xs"
+                                size="middle"
+                                options={[
+                                  { value: "pre-chat", label: "Pre-Chat (Form shows before chatting starts)" }
+                                ]}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Escalation Toggle */}
+                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
+                          <div className="flex items-start gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
+                              <CustomerServiceOutlined className="text-xs" />
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Human Support Escalation</div>
+                              <div className="text-[10px] text-slate-400 leading-tight">Prompt a "Talk to Human Agent" redirection link.</div>
+                            </div>
+                          </div>
+                          <Switch
+                            checked={draftEscalationEnabled}
+                            onChange={(checked) => setDraftEscalationEnabled(checked)}
+                            style={{ backgroundColor: draftEscalationEnabled ? draftThemeColor : undefined }}
+                          />
+                        </div>
+
+                        {draftEscalationEnabled && (
+                          <div className="space-y-3 pl-2.5 border-l-2 border-slate-200 dark:border-slate-800 ml-3.5 animate-in fade-in slide-in-from-left duration-200">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                                Support Escalation Link URL
+                              </label>
+                              <Input
+                                value={draftEscalationLink}
+                                onChange={(e) => setDraftEscalationLink(e.target.value)}
+                                placeholder="e.g. https://docsbot.ai/"
+                                className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ),
@@ -1510,6 +1664,17 @@ export default function EmbedScriptSection() {
                         </div>
                       </div>
 
+                      {/* Escalation button in Header if enabled and lead form is NOT active */}
+                      {draftEscalationEnabled && (!draftLeadCollection || previewLeadFormSubmitted) && (
+                        <div className="mr-1 shrink-0 text-slate-400">
+                          <EscalationHeaderLink
+                            escalationLink={draftEscalationLink}
+                            themeColor={draftThemeColor}
+                            isDark={isDarkTheme}
+                          />
+                        </div>
+                      )}
+
                       <button
                         onClick={() => setPreviewIsOpen(false)}
                         className="border-none bg-transparent text-slate-400 hover:text-slate-700 cursor-pointer text-sm font-semibold ml-2"
@@ -1518,161 +1683,190 @@ export default function EmbedScriptSection() {
                       </button>
                     </div>
 
-                    {/* Chat Feed with Bot Avatar */}
-                    <div
-                      style={{ backgroundColor: isDarkTheme ? "#090d16" : "#f1f5f9" }}
-                      className="flex-1 overflow-y-auto p-3.5 flex flex-col gap-2.5 text-left"
-                    >
-                      {(() => {
-                        const messagesToRender = previewMessages.length > 0
-                          ? previewMessages
-                          : (draftInitialMessage ? [{ role: "assistant", content: draftInitialMessage }] : []);
+                    {draftLeadCollection && !previewLeadFormSubmitted ? (
+                      <LeadCaptureForm
+                        fields={draftLeadFields}
+                        themeColor={draftThemeColor}
+                        isDark={isDarkTheme}
+                        onSubmit={(data) => {
+                          console.log("Simulated Lead Form Submission:", data);
+                          setPreviewLeadFormSubmitted(true);
+                        }}
+                      />
+                    ) : (
+                      <>
+                        {/* Chat Feed with Bot Avatar */}
+                        <div
+                          id="embed-sandbox-chat-messages"
+                          style={{ backgroundColor: isDarkTheme ? "#090d16" : "#f1f5f9" }}
+                          className="flex-1 overflow-y-auto p-3.5 flex flex-col gap-2.5 text-left"
+                        >
+                          {(() => {
+                            const messagesToRender = previewMessages.length > 0
+                              ? previewMessages
+                              : (draftInitialMessage ? [{ role: "assistant", content: draftInitialMessage }] : []);
 
-                        if (messagesToRender.length === 0) {
-                          return (
-                            <div className="flex flex-col items-center justify-center text-center h-full text-slate-400 p-4">
-                              <MessageOutlined className="text-2xl mb-1.5 opacity-50" />
-                              <span className="text-[10px]">No messages yet. Send a query to test!</span>
-                            </div>
-                          );
-                        }
-
-                        return messagesToRender.map((msg: any, index: number) => {
-                          const isUser = msg.role === "user";
-                          return (
-                            <div key={index} className={`flex items-start gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
-                              {/* Bot Avatar preview */}
-                              {!isUser && draftBotAvatar !== "none" && (
-                                <div
-                                  className="w-6 h-6 rounded-full flex items-center justify-center overflow-hidden shrink-0 mt-1"
-                                  style={{ background: draftThemeColor }}
-                                >
-                                  {draftBotAvatar.startsWith("http") || draftBotAvatar.startsWith("blob:") || draftBotAvatar.startsWith("data:") ? (
-                                    <img src={draftBotAvatar} alt="Bot" className="w-full h-full object-cover" />
-                                  ) : draftBotAvatar === "robot" ? (
-                                    <RobotOutlined className="text-xs text-white" />
-                                  ) : draftBotAvatar === "setting" ? (
-                                    <SettingOutlined className="text-xs text-white" />
-                                  ) : draftBotAvatar === "info" ? (
-                                    <InfoCircleOutlined className="text-xs text-white" />
-                                  ) : draftBotAvatar === "book" ? (
-                                    <BookOutlined className="text-xs text-white" />
-                                  ) : (
-                                    <MessageOutlined className="text-xs text-white" />
-                                  )}
+                            if (messagesToRender.length === 0) {
+                              return (
+                                <div className="flex flex-col items-center justify-center text-center h-full text-slate-400 p-4">
+                                  <MessageOutlined className="text-2xl mb-1.5 opacity-50" />
+                                  <span className="text-[10px]">No messages yet. Send a query to test!</span>
                                 </div>
-                              )}
-                              <div className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}>
-                                <span className="text-[8px] text-slate-400 mb-0.5">{isUser ? "You" : agent?.name || "Agent"}</span>
-                                <div
-                                  style={{
-                                    background: isUser
-                                      ? isDarkTheme ? "#1e293b" : "#f1f5f9"
-                                      : isDarkTheme ? "#0f172a" : "#ffffff",
-                                    borderColor: isUser
-                                      ? isDarkTheme ? "#334155" : "#e2e8f0"
-                                      : isDarkTheme ? "#1e293b" : "#f1f5f9",
-                                    color: isDarkTheme ? "#ffffff" : "#1e293b",
-                                  }}
-                                  className="px-2.5 py-1.5 rounded-2xl text-[11px] max-w-[85%] border shadow-sm leading-normal relative group"
-                                >
-                                  {msg.content}
-                                </div>
+                              );
+                            }
 
-                                {!isUser && (draftDisplayCopyBtn || draftDisplayFeedback || draftDisplaySources) && (
-                                  <div className="flex items-center gap-2 mt-1 ml-1 text-slate-400 w-full">
-                                    {draftDisplayCopyBtn && (
-                                      <Tooltip title="Copy Answer">
-                                        <CopyOutlined
-                                          onClick={() => {
-                                            navigator.clipboard?.writeText(msg.content);
-                                            notification.success({ message: "Copied answer to clipboard", placement: "topRight" });
+                            return (
+                              <>
+                                {messagesToRender.map((msg: any, index: number) => {
+                                  const isUser = msg.role === "user";
+                                  return (
+                                    <div key={index} className={`flex items-start gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+                                      {/* Bot Avatar preview */}
+                                      {!isUser && draftBotAvatar !== "none" && (
+                                        <div
+                                          className="w-6 h-6 rounded-full flex items-center justify-center overflow-hidden shrink-0 mt-1"
+                                          style={{ background: draftThemeColor }}
+                                        >
+                                          {draftBotAvatar.startsWith("http") || draftBotAvatar.startsWith("blob:") || draftBotAvatar.startsWith("data:") ? (
+                                            <img src={draftBotAvatar} alt="Bot" className="w-full h-full object-cover" />
+                                          ) : draftBotAvatar === "robot" ? (
+                                            <RobotOutlined className="text-xs text-white" />
+                                          ) : draftBotAvatar === "setting" ? (
+                                            <SettingOutlined className="text-xs text-white" />
+                                          ) : draftBotAvatar === "info" ? (
+                                            <InfoCircleOutlined className="text-xs text-white" />
+                                          ) : draftBotAvatar === "book" ? (
+                                            <BookOutlined className="text-xs text-white" />
+                                          ) : (
+                                            <MessageOutlined className="text-xs text-white" />
+                                          )}
+                                        </div>
+                                      )}
+                                      <div className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}>
+                                        <span className="text-[8px] text-slate-400 mb-0.5">{isUser ? "You" : agent?.name || "Agent"}</span>
+                                        <div
+                                          style={{
+                                            background: isUser
+                                              ? isDarkTheme ? "#1e293b" : "#f1f5f9"
+                                              : isDarkTheme ? "#0f172a" : "#ffffff",
+                                            borderColor: isUser
+                                              ? isDarkTheme ? "#334155" : "#e2e8f0"
+                                              : isDarkTheme ? "#1e293b" : "#f1f5f9",
+                                            color: isDarkTheme ? "#ffffff" : "#1e293b",
                                           }}
-                                          className="text-xs text-slate-400 hover:text-[#0fb5a1] cursor-pointer"
-                                        />
-                                      </Tooltip>
-                                    )}
-                                    {draftDisplayFeedback && (
-                                      <>
-                                        <Tooltip title="Helpful">
-                                          <LikeOutlined className="text-xs text-slate-400 hover:text-emerald-500 cursor-pointer" />
-                                        </Tooltip>
-                                        <Tooltip title="Not helpful">
-                                          <DislikeOutlined className="text-xs text-slate-400 hover:text-rose-500 cursor-pointer" />
-                                        </Tooltip>
-                                      </>
-                                    )}
-                                    {draftDisplaySources && (
-                                      <div className="text-[11px] text-[#0066cc] font-bold flex items-center gap-1 cursor-pointer ml-25">
-                                        <SiCrowdsource className="text-slate-800 text-[13px]" />
-                                        <span>Source</span>
+                                          className="px-2.5 py-1.5 rounded-2xl text-[11px] max-w-[85%] border shadow-sm leading-normal relative group"
+                                        >
+                                          {msg.content}
+                                        </div>
+
+                                        {!isUser && (draftDisplayCopyBtn || draftDisplayFeedback || draftDisplaySources) && (
+                                          <div className="flex items-center gap-2 mt-1 ml-1 text-slate-400 w-full">
+                                            {draftDisplayCopyBtn && (
+                                              <Tooltip title="Copy Answer">
+                                                <CopyOutlined
+                                                  onClick={() => {
+                                                    navigator.clipboard?.writeText(msg.content);
+                                                    notification.success({ message: "Copied answer to clipboard", placement: "topRight" });
+                                                  }}
+                                                  className="text-xs text-slate-400 hover:text-[#0fb5a1] cursor-pointer"
+                                                />
+                                              </Tooltip>
+                                            )}
+                                            {draftDisplayFeedback && (
+                                              <>
+                                                <Tooltip title="Helpful">
+                                                  <LikeOutlined className="text-xs text-slate-400 hover:text-emerald-500 cursor-pointer" />
+                                                </Tooltip>
+                                                <Tooltip title="Not helpful">
+                                                  <DislikeOutlined className="text-xs text-slate-400 hover:text-rose-500 cursor-pointer" />
+                                                </Tooltip>
+                                              </>
+                                            )}
+                                            {draftDisplaySources && (
+                                              <div className="text-[11px] text-[#0066cc] font-bold flex items-center gap-1 cursor-pointer ml-25">
+                                                <SiCrowdsource className="text-slate-800 text-[13px]" />
+                                                <span>Source</span>
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
                                       </div>
-                                    )}
+                                    </div>
+                                  );
+                                })}
+
+                                {draftEscalationEnabled && (
+                                  <div className="mt-2 w-full">
+                                    <EscalationSystemMessage
+                                      escalationLink={draftEscalationLink}
+                                      themeColor={draftThemeColor}
+                                      isDark={isDarkTheme}
+                                    />
                                   </div>
                                 )}
+                              </>
+                            );
+                          })()}
+                          {previewIsTyping && (
+                            <div className="flex items-center gap-1.5 animate-fade-in">
+                              <span className="text-[8px] text-slate-400">Agent typing...</span>
+                              <div className="px-2 py-1 rounded-xl bg-white border border-slate-100 shadow-sm flex items-center gap-1">
+                                <span className="w-1 h-1 rounded-full bg-slate-400 animate-bounce" />
+                                <span className="w-1 h-1 rounded-full bg-slate-400 animate-bounce [animation-delay:0.2s]" />
+                                <span className="w-1 h-1 rounded-full bg-slate-400 animate-bounce [animation-delay:0.4s]" />
                               </div>
                             </div>
-                          );
-                        });
-                      })()}
-                      {previewIsTyping && (
-                        <div className="flex items-center gap-1.5 animate-fade-in">
-                          <span className="text-[8px] text-slate-400">Agent typing...</span>
-                          <div className="px-2 py-1 rounded-xl bg-white border border-slate-100 shadow-sm flex items-center gap-1">
-                            <span className="w-1 h-1 rounded-full bg-slate-400 animate-bounce" />
-                            <span className="w-1 h-1 rounded-full bg-slate-400 animate-bounce [animation-delay:0.2s]" />
-                            <span className="w-1 h-1 rounded-full bg-slate-400 animate-bounce [animation-delay:0.4s]" />
+                          )}
+                          <div ref={messagesEndRef} />
+                        </div>
+
+                        {/* Chat Input Bar */}
+                        <div
+                          className="p-2.5 border-t rounded-b-2xl"
+                          style={{
+                            backgroundColor: isDarkTheme ? "#0f172a" : "#ffffff",
+                            borderTopColor: isDarkTheme ? "#1e293b" : "#f1f5f9",
+                          }}
+                        >
+                          <div
+                            className="flex items-center border rounded-full px-2.5 py-1 gap-1.5"
+                            style={{
+                              backgroundColor: isDarkTheme ? "#090d16" : "#f8fafc",
+                              borderColor: isDarkTheme ? "#1e293b" : "#e2e8f0",
+                            }}
+                          >
+                            <input
+                              type="text"
+                              value={previewInput}
+                              onChange={(e) => setPreviewInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") handlePreviewSend(previewInput);
+                              }}
+                              placeholder={draftChatType === "search" ? "Ask a follow up..." : "Type your message..."}
+                              style={{
+                                backgroundColor: "transparent",
+                                color: isDarkTheme ? "#ffffff" : "#1e293b",
+                                border: "none",
+                                outline: "none",
+                                flex: 1,
+                                fontSize: "11px",
+                              }}
+                            />
+                            <button
+                              onClick={() => handlePreviewSend(previewInput)}
+                              disabled={!previewInput.trim()}
+                              style={{
+                                background: previewInput.trim() ? draftThemeColor : "#e2e8f0",
+                                color: previewInput.trim() ? "#ffffff" : "#94a3b8",
+                              }}
+                              className="w-5 h-5 rounded-full flex items-center justify-center border-none cursor-pointer text-xs transition-colors duration-200"
+                            >
+                              ↑
+                            </button>
                           </div>
                         </div>
-                      )}
-                      <div ref={messagesEndRef} />
-                    </div>
-
-                    {/* Chat Input Bar */}
-                    <div
-                      className="p-2.5 border-t rounded-b-2xl"
-                      style={{
-                        backgroundColor: isDarkTheme ? "#0f172a" : "#ffffff",
-                        borderTopColor: isDarkTheme ? "#1e293b" : "#f1f5f9",
-                      }}
-                    >
-                      <div
-                        className="flex items-center border rounded-full px-2.5 py-1 gap-1.5"
-                        style={{
-                          backgroundColor: isDarkTheme ? "#090d16" : "#f8fafc",
-                          borderColor: isDarkTheme ? "#1e293b" : "#e2e8f0",
-                        }}
-                      >
-                        <input
-                          type="text"
-                          value={previewInput}
-                          onChange={(e) => setPreviewInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") handlePreviewSend(previewInput);
-                          }}
-                          placeholder={draftChatType === "search" ? "Ask a follow up..." : "Type your message..."}
-                          style={{
-                            backgroundColor: "transparent",
-                            color: isDarkTheme ? "#ffffff" : "#1e293b",
-                            border: "none",
-                            outline: "none",
-                            flex: 1,
-                            fontSize: "11px",
-                          }}
-                        />
-                        <button
-                          onClick={() => handlePreviewSend(previewInput)}
-                          disabled={!previewInput.trim()}
-                          style={{
-                            background: previewInput.trim() ? draftThemeColor : "#e2e8f0",
-                            color: previewInput.trim() ? "#ffffff" : "#94a3b8",
-                          }}
-                          className="w-5 h-5 rounded-full flex items-center justify-center border-none cursor-pointer text-xs transition-colors duration-200"
-                        >
-                          ↑
-                        </button>
-                      </div>
-                    </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

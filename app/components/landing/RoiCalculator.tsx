@@ -26,7 +26,7 @@ export default function RoiCalculator() {
       <div className="wrap">
         <div className="gs-sec-center">
           <div className="gs-eyebrow">What it&apos;s worth to you</div>
-          <Title level={1} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>See the time your team gets back.</Title>
+          <Title level={2} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>See the time your team gets back.</Title>
           <Paragraph className="gs-sec-lede" style={{fontSize:"18px",paddingBottom:10,color:"var(--muted)"}}>
             Knowledge workers lose hours every week just looking for information. Move the
             slider to see what Gsearch could give back.

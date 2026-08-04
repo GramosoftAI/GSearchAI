@@ -28,6 +28,7 @@ type Message = {
   content: string;
   sources?: SourceItem[];
   feedback?: "thumbs_up" | "thumbs_down";
+  escalation_detected?: boolean;
 };
 
 function stripThinking(content: string): string {
@@ -512,6 +513,26 @@ function WidgetContent() {
   const allowDownloads = searchParams.get("allowDownloads") !== "false";
   const linkSafety = searchParams.get("linkSafety") === "true";
 
+  // Lead Collection Config
+  const leadCollection = searchParams.get("leadCollection") === "true";
+  const rawLeadFields = searchParams.get("leadFields");
+  const leadTiming = searchParams.get("leadTiming") || "pre-chat";
+  const leadFields = useMemo(() => {
+    if (!rawLeadFields) return ["name", "email"];
+    try {
+      if (rawLeadFields.startsWith("[")) {
+        return JSON.parse(rawLeadFields) as string[];
+      }
+      return rawLeadFields.split(",").map(f => f.trim()).filter(Boolean);
+    } catch {
+      return ["name", "email"];
+    }
+  }, [rawLeadFields]);
+
+  // Human Support Escalation Config
+  const escalationEnabled = searchParams.get("escalationEnabled") === "true";
+  const escalationLink = searchParams.get("escalationLink") || "";
+
   const renderBotAvatar = (avatar: string, theme: string) => {
     if (!avatar || avatar === "none") return null;
     if (avatar.startsWith("http") || avatar.startsWith("blob:") || avatar.startsWith("data:")) {
@@ -584,6 +605,11 @@ function WidgetContent() {
   const [wsStatus, setWsStatus] = useState<"connecting" | "open" | "closed" | "error">("closed");
   const [isTyping, setIsTyping] = useState(false);
   const isTypingRef = useRef(false);
+  
+  // Lead Collection State
+  const [leadSubmitted, setLeadSubmitted] = useState<boolean>(false);
+  const [leadFormValues, setLeadFormValues] = useState<Record<string, string>>({});
+  const [submittingLead, setSubmittingLead] = useState<boolean>(false);
   useEffect(() => {
     isTypingRef.current = isTyping;
   }, [isTyping]);
@@ -1233,10 +1259,16 @@ function WidgetContent() {
             if (lastMsg && lastMsg.role === "assistant") {
               return [
                 ...prev.slice(0, -1),
-                { ...lastMsg, content: cleanedText, id: lastMsg.id || data.message_id, sources: finalSources },
+                {
+                  ...lastMsg,
+                  content: cleanedText,
+                  id: lastMsg.id || data.message_id,
+                  sources: finalSources,
+                  escalation_detected: lastMsg.escalation_detected || data.escalation_detected === true
+                },
               ];
             } else {
-              return [...prev, { role: "assistant", content: cleanedText, id: data.message_id, sources: finalSources }];
+              return [...prev, { role: "assistant", content: cleanedText, id: data.message_id, sources: finalSources, escalation_detected: data.escalation_detected === true }];
             }
           });
         }
@@ -1244,6 +1276,15 @@ function WidgetContent() {
         if (data.type === "done" || data.type === "end") {
           setIsTyping(false);
           resetTypingTimeout();
+          if (data.escalation_detected === true) {
+            setMessages((prev) => {
+              const lastMsg = prev[prev.length - 1];
+              if (lastMsg && lastMsg.role === "assistant") {
+                return [...prev.slice(0, -1), { ...lastMsg, escalation_detected: true }];
+              }
+              return prev;
+            });
+          }
         }
       } catch (err) {
         setIsTyping(false);
@@ -1473,18 +1514,168 @@ function WidgetContent() {
           </div>
         )}
 
-        {/* Chat Feed */}
-        <div
-          style={{
+        {/* Lead Form or Chat Content */}
+        {leadCollection && leadTiming === "pre-chat" && !leadSubmitted ? (
+          <div style={{
             flex: 1,
-            overflowY: "auto",
-            padding: "20px",
+            padding: "24px",
             background: "#f9f9f9",
             display: "flex",
             flexDirection: "column",
-            gap: "16px",
-          }}
-        >
+            justifyContent: "center",
+            alignItems: "stretch",
+            overflowY: "auto"
+          }}>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              for (const field of leadFields) {
+                if (!leadFormValues[field]?.trim()) {
+                  alert(`${field.charAt(0).toUpperCase() + field.slice(1)} is required.`);
+                  return;
+                }
+                if (field === "email") {
+                  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                  if (!emailRegex.test(leadFormValues[field])) {
+                    alert("Please enter a valid email address.");
+                    return;
+                  }
+                }
+              }
+              setSubmittingLead(true);
+              try {
+                const baseUrl = getApiBaseUrl();
+                const finalSessionId = `session_lead_${Date.now()}`;
+                const res = await fetch(`${baseUrl}/leads`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    agent_id: agentId || "YOUR_AGENT_ID",
+                    tenant_id: tenantId || "YOUR_TENANT_ID",
+                    session_id: finalSessionId,
+                    ...leadFormValues,
+                    source: "pre-chat"
+                  })
+                });
+                if (res.ok) {
+                  setLeadSubmitted(true);
+                } else {
+                  console.warn("Failed to create lead, proceeding to chat as fallback.");
+                  setLeadSubmitted(true);
+                }
+              } catch (err) {
+                console.warn("Lead form submission error:", err);
+                setLeadSubmitted(true);
+              } finally {
+                setSubmittingLead(false);
+              }
+            }} style={{
+              background: "#ffffff",
+              padding: "24px",
+              borderRadius: "20px",
+              border: "1px solid #e4e4e7",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.03)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "16px"
+            }}>
+              <div style={{ textAlign: "center", marginBottom: "8px" }}>
+                <div style={{
+                  width: "48px",
+                  height: "48px",
+                  borderRadius: "14px",
+                  background: `${themeColor}10`,
+                  color: themeColor,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  margin: "0 auto 12px auto"
+                }}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                </div>
+                <h3 style={{ margin: "0 0 6px 0", fontSize: "16px", fontWeight: "700", color: "#18181b" }}>Before we start</h3>
+                <p style={{ margin: 0, fontSize: "12px", color: "#71717a", lineHeight: "1.4" }}>
+                  Please introduce yourself to start chatting with the agent.
+                </p>
+              </div>
+
+              {leadFields.map((field) => {
+                const label = field.charAt(0).toUpperCase() + field.slice(1);
+                const isEmail = field.toLowerCase() === "email";
+                const isPhone = field.toLowerCase() === "phone" || field.toLowerCase() === "mobile";
+                
+                return (
+                  <div key={field} style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <label style={{ fontSize: "11px", fontWeight: "700", color: "#4b5563", textTransform: "uppercase", letterSpacing: "0.02em" }}>
+                      {label} <span style={{ color: "#ef4444" }}>*</span>
+                    </label>
+                    <input
+                      type={isEmail ? "email" : isPhone ? "tel" : "text"}
+                      required
+                      placeholder={`Enter your ${field}`}
+                      value={leadFormValues[field] || ""}
+                      onChange={(e) => setLeadFormValues((prev) => ({ ...prev, [field]: e.target.value }))}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        border: "1px solid #d1d5db",
+                        fontSize: "13px",
+                        outline: "none",
+                        transition: "border-color 0.2s",
+                        fontFamily: CHAT_FONT_FAMILY
+                      }}
+                    />
+                  </div>
+                );
+              })}
+
+              <button
+                type="submit"
+                disabled={submittingLead}
+                style={{
+                  marginTop: "8px",
+                  padding: "12px",
+                  borderRadius: "12px",
+                  border: "none",
+                  background: themeColor,
+                  color: "#ffffff",
+                  fontWeight: "700",
+                  fontSize: "13px",
+                  cursor: submittingLead ? "not-allowed" : "pointer",
+                  transition: "opacity 0.2s",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px"
+                }}
+              >
+                {submittingLead ? (
+                  <span style={{
+                    width: "14px",
+                    height: "14px",
+                    border: "2px solid #ffffff",
+                    borderTop: "2px solid transparent",
+                    borderRadius: "50%",
+                    animation: "spin 1s linear infinite",
+                    display: "inline-block"
+                  }} />
+                ) : (
+                  <span>Start Chatting</span>
+                )}
+              </button>
+            </form>
+          </div>
+        ) : (
+          <div
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              padding: "20px",
+              background: "#f9f9f9",
+              display: "flex",
+              flexDirection: "column",
+              gap: "16px",
+            }}
+          >
           {messages.map((msg, index) => {
             const isUser = msg.role === "user";
             return (
@@ -1551,6 +1742,36 @@ function WidgetContent() {
                         {renderFormattedContent(msg.content, isUser, themeColor, linkSafety ? (url) => setSafetyModalUrl(url) : undefined)}
                         {!isUser && isTyping && index === messages.length - 1 && (
                           <span className="typing-cursor" style={{ color: themeColor, marginLeft: "4px" }}>▋</span>
+                        )}
+                        {!isUser && escalationEnabled && msg.escalation_detected && (
+                          <div style={{ marginTop: "12px" }}>
+                            <button
+                              onClick={() => {
+                                if (escalationLink) {
+                                  window.open(escalationLink, "_blank", "noopener,noreferrer");
+                                }
+                              }}
+                              style={{
+                                background: themeColor,
+                                color: "#ffffff",
+                                border: "none",
+                                borderRadius: "10px",
+                                padding: "8px 16px",
+                                fontSize: "12px",
+                                fontWeight: "700",
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                transition: "opacity 0.2s",
+                                fontFamily: CHAT_FONT_FAMILY
+                              }}
+                              onMouseEnter={(e) => e.currentTarget.style.opacity = "0.9"}
+                              onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
+                            >
+                              <span>🧑💼</span> Talk to Human Agent
+                            </button>
+                          </div>
                         )}
                       </>
                     )}
@@ -1829,20 +2050,22 @@ function WidgetContent() {
 
           <div ref={messagesEndRef} />
         </div>
+      )}
       </div>
 
       {/* Input Bar */}
-      <div
-        style={{
-          padding: "2px",
-          borderRadius: "24px",
-          background: `linear-gradient(90deg, ${themeColor}, ${themeColor}ee, #ffffff, ${themeColor}ee, ${themeColor})`,
-          backgroundSize: "300% 100%",
-          animation: "borderShift 3s ease infinite",
-          boxShadow: isTyping ? `0 4px 18px ${themeColor}40` : `0 2px 12px ${themeColor}30`,
-          flexShrink: 0,
-        }}
-      >
+      {(!leadCollection || leadTiming !== "pre-chat" || leadSubmitted) && (
+        <div
+          style={{
+            padding: "2px",
+            borderRadius: "24px",
+            background: `linear-gradient(90deg, ${themeColor}, ${themeColor}ee, #ffffff, ${themeColor}ee, ${themeColor})`,
+            backgroundSize: "300% 100%",
+            animation: "borderShift 3s ease infinite",
+            boxShadow: isTyping ? `0 4px 18px ${themeColor}40` : `0 2px 12px ${themeColor}30`,
+            flexShrink: 0,
+          }}
+        >
         {/* Inner Input Wrapper */}
         <div
           style={{
@@ -1916,6 +2139,7 @@ function WidgetContent() {
           </button>
         </div>
       </div>
+      )}
 
       {/* Powered by Gramosoft */}
       <a
