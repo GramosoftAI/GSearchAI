@@ -898,6 +898,18 @@ async def async_ingest_turn(payload: MemorySaveRequest):
             await save_user_preference(payload)
             return
 
+        # Check if the AI response indicates a failure to find information or missing data
+        negative_indicators = [
+            "couldn't find", "could not find", "don't know", "do not know",
+            "no mention", "no information", "not present in dataset",
+            "not found", "unable to find", "no matching record",
+            "does not exist", "unanswered"
+        ]
+        ai_resp_lower = payload.ai_response.lower()
+        if any(indicator in ai_resp_lower for indicator in negative_indicators):
+            logger.info(f"[INGEST BYPASS] Skipping memory storage because AI response indicates info is missing or not found: {payload.ai_response!r}")
+            return
+
         user_interaction = f"User: {payload.query}\nAssistant: {payload.ai_response}"
 
         combined_prompt = (
