@@ -719,8 +719,12 @@ class AgentService:
             # Soft-delete KnowledgeBases
             await self.db.execute(
                 update(KnowledgeBase)
+                .values(deleted=True)
                 .where(
-=======
+                    KnowledgeBase.agent_id == agent_uuid,
+                    KnowledgeBase.tenant_id == self.tenant_id
+                )
+            )
             # Hard-delete memory records from episodic_memories and user_preferences tables
             from sqlalchemy import text
             await self.db.execute(
