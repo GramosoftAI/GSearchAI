@@ -39,6 +39,7 @@ def resolve_memory_api_base_url() -> str:
 
 
 async def call_memory_api(endpoint: str, json_data: dict, method: str = "POST", timeout: float = 5.0):
+    MEMORY_API_URL = resolve_memory_api_base_url()
     candidate_urls = [
         f"{MEMORY_API_URL.rstrip('/')}{endpoint}",
         f"http://localhost:8003/api/v1/memory{endpoint}",
