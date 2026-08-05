@@ -21,6 +21,9 @@ from .service import RAGService
 from ..knowledge_bases.repository import KnowledgeBaseRepository
 from ...core.database import get_db_with_tenant
 from ...core.security import verify_access_token
+from ...core.config import get_settings
+
+settings = get_settings()
 
 router = APIRouter(prefix="/ws", tags=["WebSocket RAG"])
 
