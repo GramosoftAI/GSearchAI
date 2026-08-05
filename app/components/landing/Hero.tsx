@@ -112,11 +112,7 @@ export default function Hero() {
   return (
     <header className="gs-hero">
       <div className="wrap">
-        <p className="sr-only">
-          Summary: Gsearch is an AI enterprise search platform designed for teams, organizations, and knowledge workers to search and access knowledge instantly across all workplace applications with full security.
-        </p>
-        <Title
-          level={1}
+        <h1
           style={{
             fontSize: "clamp(34px,5vw,56px)",
             fontWeight: 800,
@@ -129,7 +125,7 @@ export default function Hero() {
         >
           Gsearch is your{" "}
           <span style={{ color: "var(--teal-deep)" }}>second brain</span> at work
-        </Title>
+        </h1>
 
         <Paragraph
           style={{

@@ -100,7 +100,12 @@ export default function Footer() {
 
       <Divider style={{ borderColor: "var(--line)", marginTop: 46 }} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5, color: "var(--faint)", flexWrap: "wrap", gap: 12 }}>
-        <span>© {new Date().getFullYear()} Gramosoft Private Limited · Privacy · Terms · Contact</span>
+        <span>
+          © {new Date().getFullYear()} Gramosoft Private Limited ·{" "}
+          <a href="/privacy" style={{ color: "inherit", textDecoration: "none" }}>Privacy</a> ·{" "}
+          <a href="/terms" style={{ color: "inherit", textDecoration: "none" }}>Terms</a> ·{" "}
+          <a href="/contact" style={{ color: "inherit", textDecoration: "none" }}>Contact</a>
+        </span>
         <span>Last updated {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</span>
       </div>
     </div>

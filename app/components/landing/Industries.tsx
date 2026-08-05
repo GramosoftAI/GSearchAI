@@ -59,13 +59,13 @@ export default function Industries() {
           {securityCards.map((card) => {
             const Icon = card.icon;
             return (
-              <article className="scard" key={card.title}>
+              <div className="scard" key={card.title}>
                 <div className="si" aria-hidden="true">
                   <Icon size={22} strokeWidth={2.2} />
                 </div>
                 <h3>{card.title}</h3>
                 <p>{card.body}</p>
-              </article>
+              </div>
             );
           })}
         </div>

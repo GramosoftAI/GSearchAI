@@ -59,13 +59,13 @@ export default function Security() {
         {/* 3 Top Security Cards */}
         <div className="sec-grid">
           {securityCards.map((card) => (
-            <article className="scard" key={card.title}>
+            <div className="scard" key={card.title}>
               <p className="si" aria-hidden="true">
                 {card.icon}
               </p>
               <h3>{card.title}</h3>
               <p>{card.body}</p>
-            </article>
+            </div>
           ))}
         </div>
 

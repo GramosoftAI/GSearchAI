@@ -17,7 +17,7 @@ export default function SoloVsWorkspace() {
         </div>
         <div className="paths">
           {/* Article 1: Solo */}
-          <article className="path path-solo">
+          <div className="path path-solo">
             <svg
               className="picon picon-solo"
               viewBox="0 0 260 96"
@@ -68,10 +68,10 @@ export default function SoloVsWorkspace() {
             <Link href="/register" className="btn btn-out">
               Start for free
             </Link>
-          </article>
+          </div>
 
           {/* Article 2: Workspace / Company */}
-          <article className="path path-team">
+          <div className="path path-team">
             <svg
               className="picon picon-team"
               viewBox="0 0 260 96"
@@ -122,7 +122,7 @@ export default function SoloVsWorkspace() {
             <a href="#cta" className="btn btn-teal">
               Book a demo
             </a>
-          </article>
+          </div>
         </div>
       </div>
     </section>

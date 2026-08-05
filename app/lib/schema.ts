@@ -3,7 +3,7 @@ export const schema = {
    "@graph": [
       {
       "@type": "SoftwareApplication",
-      "@id": "https://gramosoft.tech/gsearch#software",
+      "@id": "https://gsearchai.com/#software",
       "name": "Gsearch",
       "applicationCategory": "BusinessApplication",
       "applicationSubCategory": "AI Enterprise Search & Knowledge Assistant",
@@ -43,21 +43,21 @@ export const schema = {
     },
     {
       "@type": "WebPage",
-      "@id": "https://gramosoft.tech/gsearch#webpage",
-      "url": "https://gramosoft.tech/gsearch",
+      "@id": "https://gsearchai.com/#webpage",
+      "url": "https://gsearchai.com/",
       "name": "Gsearch — AI Enterprise Search Platform",
-      "about": { "@id": "https://gramosoft.tech/gsearch#software" },
+      "about": { "@id": "https://gsearchai.com/#software" },
       "breadcrumb": {
         "@type": "BreadcrumbList",
         "itemListElement": [
           { "@type": "ListItem", "position": 1, "name": "Gramosoft", "item": "https://gramosoft.tech" },
-          { "@type": "ListItem", "position": 2, "name": "Gsearch", "item": "https://gramosoft.tech/gsearch" }
+          { "@type": "ListItem", "position": 2, "name": "Gsearch", "item": "https://gsearchai.com/" }
         ]
       }
     },
     {
       "@type": "FAQPage",
-      "@id": "https://gramosoft.tech/gsearch#faq",
+      "@id": "https://gsearchai.com/#faq",
       "mainEntity": [
         { "@type": "Question", 
             "name": "Why do you call Gsearch a second brain?", 

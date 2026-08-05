@@ -1,6 +1,6 @@
 "use client";
 
-import { useState,useEffect } from "react";
+import { useState, useEffect } from "react";
 import Sidebar from "../components/layout/Sidebar";
 import Header from "../components/layout/Header";
 import { Drawer } from "antd";
@@ -86,7 +86,7 @@ export default function DashboardLayout({
         placement="left"
         onClose={() => setMobileMenuOpen(false)}
         open={mobileMenuOpen}
-        styles={{ 
+        styles={{
           body: { padding: 0, background: 'var(--app-surface)' },
           content: { background: 'var(--app-surface)' }
         }}

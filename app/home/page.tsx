@@ -25,23 +25,25 @@ export default function HomePage() {
     <>
       <ScrollReveal />
       <Navbar />
-      <div className="fade-in-up"><Hero /></div>
-      <LogoStrip />
-      <div className="reveal"><FeatureTrio /></div>
-      <div className="reveal"><HowItWorks /></div>
-      <div className="reveal"><SoloVsWorkspace /></div>
-      <div className="reveal"><Connectors /></div>
-      <div className="reveal"><CapabilityTabs /></div>
-      <div className="reveal"><SearchComparison /></div>
-      <div className="reveal"><Industries /></div>
-      {/* <div className="reveal"><UseCases /></div> */}
-      {/* <div className="reveal"><TimeToValueAndTestimonial /></div> */}
-     
-      <div className="reveal"><TeamSwitcher /></div>
-      <div className="reveal"><RoiCalculator /></div>
-      <div className="reveal"><Faq /></div>
-      <div className="reveal"><KeyTakeawaysAndSources /></div>
-      <div className="reveal"><FinalCta /></div>
+      <article className="gs-landing-article">
+        <div className="fade-in-up"><Hero /></div>
+        <LogoStrip />
+        <div className="reveal"><FeatureTrio /></div>
+        <div className="reveal"><HowItWorks /></div>
+        <div className="reveal"><SoloVsWorkspace /></div>
+        <div className="reveal"><Connectors /></div>
+        <div className="reveal"><CapabilityTabs /></div>
+        <div className="reveal"><SearchComparison /></div>
+        <div className="reveal"><Industries /></div>
+        {/* <div className="reveal"><UseCases /></div> */}
+        {/* <div className="reveal"><TimeToValueAndTestimonial /></div> */}
+       
+        <div className="reveal"><TeamSwitcher /></div>
+        <div className="reveal"><RoiCalculator /></div>
+        <div className="reveal"><Faq /></div>
+        <div className="reveal"><KeyTakeawaysAndSources /></div>
+        <div className="reveal"><FinalCta /></div>
+      </article>
       <Footer />
     </>
   );

@@ -26,25 +26,25 @@ export const metadata: Metadata = {
     icon: "/512_512.png",
   },
   title:
-    "Gsearch — Meet your company's second brain. AI Enterprise Search & Chat Platform",
+    "Gsearch — AI Enterprise Search & Chat Platform",
 
   description:
     "Gsearch connects your tools, docs, and databases with AI search. Ask questions in plain language and get instant answers from your company data.",
 
   keywords: [
-  "AI enterprise search",
-  "company AI search tool",
-  "internal knowledge search",
-  "AI chatbot for company data",
-  "RAG search system",
-  "enterprise AI assistant",
-  "ask your data AI",
-  "document search AI",
-  "Slack AI search",
-  "Notion AI alternative",
-  "Gsearch",
-  "AI knowledge base search"
-],
+    "AI enterprise search",
+    "company AI search tool",
+    "internal knowledge search",
+    "AI chatbot for company data",
+    "RAG search system",
+    "enterprise AI assistant",
+    "ask your data AI",
+    "document search AI",
+    "Slack AI search",
+    "Notion AI alternative",
+    "Gsearch",
+    "AI knowledge base search"
+  ],
 
   authors: [
     {
@@ -58,30 +58,32 @@ export const metadata: Metadata = {
   },
 
   alternates: {
-    canonical: "https://gramosoft.tech",
+    canonical: "https://gsearchai.com/",
   },
 
   openGraph: {
-    title: "Gsearch — Your Company's AI Brain for Instant Answers",
+    title: "Gsearch — AI Enterprise Search & Chat Platform",
     description:
       "Search across all your company tools, documents, chats, and apps using natural language AI. Get instant, accurate answers instead of searching manually.",
-    url: "https://gramosoft.tech/gsearch",
-    siteName: "Gsearch by Gramosoft",
+    url: "https://gsearchai.com/",
+    siteName: "Gsearch",
     images: [
       {
-        url: "https://gramosoft.tech/images/gsearch-og.png",
+        url: "https://gsearchai.com/512_512.png",
       },
     ],
     locale: "en_IN",
     type: "website",
+
   },
 
   twitter: {
     card: "summary_large_image",
-    title: "Gsearch — AI Search for Your Company Knowledge",
+    title: "Gsearch — AI Enterprise Search & Chat Platform",
     description:
       "Ask questions across your company data and get instant AI-powered answers.",
-    images: ["https://gramosoft.tech/images/gsearch-og.png"],
+    images: ["https://gsearchai.com/512_512.png"],
+
   },
 };
 
@@ -97,13 +99,13 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full ">
-         <Script
+        <Script
           id="schema"
-            type="application/ld+json"
-            dangerouslySetInnerHTML={{
-              __html: JSON.stringify(schema),
-            }}
-          />
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(schema),
+          }}
+        />
         <script
           dangerouslySetInnerHTML={{
             __html: `
@@ -130,9 +132,9 @@ export default function RootLayout({
         <AntdRegistry>
           <GlobalProvider>
             {children}
-            <Toaster position="top-right"  toastOptions={{
-            duration: 5000, // 3 seconds
-          }}/>
+            <Toaster position="top-right" toastOptions={{
+              duration: 5000, // 3 seconds
+            }} />
           </GlobalProvider>
         </AntdRegistry>
       </body>
