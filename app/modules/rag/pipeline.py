@@ -487,31 +487,9 @@ class RAGPipeline:
 
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
 
-
-        # --- SUPPLEMENTARY PANDAS CSV EXTRACTION ---
-        # Uses description='excel_parquet' as the authoritative detection flag.
-        # parsed_path is a bare dataset name; actual data is in local parquet via ParquetIngester.
-        supplementary_csv_context = ""
-        try:
-            from sqlalchemy import text
-            if getattr(self, "db", None):
-                kb_query = "SELECT parsed_path, description FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[]));"
-                result = await self.db.execute(text(kb_query), {"kb_ids": kb_ids})
-                kb_path_rows = result.all()
-
-                has_excel_kb = any(getattr(r, 'description', '') == 'excel_parquet' for r in kb_path_rows)
-
-                if has_excel_kb:
-                    logger.info(" excel_parquet KB detected! Gathering supplementary tabular context.")
-                    pandas_result = await self._execute_table_analytics(query, kb_ids)
-                    if pandas_result and "validation error" not in pandas_result.lower() and "No valid spreadsheet" not in pandas_result:
-                        supplementary_csv_context = f"\n\n### Supplementary Tabular Data\n{pandas_result}\n"
-                    else:
-                        logger.warning(f" Supplementary CSV extraction returned no usable results: {pandas_result}")
-        except Exception as e:
-            logger.error(f"Failed supplementary CSV extraction: {e}", exc_info=True)
-        # ---------------------------------------------
-
+        # --- EXCLUSIVE PANDAS BYPASS REMOVED ---
+        # Table analytics is handled purely via router intent and _execute_table_analytics.
+        # -------------------------------
 
         # Populate KB metadata (names, total chunks)
         if self.db:
@@ -534,21 +512,17 @@ class RAGPipeline:
 
         # STAGE 0.1: EARLY INTERCEPT FOR TABLE ANALYTICS (Deterministic SQL Execution)
         table_analytics_attempted = False
+        extractive_context_text = ""
         try:
             route_result = await self.router.route_query(query, tenant_id=str(self.tenant_id))
+            # If the user uploads CSV/Excel, we want to try executing table analytics if the intent matches
             if route_result.intent == SearchType.TABLE_ANALYTICS:
                 table_analytics_attempted = True
                 logger.info("   -> Intercepting query for SQL Table Analytics engine BEFORE Adaptive Planner!")
                 table_results = await self._execute_table_analytics(query, kb_ids)
                 if table_results and "validation error" not in table_results.lower():
-                    return RAGContext(
-                        query=query,
-                        chunks=[],
-                        entity_mentions={},
-                        total_tokens=0,
-                        triplet_context=f"### Table Analytics Results\n\n{table_results}",
-                        search_type=route_result.intent.name
-                    )
+                    extractive_context_text = f"### Table Analytics Results\n\n{table_results}\n\n"
+                    logger.info("   -> Table analytics successful. Appended to extractive context. Continuing to Adaptive Planner for cross-source retrieval.")
                 else:
                     logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to Adaptive Planner.")
         except Exception as e:
@@ -2086,7 +2060,6 @@ class RAGPipeline:
             return None
             
         kb_names = {str(r.id): r.name for r in kb_rows}
-
         # --- DEFINITIVE FIX: Use ParquetIngester registry to resolve local parquet path ---
         # The CSV ingestion pipeline converts CSV→Parquet and registers the path in
         # data/parquet/active_datasets.json under the key kb.parsed_path (e.g. 'dummy_employees_details').
@@ -2147,8 +2120,7 @@ class RAGPipeline:
         parsed_path = non_excel_rows[0].parsed_path if non_excel_rows else kb_rows[0].parsed_path
         source = non_excel_rows[0].source if non_excel_rows else kb_rows[0].source
 
-
-        # (If not CSV, fallback to standard SQL generation)
+        # Fallback to standard SQL generation over document_table_rows
         if not dataset_schema:
             sample_query = "SELECT row_data FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id LIMIT 300;"
             result = await self.db.execute(text(sample_query), {"kb_ids": kb_ids, "tenant_id": uuid.UUID(str(self.tenant_id))})

@@ -8,5 +8,7 @@
     "questions_with_LLM_answers": "questions_with_LLM_answers_1785336308.parquet",
     "wa": "wa_1785491056.parquet",
     "sme-5lac": "sme-5lac_1785836008.parquet",
-    "dummy_employees_details (1)": "dummy_employees_details (1)_1785846511.parquet"
+    "dummy_employees_details (1)": "dummy_employees_details (1)_1785846511.parquet",
+    "mymoviedbt2": "mymoviedbt2_1785250219.parquet",
+    "VENDOR DETAILS_Update": "VENDOR DETAILS_Update_1785250380.parquet"
 }

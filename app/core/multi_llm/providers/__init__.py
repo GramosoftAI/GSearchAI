@@ -1,4 +1,4 @@
-from .deepinfra_provider import DeepInfraProvider
-from .ollama_provider import OllamaProvider
+# app/core/multi_llm/providers/__init__.py
+from app.core.multi_llm.providers.deepinfra_provider import DeepInfraProvider
 
-__all__ = ["DeepInfraProvider", "OllamaProvider"]
+__all__ = ["DeepInfraProvider"]

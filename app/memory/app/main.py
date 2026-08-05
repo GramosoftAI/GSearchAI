@@ -35,10 +35,10 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "graphmind_password")
 logger.info(f"[NEO4J INIT] Initializing Neo4j Driver connecting to: {NEO4J_URI}")
 neo4j_driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
-EMBED_DIM = 768
+EMBED_DIM = int(os.getenv("EMBEDDING_DIMENSION", "4096"))
 
-LIVE_SEMAPHORE = asyncio.Semaphore(int(os.getenv("OLLAMA_LIVE_CONCURRENCY", "1")))
-BACKGROUND_SEMAPHORE = asyncio.Semaphore(int(os.getenv("OLLAMA_BACKGROUND_CONCURRENCY", "1")))
+LIVE_SEMAPHORE = asyncio.Semaphore(int(os.getenv("LLM_LIVE_CONCURRENCY", "10")))
+BACKGROUND_SEMAPHORE = asyncio.Semaphore(int(os.getenv("LLM_BACKGROUND_CONCURRENCY", "5")))
 
 
 class MemoryProcessRequest(BaseModel):
@@ -115,18 +115,24 @@ def _is_delete_statement(query: str) -> bool:
 
 
 # ============================================================================
-# Ollama Helpers
+# LLM & Embedding Helpers
 # ============================================================================
+def strip_think_tags(text: str) -> str:
+    if not text:
+        return ""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+
+
 async def get_embedding(text: str, priority: str = "live") -> List[float]:
     semaphore = LIVE_SEMAPHORE if priority == "live" else BACKGROUND_SEMAPHORE
     async with semaphore:
         try:
-            llm_base = os.getenv("EMBEDDING_BASE_URL", os.getenv("LLM_BASE_URL", "")).rstrip('/')
-            api_key = os.getenv("EMBEDDING_API_KEY", os.getenv("LLM_GATEWAY_API_KEY"))
-            embed_model = os.getenv("DEEPINFRA_EMBEDDING_MODEL")
+            llm_base = os.getenv("DEEPINFRA_API_URL", "https://api.deepinfra.com/v1/openai").rstrip('/')
+            api_key = os.getenv("DEEPINFRA_API_KEY", "")
+            embed_model = os.getenv("MODEL_EMBEDDING", "Qwen/Qwen3-Embedding-8B")
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
             
-            endpoint = f"{llm_base}/embeddings" if llm_base.endswith("/openai") else f"{llm_base}/v1/embeddings"
+            endpoint = f"{llm_base}/embeddings" if not llm_base.endswith("/embeddings") else llm_base
             
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
@@ -137,7 +143,6 @@ async def get_embedding(text: str, priority: str = "live") -> List[float]:
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    # OpenAI returns {"data": [{"embedding": [...]}]}
                     embedding = data["data"][0]["embedding"]
                     if len(embedding) != EMBED_DIM:
                         logger.warning(
@@ -158,11 +163,13 @@ async def run_llm_completion(system_prompt: str, user_prompt: str, priority: str
     semaphore = LIVE_SEMAPHORE if priority == "live" else BACKGROUND_SEMAPHORE
     async with semaphore:
         try:
-            llm_base = os.getenv("LLM_BASE_URL").rstrip('/')
-            api_key = os.getenv("LLM_GATEWAY_API_KEY")
-            chat_model = os.getenv("MEMORY_CHAT_MODEL")
+            llm_base = os.getenv("DEEPINFRA_API_URL", "https://api.deepinfra.com/v1/openai").rstrip('/')
+            api_key = os.getenv("DEEPINFRA_API_KEY", "")
+            chat_model = os.getenv("MODEL_MEMORY", "meta-llama/Meta-Llama-3.1-8B-Instruct")
+            max_tokens = int(os.getenv("MAX_TOKENS_MEMORY", "512"))
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-            endpoint = f"{llm_base}/chat/completions" if llm_base.endswith("/openai") else f"{llm_base}/v1/chat/completions"
+            
+            endpoint = f"{llm_base}/chat/completions" if not llm_base.endswith("/chat/completions") else llm_base
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     endpoint,
@@ -173,14 +180,18 @@ async def run_llm_completion(system_prompt: str, user_prompt: str, priority: str
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt}
                         ],
+                        "max_tokens": max_tokens,
                         "temperature": 0.0,
-                        "stream": False
+                        "stream": False,
+                        "enable_thinking": False,
+                        "reasoning_effort": "none"
                     },
                     timeout=90.0
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    return data["choices"][0]["message"]["content"].strip()
+                    content = data["choices"][0]["message"]["content"].strip()
+                    return strip_think_tags(content)
                 logger.error(f"LLM chat error ({resp.status_code}): {resp.text}")
         except Exception as e:
             logger.error(f"LLM failure: {type(e).__name__}: {e}")

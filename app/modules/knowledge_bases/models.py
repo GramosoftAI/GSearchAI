@@ -235,9 +235,9 @@ class DocumentChunk(Base):
     text = Column(Text, nullable=False)
     chunk_index = Column(Integer, nullable=False)
     
-    # Store the vector. Dimension is 1024 as per EMBEDDING_DIMENSION in .env
+    # Store the vector. Dimension is 4096 as per EMBEDDING_DIMENSION in .env (Qwen/Qwen3-Embedding-8B)
     from pgvector.sqlalchemy import Vector
-    embedding = Column(Vector(1024), nullable=True)
+    embedding = Column(Vector(4096), nullable=True)
 
     from sqlalchemy.dialects.postgresql import JSONB
     metadata_json = Column(JSONB, nullable=True)

@@ -39,7 +39,7 @@ from ...utils.formatters import format_error, format_success
 
 from ..knowledge_bases.service import KnowledgeBaseService
 
-from ..knowledge_bases.schemas import KBCreate, KBURLIngest
+from ..knowledge_bases.schemas import KBCreate, KBURLIngest, URLDiscoverRequest, URLSelectIngestRequest
 
 from ..knowledge_bases.services.scraper_service import ScraperService
 
@@ -1387,7 +1387,7 @@ async def instant_ingest_url(
         from app.modules.jobs.service import JobService
         from app.modules.jobs.schemas import JobCreate
         from app.modules.jobs.worker import run_url_ingestion_job
-
+             
         async with AsyncSessionLocal() as db:
             # Set context
             from sqlalchemy import text
@@ -1432,16 +1432,122 @@ async def instant_ingest_url(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-
-    except HTTPException:
-
-        raise
-
+@router.post(
+    "/{agent_id}/sources/url/discover",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    summary="Discover Website Links for UI Selection",
+    description="Discover and filter all internal URLs on a website so the user can select which pages to ingest.",
+)
+async def discover_url_links_for_ui(
+    request: Request,
+    agent_id: str,
+    request_data: URLDiscoverRequest,
+) -> dict:
+    """
+    Step 1 of Interactive UI Crawl: Return discovered & filtered links for UI checkboxes.
+    """
+    try:
+        tenant_id, user_id = get_tenant_and_user(request)
+        result = await ScraperService.discover_site_links(request_data.url, max_pages=request_data.max_pages)
+        return format_success(
+            data=result,
+            meta={"message": "Discovered internal links for UI selection"}
+        )
     except Exception as e:
+        logger.error(f"Link discovery error for {request_data.url}: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Failed to discover links: {str(e)}")
 
-        logger.error(f"Instant Ingest URL error: {e}")
 
+@router.post(
+    "/{agent_id}/sources/url/select",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    summary="Ingest Selected URLs",
+    description="Scrape and ingest only the specific list of URLs selected by the user in the UI.",
+)
+async def ingest_selected_url_links(
+    request: Request,
+    agent_id: str,
+    request_data: URLSelectIngestRequest,
+) -> dict:
+    """
+    Step 2 of Interactive UI Crawl: Scrape selected checkboxes and ingest into Agent Knowledge Graph.
+    """
+    try:
+        tenant_id, user_id = get_tenant_and_user(request)
+        import time
+        t_total_start = time.time()
+
+        if not request_data.urls:
+            raise HTTPException(status_code=400, detail="No URLs provided for ingestion")
+
+        t_gcrawl_start = time.time()
+        documents = await ScraperService.scrape_selected_urls(request_data.urls)
+        t_gcrawl_end = time.time()
+        gcrawl_time_seconds = round(t_gcrawl_end - t_gcrawl_start, 2)
+
+        if not documents:
+            raise HTTPException(status_code=400, detail="No extractable text content returned for selected URLs")
+
+        final_doc = ""
+        for doc in documents:
+            if len(documents) > 1:
+                final_doc += f"\n\n# SOURCE: {doc['source']}\n\n"
+            final_doc += doc["content"]
+        document_text = final_doc.strip()
+
+        if not document_text:
+            raise HTTPException(status_code=400, detail="Scraped pages contained no text")
+
+        async with AsyncSessionLocal() as db:
+            agent_service = AgentService(db, tenant_id)
+            agent_result = await agent_service.get_agent(agent_id)
+            if not agent_result.get("success"):
+                raise HTTPException(status_code=404, detail="Agent not found")
+
+            kb_service = KnowledgeBaseService(db, tenant_id)
+            kb_name = f"{request_data.urls[0]} (Selected Links)"
+            kb_request = KBCreate(
+                name=kb_name,
+                agent_id=uuid.UUID(agent_id),
+                description=f"User-selected web content ({len(request_data.urls)} URLs)",
+                source="url_crawl"
+            )
+            kb_result = await kb_service.create_knowledge_base(user_id, kb_request)
+            if not kb_result.get("success"):
+                raise HTTPException(status_code=500, detail="Failed to create KnowledgeBase entry")
+
+            kb_id = str(kb_result["data"]["kb"].id)
+
+            t_process_start = time.time()
+            ingest_result = await kb_service.ingest_document(kb_id, document_text)
+            t_process_end = time.time()
+            processing_time_seconds = round(t_process_end - t_process_start, 2)
+            total_time_seconds = round(time.time() - t_total_start, 2)
+
+            if not ingest_result.get("success"):
+                try:
+                    logger.info(f"Selected URLs ingest failed. Cleaning up KnowledgeBase {kb_id}.")
+                    await kb_service.delete_kb(kb_id, user_id=user_id)
+                except Exception as cleanup_err:
+                    logger.error(f"Failed to clean up KnowledgeBase {kb_id} after ingestion failure: {cleanup_err}")
+                error_msg = ingest_result.get("error", "Unknown error")
+                status_code = ingest_result.get("status_code", 400)
+                raise HTTPException(status_code=status_code, detail=error_msg)
+
+            agent_name = agent_result["data"]["agent"]["name"]
+            ingest_result["data"]["agent_name"] = agent_name
+            ingest_result["data"]["time_metrics"] = {
+                "gcrawl_time_seconds": gcrawl_time_seconds,
+                "processing_time_seconds": processing_time_seconds,
+                "total_time_seconds": total_time_seconds
+            }
+            ingest_result["meta"]["message"] = f"Processed {len(request_data.urls)} selected URLs for agent: {agent_name}"
+
+            return ingest_result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ingest selected URLs error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-
-
-

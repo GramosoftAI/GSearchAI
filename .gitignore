@@ -17,7 +17,13 @@ config.yaml
 venv/
 env/
 ENV/
+/mind/
 mind/
+gsearch/
+test_docling_env/
+*.db
+*.parquet
+tmp_ws_probe.py
 
 # ==========================================================
 # Python Cache & Build
@@ -242,3 +248,38 @@ server.py
 frontend/
 data/parquet/*.parquet
 repair.py
+
+# ==========================================================
+# Strict Security, Credentials, Datasets & Tests Exclusion
+# ==========================================================
+# Hide all credentials & secrets
+.env*
+!.env.example
+*.pem
+*.key
+*.cert
+*deploy_key*
+*secret*
+*credential*
+
+# No datasets (PDFs, Excels, CSVs, Images)
+*.pdf
+*.csv
+*.CSV
+*.xlsx
+*.xls
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+dataset/
+datasets/
+wffvgr.csv
+
+# No test scripts or testing folders
+tests/
+testing/
+test_*.py
+*_test.py
+*cleanup*
