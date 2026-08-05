@@ -642,7 +642,7 @@ class RAGPipeline:
                     chunks=final_chunks,
                     entity_mentions={},
                     total_tokens=sum(len(c.text.split()) for c in final_chunks),
-                    triplet_context=triplet_context_str + supplementary_csv_context,
+                    triplet_context=triplet_context_str,
                     triplets=relevant_triplets_list,
                     search_type=analysis.intent.name
                 )
@@ -1734,7 +1734,6 @@ class RAGPipeline:
         if 'extractive_context_text' in locals() and extractive_context_text:
             final_triplet_context = extractive_context_text + final_triplet_context
             
-        final_triplet_context += supplementary_csv_context
             
         return RAGContext(
 

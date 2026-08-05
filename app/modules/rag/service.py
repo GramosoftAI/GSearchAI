@@ -422,7 +422,7 @@ If retrieved passages conflict, state the conflict. Do not resolve it yourself.
   "I couldn't find it."
 - If only part of the answer exists, answer only that part.
 - Mention the relevant source at the end.
-- Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
+- Answer ONLY the specific question asked by the user. If the user asks a complex or multi-part question, you MUST address EVERY part of the question in your response. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
 - Be concise. Focus strictly on direct answers and avoid filler.
 - TRANSACTION CLASSIFICATION: Categorize transactions strictly:
   * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
@@ -920,7 +920,7 @@ If retrieved passages conflict, state the conflict. Do not resolve it yourself.
   "I couldn't find it."
 - If only part of the answer exists, answer only that part.
 - Mention the relevant source at the end.
-- Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
+- Answer ONLY the specific question asked by the user. If the user asks a complex or multi-part question, you MUST address EVERY part of the question in your response. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
 - Be concise. Focus strictly on direct answers and avoid filler.
 - TRANSACTION CLASSIFICATION: Categorize transactions strictly:
   * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
