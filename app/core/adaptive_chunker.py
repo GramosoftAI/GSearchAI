@@ -96,7 +96,7 @@ class SemanticChunker:
     """
     @staticmethod
     async def chunk(text: str, max_chunk_size: int = 2500, threshold: float = 0.75) -> List[str]:
-        from app.core.structural_parser import RegionDetector, RegionType
+        from .structural_parser import RegionDetector, RegionType
         
         # 1. Parse into semantic regions
         regions = RegionDetector.detect_regions(text)
