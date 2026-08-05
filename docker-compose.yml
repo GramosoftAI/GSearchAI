@@ -164,3 +164,6 @@ networks:
 
 volumes:
   postgres_data:
+  neo4j_data:
+  redis_data:
+  hf_model_cache:
