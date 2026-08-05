@@ -858,22 +858,7 @@ async def process_turn(payload: MemoryProcessRequest):
                 payload.tenant_id, payload.user_id, payload.agent_id, entity_names
             )
 
-    # COMPOUND QUERY SUPPORT: If user is updating a preference AND asking a question in the same turn,
-    # save the preference immediately so it's included in guidance_context for this turn!
-    if _PREFERENCE_PATTERNS.search(payload.query):
-        try:
-            logger.info(f"[COMPOUND QUERY] Extracting and saving preference immediately for turn query: {payload.query!r}")
-            save_req = MemorySaveRequest(
-                query=payload.query,
-                ai_response="",
-                session_id=payload.session_id,
-                agent_id=payload.agent_id,
-                user_id=payload.user_id,
-                tenant_id=payload.tenant_id
-            )
-            await save_user_preference(save_req)
-        except Exception as pe:
-            logger.error(f"[COMPOUND QUERY PREFERENCE ERROR] Failed inline preference update: {pe}")
+    # Preferences are saved after AI response via save-turn to reduce latency and capture assistant response context
 
     preferences = await get_user_preferences(payload.tenant_id, payload.user_id, payload.agent_id)
 
