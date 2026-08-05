@@ -37,7 +37,7 @@ _embedding_http_client: httpx.AsyncClient = None
 _embedding_cache = {}
 _embedding_cache_insertion_order = []  # Track insertion order for LRU eviction
 _MAX_EMBEDDING_CACHE = 5000  # Max cache entries before eviction
-EXPECTED_EMBEDDING_DIMENSION = 1024
+EXPECTED_EMBEDDING_DIMENSION = settings.embedding_dimension
 
 # Cache metrics for optimization tuning
 _cache_hits = 0
@@ -71,12 +71,18 @@ class DeepInfraEmbeddingClient:
         Reads from settings.deepinfra_api_key (required)
         """
         self.api_key = settings.deepinfra_api_key
-        self.base_url = "https://api.deepinfra.com/v1/openai/embeddings"
-        self.model = "BAAI/bge-large-en-v1.5"
+        base_url = getattr(settings, "deepinfra_api_url", "https://api.deepinfra.com/v1/openai")
+        if not base_url.endswith("/embeddings"):
+            if base_url.endswith("/openai"):
+                base_url = f"{base_url}/embeddings"
+            else:
+                base_url = f"{base_url.rstrip('/')}/embeddings"
+        self.base_url = base_url
+        self.model = settings.model_embedding
         self.timeout = 30.0  # Request timeout in seconds
         self.max_retries = 3  # Number of retry attempts
-        self.max_text_length = 1000  # Safe limit (~300-400 tokens) for BGE-large 512-token context limit
-        self.expected_dimension = EXPECTED_EMBEDDING_DIMENSION  # 1024
+        self.max_text_length = 1000  # Safe limit (~300-400 tokens)
+        self.expected_dimension = settings.embedding_dimension  # Dynamic from settings
 
         logger.info(
             f" DeepInfra Embedding Client initialized (model={self.model}, timeout={self.timeout}s, dim={self.expected_dimension})"
@@ -355,3 +361,50 @@ class DeepInfraEmbeddingClient:
         final_results = [results_map[i] for i in range(len(texts))]
         logger.info(f" Batch generation complete: {len(texts)} embeddings")
         return final_results, total_tokens
+
+
+class DeepInfraEmbedder:
+    def __init__(self):
+        settings = get_settings()
+        self.api_key = settings.deepinfra_api_key
+        base_url = getattr(settings, "deepinfra_api_url", "https://api.deepinfra.com/v1/openai")
+        if not base_url.endswith("/embeddings"):
+            if base_url.endswith("/openai"):
+                base_url = f"{base_url}/embeddings"
+            else:
+                base_url = f"{base_url.rstrip('/')}/embeddings"
+        self.base_url = base_url
+        self.model = settings.model_embedding  # ← from .env, never hardcoded
+        self.dimension = settings.embedding_dimension
+
+        self.client = httpx.AsyncClient(
+            base_url=self.base_url,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=60.0,
+        )
+
+    async def embed(self, texts: List[str]) -> List[List[float]]:
+        """
+        Generate embeddings for a list of texts.
+        Returns a list of float vectors, one per input text.
+        """
+        payload = {
+            "model": self.model,
+            "input": texts,
+        }
+        response = await self.client.post("", json=payload)
+        response.raise_for_status()
+        data = response.json()
+        return [item["embedding"] for item in data["data"]]
+
+    async def embed_single(self, text: str) -> List[float]:
+        """Embed a single string. Returns a flat float vector."""
+        results = await self.embed([text])
+        return results[0]
+
+    async def close(self):
+        await self.client.aclose()
+

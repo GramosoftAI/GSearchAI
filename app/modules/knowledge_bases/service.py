@@ -708,8 +708,8 @@ class KnowledgeBaseService:
             # Mutable counters for routing observability
             routing_stats = {"fluff": 0, "processed": 0, "cache_hits": 0, "kg_calls": 0, "fast_regex": 0}
             
-            # Use dynamic high-throughput semaphore instead of hardcoded 10
-            sem = asyncio.Semaphore(max(35, settings.ingestion_llm_concurrency))
+            # Use dynamic high-throughput semaphore from settings
+            sem = asyncio.Semaphore(settings.ingestion_llm_concurrency)
 
             def _fast_regex_extract_entities(chunk_text: str) -> list:
                 """0-ms deterministic entity extractor using NLP capitalization, technical terms, and regex heuristics."""
@@ -744,7 +744,7 @@ class KnowledgeBaseService:
                     return cached_result
 
                 # Enterprise Smart KG Sampling:
-                # Run LLM KG extraction on top 15 chunks (with a 6-second timeout); 
+                # Run LLM KG extraction on top 15 chunks per document (with a 45-second timeout); 
                 # 0-ms Fast Deterministic Regex Entity Extraction on secondary chunks (idx >= 15)
                 if idx >= 15:
                     routing_stats["fast_regex"] += 1
@@ -756,15 +756,15 @@ class KnowledgeBaseService:
                 routing_stats["kg_calls"] += 1
                 try:
                     async with sem:
-                        result = await asyncio.wait_for(unified_extractor.extract_all(chunk_id, text), timeout=6.0)
+                        result = await asyncio.wait_for(unified_extractor.extract_all(chunk_id, text), timeout=45.0)
                     _chunk_extract_cache[text_hash] = result
                     return result
                 except Exception as e:
-                    logger.warning(f"Unified LLM extraction timed out/failed for chunk {idx} ({e}). Using 0-ms fast regex fallback...")
+                    logger.warning(f"Unified LLM extraction timed out/failed for chunk {idx} ({type(e).__name__}: {e}). Using 0-ms fast regex fallback...")
                     fast_entities = _fast_regex_extract_entities(text)
                     return {"entities": fast_entities, "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"fast_regex_fallback": True, "chunk_idx": idx}}
 
-            logger.info(f" Processing Unified Extractions for {len(chunks)} chunks (sliding-window concurrency={max(35, settings.ingestion_llm_concurrency)})...")
+            logger.info(f" Processing Unified Extractions for {len(chunks)} chunks (sliding-window concurrency={settings.ingestion_llm_concurrency})...")
             
             # Sliding-window concurrency: Tasks execute immediately as semaphore slots open,
             # eliminating lockstep batch delays while keeping server responsive.

@@ -21,14 +21,28 @@ from .service import RAGService
 from ..knowledge_bases.repository import KnowledgeBaseRepository
 from ...core.database import get_db_with_tenant
 from ...core.security import verify_access_token
+from ...core.config import get_settings
+
+settings = get_settings()
 
 router = APIRouter(prefix="/ws", tags=["WebSocket RAG"])
 
-MEMORY_API_BASE_URL = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
-MEMORY_API_URL = f"{MEMORY_API_BASE_URL}/api/v1/memory"
+
+def resolve_memory_api_base_url() -> str:
+    """Resolve the memory API base URL for local dev, containers, and tests."""
+    configured = os.getenv("MEMORY_API_BASE_URL", "").strip()
+    if configured:
+        return configured.rstrip("/")
+
+    env_host = os.getenv("MEMORY_API_HOST", "").strip()
+    if env_host:
+        return env_host.rstrip("/")
+
+    return "http://127.0.0.1:8001"
 
 
 async def call_memory_api(endpoint: str, json_data: dict, method: str = "POST", timeout: float = 5.0):
+    MEMORY_API_URL = resolve_memory_api_base_url()
     candidate_urls = [
         f"{MEMORY_API_URL.rstrip('/')}{endpoint}",
         f"http://localhost:8003/api/v1/memory{endpoint}",
@@ -65,8 +79,12 @@ async def rag_websocket(
 
     # 2. VALIDATE TOKEN PRESENCE
     if not token or token in ("null", "undefined"):
-        logger.warning(f"Rejected WS for agent={agent_id}: missing/invalid token param ('{token}')")
-        await websocket.send_text(json.dumps({"type": "error", "message": "Missing or invalid auth token"}))
+        logger.warning(
+            f"Rejected WS for agent={agent_id}: missing/invalid token param ('{token}')"
+        )
+        await websocket.send_text(
+            json.dumps({"type": "error", "message": "Missing or invalid auth token"})
+        )
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
@@ -79,11 +97,17 @@ async def rag_websocket(
         user_id = payload.user_id
     except Exception as auth_err:
         logger.warning(f"WebSocket auth failed for agent={agent_id}: {auth_err}")
-        await websocket.send_text(json.dumps({"type": "error", "message": "Unauthorized: invalid or expired token"}))
+        await websocket.send_text(
+            json.dumps(
+                {"type": "error", "message": "Unauthorized: invalid or expired token"}
+            )
+        )
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    logger.info(f"WebSocket connected: Agent={agent_id}, Tenant={tenant_id}, User={user_id}")
+    logger.info(
+        f"WebSocket connected: Agent={agent_id}, Tenant={tenant_id}, User={user_id}"
+    )
 
     # 4. INITIALIZE SERVICES
     async with get_db_with_tenant(tenant_id) as db:
@@ -125,7 +149,9 @@ async def rag_websocket(
                     enhance_prompt = msg.get("prompt_enhancer", False) or msg.get("enhance_prompt", False)
                     disable_memory = msg.get("disable_memory", False)
                 except json.JSONDecodeError:
-                    await websocket.send_text(json.dumps({"type": "error", "message": "Invalid JSON format"}))
+                    await websocket.send_text(
+                        json.dumps({"type": "error", "message": "Invalid JSON format"})
+                    )
                     continue
 
                 if not query:
@@ -136,7 +162,9 @@ async def rag_websocket(
                 if session_id:
                     session = await chat_service.chat_repo.get_session_by_id(session_id)
                     if not session:
-                        logger.warning(f"Session {session_id} not found in WS, creating new")
+                        logger.warning(
+                            f"Session {session_id} not found in WS, creating new"
+                        )
 
                 if session is None:
                     session = await chat_service.chat_repo.create_session(
@@ -182,9 +210,7 @@ async def rag_websocket(
 
                 # 7. SAVE USER MESSAGE TO CHAT DB
                 user_msg = await chat_service.chat_repo.add_message(
-                    session_id=active_session_id,
-                    role="user",
-                    content=query
+                    session_id=active_session_id, role="user", content=query
                 )
                 await db.commit()
 
@@ -227,14 +253,18 @@ async def rag_websocket(
                         session_id=active_session_id,
                         role="assistant",
                         content=acknowledgment,
-                        metadata={"feedback_turn": True}
+                        metadata={"feedback_turn": True},
                     )
                     await db.commit()
 
-                    await websocket.send_text(json.dumps({
-                        "type": "status",
-                        "message": "Preferences recorded successfully."
-                    }))
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "type": "status",
+                                "message": "Preferences recorded successfully.",
+                            }
+                        )
+                    )
                     await websocket.send_text(json.dumps({"type": "done"}))
                     continue
                 # If is_feedback_only but episodic_guidance exists, fall through to RAG
@@ -256,7 +286,11 @@ async def rag_websocket(
                     full_response_text = ""
                     history_stream_error = None
                     try:
-                        full_response_text = await rag_service.llm_client.generate_cloud(prompt=history_prompt)
+                        full_response_text = (
+                            await rag_service.llm_client.generate_cloud(
+                                prompt=history_prompt
+                            )
+                        )
                         await websocket.send_text(full_response_text)
                     except Exception as direct_err:
                         # Log the FULL traceback + prompt size, not just str(err) —
@@ -268,7 +302,9 @@ async def rag_websocket(
                             f"episodic_guidance_chars={len(episodic_guidance)}",
                             exc_info=True,
                         )
-                        history_stream_error = f"{type(direct_err).__name__}: {direct_err}"
+                        history_stream_error = (
+                            f"{type(direct_err).__name__}: {direct_err}"
+                        )
                         full_response_text = "I attempted to review our past chats, but ran into an error processing the summaries."
                         await websocket.send_text(full_response_text)
 
@@ -281,14 +317,14 @@ async def rag_websocket(
                             "memory_used": True,
                             "direct_history_recall": True,
                             "error": history_stream_error,
-                        }
+                        },
                     )
                     await db.commit()
 
                     async with httpx.AsyncClient() as client:
                         try:
                             await client.post(
-                                f"{MEMORY_API_URL}/save-turn",
+                                f"{memory_api_url}/save-turn",
                                 json={
                                     "query": query,
                                     "ai_response": full_response_text,
@@ -296,9 +332,9 @@ async def rag_websocket(
                                     "agent_id": agent_id,
                                     "user_id": user_id,
                                     "tenant_id": tenant_id,
-                                    "metadata": {"router_category": router_category}
+                                    "metadata": {"router_category": router_category},
                                 },
-                                timeout=3.0
+                                timeout=3.0,
                             )
                         except Exception as e:
                             logger.warning(f"memory-api save-turn failed: {e}")
@@ -310,12 +346,17 @@ async def rag_websocket(
                 conversation_turns = 0
                 if session.message_count > 1:
                     try:
-                        memory_messages = await chat_service.chat_repo.get_recent_messages(
-                            session_id=active_session_id,
-                            count=10
+                        memory_messages = (
+                            await chat_service.chat_repo.get_recent_messages(
+                                session_id=active_session_id, count=10
+                            )
                         )
-                        history_messages = [m for m in memory_messages if str(m.id) != str(user_msg.id)]
-                        conversation_turns = sum(1 for m in history_messages if m.role == "user")
+                        history_messages = [
+                            m for m in memory_messages if str(m.id) != str(user_msg.id)
+                        ]
+                        conversation_turns = sum(
+                            1 for m in history_messages if m.role == "user"
+                        )
                     except Exception as me:
                         logger.warning(f"Failed to fetch recent memory messages: {me}")
 
@@ -324,7 +365,9 @@ async def rag_websocket(
                 is_enhanced = False
                 if enhance_prompt or history_messages:
                     try:
-                        rewritten = await query_rewriter.rewrite_query(query, history=history_messages)
+                        rewritten = await query_rewriter.rewrite_query(
+                            query, history=history_messages
+                        )
                         if rewritten and rewritten != query:
                             enhanced_query = rewritten
                             is_enhanced = True
@@ -336,8 +379,7 @@ async def rag_websocket(
                 memory_used = False
                 if history_messages:
                     chat_history_str = chat_service._format_memory_context(
-                        history=history_messages,
-                        current_query=enhanced_query
+                        history=history_messages, current_query=enhanced_query
                     )
                     memory_used = True
 
@@ -346,13 +388,17 @@ async def rag_websocket(
                         "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
                         f"{episodic_guidance}\n"
                     )
-                    chat_history_str = guidance_block + ("\n" + chat_history_str if chat_history_str else "")
+                    chat_history_str = guidance_block + (
+                        "\n" + chat_history_str if chat_history_str else ""
+                    )
                     memory_used = True
 
                 skip_search = False
                 if enhanced_query.startswith("[HISTORY_FILTER]"):
                     skip_search = True
-                    enhanced_query = enhanced_query.replace("[HISTORY_FILTER]", "").strip()
+                    enhanced_query = enhanced_query.replace(
+                        "[HISTORY_FILTER]", ""
+                    ).strip()
 
                 # 11. STREAM RAG ANSWER FROM KNOWLEDGE BASE
                 full_response_text = ""
@@ -360,8 +406,10 @@ async def rag_websocket(
                 has_error = False
 
                 token_usage = {}
+
                 def capture_usage(usage_dict):
                     token_usage.update(usage_dict)
+
                 async for chunk in rag_service.stream_rag_answer(
                     query=enhanced_query,
                     agent_id=agent_id,
@@ -410,7 +458,7 @@ async def rag_websocket(
                 assistant_metadata = {
                     "sources": sources,
                     "memory_used": memory_used,
-                    "conversation_turns": conversation_turns
+                    "conversation_turns": conversation_turns,
                 }
                 if has_error:
                     assistant_metadata["error"] = True
@@ -420,13 +468,13 @@ async def rag_websocket(
                         "llm_input_tokens": token_usage.get("prompt_tokens", 0),
                         "llm_output_tokens": token_usage.get("completion_tokens", 0),
                         "total_tokens": token_usage.get("total_tokens", 0),
-                        "model": "Qwen/Qwen3.5-9B",
+                        "model": os.environ.get("MODEL_ANSWER", getattr(settings, "model_answer", "deepseek-ai/DeepSeek-V3-2")),
                     }
                 await chat_service.chat_repo.add_message(
                     session_id=active_session_id,
                     role="assistant",
                     content=full_response_text,
-                    metadata=assistant_metadata
+                    metadata=assistant_metadata,
                 )
                 await db.commit()
 
@@ -461,7 +509,11 @@ async def rag_websocket(
         except Exception as e:
             logger.error(f"WebSocket session error: {e}", exc_info=True)
             try:
-                await websocket.send_text(json.dumps({"type": "error", "message": f"Session interrupted: {str(e)}"}))
+                await websocket.send_text(
+                    json.dumps(
+                        {"type": "error", "message": f"Session interrupted: {str(e)}"}
+                    )
+                )
             except Exception:
                 pass
         finally:

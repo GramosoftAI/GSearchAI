@@ -42,9 +42,9 @@ class EpisodicMemory(Base):
     ai_response = Column(String, nullable=True)
     summarization = Column(String, nullable=True)
     
-    # Dual Vectorization Arrays (768 dimensions)
-    raw_vector = Column(VECTOR(768), nullable=True)
-    summary_vector = Column(VECTOR(768), nullable=True)
+    # Dual Vectorization Arrays (4096 dimensions)
+    raw_vector = Column(VECTOR(4096), nullable=True)
+    summary_vector = Column(VECTOR(4096), nullable=True)
     
     metadata_json = Column(JSONB, nullable=True, default=dict)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -107,19 +107,19 @@ async def init_db():
         try:
             await conn.execute(text("""
                 ALTER TABLE episodic_memories 
-                ADD COLUMN IF NOT EXISTS raw_vector vector(768);
+                ADD COLUMN IF NOT EXISTS raw_vector vector(4096);
             """))
             await conn.execute(text("""
                 ALTER TABLE episodic_memories 
-                ADD COLUMN IF NOT EXISTS summary_vector vector(768);
+                ADD COLUMN IF NOT EXISTS summary_vector vector(4096);
             """))
             await conn.execute(text("""
                 ALTER TABLE episodic_memories 
-                ALTER COLUMN raw_vector TYPE vector(768) USING NULL;
+                ALTER COLUMN raw_vector TYPE vector(4096) USING NULL;
             """))
             await conn.execute(text("""
                 ALTER TABLE episodic_memories 
-                ALTER COLUMN summary_vector TYPE vector(768) USING NULL;
+                ALTER COLUMN summary_vector TYPE vector(4096) USING NULL;
             """))
             await conn.execute(text("""
                 ALTER TABLE user_preferences 

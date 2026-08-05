@@ -41,6 +41,8 @@ class DeepInfraProvider(LLMProvider):
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
             "stream": False,
+            "enable_thinking": False,
+            "reasoning_effort": "none",
         }
         if request.json_schema:
             payload["response_format"] = {"type": "json_object"}
@@ -81,6 +83,8 @@ class DeepInfraProvider(LLMProvider):
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
             "stream": True,
+            "enable_thinking": False,
+            "reasoning_effort": "none",
         }
         try:
             async with self.client.stream("POST", "/chat/completions", json=payload) as response:
@@ -106,9 +110,9 @@ class DeepInfraProvider(LLMProvider):
     async def embed(self, texts: List[str]) -> List[List[float]]:
         # Need a default model for embeddings if not provided, assuming request.model would come here, 
         # but this takes only texts. In reality config or passed parameter should dictate.
-        # For this scaffolding, we'll assume a dummy model.
+        embed_model = os.environ.get("MODEL_EMBEDDING", "Qwen/Qwen3-Embedding-8B")
         payload = {
-            "model": "BAAI/bge-large-en-v1.5", 
+            "model": embed_model, 
             "input": texts
         }
         try:

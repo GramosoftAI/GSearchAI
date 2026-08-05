@@ -1,19 +1,21 @@
+version: "3.9"
+
 services:
-  # ============================================================================
-  # PostgreSQL: Primary relational database (Users, Tenants, API Keys, Billing)
-  # ============================================================================
   db:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg18
     container_name: graphmind-db
+    restart: unless-stopped
+
     environment:
       POSTGRES_USER: graphmind
       POSTGRES_PASSWORD: graphmind_password
       POSTGRES_DB: graphmind
       POSTGRES_INITDB_ARGS: "-c ssl=off"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+
     ports:
       - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U graphmind"]
       interval: 10s
