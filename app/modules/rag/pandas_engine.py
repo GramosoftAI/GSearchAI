@@ -86,6 +86,7 @@ class PandasQueryEngine:
         self.file_names = file_names or []
         self.path_mapping = path_mapping or {}
         
+        settings = get_settings()
         api_key = getattr(settings, "deepinfra_api_key", "")
         base_url = getattr(settings, "deepinfra_api_url", "https://api.deepinfra.com/v1/openai")
         model_name = settings.model_answer
