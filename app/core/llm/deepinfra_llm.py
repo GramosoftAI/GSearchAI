@@ -599,6 +599,7 @@ class DeepInfraLLMClient:
         
         think_state = 0
         think_buf = ""
+        full_text = ""
         try:
             client = await self.get_client()
             stream_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=30.0)
@@ -669,6 +670,7 @@ class DeepInfraLLMClient:
                                 clean_delta = delta
                                 
                             if clean_delta:
+                                full_text += clean_delta
                                 yield clean_delta
                         except json.JSONDecodeError as e:
                             logger.warning(f"  Response parsing error in stream: {e} for line {data_str}")
@@ -676,6 +678,16 @@ class DeepInfraLLMClient:
                             
             logger.info(f"LLM Stream Completed in {time.time() - start_time:.2f}s")
             
+            if think_state == 0 and think_buf and not "<think>".startswith(think_buf.lstrip()):
+                full_text += think_buf
+                yield think_buf
+
+            if "[Source:" in full_text:
+                last_source_idx = full_text.rfind("[Source:")
+                last_close_idx = full_text.rfind("]", last_source_idx)
+                if last_close_idx == -1:
+                    yield "]"
+                    
         except httpx.ReadTimeout:
             logger.error(f"LLM Stream Failed: ReadTimeout after {time.time() - start_time:.2f}s")
             yield "Error: LLM generation timed out."
