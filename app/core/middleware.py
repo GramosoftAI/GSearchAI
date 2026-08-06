@@ -110,12 +110,7 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
             )
 
         # ============= VERIFY JWT (with blacklist check) =============
-        # Import here to avoid circular imports
-        from .database import AsyncSessionLocal
-
-        # Create temporary session for blacklist check
-        async with AsyncSessionLocal() as temp_db:
-            payload = await verify_access_token(token, db=temp_db)
+        payload = await verify_access_token(token)
 
         if not payload:
             logger.warning("Invalid, expired, or revoked token")

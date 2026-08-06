@@ -600,16 +600,21 @@ class RAGPipeline:
             from app.modules.rag.engines.vector_engine import VectorEngine
             vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
             from app.modules.rag.orchestrator.planner import RetrievalTask
-            for missing in missing_goals:
+            async def fetch_fallback(missing_goal):
                 fallback_task = RetrievalTask(
                     engine_name="vector",
                     query=query,
                     metadata_filters=analysis.metadata,
-                    task_id=f"fallback_{missing}",
-                    target_section=missing
+                    task_id=f"fallback_{missing_goal}",
+                    target_section=missing_goal
                 )
                 setattr(fallback_task, "top_k", top_k)
-                fb_chunks = await vector_fallback.retrieve(fallback_task, kb_ids)
+                return await vector_fallback.retrieve(fallback_task, kb_ids)
+
+            fallback_results = await asyncio.gather(
+                *(fetch_fallback(m) for m in missing_goals)
+            )
+            for fb_chunks in fallback_results:
                 all_chunks.extend(fb_chunks)
                 
         engine_time = time.time() - engine_start

@@ -1301,7 +1301,7 @@ If you'd like, I can also:
         import os
         MEMORY_API_BASE_URL = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
         MEMORY_API_URL = f"{MEMORY_API_BASE_URL}/api/v1/memory"
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=0.5)) as client:
             try:
                 mem_resp = await client.post(
                     f"{MEMORY_API_URL}/process-turn",
@@ -1311,8 +1311,7 @@ If you'd like, I can also:
                         "agent_id": agent_id,
                         "user_id": user_id,
                         "tenant_id": self.tenant_id
-                    },
-                    timeout=8.0
+                    }
                 )
                 if mem_resp.status_code == 200:
                     mem_data = mem_resp.json()

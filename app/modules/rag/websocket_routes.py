@@ -28,39 +28,64 @@ settings = get_settings()
 router = APIRouter(prefix="/ws", tags=["WebSocket RAG"])
 
 
-def resolve_memory_api_base_url() -> str:
-    """Resolve the memory API base URL for local dev, containers, and tests."""
-    configured = os.getenv("MEMORY_API_BASE_URL", "").strip()
-    if configured:
-        return configured.rstrip("/")
-
-    env_host = os.getenv("MEMORY_API_HOST", "").strip()
-    if env_host:
-        return env_host.rstrip("/")
-
-    return "http://127.0.0.1:8001"
-
+import asyncio
 
 async def call_memory_api(endpoint: str, json_data: dict, method: str = "POST", timeout: float = 5.0):
-    MEMORY_API_URL = resolve_memory_api_base_url()
-    candidate_urls = [
-        f"{MEMORY_API_URL.rstrip('/')}{endpoint}",
-        f"http://localhost:8003/api/v1/memory{endpoint}",
-        f"http://127.0.0.1:8003/api/v1/memory{endpoint}",
-        f"http://localhost:8002/api/v1/memory{endpoint}",
-        f"http://memory-api:8001/api/v1/memory{endpoint}"
-    ]
-    urls = list(dict.fromkeys(candidate_urls))
+    """
+    Calls the Memory API using concurrent requests and short connection timeouts
+    to prevent blocking on unreachable endpoints.
+    """
+    configured = os.getenv("MEMORY_API_BASE_URL", "").strip() or os.getenv("MEMORY_API_HOST", "").strip()
     
-    async with httpx.AsyncClient() as client:
-        for url in urls:
+    urls = []
+    if configured:
+        urls.append(f"{configured.rstrip('/')}{endpoint}")
+    else:
+        # Fallbacks for unconfigured local/docker environments
+        candidate_urls = [
+            f"http://127.0.0.1:8001{endpoint}",
+            f"http://localhost:8003/api/v1/memory{endpoint}",
+            f"http://127.0.0.1:8003/api/v1/memory{endpoint}",
+            f"http://localhost:8002/api/v1/memory{endpoint}",
+            f"http://memory-api:8001/api/v1/memory{endpoint}"
+        ]
+        urls = list(dict.fromkeys(candidate_urls))
+        
+    # Distinct connect timeout (fail fast on closed ports) vs read timeout
+    httpx_timeout = httpx.Timeout(timeout, connect=0.5)
+    
+    async with httpx.AsyncClient(timeout=httpx_timeout) as client:
+        if len(urls) == 1:
             try:
-                resp = await client.request(method, url, json=json_data, timeout=timeout)
+                resp = await client.request(method, urls[0], json=json_data)
+                if resp.status_code == 200:
+                    return resp
+                logger.warning(f"Memory API {urls[0]} returned status {resp.status_code}: {resp.text}")
+            except Exception as e:
+                logger.debug(f"Memory API {urls[0]} unreachable: {e}")
+            return None
+
+        # Concurrent requests for fallbacks
+        async def fetch(url: str):
+            try:
+                resp = await client.request(method, url, json=json_data)
                 if resp.status_code == 200:
                     return resp
                 logger.warning(f"Memory API {url} returned status {resp.status_code}: {resp.text}")
             except Exception as e:
                 logger.debug(f"Memory API {url} unreachable: {e}")
+            return None
+
+        tasks = [asyncio.create_task(fetch(url)) for url in urls]
+        for coro in asyncio.as_completed(tasks):
+            res = await coro
+            if res is not None:
+                # Cancel remaining tasks once a successful response is found
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
+                return res
+
     return None
 
 

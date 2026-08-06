@@ -8,10 +8,16 @@ import bcrypt
 from pydantic import BaseModel
 import logging
 import secrets
+import time
 
 from .config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# Simple TTL cache to prevent N+1 DB queries on every API request
+_blacklist_cache = {}
+_BLACKLIST_CACHE_TTL = 300 # 5 minutes
+_MAX_CACHE_SIZE = 10000
 
 # ... (Previous imports)
 
@@ -201,24 +207,58 @@ async def verify_access_token(
             return None
 
         # CRITICAL: Check if token is blacklisted (revoked)
-        if db and jti:
-            from sqlalchemy import select
-            from ..modules.auth.models import TokenBlacklist
+        if jti:
+            cache_key = f"{tenant_id}:{jti}"
+            now = time.time()
+            
+            # 1. Check in-memory cache first to avoid DB query latency
+            if cache_key in _blacklist_cache:
+                is_blacklisted, timestamp = _blacklist_cache[cache_key]
+                if now - timestamp < _BLACKLIST_CACHE_TTL:
+                    if is_blacklisted:
+                        logger.warning(f"Token blacklisted (cached): {jti[:20]}...")
+                        return None
+                    else:
+                        # Proceed! It's cached as valid.
+                        pass
+                else:
+                    # Expired, clean it up before DB check
+                    del _blacklist_cache[cache_key]
 
-            result = await db.execute(
-                select(TokenBlacklist).where(
-                    (TokenBlacklist.jti == jti)
-                    & (TokenBlacklist.tenant_id == tenant_id)
-                )
-            )
-            blacklisted = result.scalar_one_or_none()
+            # 2. Cache miss: Check Database
+            if cache_key not in _blacklist_cache:
+                from sqlalchemy import select
+                from ..modules.auth.models import TokenBlacklist
+                
+                async def fetch_blacklist(session):
+                    result = await session.execute(
+                        select(TokenBlacklist).where(
+                            (TokenBlacklist.jti == jti)
+                            & (TokenBlacklist.tenant_id == tenant_id)
+                        )
+                    )
+                    return result.scalar_one_or_none()
 
-            if blacklisted:
-                logger.warning(
-                    f"Token blacklisted (revoked): {jti[:20]}... "
-                    f"Reason: {blacklisted.reason}"
-                )
-                return None
+                blacklisted = None
+                if db:
+                    blacklisted = await fetch_blacklist(db)
+                else:
+                    from .database import AsyncSessionLocal
+                    async with AsyncSessionLocal() as temp_db:
+                        blacklisted = await fetch_blacklist(temp_db)
+                
+                # Update Cache
+                if len(_blacklist_cache) > _MAX_CACHE_SIZE:
+                    _blacklist_cache.clear()
+                
+                _blacklist_cache[cache_key] = (blacklisted is not None, now)
+
+                if blacklisted:
+                    logger.warning(
+                        f"Token blacklisted (revoked): {jti[:20]}... "
+                        f"Reason: {blacklisted.reason}"
+                    )
+                    return None
 
         return TokenPayload(
             user_id=user_id,
@@ -260,21 +300,50 @@ async def verify_refresh_token(token: str, db=None) -> Optional[TokenPayload]:
             logger.warning(f"Expected refresh token, got {token_type}")
             return None
 
-        # Check blacklist if db is provided
+        # Check blacklist
         jti = payload.get("jti", "")
-        if db and jti:
-            from ..modules.auth.models import TokenBlacklist
-            from sqlalchemy import select
+        if jti:
+            cache_key = f"{tenant_id}:{jti}"
+            now = time.time()
+            
+            if cache_key in _blacklist_cache:
+                is_blacklisted, timestamp = _blacklist_cache[cache_key]
+                if now - timestamp < _BLACKLIST_CACHE_TTL:
+                    if is_blacklisted:
+                        logger.warning(f"Refresh token revoked (cached): {jti[:20]}...")
+                        return None
+                else:
+                    del _blacklist_cache[cache_key]
+            
+            if cache_key not in _blacklist_cache:
+                from ..modules.auth.models import TokenBlacklist
+                from sqlalchemy import select
 
-            result = await db.execute(
-                select(TokenBlacklist).where(
-                    (TokenBlacklist.jti == jti)
-                    & (TokenBlacklist.tenant_id == tenant_id)
-                )
-            )
-            if result.scalar_one_or_none():
-                logger.warning(f"Refresh token revoked (blacklisted): {jti[:20]}...")
-                return None
+                async def fetch_blacklist_refresh(session):
+                    result = await session.execute(
+                        select(TokenBlacklist).where(
+                            (TokenBlacklist.jti == jti)
+                            & (TokenBlacklist.tenant_id == tenant_id)
+                        )
+                    )
+                    return result.scalar_one_or_none()
+
+                blacklisted = None
+                if db:
+                    blacklisted = await fetch_blacklist_refresh(db)
+                else:
+                    from .database import AsyncSessionLocal
+                    async with AsyncSessionLocal() as temp_db:
+                        blacklisted = await fetch_blacklist_refresh(temp_db)
+                
+                if len(_blacklist_cache) > _MAX_CACHE_SIZE:
+                    _blacklist_cache.clear()
+                
+                _blacklist_cache[cache_key] = (blacklisted is not None, now)
+
+                if blacklisted:
+                    logger.warning(f"Refresh token revoked (blacklisted): {jti[:20]}...")
+                    return None
 
         return TokenPayload(
             user_id=user_id,
