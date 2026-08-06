@@ -128,7 +128,9 @@ services:
     container_name: graphmind-memory-api
     command: python -m uvicorn main:app --host 0.0.0.0 --port 8001 --reload
     ports:
-      - "8003:8001"
+      - "4917:8001"
+
+
     volumes:
       - ./app/memory/app:/app    
       - hf_model_cache:/root/.cache/huggingface
