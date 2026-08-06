@@ -386,7 +386,7 @@
 
     // Powered by Gramosoft label
     const poweredBy = document.createElement("a");
-    poweredBy.href = "https://gramosoft.tech/";
+    poweredBy.href = "https://gsearchai.com/";
     poweredBy.target = "_blank";
     poweredBy.rel = "noopener noreferrer";
     poweredBy.style.display = "block";
@@ -397,7 +397,7 @@
     poweredBy.style.userSelect = "none";
     poweredBy.style.textDecoration = "none";
     poweredBy.style.cursor = "pointer";
-    poweredBy.innerHTML = `Powered by <span style="font-weight: 600; color: #71717a;">Gramosoft</span>`;
+    poweredBy.innerHTML = `Powerd by <span style="font-weight: 600; color: #71717a;">Gsearch</span>`;
 
     // Assemble and render elements
     inputBar.appendChild(leftIcon);

@@ -2143,7 +2143,7 @@ function WidgetContent() {
 
       {/* Powered by Gramosoft */}
       <a
-        href="https://gramosoft.tech/"
+        href="https://gsearchai.com/"
         target="_blank"
         rel="noopener noreferrer"
         style={{
@@ -2159,7 +2159,7 @@ function WidgetContent() {
           cursor: "pointer",
         }}
       >
-        Powered by <span style={{ fontWeight: 600, color: "#52525b" }}>Gramosoft</span>
+        Powerd by <span style={{ fontWeight: 600, color: "#52525b" }}>Gsearch</span>
       </a>
       {/* Link Safety Modal */}
       {safetyModalUrl && (
