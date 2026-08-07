@@ -2721,35 +2721,39 @@ export default function ChatPlaygroundPage() {
                             {(() => {
                               const uniqueSources = deduplicateSources(msg.sources || []);
                               if (!showSources || uniqueSources.length === 0 || msg.content?.includes("Something went wrong") || msg.content?.includes("trouble connecting")) return null;
+                              
+                              const getFileIcon = (src: string) => {
+                                const s = (src || "").toLowerCase();
+                                if (s.endsWith(".pdf")) return "📄";
+                                if (s.endsWith(".xlsx") || s.endsWith(".xls")) return "📊";
+                                if (s.endsWith(".csv")) return "🗂️";
+                                if (s.startsWith("http://") || s.startsWith("https://")) return "🌐";
+                                return "📋";
+                              };
                               return (
-                                <div className="ml-auto flex items-center">
-                                  {uniqueSources.length === 1 ? (
-                                    <button
-                                      onClick={() => handleOpenSource(uniqueSources[0])}
-                                      className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0"
-                                    >
-                                      <SiCrowdsource />
-                                      <span>Source</span>
-                                    </button>
-                                  ) : (
-                                    <Dropdown
-                                      menu={{
-                                        items: uniqueSources.map((src: any, idx: number) => ({
-                                          key: idx.toString(),
-                                          label: getCleanFileName(src),
-                                          onClick: () => handleOpenSource(src),
-                                        })),
-                                        style: { maxHeight: "200px", overflowY: "auto" }
-                                      }}
-                                      placement="bottomLeft"
-                                      trigger={['click']}
-                                    >
-                                      <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0">
-                                        <SiCrowdsource />
-                                        <span>Sources</span>
+                                <div className="flex flex-wrap gap-1.5 mt-2 w-full">
+                                  {uniqueSources.map((src: any, idx: number) => {
+                                    const sourceUrl = src.source || src;
+                                    const name = getFileName(sourceUrl) || getCleanFileName(sourceUrl) || "Source";
+                                    const shortName = name.length > 22 ? name.slice(0, 20) + "…" : name;
+                                    const icon = getFileIcon(sourceUrl);
+                                    return (
+                                      <button
+                                        key={idx}
+                                        onClick={() => handleOpenSource(src)}
+                                        title={name}
+                                        style={{
+                                          clipPath: "polygon(8% 0%, 92% 0%, 100% 50%, 92% 100%, 8% 100%, 0% 50%)",
+                                          background: "linear-gradient(135deg, rgba(15,181,161,0.12) 0%, rgba(15,181,161,0.06) 100%)",
+                                          border: "1px solid rgba(15,181,161,0.35)",
+                                        }}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold text-[#0fb5a1] hover:bg-[#0fb5a1]/20 transition-all duration-150 cursor-pointer whitespace-nowrap"
+                                      >
+                                        <span className="text-[11px]">{icon}</span>
+                                        <span className="tracking-wide">{shortName}</span>
                                       </button>
-                                    </Dropdown>
-                                  )}
+                                    );
+                                  })}
                                 </div>
                               );
                             })()}
