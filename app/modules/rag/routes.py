@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Request, status, Depends
 
 from .schemas import RAGQueryRequest, RAGQueryResponse, RAGErrorResponse, RAGFeedbackRequest
 
-from .loader import get_rag_service
+from .service import RAGService
 
 from ...core.database import get_db, AsyncSessionLocal
 
@@ -126,7 +126,7 @@ async def rag_query(
 
     query_request: RAGQueryRequest,
 
-    rag_service: "RAGService" = Depends(get_rag_service),
+    db: AsyncSession = Depends(get_db),
 
 ) -> Union[RAGQueryResponse, RAGErrorResponse]:
 
@@ -288,7 +288,7 @@ async def rag_query(
 
     logger.debug("Initializing RAG service...")
 
-    # rag_service is now injected via Depends
+    rag_service = RAGService(db=db, tenant_id=tenant_id)
 
 
 

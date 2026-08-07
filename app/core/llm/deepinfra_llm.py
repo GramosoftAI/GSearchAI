@@ -240,7 +240,7 @@ class DeepInfraLLMClient:
         self.deepinfra_api_key = self.api_key
         self.gateway_api_key = self.api_key
 
-        self.timeout = 60.0  # Enterprise timeout cap against stalled sockets (60s for high-concurrency extraction)
+        self.timeout = 120.0  # Enterprise timeout cap against stalled sockets (120s for high-concurrency extraction)
         self.max_retries = self.model_answer_try  # Configurable retry attempts from settings
         self.max_tokens = self.max_tokens_answer  # Max output tokens
         self.max_answer_length = 2000  # Max chars in answer
@@ -422,6 +422,8 @@ class DeepInfraLLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         enable_thinking: Optional[bool] = False,
+        model: Optional[str] = None,
+        **kwargs
     ) -> str:
         """
         Equivalent to generate() but explicitly routes to the cloud DeepInfra model 
@@ -435,7 +437,7 @@ class DeepInfraLLMClient:
             headers["Authorization"] = f"Bearer {self.deepinfra_api_key}"
         
         payload = {
-            "model": self.model_answer,
+            "model": model or self.model_answer,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
