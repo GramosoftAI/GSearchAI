@@ -25,7 +25,7 @@ class MetadataPayload(BaseModel):
     triplets: Optional[List[Dict[str, str]]] = None
     kb_name: str
     augmented_query: Optional[str] = None
-    authoritative_entities: Optional[List[str]] = None
+    authoritative_entities: Optional[List[Dict[str, Any]]] = None
     session_id: Optional[str] = None
     is_enhanced: Optional[bool] = False
     enhanced_query: Optional[str] = None
