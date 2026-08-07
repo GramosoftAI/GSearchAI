@@ -185,7 +185,7 @@ async def rag_websocket(
                         if chunk.type == ChunkType.CONTENT:
                             await websocket.send_text(chunk.text)
                         elif chunk.type == ChunkType.METADATA:
-                            await websocket.send_text(json.dumps(chunk.data))
+                            await websocket.send_text(json.dumps(chunk.data.model_dump()))
                         elif chunk.type == ChunkType.ERROR:
                             # The original route sometimes sent raw text for errors and sometimes JSON. 
                             # We send JSON here, or raw text if preferred, but JSON is safer.

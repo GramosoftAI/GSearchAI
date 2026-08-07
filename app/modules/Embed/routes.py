@@ -885,7 +885,7 @@ async def websocket_chat_endpoint(
                                 "delta": chunk.text
                             })
                         elif chunk.type == ChunkType.METADATA:
-                            chunk_sources = chunk.data.get("sources", [])
+                            chunk_sources = [s.model_dump() for s in chunk.data.sources]
                             sources.extend(chunk_sources)
                             await websocket.send_json({
                                 "type": "sources",

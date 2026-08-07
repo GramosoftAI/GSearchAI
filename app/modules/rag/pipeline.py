@@ -352,40 +352,21 @@ class RAGPipeline:
 
 
     async def query(
-
-
-
         self,
-
-
-
-        query: str,
-
-
-
-        agent_id: str,
-
-
-
-        kb_id: str | list[str],
-
-
-
-        user_id: Optional[str] = None,
-
-
-
+        context: "PipelineContext",
         top_k: int = 3,
         max_depth: int = 2,
         max_tokens: int = 24000,
+        enable_logging: bool = True
     ) -> RAGContext:
-
-
-
         """
-
-
-
+        Executes the main Hybrid RAG retrieval pipeline (Graph + Semantic + Fallbacks).
+        """
+        query = context.query
+        agent_id = context.agent_id
+        kb_id = context.kb_ids
+        user_id = context.user_id
+        """
         Execute RAG query on knowledge base.
 
 

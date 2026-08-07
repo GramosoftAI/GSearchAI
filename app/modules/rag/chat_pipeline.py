@@ -9,7 +9,7 @@ from .service import RAGService
 from ..chats.service import ChatService
 from ...core.query_rewriter import QueryRewriter
 from .services.memory_manager import MemoryManager
-from .stream.response_chunk import ResponseChunk, ChunkType
+from .stream.response_chunk import ChunkType, ResponseChunk, StatusChunk, DoneChunk, ContentChunk, ErrorChunk, MetadataChunk, MetadataPayload
 from ...core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -81,8 +81,8 @@ class ChatPipeline:
             )
             await self.db.commit()
             
-            yield ResponseChunk(type=ChunkType.STATUS, text="Preferences recorded successfully.")
-            yield ResponseChunk(type=ChunkType.DONE)
+            yield StatusChunk(text="Preferences recorded successfully.")
+            yield DoneChunk()
             return
 
         # 3. META-HISTORY SHORT-CIRCUIT (COGNEE STRUCTURAL RECALL)
@@ -99,7 +99,7 @@ class ChatPipeline:
             history_stream_error = None
             try:
                 full_response_text = await self.rag_service.llm_client.generate_cloud(prompt=history_prompt)
-                yield ResponseChunk(type=ChunkType.CONTENT, text=full_response_text)
+                yield ContentChunk(text=full_response_text)
             except Exception as direct_err:
                 logger.error(
                     f"Direct memory streaming failed: {direct_err}",
@@ -107,7 +107,7 @@ class ChatPipeline:
                 )
                 history_stream_error = str(direct_err)
                 full_response_text = "I attempted to review our past chats, but ran into an error processing the summaries."
-                yield ResponseChunk(type=ChunkType.ERROR, text=full_response_text)
+                yield ErrorChunk(text=full_response_text)
             
             await self.chat_service.chat_repo.add_message(
                 session_id=session_id,
@@ -131,7 +131,7 @@ class ChatPipeline:
                 metadata={"router_category": router_category}
             )
 
-            yield ResponseChunk(type="done")
+            yield DoneChunk()
             return
 
         # 4. FETCH RECENT HISTORY
@@ -199,14 +199,24 @@ class ChatPipeline:
         def capture_usage(usage_dict):
             token_usage.update(usage_dict)
 
-        async for chunk in self.rag_service.stream_rag_answer(
+        from .stream.pipeline_context import PipelineContext
+        pipeline_context = PipelineContext(
             query=enhanced_query,
-            agent_id=agent_id,
-            kb_id=kb_ids,
-            user_id=user_id,
             session_id=session_id,
+            agent_id=agent_id,
+            user_id=user_id,
+            tenant_id=self.tenant_id,
+            kb_ids=kb_ids,
+            rewritten_query=enhanced_query if is_enhanced else None,
+            memory_context=chat_history_str,
+            router_category=router_category,
+            is_feedback_only=is_feedback_only,
+            is_history_query=is_history_query
+        )
+
+        async for chunk in self.rag_service.stream_rag_answer(
+            context=pipeline_context,
             on_usage_callback=capture_usage,
-            chat_history=chat_history_str,
             skip_search=skip_search,
             top_k=top_k,
             max_depth=max_depth
@@ -221,18 +231,18 @@ class ChatPipeline:
                             parsed["enhanced_query"] = enhanced_query
                         sources = parsed.get("sources", [])
                         
-                        yield ResponseChunk(type=ChunkType.METADATA, data=parsed)
+                        yield MetadataChunk(data=MetadataPayload(**parsed))
                         continue
 
                     elif "error" in parsed:
-                        yield ResponseChunk(type=ChunkType.ERROR, text=parsed["error"])
+                        yield ErrorChunk(text=parsed["error"])
                         full_response_text = parsed["error"]
                         has_error = True
                         break
             except (json.JSONDecodeError, TypeError):
                 pass
 
-            yield ResponseChunk(type=ChunkType.CONTENT, text=chunk)
+            yield ContentChunk(text=chunk)
             full_response_text += chunk
 
         # 8. PERSIST ASSISTANT MESSAGE
@@ -277,4 +287,4 @@ class ChatPipeline:
 
         # 10. SIGNAL COMPLETION
         if not has_error:
-            yield ResponseChunk(type="done")
+            yield DoneChunk()

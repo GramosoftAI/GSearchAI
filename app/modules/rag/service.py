@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .pipeline import RAGPipeline, RAGContext
+from .stream.pipeline_context import PipelineContext
 from ..knowledge_bases.repository import KnowledgeBaseRepository
 from ..agents.repository import AgentRepository
 from ..personalities.models import Personality
@@ -92,22 +93,22 @@ class RAGService:
 
     async def stream_rag_answer(
         self,
-        query: str,
-        agent_id: str,
-        kb_id: str | list[str],
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        context: PipelineContext,
         top_k: int = 30,
         max_depth: int = 2,
         on_usage_callback: Optional[Callable[[dict], None]] = None,
-        chat_history: Optional[str] = None,
         skip_search: bool = False,
     ):
-        logger.info(f" RAG Service: Streaming answer for agent={agent_id}, kb={kb_id}")
+        query = context.query
+        agent_id = context.agent_id
+        kb_ids = context.kb_ids
+        user_id = context.user_id
+        session_id = context.session_id
+        chat_history = context.memory_context
+
+        logger.info(f" RAG Service: Streaming answer for agent={agent_id}, kb={kb_ids}")
 
         # 1. Validate KB ownership
-        kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
-
         # 1. Validate KB ownership and separate Excel vs Document KBs
         excel_kbs = []
         doc_kbs = []
@@ -158,10 +159,7 @@ class RAGService:
         if not skip_search and (doc_kbs or not excel_kbs):
             vector_task = asyncio.create_task(
                 self.pipeline.query(
-                    query=query,
-                    agent_id=agent_id,
-                    kb_id=kb_ids,
-                    user_id=user_id,
+                    context=context,
                     top_k=top_k,
                     max_depth=max_depth,
                 )
