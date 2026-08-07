@@ -1408,8 +1408,8 @@ function WidgetContent() {
 
       const cleanedText = rawStream
         .replace(/<think>[\s\S]*?<\/think>/g, "")
-        .replace(/\[Source:[^\]]+\]/g, "")
-        .replace(/\(Source:[^)]+\)/g, "")
+        .replace(/(?:\[Source:[^\]]*\]?)/gi, "")
+        .replace(/(?:\(Source:[^)]*\)?)/gi, "")
         .trim();
 
       setMessages((prev) => {
@@ -2354,6 +2354,8 @@ function WidgetContent() {
                                         zIndex: 999,
                                         minWidth: "180px",
                                         maxWidth: "260px",
+                                        maxHeight: "180px",
+                                        overflowY: "auto",
                                         animation: "lineFadeIn 0.2s ease-out"
                                       }}
                                     >

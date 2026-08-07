@@ -24,6 +24,8 @@ export default function AgentList({ selectedId, onChange, style, size = "middle"
   return (
     <div className={`${styles.dropdownWrapper} ${className || ""}`} style={defaultStyle}>
       <Select
+        showSearch
+        optionFilterProp="label"
         size={size}
         value={selectedId ?? undefined}
         onChange={handleChange}

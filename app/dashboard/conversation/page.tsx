@@ -489,7 +489,8 @@ function cleanAndExtractSources(content: string, existingSources?: SourceMetadat
   const citedFilenames = extractCitedFilenames(stripped);
 
   const cleanedContent = stripped
-    .replace(/(?:\[Source:\s*.+?\]|\(Source:\s*.+?\))/g, "")
+    .replace(/(?:\[Source:[^\]]*\]?)/gi, "")
+    .replace(/(?:\(Source:[^)]*\)?)/gi, "")
     .trim();
 
   let finalSources: SourceMetadata[] = existingSources && existingSources.length > 0 ? [...existingSources] : [];
@@ -601,7 +602,10 @@ const parseRowCells = (rowLine: string): string[] => {
 };
 
 const parseBlocks = (content: string): Block[] => {
-  const stripped = stripThinking(content).trim();
+  const stripped = stripThinking(content)
+    .replace(/(?:\[Source:[^\]]*\]?)/gi, "")
+    .replace(/(?:\(Source:[^)]*\)?)/gi, "")
+    .trim();
   if (!stripped) return [];
 
   const lines = stripped.split('\n');
@@ -855,6 +859,7 @@ export default function ChatPlaygroundPage() {
   const [activeMode, setActiveMode] = useState<'search' | 'agent'>('agent');
   const [selectedModel, setSelectedModel] = useState<'Flash' | 'Pro' | 'Ultra'>('Flash');
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [agentSearchText, setAgentSearchText] = useState<string>("");
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Feedback states
@@ -1043,21 +1048,29 @@ export default function ChatPlaygroundPage() {
               const matchedSession = data.find(s => s.id === urlSessionId);
               if (matchedSession) {
                 setCurrentSessionId(matchedSession.id);
-                const mappedMessages = (matchedSession.messages || []).map((msg: any) => {
-                  const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
-                  return {
-                    id: msg.message_id || msg.id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
-                    role: msg.role,
-                    content: cleanedContent,
-                    file: msg.file,
-                    sources: sources.length > 0 ? sources : undefined,
-                    feedback: msg.feedback_type || msg.feedback,
-                    timestamp: msg.created_at
-                      ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                      : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-                  };
-                });
-                setMessages(mappedMessages);
+                (async () => {
+                  let rawMessages = matchedSession.messages || [];
+                  const fetched = await fetchSessionMessages(matchedAgent.id, matchedSession.id);
+                  if (fetched && fetched.length > 0) {
+                    rawMessages = fetched;
+                  }
+                  const mappedMessages = rawMessages.map((msg: any) => {
+                    const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
+                    const msgTime = msg.created_at || msg.createdAt || msg.timestamp;
+                    return {
+                      id: msg.message_id || msg.id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
+                      role: msg.role,
+                      content: cleanedContent,
+                      file: msg.file,
+                      sources: sources.length > 0 ? sources : undefined,
+                      feedback: msg.feedback_type || msg.feedback,
+                      timestamp: msgTime
+                        ? new Date(msgTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                        : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                    };
+                  });
+                  setMessages(mappedMessages);
+                })();
               }
             } else {
               // Start a new session (show "New chat" by default on agent load)
@@ -1239,7 +1252,8 @@ export default function ChatPlaygroundPage() {
           console.log("DELTA:", accumulated);
           const textContent = accumulated
             .replace(/<think>[\s\S]*?<\/think>/g, "")
-            .replace(/(?:\[Source:\s*.+?\]|\(Source:\s*.+?\))/g, "")
+            .replace(/(?:\[Source:[^\]]*\]?)/gi, "")
+            .replace(/(?:\(Source:[^)]*\)?)/gi, "")
             .trim();
 
           const citedFilenames = extractCitedFilenames(accumulated);
@@ -1317,6 +1331,7 @@ export default function ChatPlaygroundPage() {
               if (rawMsgs.length > 0) {
                 const mappedMessages = rawMsgs.map((msg: any) => {
                   const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
+                  const msgTime = msg.created_at || msg.createdAt || msg.timestamp;
                   return {
                     id: msg.id || msg.message_id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
                     role: msg.role,
@@ -1324,8 +1339,8 @@ export default function ChatPlaygroundPage() {
                     file: msg.file,
                     sources: sources.length > 0 ? sources : undefined,
                     feedback: msg.feedback_type || msg.feedback,
-                    timestamp: msg.created_at
-                      ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                    timestamp: msgTime
+                      ? new Date(msgTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
                       : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
                   };
                 });
@@ -1457,6 +1472,7 @@ export default function ChatPlaygroundPage() {
 
     const mappedMessages = rawMessages.map((msg: any) => {
       const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
+      const msgTime = msg.created_at || msg.createdAt || msg.timestamp;
       return {
         id: msg.message_id || msg.id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
         role: msg.role,
@@ -1464,8 +1480,8 @@ export default function ChatPlaygroundPage() {
         file: msg.file,
         sources: sources.length > 0 ? sources : undefined,
         feedback: msg.feedback_type || msg.feedback,
-        timestamp: msg.created_at
-          ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        timestamp: msgTime
+          ? new Date(msgTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
           : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
     });
@@ -2723,6 +2739,7 @@ export default function ChatPlaygroundPage() {
                                           label: getCleanFileName(src),
                                           onClick: () => handleOpenSource(src),
                                         })),
+                                        style: { maxHeight: "200px", overflowY: "auto" }
                                       }}
                                       placement="bottomLeft"
                                       trigger={['click']}
@@ -2982,17 +2999,48 @@ export default function ChatPlaygroundPage() {
                 {activeMode === 'agent' && (
                   <Dropdown
                     menu={{
-                      items: botsCache?.map((bot) => ({
-                        key: bot.id,
-                        label: <span className="font-semibold text-xs">{bot.name}</span>
-                      })),
+                      items: (() => {
+                        const filtered = botsCache?.filter((bot) =>
+                          bot.name.toLowerCase().includes(agentSearchText.toLowerCase())
+                        ) || [];
+                        if (filtered.length === 0) {
+                          return [{
+                            key: "no-results",
+                            label: <span className="text-xs text-gray-400 italic">No agents found</span>,
+                            disabled: true
+                          }];
+                        }
+                        return filtered.map((bot) => ({
+                          key: bot.id,
+                          label: <span className="font-semibold text-xs">{bot.name}</span>
+                        }));
+                      })(),
+                      style: { maxHeight: "200px", overflowY: "auto" },
                       onClick: (e) => {
+                        if (e.key === "no-results") return;
                         const selected = botsCache?.find(b => b.id === e.key);
                         if (selected) {
                           handleAgentChange(selected.id, selected.name);
                         }
                       }
                     }}
+                    dropdownRender={(menu) => (
+                      <div
+                        className="bg-white dark:bg-[#0f172a] border border-[var(--app-border)]/40 rounded-xl p-2 shadow-xl"
+                        style={{ minWidth: "160px" }}
+                      >
+                        <Input
+                          placeholder="Search..."
+                          value={agentSearchText}
+                          onChange={(e) => setAgentSearchText(e.target.value)}
+                          onKeyDown={(e) => e.stopPropagation()}
+                          size="small"
+                          className="mb-1.5"
+                          allowClear
+                        />
+                        {menu}
+                      </div>
+                    )}
                     trigger={["click"]}
                   >
                     <div className="inline-flex bg-transparent rounded-full overflow-hidden">
