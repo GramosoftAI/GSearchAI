@@ -1734,8 +1734,7 @@ class RAGPipeline:
         if 'extractive_context_text' in locals() and extractive_context_text:
             final_triplet_context = extractive_context_text + final_triplet_context
             
-        # Removed undefined supplementary_csv_context
-        
+            
         return RAGContext(
 
             query=query,
@@ -2051,7 +2050,7 @@ class RAGPipeline:
         
         # 1. Fetch schema, name, parsed_path AND s3_path for target KBs
         import uuid
-        kb_query = "SELECT id, name, dataset_schema, parsed_path, s3_path, source FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id;"
+        kb_query = "SELECT id, name, dataset_schema, parsed_path, s3_path, source, description FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id;"
         result = await self.db.execute(text(kb_query), {"kb_ids": kb_ids, "tenant_id": uuid.UUID(str(self.tenant_id))})
         kb_rows = result.all()
         

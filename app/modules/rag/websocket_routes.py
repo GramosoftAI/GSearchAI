@@ -45,11 +45,13 @@ async def call_memory_api(endpoint: str, json_data: dict, method: str = "POST", 
     MEMORY_API_URL = resolve_memory_api_base_url()
     candidate_urls = [
         f"{MEMORY_API_URL.rstrip('/')}{endpoint}",
-        f"http://localhost:8003/api/v1/memory{endpoint}",
-        f"http://127.0.0.1:8003/api/v1/memory{endpoint}",
+        f"http://localhost:4917/api/v1/memory{endpoint}",
+        f"http://127.0.0.1:4917/api/v1/memory{endpoint}",
         f"http://localhost:8002/api/v1/memory{endpoint}",
         f"http://memory-api:8001/api/v1/memory{endpoint}"
     ]
+
+
     urls = list(dict.fromkeys(candidate_urls))
     
     async with httpx.AsyncClient() as client:
