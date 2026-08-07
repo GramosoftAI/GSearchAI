@@ -672,7 +672,7 @@ export default function KnowledgeBasePage() {
         }
       });
       
-      message.success("Successfully imported selected URLs to knowledge base");
+      // message.success("Successfully imported selected URLs to knowledge base");
       setCrawlerModalVisible(false);
       setUrl(''); // clear URL input
       

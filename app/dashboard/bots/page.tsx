@@ -600,7 +600,7 @@ export default function BotsPage() {
             />
           </Form.Item>
 
-          <Flex gap={16} className="mt-8">
+          <Flex gap={16} wrap="wrap" className="mt-8">
             <Popconfirm
               title="Delete AI Agent?"
               description="This will permanently delete the agent and all associated knowledge base data. This action cannot be undone."

@@ -63,9 +63,26 @@ a {
   padding: 0 26px;
 }
 
-.ratings{display:flex;gap:26px;justify-content:center;align-items:center;margin-top:26px;color:var(--muted);font-size:14px;font-weight:600}
-.ratings .r{display:flex;align-items:center;gap:7px}
-.ratings .stars{color:var(--gold)}
+.ratings {
+  display: flex;
+  gap: 26px;
+  justify-content: center;
+  align-items: center;
+  margin-top: 26px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600
+}
+
+.ratings .r {
+  display: flex;
+  align-items: center;
+  gap: 7px
+}
+
+.ratings .stars {
+  color: var(--gold)
+}
 
 ::selection {
   background: var(--teal-soft);
@@ -298,6 +315,7 @@ a {
     opacity: 0;
     transform: translateY(20px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -1423,20 +1441,90 @@ a {
   border-bottom: none !important;
 }
 
-.meta-dates{font-size:13.5px;color:var(--faint);margin-top:26px;text-align:center}
-.meta-dates a{color:var(--teal-deep);font-weight:600}
+.meta-dates {
+  font-size: 13.5px;
+  color: var(--faint);
+  margin-top: 26px;
+  text-align: center
+}
+
+.meta-dates a {
+  color: var(--teal-deep);
+  font-weight: 600
+}
 
 /* ---- illustrations ---- */
-.illus{margin-top:46px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(165deg,#F7FCFB,#fff);padding:34px;overflow:hidden;position:relative}
-.illus svg{width:100%;height:auto;display:block;max-height:340px}
-.illus figcaption{text-align:center;font-size:13.5px;color:var(--muted);margin-top:18px}
-.split{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;margin-top:46px}
-.split .illus{margin-top:0}
-.split-copy h3{font-size:24px;margin-bottom:12px}
-.split-copy p{font-size:16px;color:var(--muted);margin-bottom:16px}
-.band{height:6px;background:linear-gradient(90deg,var(--teal),#9fe0c8,var(--gold),var(--violet));border-radius:100px;max-width:180px;margin:0 auto}
-.path .picon{width:100%;height:96px;margin-bottom:18px}
-@media (max-width:860px){.split{grid-template-columns:1fr;gap:30px}.illus{padding:22px}}
+.illus {
+  margin-top: 46px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: linear-gradient(165deg, #F7FCFB, #fff);
+  padding: 34px;
+  overflow: hidden;
+  position: relative
+}
+
+.illus svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  max-height: 340px
+}
+
+.illus figcaption {
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--muted);
+  margin-top: 18px
+}
+
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+  align-items: center;
+  margin-top: 46px
+}
+
+.split .illus {
+  margin-top: 0
+}
+
+.split-copy h3 {
+  font-size: 24px;
+  margin-bottom: 12px
+}
+
+.split-copy p {
+  font-size: 16px;
+  color: var(--muted);
+  margin-bottom: 16px
+}
+
+.band {
+  height: 6px;
+  background: linear-gradient(90deg, var(--teal), #9fe0c8, var(--gold), var(--violet));
+  border-radius: 100px;
+  max-width: 180px;
+  margin: 0 auto
+}
+
+.path .picon {
+  width: 100%;
+  height: 96px;
+  margin-bottom: 18px
+}
+
+@media (max-width:860px) {
+  .split {
+    grid-template-columns: 1fr;
+    gap: 30px
+  }
+
+  .illus {
+    padding: 22px
+  }
+}
 
 /* ---- SVG Diagram Animations ---- */
 .illus-flow {
@@ -1444,20 +1532,37 @@ a {
   stroke-dashoffset: 100;
   animation: illusFlow 2.5s infinite linear;
 }
-.illus-flow-1 { animation-delay: 0s; }
-.illus-flow-2 { animation-delay: 0.5s; }
-.illus-flow-3 { animation-delay: 1s; }
-.illus-flow-4 { animation-delay: 0.3s; }
-.illus-flow-5 { animation-delay: 0.8s; }
+
+.illus-flow-1 {
+  animation-delay: 0s;
+}
+
+.illus-flow-2 {
+  animation-delay: 0.5s;
+}
+
+.illus-flow-3 {
+  animation-delay: 1s;
+}
+
+.illus-flow-4 {
+  animation-delay: 0.3s;
+}
+
+.illus-flow-5 {
+  animation-delay: 0.8s;
+}
 
 @keyframes illusFlow {
   0% {
     stroke-dashoffset: 100;
     opacity: 0.15;
   }
+
   50% {
     opacity: 1;
   }
+
   100% {
     stroke-dashoffset: 0;
     opacity: 0.15;
@@ -1469,16 +1574,32 @@ a {
   transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   animation: illusFloat 4s ease-in-out infinite alternate;
 }
-.illus-node-1 { animation-delay: 0s; }
-.illus-node-2 { animation-delay: 0.8s; }
-.illus-node-3 { animation-delay: 1.6s; }
-.illus-node-4 { animation-delay: 0.4s; }
-.illus-node-5 { animation-delay: 1.2s; }
+
+.illus-node-1 {
+  animation-delay: 0s;
+}
+
+.illus-node-2 {
+  animation-delay: 0.8s;
+}
+
+.illus-node-3 {
+  animation-delay: 1.6s;
+}
+
+.illus-node-4 {
+  animation-delay: 0.4s;
+}
+
+.illus-node-5 {
+  animation-delay: 1.2s;
+}
 
 .illus-node:hover {
   transform: translateY(-4px) scale(1.05);
   cursor: pointer;
 }
+
 .illus-node:hover .illus-rect {
   stroke: #0fb5a1;
   fill: #f0fdfa;
@@ -1489,6 +1610,7 @@ a {
   0% {
     transform: translateY(0px);
   }
+
   100% {
     transform: translateY(-6px);
   }
@@ -1500,11 +1622,14 @@ a {
 }
 
 @keyframes brainOuterRing {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 0.08;
     stroke: #0fb5a1;
     stroke-width: 0;
   }
+
   50% {
     opacity: 0.25;
     stroke: #0fb5a1;
@@ -1517,9 +1642,12 @@ a {
 }
 
 @keyframes brainCorePulse {
-  0%, 100% {
+
+  0%,
+  100% {
     stroke: #0fb5a1;
   }
+
   50% {
     stroke: #7c6cf0;
   }
@@ -1534,6 +1662,7 @@ a {
   0% {
     transform: rotate(0deg);
   }
+
   100% {
     transform: rotate(360deg);
   }
@@ -1551,10 +1680,12 @@ a {
     stroke-dashoffset: 60;
     opacity: 0.4;
   }
+
   50% {
     stroke-dashoffset: 0;
     opacity: 1;
   }
+
   100% {
     stroke-dashoffset: -60;
     opacity: 0.4;
@@ -1569,6 +1700,7 @@ a {
   0% {
     transform: translateX(0px);
   }
+
   100% {
     transform: translateX(4px);
   }
@@ -1584,6 +1716,7 @@ a {
   0% {
     transform: translateY(0px);
   }
+
   100% {
     transform: translateY(-4px);
   }
@@ -1592,12 +1725,16 @@ a {
 .illus-line {
   animation: lineShimmer 2.2s ease-in-out infinite alternate;
 }
-.illus-line-2 { animation-delay: 0.4s; }
+
+.illus-line-2 {
+  animation-delay: 0.4s;
+}
 
 @keyframes lineShimmer {
   0% {
     fill: #e2e8f0;
   }
+
   100% {
     fill: #0fb5a1;
     opacity: 0.75;
@@ -1608,15 +1745,25 @@ a {
   transition: transform 0.2s ease;
   animation: citPulse 3s ease-in-out infinite alternate;
 }
-.illus-cit-1 { animation-delay: 0s; }
-.illus-cit-2 { animation-delay: 0.5s; }
-.illus-cit-3 { animation-delay: 1s; }
+
+.illus-cit-1 {
+  animation-delay: 0s;
+}
+
+.illus-cit-2 {
+  animation-delay: 0.5s;
+}
+
+.illus-cit-3 {
+  animation-delay: 1s;
+}
 
 @keyframes citPulse {
   0% {
     opacity: 0.75;
     transform: scale(0.98);
   }
+
   100% {
     opacity: 1;
     transform: scale(1.03);
@@ -1726,6 +1873,7 @@ a {
     grid-template-columns: 1fr;
     gap: 16px;
   }
+
   .sec-center .sec-h {
     font-size: 28px;
   }
@@ -1750,16 +1898,32 @@ a {
 .pipe-bubble {
   animation: bubblePulse 2.8s ease-in-out infinite alternate;
 }
-.bubble-1 { animation-delay: 0s; }
-.bubble-2 { animation-delay: 0.4s; }
-.bubble-3 { animation-delay: 0.8s; }
-.bubble-4 { animation-delay: 1.2s; }
-.bubble-5 { animation-delay: 1.6s; }
+
+.bubble-1 {
+  animation-delay: 0s;
+}
+
+.bubble-2 {
+  animation-delay: 0.4s;
+}
+
+.bubble-3 {
+  animation-delay: 0.8s;
+}
+
+.bubble-4 {
+  animation-delay: 1.2s;
+}
+
+.bubble-5 {
+  animation-delay: 1.6s;
+}
 
 @keyframes bubblePulse {
   0% {
     opacity: 0.35;
   }
+
   100% {
     opacity: 0.95;
   }
@@ -1777,9 +1941,11 @@ a {
     stroke-dashoffset: 40;
     opacity: 0.3;
   }
+
   50% {
     opacity: 1;
   }
+
   100% {
     stroke-dashoffset: -40;
     opacity: 0.3;
@@ -1791,8 +1957,13 @@ a {
 }
 
 @keyframes pipeHeadNudge {
-  0% { transform: translateX(0px); }
-  100% { transform: translateX(3px); }
+  0% {
+    transform: translateX(0px);
+  }
+
+  100% {
+    transform: translateX(3px);
+  }
 }
 
 /* Stage 2: Graph Nodes & Lines */
@@ -1807,6 +1978,7 @@ a {
     stroke-dashoffset: 100;
     opacity: 0.3;
   }
+
   100% {
     stroke-dashoffset: 0;
     opacity: 0.9;
@@ -1816,31 +1988,60 @@ a {
 .pipe-node {
   animation: nodeGlow 2.5s ease-in-out infinite alternate;
 }
-.node-1 { animation-delay: 0s; }
-.node-2 { animation-delay: 0.6s; }
-.node-3 { animation-delay: 1.2s; }
-.node-4 { animation-delay: 1.8s; }
+
+.node-1 {
+  animation-delay: 0s;
+}
+
+.node-2 {
+  animation-delay: 0.6s;
+}
+
+.node-3 {
+  animation-delay: 1.2s;
+}
+
+.node-4 {
+  animation-delay: 1.8s;
+}
 
 @keyframes nodeGlow {
-  0% { opacity: 0.6; }
-  100% { opacity: 1; }
+  0% {
+    opacity: 0.6;
+  }
+
+  100% {
+    opacity: 1;
+  }
 }
 
 /* Stage 3: Search lines & Citations */
 .pipe-search-line {
   animation: linePulse 2s ease-in-out infinite alternate;
 }
-.pipe-search-line.line-2 { animation-delay: 0.5s; }
+
+.pipe-search-line.line-2 {
+  animation-delay: 0.5s;
+}
 
 @keyframes linePulse {
-  0% { fill: #e2e8f0; }
-  100% { fill: #0fb5a1; opacity: 0.75; }
+  0% {
+    fill: #e2e8f0;
+  }
+
+  100% {
+    fill: #0fb5a1;
+    opacity: 0.75;
+  }
 }
 
 .pipe-cit {
   animation: citPulse 2.5s ease-in-out infinite alternate;
 }
-.pipe-cit.cit-2 { animation-delay: 0.8s; }
+
+.pipe-cit.cit-2 {
+  animation-delay: 0.8s;
+}
 
 /* ---- Solo vs Workspace Section Styles ---- */
 .gs-paths-section {
@@ -1921,7 +2122,7 @@ a {
   margin-bottom: 10px;
 }
 
-.path > p {
+.path>p {
   font-size: 15px;
   line-height: 1.6;
   color: var(--muted, #64748b);
@@ -1999,8 +2200,13 @@ a {
 }
 
 @keyframes soloUserPulse {
-  0% { fill: #e3f7f3; }
-  100% { fill: #ccfbf1; }
+  0% {
+    fill: #e3f7f3;
+  }
+
+  100% {
+    fill: #ccfbf1;
+  }
 }
 
 .solo-lines path {
@@ -2008,24 +2214,48 @@ a {
   stroke-dashoffset: 40;
   animation: soloLineDraw 2.5s ease-in-out infinite alternate;
 }
-.solo-lines .line-2 { animation-delay: 0.3s; }
-.solo-lines .line-3 { animation-delay: 0.6s; }
+
+.solo-lines .line-2 {
+  animation-delay: 0.3s;
+}
+
+.solo-lines .line-3 {
+  animation-delay: 0.6s;
+}
 
 @keyframes soloLineDraw {
-  0% { stroke-dashoffset: 40; opacity: 0.3; }
-  100% { stroke-dashoffset: 0; opacity: 1; }
+  0% {
+    stroke-dashoffset: 40;
+    opacity: 0.3;
+  }
+
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
 }
 
 .solo-card {
   transition: stroke 0.3s ease;
   animation: cardFloat 4s ease-in-out infinite alternate;
 }
-.solo-card.card-2 { animation-delay: 0.5s; }
-.solo-card.card-3 { animation-delay: 1s; }
+
+.solo-card.card-2 {
+  animation-delay: 0.5s;
+}
+
+.solo-card.card-3 {
+  animation-delay: 1s;
+}
 
 @keyframes cardFloat {
-  0% { transform: translateY(0px); }
-  100% { transform: translateY(-3px); }
+  0% {
+    transform: translateY(0px);
+  }
+
+  100% {
+    transform: translateY(-3px);
+  }
 }
 
 .solo-plus-bg {
@@ -2033,19 +2263,37 @@ a {
 }
 
 @keyframes plusGlow {
-  0% { opacity: 0.2; }
-  100% { opacity: 0.5; }
+  0% {
+    opacity: 0.2;
+  }
+
+  100% {
+    opacity: 0.5;
+  }
 }
 
 .team-users-bg circle {
   animation: teamMemberPulse 3s ease-in-out infinite alternate;
 }
-.team-users-bg .u-2 { animation-delay: 0.4s; }
-.team-users-bg .u-3 { animation-delay: 0.8s; }
+
+.team-users-bg .u-2 {
+  animation-delay: 0.4s;
+}
+
+.team-users-bg .u-3 {
+  animation-delay: 0.8s;
+}
 
 @keyframes teamMemberPulse {
-  0% { stroke: #0fb5a1; fill: #e3f7f3; }
-  100% { stroke: #7c6cf0; fill: #f3e8ff; }
+  0% {
+    stroke: #0fb5a1;
+    fill: #e3f7f3;
+  }
+
+  100% {
+    stroke: #7c6cf0;
+    fill: #f3e8ff;
+  }
 }
 
 .team-lines path {
@@ -2055,8 +2303,15 @@ a {
 }
 
 @keyframes teamLineStream {
-  0% { stroke-dashoffset: 40; opacity: 0.3; }
-  100% { stroke-dashoffset: 0; opacity: 1; }
+  0% {
+    stroke-dashoffset: 40;
+    opacity: 0.3;
+  }
+
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
 }
 
 .team-lock {
@@ -2064,8 +2319,13 @@ a {
 }
 
 @keyframes lockNudge {
-  0% { transform: translate(216px, 36px) scale(1); }
-  100% { transform: translate(216px, 34px) scale(1.08); }
+  0% {
+    transform: translate(216px, 36px) scale(1);
+  }
+
+  100% {
+    transform: translate(216px, 34px) scale(1.08);
+  }
 }
 
 @media (max-width: 860px) {
@@ -2294,8 +2554,15 @@ a {
 }
 
 @keyframes shieldPulse {
-  0% { stroke: #0fb5a1; fill: #f4fcfa; }
-  100% { stroke: #7c6cf0; fill: #f5f3ff; }
+  0% {
+    stroke: #0fb5a1;
+    fill: #f4fcfa;
+  }
+
+  100% {
+    stroke: #7c6cf0;
+    fill: #f5f3ff;
+  }
 }
 
 .sec-lock-group {
@@ -2303,32 +2570,65 @@ a {
 }
 
 @keyframes lockFloat {
-  0% { transform: translate(168px, 86px); }
-  100% { transform: translate(168px, 82px); }
+  0% {
+    transform: translate(168px, 86px);
+  }
+
+  100% {
+    transform: translate(168px, 82px);
+  }
 }
 
 .sec-badge-box {
   transition: all 0.3s ease;
   animation: badgeGlow 2.5s ease-in-out infinite alternate;
 }
-.sec-badge-box.badge-2 { animation-delay: 0.6s; }
+
+.sec-badge-box.badge-2 {
+  animation-delay: 0.6s;
+}
 
 @keyframes badgeGlow {
-  0% { stroke: #bfe9e1; }
-  100% { stroke: #0fb5a1; fill: #e3f7f3; }
+  0% {
+    stroke: #bfe9e1;
+  }
+
+  100% {
+    stroke: #0fb5a1;
+    fill: #e3f7f3;
+  }
 }
 
 .sec-dot {
   animation: dotPulse 2s ease-in-out infinite alternate;
 }
-.dot-1 { animation-delay: 0s; }
-.dot-2 { animation-delay: 0.5s; }
-.dot-3 { animation-delay: 1s; }
-.dot-4 { animation-delay: 1.5s; }
+
+.dot-1 {
+  animation-delay: 0s;
+}
+
+.dot-2 {
+  animation-delay: 0.5s;
+}
+
+.dot-3 {
+  animation-delay: 1s;
+}
+
+.dot-4 {
+  animation-delay: 1.5s;
+}
 
 @keyframes dotPulse {
-  0% { opacity: 0.3; transform: scale(0.8); }
-  100% { opacity: 1; transform: scale(1.2); }
+  0% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
 }
 
 /* 4 Bottom Security Feature Cards */
@@ -2488,9 +2788,11 @@ a {
   .sec-grid {
     grid-template-columns: 1fr;
   }
+
   .sec-row2 {
     grid-template-columns: repeat(2, 1fr);
   }
+
   .team-panel {
     grid-template-columns: 1fr;
     padding: 28px 24px;
@@ -2626,6 +2928,7 @@ a {
   .gs-takeaways-card {
     padding: 24px 20px;
   }
+
   .gs-takeaways-list li {
     font-size: 14.5px;
   }
@@ -2682,6 +2985,7 @@ a {
 
 /* ---- Comprehensive Mobile Responsive Optimization ---- */
 @media (max-width: 768px) {
+
   /* Reduce excessive section padding on mobile */
   .gs-block,
   .block,
@@ -2763,7 +3067,7 @@ a {
     margin-bottom: 20px !important;
   }
 
-  .gs-footer > div > div:last-child {
+  .gs-footer>div>div:last-child {
     flex-direction: column !important;
     align-items: center !important;
     gap: 8px !important;
