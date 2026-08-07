@@ -15,6 +15,7 @@ asgiref==3.11.1
 asyncpg==0.31.0
 attrs==26.1.0
 Authlib==1.7.0
+backports.tarfile==1.2.0
 bcrypt==5.0.0
 beartype==0.22.9
 beautifulsoup4==4.14.3
@@ -75,13 +76,14 @@ httpcore==1.0.9
 httptools==0.7.1
 httpx==0.28.1
 httpx-sse==0.4.3
-huggingface_hub==1.13.0
+huggingface_hub>=0.23.0,<1.0.0
 idna==3.11
 importlib_metadata==8.7.1
 iniconfig==2.3.0
 jaraco.classes==3.4.0
 jaraco.context==6.1.2
 jaraco.functools==4.4.0
+jeepney==0.9.0
 Jinja2==3.1.6
 jiter==0.14.0
 jmespath==1.1.0
@@ -127,7 +129,7 @@ mypy_extensions==1.1.0
 narwhals==2.18.1
 neo4j==5.14.1
 nexus-rpc==1.4.0
-numpy==2.4.4
+numpy>=1.24.0,<3.0.0
 ollama==0.6.2
 openai==2.48.0
 openapi-pydantic==0.5.1
@@ -151,7 +153,7 @@ opentelemetry-util-http==0.60b1
 orjson==3.11.8
 ormsgpack==1.12.2
 packaging==25.0
-pandas==3.0.2
+pandas>=2.1.4,<3.0.0
 passlib==1.7.4
 pathable==0.5.0
 pathspec==1.0.4
@@ -178,15 +180,14 @@ pyasn1==0.6.3
 pyasn1_modules==0.4.2
 pycodestyle==2.11.1
 pycparser==3.0
-pydantic==2.13.3
-pydantic-settings==2.14.0
-pydantic_core==2.46.3
+pydantic>=2.7.0,<3.0.0
+pydantic-settings>=2.0.0,<3.0.0
 pydeck==0.9.1
 pyflakes==3.1.0
 Pygments==2.20.0
 PyJWT==2.12.1
 PyPDF2==3.0.1
-pypdfium2==5.6.0
+pypdfium2>=4.30.0,<5.0.0
 pyperclip==1.11.0
 pystache==0.6.8
 pytest==7.4.3
@@ -197,8 +198,8 @@ python-dotenv==1.2.2
 python-jose==3.3.0
 python-multipart==0.0.27
 pytz==2026.1.post1
-pywin32==311
-pywin32-ctypes==0.2.3
+pywin32==311; sys_platform == 'win32'
+pywin32-ctypes==0.2.3; sys_platform == 'win32'
 PyYAML==6.0.3
 RapidFuzz==3.14.5
 referencing==0.37.0
@@ -212,6 +213,7 @@ rsa==4.9.1
 s3transfer==0.17.0
 scikit-learn==1.8.0
 scipy==1.17.1
+SecretStorage==3.5.0
 shellingham==1.5.4
 six==1.17.0
 smmap==5.0.3
@@ -231,11 +233,11 @@ tokenizers==0.23.1
 toml==0.10.2
 tornado==6.5.5
 tqdm==4.67.3
-typer==0.25.1
+typer>=0.12.5,<0.13.0
 types-protobuf==6.32.1.20260221
 types-requests==2.33.0.20260408
-typing-inspection==0.4.2
 typing_extensions==4.15.0
+typing-inspection==0.4.2
 tzdata==2026.1
 uncalled-for==0.3.1
 urllib3==2.6.3
@@ -246,26 +248,8 @@ watchfiles==1.1.1
 wcwidth==0.6.0
 websockets==16.0
 wrapt==1.17.3
-yarl==1.23.0
-zipp==3.23.1
-
-# ARQ Queue
-arq==0.25.0
-redis==5.0.1
-beautifulsoup4==4.12.3
-json-repair==0.30.0
-docling==2.14.0
-
-langchain==0.3.0
-langchain-community==0.3.0
-langchain-openai==0.2.0
-duckdb==1.1.0
-duckdb-engine==0.13.0
-polars==1.43.1
-fastexcel
-pyarrow
-openpyxl
-
 xai-sdk==1.12.1
 xxhash==3.7.0
+yarl==1.23.0
+zipp==3.23.1
 zstandard==0.25.0

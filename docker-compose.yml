@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   db:
-    image: pgvector/pgvector:pg18
+    image: pgvector/pgvector:pg16
     container_name: graphmind-db
     restart: unless-stopped
 
