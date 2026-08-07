@@ -25,7 +25,7 @@ else
 fi
 
 echo "🚀 Launching Memory API in background on port 4917..."
-$UVICORN_CMD app.memory.app.main:app --host 0.0.0.0 --port 4917 &
+PYTHONPATH=./app/memory/app $UVICORN_CMD app.memory.app.main:app --host 0.0.0.0 --port 4917 &
 
 echo "🚀 Launching Main API on port 4915..."
 $UVICORN_CMD app.main:app --host 0.0.0.0 --port 4915 --log-level debug
