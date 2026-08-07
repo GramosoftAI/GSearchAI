@@ -1,16 +1,13 @@
 {
+    "dummy_employees_details": "dummy_employees_details_1785309842.parquet",
     "AAPL_Q3_2022_Benchmark_Scored": "AAPL_Q3_2022_Benchmark_Scored_1785147546.parquet",
     "data-178454603": "data-178454603_1785149231.parquet",
+<<<<<<< HEAD
+    "mymoviedbt2": "mymoviedbt2_1785250219.parquet",
+    "VENDOR DETAILS_Update": "VENDOR DETAILS_Update_1785250380.parquet"
+=======
     "FSI-2023-DOWNLOAD": "FSI-2023-DOWNLOAD_1785248322.parquet",
     "Project-Management-Sample-Data": "Project-Management-Sample-Data_1785243663.parquet",
-    "Backend_Issues_Assignment": "Backend_Issues_Assignment_1785246767.parquet",
-    "questions_with_LLM_answers": "questions_with_LLM_answers_1785336308.parquet",
-    "wa": "wa_1785491056.parquet",
-    "WA_Fn-UseC_-HR-Employee-Attrition": "WA_Fn-UseC_-HR-Employee-Attrition_1785503669.parquet",
-    "sme-5lac": "sme-5lac_1785836008.parquet",
-    "dummy_employees_details (1)": "dummy_employees_details (1)_1785846511.parquet",
-    "mymoviedbt2": "mymoviedbt2_1785250219.parquet",
-    "VENDOR DETAILS_Update": "VENDOR DETAILS_Update_1785250380.parquet",
-    "dummy_employees_details": "dummy_employees_details_1785908950.parquet",
-    "WA_Fn-UseC_-HR-Employee-Attrition": "WA_Fn-UseC_-HR-Employee-Attrition_1785910772.parquet"
+    "Backend_Issues_Assignment": "Backend_Issues_Assignment_1785246767.parquet"
+>>>>>>> staging
 }

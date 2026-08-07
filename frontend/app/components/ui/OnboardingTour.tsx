@@ -45,7 +45,7 @@ export default function OnboardingTour({
     setMounted(true);
   }, []);
 
-  // Update target rect on intervals, window resize, or scroll to handle layout shifts dynamically
+  
   useEffect(() => {
     if (!isActive || !mounted || !step) {
       setTargetRect(null);
@@ -56,7 +56,7 @@ export default function OnboardingTour({
       const el = document.getElementById(step.targetId);
       if (el) {
         const rect = el.getBoundingClientRect();
-        // Only update if dimensions changed to avoid infinite re-renders
+        
         setTargetRect((prev) => {
           if (
             prev &&
@@ -70,7 +70,7 @@ export default function OnboardingTour({
           return rect;
         });
       } else {
-        // If element is not in DOM yet (e.g. waiting for selection), retry or keep null
+       
         setTargetRect(null);
       }
     };
@@ -87,12 +87,10 @@ export default function OnboardingTour({
     };
   }, [isActive, mounted, step, activeStep]);
 
-  // Position the popover and arrow relative to the target rect
   useEffect(() => {
     if (!targetRect || !step || !popoverRef.current) return;
 
     const popoverWidth = 320;
-    // Get actual layout height of the card
     const popoverHeight = popoverRef.current.getBoundingClientRect().height || 180;
     const offset = 16;
 
@@ -124,7 +122,6 @@ export default function OnboardingTour({
         break;
     }
 
-    // Constrain within viewport boundaries
     const padding = 16;
     if (left < padding) {
       left = padding;
@@ -138,7 +135,7 @@ export default function OnboardingTour({
       top = window.innerHeight - popoverHeight - padding;
     }
 
-    // Calculate Arrow position relative to the popover
+    
     let arrowLeft: React.CSSProperties["left"] = "50%";
     let arrowTop: React.CSSProperties["top"] = "auto";
     let arrowRight: React.CSSProperties["right"] = "auto";
@@ -146,7 +143,6 @@ export default function OnboardingTour({
 
     if (arrowDir === "up" || arrowDir === "down") {
       const calculatedArrowLeft = targetCenterX - left;
-      // Constrain arrow to popover bounds
       const arrowPadding = 24;
       arrowLeft = Math.max(arrowPadding, Math.min(popoverWidth - arrowPadding, calculatedArrowLeft));
       if (arrowDir === "up") {
@@ -201,10 +197,10 @@ export default function OnboardingTour({
 
   if (!isActive || !mounted || !step) return null;
 
-  // Render four overlay segments to create a clickable spotlight window
+ 
   const renderBackdrops = () => {
     if (!targetRect) {
-      // Fallback fullscreen overlay if target not visible/loaded
+      
       return (
         <div
           onClick={onClose}
@@ -225,53 +221,41 @@ export default function OnboardingTour({
 
     const t = targetRect.top;
     const l = targetRect.left;
-    const r = targetRect.right;
-    const b = targetRect.bottom;
     const h = targetRect.height;
-
-    const backdropColor = "rgba(13, 15, 23, 0.75)";
-    const commonStyle: React.CSSProperties = {
-      position: "fixed",
-      backgroundColor: backdropColor,
-      zIndex: 99990,
-      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-    };
+    const w = targetRect.width;
+    // const padding = 1;
 
     return (
       <>
-        {/* Top backdrop */}
-        <div style={{ ...commonStyle, left: 0, top: 0, width: "100vw", height: `${t}px` }} />
-        {/* Bottom backdrop */}
-        <div style={{ ...commonStyle, left: 0, top: `${b}px`, width: "100vw", height: `calc(100vh - ${b}px)` }} />
-        {/* Left backdrop */}
-        <div style={{ ...commonStyle, left: 0, top: `${t}px`, width: `${l}px`, height: `${h}px` }} />
-        {/* Right backdrop */}
-        <div style={{ ...commonStyle, left: `${r}px`, top: `${t}px`, width: `calc(100vw - ${r}px)`, height: `${h}px` }} />
+        <div
+          onClick={onClose}
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            zIndex: 99989,
+            cursor: "pointer",
+          }}
+        />
+
         
-        {/* Animated highlight frame surrounding the element (without blocking pointer events on it) */}
         <div
           style={{
             position: "fixed",
-            left: `${l - 6}px`,
-            top: `${t - 6}px`,
-            width: `${targetRect.width + 12}px`,
-            height: `${h + 12}px`,
+            left: `${l}px`,
+            top: `${t}px`,
+            width: `${w}px`,
+            height: `${h}px`,
+            borderRadius: step.targetId === "tour-agent-select" ? "9999px" : step.targetId === "tour-chat-input-card" ? "24px" : "16px",
             border: "2px solid #0fb5a1",
-            borderRadius: "16px",
-            boxShadow: "0 0 0 2px rgba(15, 181, 161, 0.1), 0 0 15px rgba(15, 181, 161, 0.4), inset 0 0 10px rgba(15, 181, 161, 0.15)",
+            boxShadow: "0 0 0 9999px rgba(13, 15, 23, 0.75), 0 0 16px rgba(15, 181, 161, 0.5)",
             pointerEvents: "none",
             zIndex: 99995,
             transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-            animation: "pulse-border 2s infinite ease-in-out",
           }}
         />
-        
-        <style dangerouslySetInnerHTML={{__html: `
-          @keyframes pulse-border {
-            0%, 100% { border-color: #0fb5a1; box-shadow: 0 0 15px rgba(15, 181, 161, 0.4); }
-            50% { border-color: #34d399; box-shadow: 0 0 22px rgba(52, 211, 153, 0.6); }
-          }
-        `}} />
       </>
     );
   };
@@ -294,7 +278,7 @@ export default function OnboardingTour({
     <>
       {renderBackdrops()}
 
-      {/* Guided Popover Card with glassmorphism styling */}
+     
       <div
         ref={popoverRef}
         style={popoverStyle}

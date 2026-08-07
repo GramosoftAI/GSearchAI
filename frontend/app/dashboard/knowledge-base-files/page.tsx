@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Typography,
   Card,
@@ -216,6 +216,8 @@ export default function KnowledgeBaseFilesPage() {
   const [spreadsheetData, setSpreadsheetData] = useState<{ [sheetName: string]: string[][] } | null>(null);
   const [spreadsheetSheets, setSpreadsheetSheets] = useState<string[]>([]);
   const [activeSheet, setActiveSheet] = useState<string>("");
+  const [excelPage, setExcelPage] = useState<number>(1);
+  const excelArrayBufferRef = useRef<ArrayBuffer | null>(null);
 
   const [request, , loading] = useAxios({
     endpoint: "GET_USER_KBS",
@@ -227,9 +229,8 @@ export default function KnowledgeBaseFilesPage() {
 
     let path = `/${activeUserId}?limit=${limit}&offset=${offset}`;
 
-    if (dateRange) {
+    if (dateRange && dateRange[0] && dateRange[1]) {
       path += `&start_date=${dateRange[0]}&end_date=${dateRange[1]}`;
-      path += `&date=${dateRange[0]}`; // For backwards compatibility
     }
     if (selectedAgent) {
       path += `&agent_id=${selectedAgent}`;
@@ -238,11 +239,8 @@ export default function KnowledgeBaseFilesPage() {
       path += `&search=${encodeURIComponent(searchQuery)}`;
     }
 
-    console.log("Requesting GET_USER_KBS with path:", path);
-
     try {
       await request({ path }, (res) => {
-        console.log("GET_USER_KBS response received:", res);
         const kbsList = res?.data?.kbs ?? [];
         const totalCount = res?.data?.total ?? 0;
         setKbs(kbsList);
@@ -251,7 +249,8 @@ export default function KnowledgeBaseFilesPage() {
     } catch (err) {
       console.error("Failed to fetch knowledge base files:", err);
     }
-  }, [activeUserId, limit, offset, dateRange, selectedAgent, searchQuery, request]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeUserId, limit, offset, dateRange, selectedAgent, searchQuery]);
 
   // Debounce API calls for search query, and trigger on other filter updates immediately
   useEffect(() => {
@@ -267,7 +266,7 @@ export default function KnowledgeBaseFilesPage() {
 
   const handleDateRangeChange = (dates: any, dateStrings: [string, string]) => {
     if (dates && dateStrings[0] && dateStrings[1]) {
-      setDateRange(dateStrings);
+      setDateRange([dateStrings[0], dateStrings[1]]);
     } else {
       setDateRange(null);
     }
@@ -287,13 +286,35 @@ export default function KnowledgeBaseFilesPage() {
   };
 
   const handlePreview = async (item: any) => {
+    const nameStr = (item.name || item.source || "").toLowerCase();
+    const isUrl = nameStr.includes("url") || nameStr.includes("http") || nameStr.includes("www.");
+
+    if (isUrl) {
+      const rawSource = item.name || item.source || "";
+      let extractedUrl = "";
+      const urlMatch = rawSource.match(/(https?:\/\/[^\s]+)/i);
+      if (urlMatch) {
+        extractedUrl = urlMatch[1];
+      } else {
+        const domainMatch = rawSource.match(/([a-zA-Z0-9-]+\.[a-zA-Z]{2,}[^\s]*)/);
+        if (domainMatch) {
+          extractedUrl = "https://" + domainMatch[1];
+        } else {
+          extractedUrl = rawSource;
+        }
+      }
+
+      if (extractedUrl) {
+        window.open(extractedUrl, '_blank');
+      }
+      return;
+    }
+
     setPreviewItem(item);
     setPreviewOpen(true);
     setPreviewLoading(true);
     setPreviewUrl("");
     setParsedText("");
-
-    const nameStr = (item.name || item.source || "").toLowerCase();
 
     // Set initial tab: parsed content first if it's text or pdf without original
     const isText = nameStr.includes("text");
@@ -346,22 +367,37 @@ export default function KnowledgeBaseFilesPage() {
           } else if (isCSV || isExcel) {
             try {
               const arrayBuffer = await blob.arrayBuffer();
-              const XLSX = await import("xlsx");
-              const workbook = XLSX.read(arrayBuffer, { type: "array" });
+              excelArrayBufferRef.current = arrayBuffer;
 
-              const sheetsData: { [sheetName: string]: string[][] } = {};
-              workbook.SheetNames.forEach((sheetName) => {
-                const worksheet = workbook.Sheets[sheetName];
+              const XLSX = await import("xlsx");
+              // 1. Read sheet names first (extremely fast!)
+              const workbook = XLSX.read(arrayBuffer, { type: "array", bookSheets: true });
+              setSpreadsheetSheets(workbook.SheetNames);
+
+              if (workbook.SheetNames.length > 0) {
+                const firstSheet = workbook.SheetNames[0];
+                setActiveSheet(firstSheet);
+
+                // 2. Parse only the active sheet on load (skips all other sheets)
+                const partialWorkbook = XLSX.read(arrayBuffer, {
+                  type: "array",
+                  sheets: [firstSheet],
+                  cellFormula: false,
+                  cellHTML: false,
+                  cellText: false,
+                  cellDates: true
+                });
+
+                const worksheet = partialWorkbook.Sheets[firstSheet];
                 const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
-                sheetsData[sheetName] = jsonData.map((row: any) =>
+                const formattedData = jsonData.map((row: any) =>
                   Array.isArray(row)
                     ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
                     : []
                 );
-              });
-              setSpreadsheetData(sheetsData);
-              setSpreadsheetSheets(workbook.SheetNames);
-              setActiveSheet(workbook.SheetNames[0] || "");
+                setSpreadsheetData({ [firstSheet]: formattedData });
+              }
+              setExcelPage(1);
               setPreviewType("excel");
             } catch (err) {
               console.error("Failed to parse spreadsheet:", err);
@@ -419,14 +455,31 @@ export default function KnowledgeBaseFilesPage() {
     setSpreadsheetData(null);
     setSpreadsheetSheets([]);
     setActiveSheet("");
+    setExcelPage(1);
   };
 
-  // Perform client-side filter on top of server data as fallback search
+  // Perform client-side filter on top of server data
   const filteredKbs = kbs.filter((kb) => {
-    const q = searchQuery.toLowerCase();
-    if (!q) return true;
-    const nameStr = (kb.name || kb.source || "").toLowerCase();
-    return nameStr.includes(q);
+    // 1. Search filter
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const nameStr = (kb.name || kb.source || "").toLowerCase();
+      if (!nameStr.includes(q)) return false;
+    }
+
+    // 2. Date range filter (inclusive check)
+    if (dateRange && dateRange[0] && dateRange[1]) {
+      if (kb.created_at) {
+        const itemDate = dayjs(kb.created_at);
+        const start = dayjs(dateRange[0]).startOf("day");
+        const end = dayjs(dateRange[1]).endOf("day");
+        if (itemDate.isBefore(start) || itemDate.isAfter(end)) {
+          return false;
+        }
+      }
+    }
+
+    return true;
   });
 
   const columns = [
@@ -434,10 +487,11 @@ export default function KnowledgeBaseFilesPage() {
       title: "File Name",
       dataIndex: "name",
       key: "name",
+      minWidth: 200,
       render: (text: string) => {
         const cleaned = text ? text.replace(/^(pdf|spreadsheet|text|url|file|csv|excel):\s*/i, "") : "Unnamed File";
         return (
-          <Text className="font-semibold text-[var(--app-text)]">{cleaned}</Text>
+          <Text className="font-semibold text-[var(--app-text)] block break-words max-w-sm">{cleaned}</Text>
         );
       },
     },
@@ -445,10 +499,11 @@ export default function KnowledgeBaseFilesPage() {
       title: "Agent",
       dataIndex: "agent_id",
       key: "agent_id",
+      minWidth: 120,
       render: (agentId: string) => {
         const agent = agents.find((a: any) => a.id === agentId);
         return (
-          <Text className="text-[var(--app-text-soft)]">
+          <Text className="text-[var(--app-text-soft)] whitespace-nowrap">
             {agent ? agent.name : agentId || "N/A"}
           </Text>
         );
@@ -458,8 +513,9 @@ export default function KnowledgeBaseFilesPage() {
       title: "Created At",
       dataIndex: "created_at",
       key: "created_at",
+      minWidth: 160,
       render: (date: string) => (
-        <Text className="text-[var(--app-text-soft)]">
+        <Text className="text-[var(--app-text-soft)] whitespace-nowrap">
           {date ? dayjs(date).format("DD MMM YYYY hh:mm A") : "N/A"}
         </Text>
       ),
@@ -467,6 +523,7 @@ export default function KnowledgeBaseFilesPage() {
     {
       title: "Actions",
       key: "actions",
+      minWidth: 80,
       render: (_: any, record: any) => (
         <Space size="middle">
           <Tooltip title="View Document Preview">
@@ -549,8 +606,11 @@ export default function KnowledgeBaseFilesPage() {
                 <DatePicker.RangePicker
                   size="large"
                   className="w-full"
+                  popupClassName="single-month-rangepicker"
                   value={dateRange ? [dayjs(dateRange[0]), dayjs(dateRange[1])] : null}
                   onChange={handleDateRangeChange}
+                  format="YYYY-MM-DD"
+                  allowClear
                 />
               </Flex>
             </Col>
@@ -593,14 +653,15 @@ export default function KnowledgeBaseFilesPage() {
         </Card>
 
         {/* Table Content Section */}
-        <Card className="bg-[var(--app-surface)] border-[var(--app-border)] shadow-sm rounded-2xl overflow-hidden">
+        <Card className="bg-[var(--app-surface)] border-[var(--app-border)] shadow-sm rounded-2xl overflow-hidden" styles={{ body: { padding: 0 } }}>
           <Table
             columns={columns}
-            dataSource={kbs}
+            dataSource={filteredKbs}
             rowKey="id"
             loading={loading}
             pagination={paginationConfig}
             className="custom-table"
+            scroll={{ x: 'max-content' }}
           />
         </Card>
       </Flex>
@@ -700,8 +761,37 @@ export default function KnowledgeBaseFilesPage() {
                         {spreadsheetSheets.map((sheet) => (
                           <button
                             key={sheet}
-                            onClick={() => setActiveSheet(sheet)}
-                            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all \${
+                            onClick={async () => {
+                              if ((!spreadsheetData || !spreadsheetData[sheet]) && excelArrayBufferRef.current) {
+                                setPreviewLoading(true);
+                                try {
+                                  const XLSX = await import("xlsx");
+                                  const partialWorkbook = XLSX.read(excelArrayBufferRef.current, {
+                                    type: "array",
+                                    sheets: [sheet],
+                                    cellFormula: false,
+                                    cellHTML: false,
+                                    cellText: false,
+                                    cellDates: true
+                                  });
+                                  const worksheet = partialWorkbook.Sheets[sheet];
+                                  const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+                                  const formattedData = jsonData.map((row: any) =>
+                                    Array.isArray(row)
+                                      ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+                                      : []
+                                  );
+                                  setSpreadsheetData(prev => ({ ...(prev || {}), [sheet]: formattedData }));
+                                } catch (err) {
+                                  console.error("Failed to parse sheet:", sheet, err);
+                                } finally {
+                                  setPreviewLoading(false);
+                                }
+                              }
+                              setActiveSheet(sheet);
+                              setExcelPage(1);
+                            }}
+                            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
                               activeSheet === sheet
                                 ? "bg-[#0fb5a1] text-white border-[#0fb5a1]"
                                 : "bg-[var(--app-surface)] text-[var(--app-text-soft)] border-[var(--app-border)] hover:bg-[var(--app-hover)]"
@@ -714,32 +804,81 @@ export default function KnowledgeBaseFilesPage() {
                     )}
                     {/* Sheet Table */}
                     <div className="flex-1 overflow-auto p-4">
-                      <table className="w-full border-collapse bg-[var(--app-surface)] text-xs text-[var(--app-text)] border border-[var(--app-border)]">
-                        <thead>
-                          <tr className="bg-[var(--app-surface-muted)]">
-                            <th className="border border-[var(--app-border)] p-2 text-center font-bold w-10 bg-[var(--app-surface-muted)] text-[var(--app-text-soft)]">#</th>
-                            {spreadsheetData[activeSheet]?.[0]?.map((colHeader, idx) => (
-                              <th key={idx} className="border border-[var(--app-border)] p-2 text-left font-bold bg-[var(--app-surface-muted)] text-[var(--app-text-soft)]">
-                                {colHeader || `Column \${idx + 1}`}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {spreadsheetData[activeSheet]?.slice(1).map((row, rIdx) => (
-                            <tr key={rIdx} className="hover:bg-[var(--app-hover)]">
-                              <td className="border border-[var(--app-border)] p-2 text-center text-[var(--app-text-soft)] font-medium bg-[var(--app-surface-muted)]/30">
-                                {rIdx + 1}
-                              </td>
-                              {row.map((cell, cIdx) => (
-                                <td key={cIdx} className="border border-[var(--app-border)] p-2 text-left">
-                                  {cell}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                      {spreadsheetData[activeSheet] && spreadsheetData[activeSheet].length > 0 ? (
+                        (() => {
+                          const activeSheetData = spreadsheetData[activeSheet];
+                          const totalRows = activeSheetData.length > 0 ? activeSheetData.length - 1 : 0;
+                          const PAGE_SIZE = 100;
+                          const totalPages = Math.ceil(totalRows / PAGE_SIZE);
+                          const displayedRows = activeSheetData.slice(
+                            1 + (excelPage - 1) * PAGE_SIZE,
+                            1 + excelPage * PAGE_SIZE
+                          );
+
+                          return (
+                            <div className="flex flex-col gap-4">
+                              <table className="w-full border-collapse bg-[var(--app-surface)] text-xs text-[var(--app-text)] border border-[var(--app-border)]">
+                                <thead>
+                                  <tr className="bg-[var(--app-surface-muted)]">
+                                    <th className="border border-[var(--app-border)] p-2 text-center font-bold w-10 bg-[var(--app-surface-muted)] text-[var(--app-text-soft)]">#</th>
+                                    {activeSheetData[0]?.map((colHeader, idx) => (
+                                      <th key={idx} className="border border-[var(--app-border)] p-2 text-left font-bold bg-[var(--app-surface-muted)] text-[var(--app-text-soft)]">
+                                        {colHeader || `Column ${idx + 1}`}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {displayedRows.map((row, rIdx) => (
+                                    <tr key={rIdx} className="hover:bg-[var(--app-hover)]">
+                                      <td className="border border-[var(--app-border)] p-2 text-center text-[var(--app-text-soft)] font-medium bg-[var(--app-surface-muted)]/30">
+                                        {(excelPage - 1) * PAGE_SIZE + rIdx + 1}
+                                      </td>
+                                      {row.map((cell, cIdx) => (
+                                        <td key={cIdx} className="border border-[var(--app-border)] p-2 text-left">
+                                          {cell}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+
+                              {/* Pagination footer */}
+                              {totalPages > 1 && (
+                                <div className="flex items-center justify-between p-3 border border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 select-none rounded-xl">
+                                  <span className="text-xs text-[var(--app-text-soft)] font-bold">
+                                    Showing {1 + (excelPage - 1) * PAGE_SIZE} - {Math.min(excelPage * PAGE_SIZE, totalRows)} of {totalRows} rows
+                                  </span>
+                                  <div className="flex gap-2">
+                                    <button
+                                      disabled={excelPage === 1}
+                                      onClick={() => setExcelPage(prev => Math.max(prev - 1, 1))}
+                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                    >
+                                      Previous
+                                    </button>
+                                    <span className="text-xs self-center px-1 font-bold text-[var(--app-text)]">
+                                      Page {excelPage} of {totalPages}
+                                    </span>
+                                    <button
+                                      disabled={excelPage === totalPages}
+                                      onClick={() => setExcelPage(prev => Math.min(prev + 1, totalPages))}
+                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                    >
+                                      Next
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()
+                      ) : (
+                        <div className="py-20 text-[var(--app-text-soft)] text-center">
+                          <span className="text-xs">No data in this sheet</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : previewUrl ? (
@@ -783,6 +922,17 @@ export default function KnowledgeBaseFilesPage() {
           color: var(--app-text) !important;
           background: var(--app-surface) !important;
           padding: 16px 24px !important;
+        }
+        @media (max-width: 640px) {
+          .custom-table :global(.ant-table-thead > tr > th) {
+            padding: 12px 14px !important;
+            white-space: nowrap !important;
+            font-size: 11px !important;
+          }
+          .custom-table :global(.ant-table-tbody > tr > td) {
+            padding: 12px 14px !important;
+            font-size: 13px !important;
+          }
         }
         .custom-table :global(.ant-table-tbody > tr:hover > td) {
           background: var(--app-hover) !important;

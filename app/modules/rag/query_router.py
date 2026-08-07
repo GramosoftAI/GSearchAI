@@ -345,13 +345,16 @@ Return ONLY valid JSON in this exact format, with no markdown formatting or back
  "intent": "find information"
 }}
 """
+        from app.core.llm.routing import LLMTask
         try:
             result = await self.llm_client.generate_cloud(
                 prompt=prompt,
                 system_prompt="You are a query rewriting engine. Return only JSON.",
                 temperature=0.0,
                 max_tokens=1024,
-                enable_thinking=False
+                enable_thinking=False,
+                model=self.llm_client.model_intent,
+                task=LLMTask.ROUTER
             )
             # Clean up markdown if present
             import re
@@ -416,13 +419,16 @@ Query:
 {query}
 """
 
+        from app.core.llm.routing import LLMTask
         try:
             response = await self.llm_client.generate_cloud(
                 prompt=prompt,
                 system_prompt="You are an enterprise RAG router. Return only JSON.",
                 temperature=0.0,
                 max_tokens=1024,
-                enable_thinking=False
+                enable_thinking=False,
+                model=self.llm_client.model_intent,
+                task=LLMTask.ROUTER
             )
             import re
             json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
@@ -507,12 +513,15 @@ Return ONLY valid JSON in this exact structure with no markdown formatting, no b
   "rewritten_query": "average revenue calculation"
 }}
 """
+        from app.core.llm.routing import LLMTask
         response = await self.llm_client.generate_cloud(
             prompt=prompt,
             system_prompt=system_prompt,
             temperature=0.0,
             max_tokens=512,
-            enable_thinking=False
+            enable_thinking=False,
+            model=self.llm_client.model_intent,
+            task=LLMTask.ROUTER
         )
 
         # Parse & sanitize response

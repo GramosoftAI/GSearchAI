@@ -127,6 +127,7 @@ JSON:
 QUERY:
 {query}
 """
+        from app.core.llm.routing import LLMTask
         try:
             response = await self.llm_client.generate_cloud(
                 prompt=prompt,
@@ -134,7 +135,9 @@ QUERY:
                 temperature=0.0,
                 max_tokens=1024,
                 enable_thinking=False,
-                timeout=8.0
+                model=self.llm_client.model_intent,
+                timeout=15.0, # Increased safety buffer
+                task=LLMTask.INTENT_DETECTION
             )
             
             # Extract JSON block

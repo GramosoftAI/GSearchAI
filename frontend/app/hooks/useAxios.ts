@@ -32,6 +32,7 @@ export interface AxiosConfig<R> extends AxiosRequestConfig {
   path?: string;
   data?: R;
   isFormData?: boolean;
+  hideGlobalLoader?: boolean;
 }
 
 interface UseAxiosProps<T, R> {
@@ -51,6 +52,7 @@ interface UseAxiosProps<T, R> {
 
   successCb?: () => void;
   errorCb?: () => void;
+  hideGlobalLoader?: boolean;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -74,6 +76,7 @@ export default function useAxios<T = any, R = any>({
 
   successCb,
   errorCb,
+  hideGlobalLoader = false,
 }: UseAxiosProps<T, R>) {
   // const { message } = AntApp.useApp();
 
@@ -124,7 +127,9 @@ export default function useAxios<T = any, R = any>({
       controller.current = new AbortController();
 
       setLoading(true);
-      inc();
+      if (!(config?.hideGlobalLoader || hideGlobalLoader)) {
+        inc();
+      }
 
 
       const token = getCookie("AUTH_TOKEN");
@@ -293,7 +298,9 @@ export default function useAxios<T = any, R = any>({
       /* -------------------------------------------------------------------------- */
 
       setLoading(false);
-      dec();
+      if (!(config?.hideGlobalLoader || hideGlobalLoader)) {
+        dec();
+      }
     }
     }, [baseURL, hideErrorMsg, initialData, method, payload, router, showSuccessMsg, successCb, errorCb, successMsg, successStatusCode, url, withCredentials]);
 

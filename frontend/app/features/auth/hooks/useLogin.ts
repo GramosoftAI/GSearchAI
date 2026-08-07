@@ -38,6 +38,7 @@ export function useLogin() {
           if (user) {
             localStorage.setItem("userName", `${user.first_name} ${user.last_name}`);
             localStorage.setItem("isAdmin", String(user.is_admin ?? false));
+            localStorage.setItem("app_theme_preference", "light");
             router.push(routes.dashboard);
           }
 

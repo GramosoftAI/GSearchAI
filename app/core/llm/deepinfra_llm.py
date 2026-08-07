@@ -212,6 +212,7 @@ class DeepInfraLLMClient:
         self.api_key = settings.deepinfra_api_key
         self.base_url = settings.deepinfra_api_url
 
+<<<<<<< HEAD
         # Task-specific model assignments — all from settings, never hardcoded
         self.model_answer      = settings.model_answer
         self.model_extraction  = settings.active_model("extraction")
@@ -220,6 +221,19 @@ class DeepInfraLLMClient:
         self.model_reranker    = settings.active_model("reranker")
         self.model_memory      = settings.model_memory
         self.model_vision      = settings.model_vision
+=======
+        # Ingestion / Extraction Configuration (now using DeepInfra instead of local gateway)
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+        self.gateway_api_key = os.environ.get("LLM_GATEWAY_API_KEY") or getattr(settings, 'llm_gateway_api_key', "")
+        base_url = getattr(settings, 'llm_base_url', 'http://103.191.132.28:7218')
+        if base_url == "https://api.deepinfra.com/v1/openai":
+            self.gateway_base_url = f"{base_url}/chat/completions"
+        else:
+            self.gateway_base_url = f"{base_url}/v1/chat/completions" if not base_url.endswith("/v1/chat/completions") else base_url
+        self.gateway_model = os.environ.get("LLM_GATEWAY_MODEL") or getattr(settings, "llm_gateway_model", "qwen2.5:3b")
+>>>>>>> staging
 
         # Token limits — all from settings
         self.max_tokens_answer       = settings.max_tokens_answer
@@ -233,7 +247,6 @@ class DeepInfraLLMClient:
         # Backwards compatibility attributes
         self.deepinfra_model = self.model_answer
         self.gateway_model = self.model_extraction
-        self.timeout = 90.0  # Enterprise timeout cap against stalled sockets
         self.deepinfra_base_url = f"{self.base_url}/chat/completions"
         self.gateway_base_url = f"{self.base_url}/chat/completions"
         self.deepinfra_api_key = self.api_key
@@ -421,8 +434,6 @@ class DeepInfraLLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         enable_thinking: Optional[bool] = False,
-        model: Optional[str] = None,
-        timeout: Optional[float] = None,
     ) -> str:
         """
         Equivalent to generate() but explicitly routes to the cloud DeepInfra model 
@@ -435,7 +446,6 @@ class DeepInfraLLMClient:
         if self.deepinfra_api_key:
             headers["Authorization"] = f"Bearer {self.deepinfra_api_key}"
         
-        target_model = model or self.deepinfra_model
         payload = {
             "model": self.model_answer,
             "messages": [
@@ -453,7 +463,7 @@ class DeepInfraLLMClient:
             try:
                 client = await self.get_client()
                 async with _llm_semaphore:
-                    response = await client.post(self.deepinfra_base_url, headers=headers, json=payload, timeout=timeout or self.timeout)
+                    response = await client.post(self.deepinfra_base_url, headers=headers, json=payload, timeout=self.timeout)
                 response.raise_for_status()
                 data = response.json()
                 content = data["choices"][0]["message"]["content"].strip()
@@ -599,7 +609,6 @@ class DeepInfraLLMClient:
         
         think_state = 0
         think_buf = ""
-        full_text = ""
         try:
             client = await self.get_client()
             stream_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=30.0)
@@ -670,7 +679,6 @@ class DeepInfraLLMClient:
                                 clean_delta = delta
                                 
                             if clean_delta:
-                                full_text += clean_delta
                                 yield clean_delta
                         except json.JSONDecodeError as e:
                             logger.warning(f"  Response parsing error in stream: {e} for line {data_str}")
@@ -678,16 +686,6 @@ class DeepInfraLLMClient:
                             
             logger.info(f"LLM Stream Completed in {time.time() - start_time:.2f}s")
             
-            if think_state == 0 and think_buf and not "<think>".startswith(think_buf.lstrip()):
-                full_text += think_buf
-                yield think_buf
-
-            if "[Source:" in full_text:
-                last_source_idx = full_text.rfind("[Source:")
-                last_close_idx = full_text.rfind("]", last_source_idx)
-                if last_close_idx == -1:
-                    yield "]"
-                    
         except httpx.ReadTimeout:
             logger.error(f"LLM Stream Failed: ReadTimeout after {time.time() - start_time:.2f}s")
             yield "Error: LLM generation timed out."

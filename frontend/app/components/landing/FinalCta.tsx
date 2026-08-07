@@ -1,5 +1,5 @@
 "use client";
-import React from "react";
+
 import { Button, Space, Typography } from "antd";
 
 const { Title, Paragraph } = Typography;
@@ -8,7 +8,7 @@ export default function FinalCta() {
   return (
   <section className="gs-final" id="cta">
     <div className="wrap">
-      <Title level={1} style={{ fontSize: "clamp(30px,4vw,46px)", fontWeight: 800, letterSpacing: "-0.03em", maxWidth: 680, margin: "0 auto", textAlign: "center",color:"var(--ink)" }}>
+      <Title level={2} style={{ fontSize: "clamp(30px,4vw,46px)", fontWeight: 800, letterSpacing: "-0.03em", maxWidth: 680, margin: "0 auto", textAlign: "center",color:"var(--ink)" }}>
         Give your company a second brain.
       </Title>
       <Paragraph style={{ fontSize: 18, color: "var(--muted)", margin: "18px auto 30px", maxWidth: 500, textAlign: "center" }}>

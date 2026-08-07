@@ -1,11 +1,13 @@
 "use client";
 
-import { useState,useEffect } from "react";
+import { useState, useEffect } from "react";
 import Sidebar from "../components/layout/Sidebar";
 import Header from "../components/layout/Header";
 import { Drawer } from "antd";
 import { useStore } from "../hooks/useStore";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { getCookie } from "../config/cookies";
+import Loader from "../components/provider/Loder";
 
 export default function DashboardLayout({
   children,
@@ -18,6 +20,17 @@ export default function DashboardLayout({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { isAdminMode, setIsAdminMode } = useStore();
   const pathname = usePathname();
+  const router = useRouter();
+  const [authorized, setAuthorized] = useState(false);
+
+  useEffect(() => {
+    const token = getCookie("AUTH_TOKEN");
+    if (!token) {
+      router.push("/login");
+    } else {
+      setAuthorized(true);
+    }
+  }, [pathname, router]);
 
   useEffect(() => {
     if (pathname.startsWith("/dashboard/admin")) {
@@ -49,6 +62,10 @@ export default function DashboardLayout({
     };
   }, []);
 
+  if (!authorized) {
+    return <Loader />;
+  }
+
   return (
     <div className="h-screen flex w-full relative bg-[var(--app-surface-muted)] overflow-hidden transition-colors duration-500">
       {/* Premium Background Decorative Elements */}
@@ -69,7 +86,7 @@ export default function DashboardLayout({
         placement="left"
         onClose={() => setMobileMenuOpen(false)}
         open={mobileMenuOpen}
-        styles={{ 
+        styles={{
           body: { padding: 0, background: 'var(--app-surface)' },
           content: { background: 'var(--app-surface)' }
         }}

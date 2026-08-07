@@ -99,6 +99,10 @@ export function useRegister() {
 
           const token = responseData?.tokens?.access_token ?? "";
           setCookie(AUTH_COOKIE_KEY, token);
+          if (typeof window !== "undefined" && token) {
+            localStorage.setItem("AUTH_TOKEN", token);
+            localStorage.setItem("token", token);
+          }
         }
       );
     } catch (err: unknown) {

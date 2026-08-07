@@ -1,6 +1,6 @@
 "use client";
-import React, { useState, useEffect, useRef } from "react";
-import { Row, Col, Card, Typography, Statistic } from "antd";
+import { useState, useEffect, useRef } from "react";
+import { Row, Col, Card, Typography} from "antd";
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -37,14 +37,14 @@ const AnimatedCounter = ({ value }: { value: string }) => {
           setHasAnimated(true);
           let start = 0;
           const end = target;
-          const duration = 1200; // 1.2 seconds animation
+          const duration = 1200; 
           const startTime = performance.now();
 
           const animate = (currentTime: number) => {
             const elapsed = currentTime - startTime;
             const progress = Math.min(elapsed / duration, 1);
             
-            // Ease out quad
+           
             const easeProgress = progress * (2 - progress);
             
             const currentCount = Math.floor(easeProgress * (end - start) + start);

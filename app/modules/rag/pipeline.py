@@ -487,9 +487,37 @@ class RAGPipeline:
 
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
 
+<<<<<<< HEAD
         # --- EXCLUSIVE PANDAS BYPASS REMOVED ---
         # Table analytics is handled purely via router intent and _execute_table_analytics.
         # -------------------------------
+=======
+
+        # --- SUPPLEMENTARY PANDAS CSV EXTRACTION ---
+        # Uses description='excel_parquet' as the authoritative detection flag.
+        # parsed_path is a bare dataset name; actual data is in local parquet via ParquetIngester.
+        supplementary_csv_context = ""
+        try:
+            from sqlalchemy import text
+            if getattr(self, "db", None):
+                kb_query = "SELECT parsed_path, description FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[]));"
+                result = await self.db.execute(text(kb_query), {"kb_ids": kb_ids})
+                kb_path_rows = result.all()
+
+                has_excel_kb = any(getattr(r, 'description', '') == 'excel_parquet' for r in kb_path_rows)
+
+                if has_excel_kb:
+                    logger.info(" excel_parquet KB detected! Gathering supplementary tabular context.")
+                    pandas_result = await self._execute_table_analytics(query, kb_ids)
+                    if pandas_result and "validation error" not in pandas_result.lower() and "No valid spreadsheet" not in pandas_result:
+                        supplementary_csv_context = f"\n\n### Supplementary Tabular Data\n{pandas_result}\n"
+                    else:
+                        logger.warning(f" Supplementary CSV extraction returned no usable results: {pandas_result}")
+        except Exception as e:
+            logger.error(f"Failed supplementary CSV extraction: {e}", exc_info=True)
+        # ---------------------------------------------
+
+>>>>>>> staging
 
         # Populate KB metadata (names, total chunks)
         if self.db:
@@ -600,21 +628,16 @@ class RAGPipeline:
             from app.modules.rag.engines.vector_engine import VectorEngine
             vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
             from app.modules.rag.orchestrator.planner import RetrievalTask
-            async def fetch_fallback(missing_goal):
+            for missing in missing_goals:
                 fallback_task = RetrievalTask(
                     engine_name="vector",
                     query=query,
                     metadata_filters=analysis.metadata,
-                    task_id=f"fallback_{missing_goal}",
-                    target_section=missing_goal
+                    task_id=f"fallback_{missing}",
+                    target_section=missing
                 )
                 setattr(fallback_task, "top_k", top_k)
-                return await vector_fallback.retrieve(fallback_task, kb_ids)
-
-            fallback_results = await asyncio.gather(
-                *(fetch_fallback(m) for m in missing_goals)
-            )
-            for fb_chunks in fallback_results:
+                fb_chunks = await vector_fallback.retrieve(fallback_task, kb_ids)
                 all_chunks.extend(fb_chunks)
                 
         engine_time = time.time() - engine_start
@@ -647,7 +670,7 @@ class RAGPipeline:
                     chunks=final_chunks,
                     entity_mentions={},
                     total_tokens=sum(len(c.text.split()) for c in final_chunks),
-                    triplet_context=triplet_context_str + extractive_context_text,
+                    triplet_context=triplet_context_str + supplementary_csv_context,
                     triplets=relevant_triplets_list,
                     search_type=analysis.intent.name
                 )
@@ -1739,8 +1762,8 @@ class RAGPipeline:
         if 'extractive_context_text' in locals() and extractive_context_text:
             final_triplet_context = extractive_context_text + final_triplet_context
             
-        # Removed undefined supplementary_csv_context
-        
+        final_triplet_context += supplementary_csv_context
+            
         return RAGContext(
 
             query=query,
@@ -1997,11 +2020,6 @@ class RAGPipeline:
                 reverse=True
             )
             
-            # DOCUMENT VECTOR SUMMARY FALLBACK: If no chunks met similarity threshold, return initial 5 document chunks for overview/summarization
-            if not sorted_chunks and chunks_with_similarity:
-                logger.info("   -> Broad Summary Fallback: No chunks met similarity threshold. Returning top 5 initial document chunks by position.")
-                sorted_chunks = sorted(chunks_with_similarity, key=lambda x: x.get("position", 0))
-            
             if chunks_with_similarity:
                 max_score = max(c["similarity"] for c in chunks_with_similarity)
                 logger.info(f" Max similarity score found in Neo4j: {max_score:.4f} (Threshold: {self.settings.similarity_min_threshold})")
@@ -2065,6 +2083,14 @@ class RAGPipeline:
             return None
             
         kb_names = {str(r.id): r.name for r in kb_rows}
+<<<<<<< HEAD
+        
+        dataset_schema = {}
+        for r in kb_rows:
+            if r.dataset_schema:
+                dataset_schema.update(r.dataset_schema)
+=======
+
         # --- DEFINITIVE FIX: Use ParquetIngester registry to resolve local parquet path ---
         # The CSV ingestion pipeline converts CSV→Parquet and registers the path in
         # data/parquet/active_datasets.json under the key kb.parsed_path (e.g. 'dummy_employees_details').
@@ -2081,7 +2107,6 @@ class RAGPipeline:
             logger.info(f" {len(excel_kb_rows)} excel_parquet KB(s) detected! Resolving local parquet via ParquetIngester.")
             from .pandas_engine import PandasQueryEngine
             active_paths = []
-            file_names = []
             for ekb in excel_kb_rows:
                 dataset_name = getattr(ekb, 'parsed_path', None) or getattr(ekb, 'name', None)
                 if dataset_name:
@@ -2089,24 +2114,18 @@ class RAGPipeline:
                     if p:
                         logger.info(f" Resolved parquet: {p}")
                         active_paths.append(p)
-                        raw_fn = getattr(ekb, 'source', None) or getattr(ekb, 's3_path', None) or getattr(ekb, 'name', None) or dataset_name
-                        file_names.append(raw_fn)
                     else:
                         logger.warning(f" No active parquet found for dataset_name={dataset_name!r}")
 
             if active_paths:
-                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths, file_names=file_names)
+                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
                 query_str = "PANDAS PandasQueryEngine.execute_query"
                 all_csv_results = []
-                from .service import clean_source_name
                 for ekb, path in zip(excel_kb_rows, active_paths):
                     try:
                         res = await engine.execute_query(query, path)
                         if res and "No valid spreadsheet" not in res:
-                            raw_src = getattr(ekb, 'source', None) or getattr(ekb, 's3_path', None) or getattr(ekb, 'parsed_path', None) or ekb.name or path
-                            kb_label = clean_source_name(raw_src)
-                            if "ENTERPRISE SPREADSHEET ANALYSIS" in str(kb_label).upper() and getattr(ekb, 'source', None):
-                                kb_label = clean_source_name(ekb.source)
+                            kb_label = ekb.name or path
                             all_csv_results.append(f"[Source: {kb_label}]\n{res}")
                         else:
                             logger.warning(f" PandasQueryEngine returned empty/error for {path}: {res}")
@@ -2124,6 +2143,8 @@ class RAGPipeline:
         dataset_schema = non_excel_rows[0].dataset_schema if non_excel_rows else kb_rows[0].dataset_schema
         parsed_path = non_excel_rows[0].parsed_path if non_excel_rows else kb_rows[0].parsed_path
         source = non_excel_rows[0].source if non_excel_rows else kb_rows[0].source
+
+>>>>>>> staging
 
         # Fallback to standard SQL generation over document_table_rows
         if not dataset_schema:

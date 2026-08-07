@@ -1,6 +1,6 @@
 "use client"
 
-import { Button, Flex, Input, Typography, Card, Row, Col, Segmented, Modal, Spin, Divider, Progress, message } from 'antd'
+import { Button, Flex, Input, Typography, Card, Row, Col, Segmented, Modal, Spin, Divider, Progress, message, Checkbox } from 'antd'
 import { useState, useEffect, useRef } from 'react'
 import { Globe, FileText, Type, Upload, X, Image as ImageIcon, Clock } from 'lucide-react'
 import AgentList from "../../components/ui/AgentList";
@@ -203,6 +203,8 @@ export default function KnowledgeBasePage() {
   const [request, , loading] = useAxios<unknown, Record<string, unknown> | FormData>({ endpoint: "KNOWLEDGEBASE", showSuccessMsg: true })
   const [getAgents] = useAxios<AgentListResponse>({ endpoint: "GETAGENTLIST" });
   const [agentlist, agentlistres] = useAxios<any>({ endpoint: "GET_LIST" })
+  const [urlDiscover] = useAxios<any>({ endpoint: "URL_DISCOVER", hideGlobalLoader: true })
+  const [urlSelect] = useAxios<any>({ endpoint: "URL_SELECT", showSuccessMsg: true })
 
   const activeJobs = useStore((state) => state.activeJobs);
   const setActiveJobs = useStore((state) => state.setActiveJobs);
@@ -316,6 +318,14 @@ export default function KnowledgeBasePage() {
   const [excelSheets, setExcelSheets] = useState<{ [sheetName: string]: string[][] }>({});
   const [excelSheetNames, setExcelSheetNames] = useState<string[]>([]);
   const [activeExcelSheet, setActiveExcelSheet] = useState<string>("");
+  const [excelPage, setExcelPage] = useState<number>(1);
+  const excelArrayBufferRef = useRef<ArrayBuffer | null>(null);
+
+  // gcrawlai link crawler states
+  const [crawlerModalVisible, setCrawlerModalVisible] = useState(false);
+  const [crawlerLoading, setCrawlerLoading] = useState(false);
+  const [crawledUrls, setCrawledUrls] = useState<string[]>([]);
+  const [selectedUrls, setSelectedUrls] = useState<string[]>([]);
 
   const sourcesList = Array.isArray(agentlistres)
     ? agentlistres
@@ -336,25 +346,10 @@ export default function KnowledgeBasePage() {
   }, [agentlistres]);
 
   const handleOpenPreview = async (item: any) => {
-    setPreviewItem(item);
-    setPreviewVisible(true);
-    setPreviewUrl("");
-    setParsedText("");
-    setParsedUrl("");
-    setPreviewType("other");
-    setExcelSheets({});
-    setExcelSheetNames([]);
-    setActiveExcelSheet("");
-
     const nameStr = (item.name || item.source || "").toLowerCase();
     const isUrl = nameStr.includes("url") || nameStr.includes("http") || nameStr.includes("www.");
 
-    const kbId = item.id || item.kb_id;
-
     if (isUrl) {
-      setPreviewLoading(false);
-      setPreviewTab('parsed');
-
       const rawSource = item.name || item.source || "";
       let extractedUrl = "";
       const urlMatch = rawSource.match(/(https?:\/\/[^\s]+)/i);
@@ -372,10 +367,21 @@ export default function KnowledgeBasePage() {
       if (extractedUrl) {
         window.open(extractedUrl, '_blank');
       }
-
-      setParsedText(`### URL Source\n\nDestination URL opened in a new tab:\n\n**URL:** [${extractedUrl}](${extractedUrl})\n\nNo preview content available. Data is empty.`);
       return;
     }
+
+    setPreviewItem(item);
+    setPreviewVisible(true);
+    setPreviewUrl("");
+    setParsedText("");
+    setParsedUrl("");
+    setPreviewType("other");
+    setExcelSheets({});
+    setExcelSheetNames([]);
+    setActiveExcelSheet("");
+    setExcelPage(1);
+
+    const kbId = item.id || item.kb_id;
 
     // Set initial tab based on name and paths
     const isText = nameStr.includes("text");
@@ -419,24 +425,35 @@ export default function KnowledgeBasePage() {
           } else if (isCSV || isExcel) {
             setPreviewType(isCSV ? "csv" : "excel");
             const arrayBuffer = await blob.arrayBuffer();
-            const XLSX = await import("xlsx");
-            const workbook = XLSX.read(arrayBuffer, { type: "array" });
+            excelArrayBufferRef.current = arrayBuffer;
 
-            const sheetsData: { [sheetName: string]: string[][] } = {};
-            workbook.SheetNames.forEach((sheetName) => {
-              const worksheet = workbook.Sheets[sheetName];
+            const XLSX = await import("xlsx");
+            // 1. Read sheet names first (extremely fast!)
+            const workbook = XLSX.read(arrayBuffer, { type: "array", bookSheets: true });
+            setExcelSheetNames(workbook.SheetNames);
+
+            if (workbook.SheetNames.length > 0) {
+              const firstSheet = workbook.SheetNames[0];
+              setActiveExcelSheet(firstSheet);
+
+              // 2. Parse only the active sheet on load (skips all other sheets)
+              const partialWorkbook = XLSX.read(arrayBuffer, {
+                type: "array",
+                sheets: [firstSheet],
+                cellFormula: false,
+                cellHTML: false,
+                cellText: false,
+                cellDates: true
+              });
+
+              const worksheet = partialWorkbook.Sheets[firstSheet];
               const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
-              sheetsData[sheetName] = jsonData.map((row: any) =>
+              const formattedData = jsonData.map((row: any) =>
                 Array.isArray(row)
                   ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
                   : []
               );
-            });
-
-            setExcelSheets(sheetsData);
-            setExcelSheetNames(workbook.SheetNames);
-            if (workbook.SheetNames.length > 0) {
-              setActiveExcelSheet(workbook.SheetNames[0]);
+              setExcelSheets({ [firstSheet]: formattedData });
             }
           }
         } else {
@@ -638,6 +655,41 @@ export default function KnowledgeBasePage() {
   }, [])
 
 
+  const handleConfirmCrawlerLinks = async () => {
+    if (selectedUrls.length === 0) {
+      message.warning("Please select at least one URL to import");
+      return;
+    }
+    
+    setCrawlerLoading(true);
+
+    try {
+      // Call urlSelect API to import selected URLs
+      await urlSelect({
+        path: `/${agent?.id}/sources/url/select`,
+        data: {
+          urls: selectedUrls
+        }
+      });
+      
+      message.success("Successfully imported selected URLs to knowledge base");
+      setCrawlerModalVisible(false);
+      setUrl(''); // clear URL input
+      
+      // Refresh source list
+      if (agent?.id) {
+        await agentlist({
+          path: `/agents/${agent.id}?limit=50&offset=0`,
+        });
+      }
+    } catch (err) {
+      console.error("Bulk URL import failed:", err);
+      message.error("Failed to import selected URLs");
+    } finally {
+      setCrawlerLoading(false);
+    }
+  };
+
   async function handleSubmit() {
     if (!agent?.id) {
       message.warning("No agent selected")
@@ -645,45 +697,96 @@ export default function KnowledgeBasePage() {
     }
 
     if (activeTab === 'url') {
-      const res = await request({ data: { agent_id: agent.id, agent_name: agent.name, url }, path: `/${agent.id}/sources/url` }) as any
-      const jobId = res?.jobId || res?.job_id || res?.data?.jobId || res?.data?.job_id || res?.result?.jobId || res?.result?.job_id;
-      if (jobId) {
-        setActiveJobs(prev => [...prev, {
-          id: jobId,
-          name: url,
-          type: 'url',
-          progress: 0,
-          status: 'pending'
-        }]);
+      if (!url.trim()) {
+        message.warning("Please enter a URL to discover");
+        return;
       }
-      await agentlist({
-        path: `/agents/${agent.id}?limit=50&offset=0`,
-      });
-      setUrl('')
-      return
+      setCrawlerModalVisible(true);
+      setCrawlerLoading(true);
+      setCrawledUrls([]);
+      setSelectedUrls([]);
+
+      try {
+        // Call urlDiscover API to get sub-links
+        const response = await urlDiscover({
+          path: `/${agent.id}/sources/url/discover`,
+          data: {
+            url: url.trim()
+          }
+        });
+
+        // Backend response directly contains data: { urls: [urls] } or data: [urls]
+        const linksList = response?.data?.urls || response?.data || response?.links || [];
+
+        if (Array.isArray(linksList)) {
+          setCrawledUrls(linksList);
+          setSelectedUrls([]); // Empty by default
+        } else {
+          throw new Error("No URL list returned from discovery API");
+        }
+      } catch (err: any) {
+        setCrawlerModalVisible(false);
+        message.error(err.message || "Failed to discover links");
+      } finally {
+        setCrawlerLoading(false);
+      }
+      return;
     }
 
     if (activeTab === 'pdf') {
       if (!selectedFile) { console.warn("No file selected"); return }
-      const formData = new FormData()
-      formData.append('agent_id', agent.id)
-      formData.append('agent_name', agent.name)
-      formData.append('file', selectedFile)
-      const res = await request({ data: formData, path: `/${agent.id}/sources/pdf`, isFormData: true, transformRequest: [(data: unknown) => data] }) as any
-      const jobId = res?.jobId || res?.job_id || res?.data?.jobId || res?.data?.job_id || res?.result?.jobId || res?.result?.job_id;
-      if (jobId) {
-        setActiveJobs(prev => [...prev, {
-          id: jobId,
-          name: selectedFile.name,
-          type: 'pdf',
+      const tempId = `temp_${Date.now()}`;
+      const fileName = selectedFile.name;
+      const fileToUpload = selectedFile;
+      setSelectedFile(null);
+
+      // Instantly show progress card at bottom
+      setActiveJobs(prev => [...prev, {
+        id: tempId,
+        name: fileName,
+        type: 'pdf',
+        progress: 5,
+        status: 'uploading'
+      }]);
+
+      const formData = new FormData();
+      formData.append('agent_id', agent.id);
+      formData.append('agent_name', agent.name);
+      formData.append('file', fileToUpload);
+
+      try {
+        const res = await request({ data: formData, path: `/${agent.id}/sources/pdf`, isFormData: true, transformRequest: [(data: unknown) => data] }) as any;
+        const jobId = res?.jobId || res?.job_id || res?.data?.jobId || res?.data?.job_id || res?.result?.jobId || res?.result?.job_id;
+
+        if (jobId) {
+          setActiveJobs(prev => prev.map(j => j.id === tempId ? {
+            id: jobId,
+            name: fileName,
+            type: 'pdf',
+            progress: 10,
+            status: 'processing'
+          } : j));
+        } else {
+          setActiveJobs(prev => prev.map(j => j.id === tempId ? {
+            ...j,
+            progress: 100,
+            status: 'completed'
+          } : j));
+          setTimeout(() => {
+            setActiveJobs(prev => prev.filter(j => j.id !== tempId));
+          }, 3000);
+        }
+      } catch (err) {
+        setActiveJobs(prev => prev.map(j => j.id === tempId ? {
+          ...j,
           progress: 0,
-          status: 'pending'
-        }]);
+          status: 'failed'
+        } : j));
       }
+
       await agentlist({
         path: `/agents/${agent.id}?limit=50&offset=0`,
       });
-      setSelectedFile(null)
       return
     }
 
@@ -1167,11 +1270,11 @@ export default function KnowledgeBasePage() {
                   size="small"
                   className="shadow-sm hover:shadow-md transition-all"
                 >
-                  <div className="flex items-start gap-3 justify-between">
+                  <div className="flex flex-col sm:flex-row sm:items-start gap-3 justify-between">
                     <div className="flex items-start gap-3 flex-1 min-w-0">
                       <FileTextOutlined
                         style={{ fontSize: 20 }}
-                        className="text-blue-500 mt-1"
+                        className="text-blue-500 mt-1 shrink-0"
                       />
 
                       <div className="flex-1 min-w-0">
@@ -1209,7 +1312,7 @@ export default function KnowledgeBasePage() {
                       </div>
                     </div>
 
-                    <div className="shrink-0 ml-3 flex gap-2">
+                    <div className="flex items-center justify-end gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-[var(--app-border)]/40 shrink-0 sm:ml-3">
                       <Button
                         type="primary"
                         size="middle"
@@ -1338,7 +1441,36 @@ export default function KnowledgeBasePage() {
                           return (
                             <button
                               key={sheetName}
-                              onClick={() => setActiveExcelSheet(sheetName)}
+                              onClick={async () => {
+                                if (!excelSheets[sheetName] && excelArrayBufferRef.current) {
+                                  setPreviewLoading(true);
+                                  try {
+                                    const XLSX = await import("xlsx");
+                                    const partialWorkbook = XLSX.read(excelArrayBufferRef.current, {
+                                      type: "array",
+                                      sheets: [sheetName],
+                                      cellFormula: false,
+                                      cellHTML: false,
+                                      cellText: false,
+                                      cellDates: true
+                                    });
+                                    const worksheet = partialWorkbook.Sheets[sheetName];
+                                    const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+                                    const formattedData = jsonData.map((row: any) =>
+                                      Array.isArray(row)
+                                        ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+                                        : []
+                                    );
+                                    setExcelSheets(prev => ({ ...prev, [sheetName]: formattedData }));
+                                  } catch (err) {
+                                    console.error("Failed to parse sheet:", sheetName, err);
+                                  } finally {
+                                    setPreviewLoading(false);
+                                  }
+                                }
+                                setActiveExcelSheet(sheetName);
+                                setExcelPage(1);
+                              }}
                               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
                                 ? "bg-[#0fb5a1] text-white shadow-sm"
                                 : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
@@ -1354,30 +1486,73 @@ export default function KnowledgeBasePage() {
                     {/* Spreadsheet Grid */}
                     <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
                       {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
-                        <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
-                          <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
-                            <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
-                              <tr>
-                                {excelSheets[activeExcelSheet][0].map((cell, idx) => (
-                                  <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
-                                    {cell || `Column ${idx + 1}`}
-                                  </th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
-                              {excelSheets[activeExcelSheet].slice(1).map((row, rowIdx) => (
-                                <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
-                                  {excelSheets[activeExcelSheet][0].map((_, colIdx) => (
-                                    <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
-                                      {row[colIdx] || ""}
-                                    </td>
-                                  ))}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
+                        (() => {
+                          const activeSheetData = excelSheets[activeExcelSheet];
+                          const totalRows = activeSheetData.length > 0 ? activeSheetData.length - 1 : 0;
+                          const PAGE_SIZE = 100;
+                          const totalPages = Math.ceil(totalRows / PAGE_SIZE);
+                          const displayedRows = activeSheetData.slice(
+                            1 + (excelPage - 1) * PAGE_SIZE,
+                            1 + excelPage * PAGE_SIZE
+                          );
+
+                          return (
+                            <div className="flex flex-col gap-4">
+                              <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
+                                <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
+                                  <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
+                                    <tr>
+                                      {activeSheetData[0].map((cell, idx) => (
+                                        <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
+                                          {cell || `Column ${idx + 1}`}
+                                        </th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
+                                    {displayedRows.map((row, rowIdx) => (
+                                      <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
+                                        {activeSheetData[0].map((_, colIdx) => (
+                                          <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
+                                            {row[colIdx] || ""}
+                                          </td>
+                                        ))}
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              
+                              {/* Pagination footer */}
+                              {totalPages > 1 && (
+                                <div className="flex items-center justify-between p-3 border border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 select-none rounded-xl">
+                                  <span className="text-xs text-[var(--app-text-soft)] font-bold">
+                                    Showing {1 + (excelPage - 1) * PAGE_SIZE} - {Math.min(excelPage * PAGE_SIZE, totalRows)} of {totalRows} rows
+                                  </span>
+                                  <div className="flex gap-2">
+                                    <button
+                                      disabled={excelPage === 1}
+                                      onClick={() => setExcelPage(prev => Math.max(prev - 1, 1))}
+                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                    >
+                                      Previous
+                                    </button>
+                                    <span className="text-xs self-center px-1 font-bold text-[var(--app-text)]">
+                                      Page {excelPage} of {totalPages}
+                                    </span>
+                                    <button
+                                      disabled={excelPage === totalPages}
+                                      onClick={() => setExcelPage(prev => Math.min(prev + 1, totalPages))}
+                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                    >
+                                      Next
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()
                       ) : (
                         <Flex vertical align="center" justify="center" className="py-20 text-[var(--app-text-soft)] h-full">
                           <FileText size={32} className="mb-2 opacity-55" />
@@ -1401,6 +1576,109 @@ export default function KnowledgeBasePage() {
               </div>
             )}
           </div>
+        )}
+      </Modal>
+
+      <Modal
+        title={
+          <Flex align="center" gap={8}>
+            <Globe className="text-[#0fb5a1]" size={18} />
+            <Text className="font-bold text-slate-800 dark:text-slate-200">Import Crawler Links</Text>
+          </Flex>
+        }
+        open={crawlerModalVisible}
+        onCancel={() => setCrawlerModalVisible(false)}
+        footer={
+          !crawlerLoading && crawledUrls.length > 0 ? (
+            <Flex justify="end" gap={8}>
+              <Button onClick={() => setCrawlerModalVisible(false)}>Cancel</Button>
+              <Button
+                type="primary"
+                onClick={handleConfirmCrawlerLinks}
+                style={{ backgroundColor: "#0fb5a1", borderColor: "#0fb5a1" }}
+              >
+                Import {selectedUrls.length} links
+              </Button>
+            </Flex>
+          ) : null
+        }
+        width={600}
+        centered
+        destroyOnClose
+      >
+        {crawlerLoading ? (
+          <Flex vertical align="center" justify="center" className="py-12 gap-3">
+            <Spin size="large" />
+            <Text className="text-sm font-medium text-slate-500">Crawling web pages and extracting links, please wait...</Text>
+          </Flex>
+        ) : crawledUrls.length > 0 ? (
+          <div className="space-y-4 py-2">
+            <Text className="text-xs text-slate-500 block">
+              We crawled the domain and found the following links. Select the pages you want to add to your knowledge base.
+            </Text>
+            
+            {/* Select All Checkbox */}
+            <div className="flex justify-between items-center bg-slate-100 dark:bg-slate-900/50 p-2.5 rounded-lg border border-slate-200/50 dark:border-slate-800/50">
+              <Checkbox
+                checked={selectedUrls.length === crawledUrls.length}
+                indeterminate={selectedUrls.length > 0 && selectedUrls.length < crawledUrls.length}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    setSelectedUrls(crawledUrls);
+                  } else {
+                    setSelectedUrls([]);
+                  }
+                }}
+              >
+                <span className="font-semibold text-xs text-slate-700 dark:text-slate-300">Select all links</span>
+              </Checkbox>
+              <span className="text-[10px] font-bold text-[#0fb5a1] bg-[#0fb5a1]/10 px-2.5 py-0.5 rounded-full">
+                {selectedUrls.length} / {crawledUrls.length} selected
+              </span>
+            </div>
+
+            {/* List scrollbox */}
+            <div className="max-h-72 overflow-y-auto space-y-2.5 border border-slate-200 dark:border-slate-800 rounded-xl p-3 bg-slate-50 dark:bg-slate-955/50 custom-scrollbar">
+              {crawledUrls.map((link) => {
+                const isSelected = selectedUrls.includes(link);
+                return (
+                  <div
+                    key={link}
+                    onClick={() => {
+                      if (isSelected) {
+                        setSelectedUrls(prev => prev.filter(u => u !== link));
+                      } else {
+                        setSelectedUrls(prev => [...prev, link]);
+                      }
+                    }}
+                    className={`flex items-start p-2.5 rounded-lg border transition-all cursor-pointer select-none ${
+                      isSelected
+                        ? "bg-[#0fb5a1]/5 border-[#0fb5a1]/30 text-slate-800 dark:text-slate-100"
+                        : "bg-white dark:bg-slate-900 border-slate-200/60 dark:border-slate-800/60 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700"
+                    }`}
+                  >
+                    <Checkbox
+                      checked={isSelected}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedUrls(prev => [...prev, link]);
+                        } else {
+                          setSelectedUrls(prev => prev.filter(u => u !== link));
+                        }
+                      }}
+                      className="mt-0.5 shrink-0"
+                    />
+                    <span className="ml-2.5 text-xs font-mono break-all leading-tight">{link}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <Flex vertical align="center" justify="center" className="py-12">
+            <Empty description="No links found on this domain" />
+          </Flex>
         )}
       </Modal>
     </>

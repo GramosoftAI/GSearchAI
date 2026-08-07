@@ -10,9 +10,9 @@ import { SlSettings } from "react-icons/sl";
 import { GoGraph } from "react-icons/go";
 import { useTheme } from "../provider/ThemeProvider";
 import ThemeModeSwitch from "../ui/ThemeModeSwitch";
-import { Button, message } from "antd";
+import { Button} from "antd";
 import { MenuUnfoldOutlined, MenuFoldOutlined } from "@ant-design/icons";
-import { Home, Users, Server, ThumbsUp, CreditCard, Settings, DollarSign, AlertCircle, Shield } from "lucide-react";
+import { Home, Users,ThumbsUp, CreditCard, Settings, DollarSign, AlertCircle, Shield } from "lucide-react";
 import { useStore } from "../../hooks/useStore";
 
 type MenuItem = {
@@ -36,7 +36,7 @@ export const adminMenuItems = [
   { label: "Overview", icon: Home, path: "/dashboard/admin/overview" },
   { label: "User Management", icon: Users, path: "/dashboard/admin/users" },
   { label: "Feedback", icon: ThumbsUp, path: "/dashboard/admin/feedback" },
-  { label: "Plans & Billing", icon: CreditCard, path: "/dashboard/admin/billing" },
+  { label: "Token Usage & Costs", icon: CreditCard, path: "/dashboard/admin/billing" },
   { label: "Global Settings", icon: Settings, path: "/dashboard/admin/settings" },
   { label: "Custom Requests", icon: DollarSign, path: "/dashboard/admin/requests" },
   { label: "Error Logs", icon: AlertCircle, path: "/dashboard/admin/logs" },
@@ -44,7 +44,7 @@ export const adminMenuItems = [
 
 interface SidebarProps {
   collapsed: boolean;
-  onToggle: () => void; // Added onToggle here to handle collapse locally
+  onToggle: () => void; 
   onItemClick?: () => void;
 }
 
@@ -67,32 +67,44 @@ export default function Sidebar({ collapsed, onToggle, onItemClick }: SidebarPro
         collapsed ? "lg:w-24 w-24" : "w-full lg:w-80"
       } bg-[var(--app-surface)] text-[var(--app-text)] z-50 border-r border-[var(--app-border)] shadow-xl overflow-hidden`}
     >
-      {/* 1. Header Section with Integrated Menu Toggle Button */}
       <div className={`pt-7 px-6 pb-10 flex items-center ${collapsed ? "justify-center" : "justify-between"}`}>
         <div className="flex items-center gap-4">
-          {isAdminMode ? (
-            <div 
-              className="w-12 h-12 rounded-[18px] text-white flex items-center justify-center flex-shrink-0 shadow-lg shadow-[var(--app-primary)]/20 animate-in zoom-in duration-300"
-              style={{ backgroundColor: "var(--app-primary)" }}
-            >
-              <Shield size={24} style={{ color: "#ffffff", fill: "#ffffff" }} />
-            </div>
+          {collapsed ? (
+            isAdminMode ? (
+              <div 
+                className="w-12 h-12 rounded-[18px] text-white flex items-center justify-center flex-shrink-0 shadow-lg shadow-[var(--app-primary)]/20 animate-in zoom-in duration-300"
+                style={{ backgroundColor: "var(--app-primary)" }}
+              >
+                <Shield size={24} style={{ color: "#ffffff", fill: "#ffffff" }} />
+              </div>
+            ) : (
+              <div className="w-12 h-12 rounded-[18px] flex items-center justify-center flex-shrink-0 shadow-lg shadow-[var(--app-primary)]/20 overflow-hidden">
+                <img src="/512_512.png" alt="Gsearch AI Logo" className="w-full h-full object-contain" />
+              </div>
+            )
           ) : (
-            <div 
-              className="w-12 h-12 rounded-[18px] text-white flex items-center justify-center flex-shrink-0 shadow-lg shadow-[var(--app-primary)]/20"
-              style={{ backgroundColor: "var(--app-primary)" }}
-            >
-              <FaBrain size={24} style={{ color: "#ffffff" }} />
-            </div>
-          )}
-          {!collapsed && (
-            <span className="text-[var(--app-text)] text-2xl font-black tracking-tighter leading-none animate-in fade-in duration-300">
-              {isAdminMode ? "Admin Portal" : "Gsearch AI"}
-            </span>
+            isAdminMode ? (
+              <>
+                <div 
+                  className="w-12 h-12 rounded-[18px] text-white flex items-center justify-center flex-shrink-0 shadow-lg shadow-[var(--app-primary)]/20 animate-in zoom-in duration-300"
+                  style={{ backgroundColor: "var(--app-primary)" }}
+                >
+                  <Shield size={24} style={{ color: "#ffffff", fill: "#ffffff" }} />
+                </div>
+                <span className="text-[var(--app-text)] text-2xl font-black tracking-tighter leading-none animate-in fade-in duration-300">
+                  Admin Portal
+                </span>
+              </>
+            ) : (
+              <img 
+                src={isDark ? "/GSearchAI Logos White.svg" : "/Group 1597883327.svg"} 
+                alt="Gsearch AI" 
+                className="h-10 max-w-[180px] object-contain animate-in fade-in duration-300" 
+              />
+            )
           )}
         </div>
 
-        {/* Toggle Button Moved from Header to Sidebar Top Right */}
         {!collapsed && (
           <Button 
             type="text" 
@@ -103,7 +115,6 @@ export default function Sidebar({ collapsed, onToggle, onItemClick }: SidebarPro
         )}
       </div>
 
-      {/* Mini Toggle Trigger for Collapsed State */}
       {collapsed && (
         <div className="flex justify-center pb-4 px-4">
           <Button 
@@ -115,7 +126,6 @@ export default function Sidebar({ collapsed, onToggle, onItemClick }: SidebarPro
         </div>
       )}
 
-      {/* 2. Scrollable Navigation Area */}
       <nav className="flex-1 overflow-y-auto custom-scrollbar px-4 space-y-2">
         {isAdminMode ? (
           adminMenuItems.map((item) => {
@@ -125,7 +135,6 @@ export default function Sidebar({ collapsed, onToggle, onItemClick }: SidebarPro
                 key={item.path}
                 href={item.path}
                 onClick={(e) => {
-                  // message.info("Coming Soon");
                   if (onItemClick) onItemClick();
                 }}
                 className={`group relative flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all duration-300 overflow-hidden ${

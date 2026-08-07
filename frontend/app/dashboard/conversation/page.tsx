@@ -51,6 +51,10 @@ type SourceMetadata = {
   s3_path?: string;
   parsed_path?: string;
   text?: string;
+  name?: string;
+  file_name?: string;
+  title?: string;
+  url?: string;
 };
 
 type Message = {
@@ -372,6 +376,46 @@ function getFileName(sourceUrlOrName: string | any): string {
   }
 }
 
+function getCleanSourceName(rawName: string): string {
+  if (!rawName) return "";
+  let cleaned = rawName;
+  cleaned = cleaned.replace(/^text source:\s*/i, "").trim();
+  
+  if (cleaned.startsWith("http://") || cleaned.startsWith("https://")) {
+    if (cleaned.endsWith("...")) {
+      return cleaned;
+    }
+    const parts = cleaned.split(/[/\\]/);
+    const lastPart = parts[parts.length - 1] || cleaned;
+    if (lastPart.length > 3) return lastPart;
+    return cleaned;
+  }
+  
+  if (cleaned.includes("/") || cleaned.includes("\\")) {
+    const parts = cleaned.split(/[/\\]/);
+    cleaned = parts[parts.length - 1] || cleaned;
+  }
+  return cleaned.replace(/^(pdf|doc|docx|csv|xlsx|image|img|txt):\s*/i, "").trim();
+}
+
+function getCleanFileName(src: any): string {
+  if (!src) return "";
+  const rawName = src.name || src.file_name || src.s3_path || src.source || "Source";
+  return getCleanSourceName(rawName);
+}
+
+function deduplicateSources(sources: any[]): any[] {
+  if (!sources || !Array.isArray(sources)) return [];
+  const seen = new Set<string>();
+  return sources.filter((src) => {
+    const cleanName = getCleanFileName(src).toLowerCase().trim();
+    if (!cleanName) return false;
+    if (seen.has(cleanName)) return false;
+    seen.add(cleanName);
+    return true;
+  });
+}
+
 // Classify a source by its extension / URL pattern
 // If the source object has a kb_id it's always a downloadable file (clickable)
 function getSourceType(source: string, kb_id?: string): 'url' | 'pdf' | 'excel' | 'csv' | 'image' | 'text' {
@@ -392,19 +436,40 @@ function extractCitedFilenames(text: string): string[] {
   const filenames = new Set<string>();
   let match;
   while ((match = regex.exec(text)) !== null) {
-    let sourceStr = match[1].trim();
-    // Extract anything that looks like a filename (e.g. file.pdf, file name.docx)
-    const fileMatches = sourceStr.match(/[a-zA-Z0-9_\\-\\s]+\\.[a-zA-Z0-9]+/g);
-    if (fileMatches && fileMatches.length > 0) {
-      fileMatches.forEach(f => filenames.add(getFileName(f.trim()).toLowerCase()));
-    } else {
-      if (sourceStr.includes(" - Position")) {
-        sourceStr = sourceStr.split(" - Position")[0].trim();
+    const rawCitation = match[1];
+    const parts = rawCitation.split(",");
+    parts.forEach(p => {
+      let partClean = p.trim();
+      if (partClean.includes(" - Position")) {
+        partClean = partClean.split(" - Position")[0].trim();
       }
-      filenames.add(getFileName(sourceStr).toLowerCase());
-    }
+      if (partClean) {
+        filenames.add(partClean.toLowerCase());
+      }
+    });
   }
   return Array.from(filenames);
+}
+
+function matchesCitation(src: any, citedFilenames: string[]): boolean {
+  if (citedFilenames.length === 0) return false;
+  const candidates = [
+    src.name,
+    src.file_name,
+    src.s3_path,
+    src.source
+  ].filter(Boolean).map(val => String(val).toLowerCase());
+
+  return candidates.some(candidate => {
+    let cleanCandidate = candidate;
+    if (cleanCandidate.includes("/") || cleanCandidate.includes("\\")) {
+      const parts = cleanCandidate.split(/[/\\]/);
+      cleanCandidate = parts[parts.length - 1] || cleanCandidate;
+    }
+    cleanCandidate = cleanCandidate.replace(/^(pdf|doc|docx|csv|xlsx|image|img|txt):\s*/i, "").trim();
+    if (!cleanCandidate) return false;
+    return citedFilenames.some(cf => cleanCandidate.includes(cf) || cf.includes(cleanCandidate));
+  });
 }
 
 function stripThinking(content: string): string {
@@ -449,10 +514,10 @@ type AgentListResponse = {
 const GSearchLogoAvatar = ({ size = 32 }: { size?: number }) => {
   return (
     <div
-      className="rounded-xl flex items-center justify-center bg-[#0fb5a1] text-white shrink-0 border border-[#0fb5a1]/20 shadow-none font-bold"
+      className="rounded-xl flex items-center justify-center shrink-0 shadow-none overflow-hidden"
       style={{ width: `${size}px`, height: `${size}px` }}
     >
-      <FaBrain size={size * 0.55} />
+      <img src="/512_512.png" alt="GSearch" className="w-full h-full object-contain" />
     </div>
   );
 };
@@ -798,7 +863,7 @@ export default function ChatPlaygroundPage() {
   const [selectedReason, setSelectedReason] = useState<string>("Incorrect Answer");
   const [customReason, setCustomReason] = useState<string>("");
   const { data: sessionData } = useSession();
-  const [userName, setUserName] = useState("Srivishnus");
+  const [userName, setUserName] = useState("User");
 
   useEffect(() => {
     const storedName = localStorage.getItem("userName");
@@ -868,13 +933,7 @@ export default function ChatPlaygroundPage() {
   };
 
   useEffect(() => {
-    const isCompleted = localStorage.getItem("grag_onboarding_completed");
-    if (!isCompleted) {
-      const timer = setTimeout(() => {
-        setTourActive(true);
-      }, 1000);
-      return () => clearTimeout(timer);
-    }
+    // Onboarding tour auto-trigger disabled per user request
   }, []);
 
   useEffect(() => {
@@ -929,6 +988,8 @@ export default function ChatPlaygroundPage() {
   const [excelSheets, setExcelSheets] = useState<{ [sheetName: string]: string[][] }>({});
   const [excelSheetNames, setExcelSheetNames] = useState<string[]>([]);
   const [activeExcelSheet, setActiveExcelSheet] = useState<string>("");
+  const [excelPage, setExcelPage] = useState<number>(1);
+  const excelArrayBufferRef = useRef<ArrayBuffer | null>(null);
 
   const resetChatStates = () => {
     setIsTyping(false);
@@ -1090,6 +1151,13 @@ export default function ChatPlaygroundPage() {
   const connectWs = useCallback(function connectSocket() {
     if (!agent?.id) return;
 
+    const token = getCookie(AUTH_COOKIE_KEY);
+    if (!token || token === "null" || token === "undefined") {
+      console.warn("WebSocket connection aborted: auth token missing or not ready");
+      setWsStatus("closed");
+      return;
+    }
+
     if (ws.current) {
       ws.current.close();
     }
@@ -1097,14 +1165,18 @@ export default function ChatPlaygroundPage() {
     setWsStatus("connecting");
 
     // Professionally construct the WS base URL to inherit the API path (e.g., /api/v1)
-    let wsBaseUrl = API_BASE_URL.replace(/^http/, "ws");
+    let wsBaseUrl = API_BASE_URL.replace(/^http/, "ws").replace(/\/$/, "");
     if (process.env.NEXT_PUBLIC_WS_URL) {
       const cleanWsHost = process.env.NEXT_PUBLIC_WS_URL.replace(/\/$/, "");
-      const apiPathSuffix = API_BASE_URL.replace(/^https?:\/\/[^\/]+/, "");
-      wsBaseUrl = `${cleanWsHost}${apiPathSuffix}`;
+      if (cleanWsHost.includes("/api/v1")) {
+        wsBaseUrl = cleanWsHost;
+      } else {
+        const apiPathSuffix = API_BASE_URL.replace(/^https?:\/\/[^\/]+/, "");
+        wsBaseUrl = `${cleanWsHost}${apiPathSuffix}`;
+      }
     }
 
-    const wsUrl = `${wsBaseUrl}/rag/ws/${agent.id}?token=${getCookie(AUTH_COOKIE_KEY)}`;
+    const wsUrl = `${wsBaseUrl}/rag/ws/${agent.id}?token=${token}`;
 
     const socket = new WebSocket(wsUrl);
     ws.current = socket;
@@ -1173,15 +1245,7 @@ export default function ChatPlaygroundPage() {
           const citedFilenames = extractCitedFilenames(accumulated);
           let finalSources: SourceMetadata[] = [];
           if (wsSourcesRef.current.length > 0) {
-            // Filter wsSourcesRef: keep it if the AI mentioned the filename ANYWHERE, or if it matched the extraction
-            const matchedSources = wsSourcesRef.current.filter(src => {
-              if (!src.source) return false;
-              const srcName = getFileName(src.source).toLowerCase();
-              if (!srcName) return false;
-              const inText = accumulated.toLowerCase().includes(srcName);
-              const inCitations = citedFilenames.some(cf => srcName.includes(cf) || cf.includes(srcName));
-              return inText || inCitations;
-            });
+            const matchedSources = wsSourcesRef.current.filter((src: any) => matchesCitation(src, citedFilenames));
 
             // If we found specific matches, use them. Else, fallback to all backend sources.
             if (matchedSources.length > 0) {
@@ -1497,7 +1561,8 @@ export default function ChatPlaygroundPage() {
     ws.current?.send(JSON.stringify({
       query: userMsg.content,
       file: userMsg.file ? { name: userMsg.file.name, type: userMsg.file.type } : null,
-      session_id: currentSessionId && !currentSessionId.startsWith("session_") ? currentSessionId : null
+      session_id: currentSessionId && !currentSessionId.startsWith("session_") ? currentSessionId : null,
+      embed: false
     }));
 
     wsSourcesRef.current = [];
@@ -1608,7 +1673,8 @@ export default function ChatPlaygroundPage() {
     ws.current?.send(JSON.stringify({
       query: trimmed,
       file: payloadFile ? { name: payloadFile.name, type: payloadFile.type } : null,
-      session_id: targetSessionId && !targetSessionId.startsWith("session_") ? targetSessionId : null
+      session_id: targetSessionId && !targetSessionId.startsWith("session_") ? targetSessionId : null,
+      embed: false
     }));
 
     setInput("");
@@ -1639,7 +1705,7 @@ export default function ChatPlaygroundPage() {
 
     let kbId = src.kb_id;
     if (!kbId && currentSources.length > 0) {
-      const fname = getFileName(src.source).toLowerCase();
+      const fname = getCleanFileName(src).toLowerCase();
       const matched = currentSources.find(as => {
         const asName = (as.name || as.source || as.filename || '').toLowerCase();
         return asName.includes(fname) || fname.includes(asName) || cleanCompare(asName, fname);
@@ -1669,21 +1735,22 @@ export default function ChatPlaygroundPage() {
     if (kbId) {
       try {
         const blobUrl = await getFilePreview(kbId);
-        const filename = getFileName(src.source);
-        const nameLower = filename.toLowerCase();
+        const filename = getCleanFileName(src);
+        const fullSourceStr = `${src.source || ''} ${src.name || ''} ${src.file_name || ''} ${src.title || ''} ${src.s3_path || ''} ${src.url || ''} ${filename}`.toLowerCase();
 
         // 1. Fetch blob to determine content type and parse binary spreadsheets
         const blobRes = await fetch(blobUrl);
         const blob = await blobRes.blob();
         const contentType = blob.type.toLowerCase();
 
-        const isPdf = contentType.includes('pdf') || nameLower.endsWith('.pdf');
-        const isImage = contentType.includes('image/') || nameLower.endsWith('.png') || nameLower.endsWith('.jpg') || nameLower.endsWith('.jpeg') || nameLower.endsWith('.webp') || nameLower.endsWith('.gif');
-        const isTxt = contentType.includes('text/plain') || nameLower.endsWith('.txt');
-        const isCSV = contentType.includes('csv') || nameLower.endsWith('.csv');
+        const isPdf = contentType.includes('pdf') || fullSourceStr.includes('.pdf');
+        const isImage = contentType.includes('image/') || fullSourceStr.includes('.png') || fullSourceStr.includes('.jpg') || fullSourceStr.includes('.jpeg') || fullSourceStr.includes('.webp') || fullSourceStr.includes('.gif');
+        const isTxt = contentType.includes('text/plain') || fullSourceStr.includes('.txt');
+        const isCSV = contentType.includes('csv') || fullSourceStr.includes('.csv') || fullSourceStr.includes('csv:');
         const isExcel = contentType.includes('excel') || contentType.includes('spreadsheet') ||
           contentType.includes('vnd.ms-excel') || contentType.includes('vnd.openxmlformats-officedocument.spreadsheetml.sheet') ||
-          nameLower.endsWith('.xls') || nameLower.endsWith('.xlsx');
+          contentType.includes('octet-stream') || contentType.includes('zip') ||
+          fullSourceStr.includes('.xls') || fullSourceStr.includes('.xlsx') || fullSourceStr.includes('excel:') || fullSourceStr.includes('spreadsheet:');
 
         if (isPdf || isImage || isTxt) {
           const viewBlobUrl = URL.createObjectURL(blob);
@@ -1706,30 +1773,31 @@ export default function ChatPlaygroundPage() {
           newWindow.document.body.appendChild(iframe);
         } else if (isCSV || isExcel) {
           // Parse spreadsheet array buffer using xlsx
-          const arrayBuffer = await blob.arrayBuffer();
-          const XLSX = await import("xlsx");
-          const workbook = XLSX.read(arrayBuffer, { type: "array" });
+          try {
+            const arrayBuffer = await blob.arrayBuffer();
+            const XLSX = await import("xlsx");
+            const workbook = XLSX.read(arrayBuffer, { type: "array" });
 
-          const sheetsData: { [sheetName: string]: string[][] } = {};
-          workbook.SheetNames.forEach((sheetName) => {
-            const worksheet = workbook.Sheets[sheetName];
-            const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
-            sheetsData[sheetName] = jsonData.map((row: any) =>
-              Array.isArray(row)
-                ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
-                : []
-            );
-          });
-          const sheetNames = workbook.SheetNames;
-          const viewBlobUrl = URL.createObjectURL(blob);
+            const sheetsData: { [sheetName: string]: string[][] } = {};
+            workbook.SheetNames.forEach((sheetName) => {
+              const worksheet = workbook.Sheets[sheetName];
+              const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+              sheetsData[sheetName] = jsonData.map((row: any) =>
+                Array.isArray(row)
+                  ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+                  : []
+              );
+            });
+            const sheetNames = workbook.SheetNames;
+            const viewBlobUrl = URL.createObjectURL(blob);
 
-          newWindow.document.open();
-          newWindow.document.write(`
+            newWindow.document.open();
+            newWindow.document.write(`
             <!DOCTYPE html>
             <html>
             <head>
               <meta charset="utf-8">
-              <title>\${filename || 'Spreadsheet Preview'}</title>
+              <title>${filename || 'Spreadsheet Preview'}</title>
               <style>
                 body {
                   margin: 0;
@@ -1822,7 +1890,7 @@ export default function ChatPlaygroundPage() {
             </head>
             <body>
               <header>
-                <h1>\${filename}</h1>
+                <h1>${filename}</h1>
                 <button id="download-btn" style="background: #0fb5a1; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px;">
                   <svg stroke="currentColor" fill="none" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                   Download File
@@ -1833,8 +1901,8 @@ export default function ChatPlaygroundPage() {
                 <table id="sheet-table"></table>
               </div>
               <script>
-                const sheetsData = \${JSON.stringify(sheetsData)};
-                const sheetNames = \${JSON.stringify(sheetNames)};
+                const sheetsData = ${JSON.stringify(sheetsData)};
+                const sheetNames = ${JSON.stringify(sheetNames)};
                 
                 function renderSheet(sheetName) {
                   const rows = sheetsData[sheetName] || [];
@@ -1915,8 +1983,8 @@ export default function ChatPlaygroundPage() {
 
                 document.getElementById('download-btn').onclick = () => {
                   const link = document.createElement('a');
-                  link.href = '\${viewBlobUrl}';
-                  link.download = '\${filename}';
+                  link.href = "${viewBlobUrl}";
+                  link.download = "${filename}";
                   document.body.appendChild(link);
                   link.click();
                   document.body.removeChild(link);
@@ -1925,16 +1993,17 @@ export default function ChatPlaygroundPage() {
             </body>
             </html>
           `);
-          newWindow.document.close();
-        } else {
-          // fallback direct download
-          newWindow.close();
-          const link = document.createElement('a');
-          link.href = blobUrl;
-          link.download = filename;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
+            newWindow.document.close();
+          } catch (xlsxErr) {
+            console.warn("Spreadsheet parsing failed, downloading:", xlsxErr);
+            newWindow.close();
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+          }
         }
       } catch (err) {
         console.error(err);
@@ -2008,7 +2077,8 @@ export default function ChatPlaygroundPage() {
     ws.current?.send(JSON.stringify({
       query: tempEditText.trim(),
       file: null,
-      session_id: currentSessionId && !currentSessionId.startsWith("session_") ? currentSessionId : null
+      session_id: currentSessionId && !currentSessionId.startsWith("session_") ? currentSessionId : null,
+      embed: false
     }));
 
     wsSourcesRef.current = [];
@@ -2191,6 +2261,7 @@ export default function ChatPlaygroundPage() {
       setExcelSheets({});
       setExcelSheetNames([]);
       setActiveExcelSheet("");
+      setExcelPage(1);
       if (sourcesDrawerPreviewUrl) {
         URL.revokeObjectURL(sourcesDrawerPreviewUrl);
       }
@@ -2215,18 +2286,20 @@ export default function ChatPlaygroundPage() {
       setSourcesDrawerPreviewUrl(blobUrl);
 
       const name = getFileName(source.source).toLowerCase();
+      const fullSourceStr = `${source.source || ''} ${source.name || ''} ${source.file_name || ''} ${source.title || ''} ${source.s3_path || ''} ${name}`.toLowerCase();
 
       // Fetch blob to determine content type and parse binary spreadsheets
       const blobRes = await fetch(blobUrl);
       const blob = await blobRes.blob();
       const contentType = blob.type.toLowerCase();
 
-      const isPDF = contentType.includes("pdf") || name.endsWith(".pdf");
-      const isImage = contentType.includes("image/") || name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".webp") || name.endsWith(".gif");
-      const isCSV = contentType.includes("csv") || name.endsWith(".csv");
+      const isPDF = contentType.includes("pdf") || fullSourceStr.includes(".pdf");
+      const isImage = contentType.includes("image/") || fullSourceStr.includes(".png") || fullSourceStr.includes(".jpg") || fullSourceStr.includes(".jpeg") || fullSourceStr.includes(".webp") || fullSourceStr.includes(".gif");
+      const isCSV = contentType.includes("csv") || fullSourceStr.includes(".csv") || fullSourceStr.includes("csv:");
       const isExcel = contentType.includes("excel") || contentType.includes("spreadsheet") ||
         contentType.includes("vnd.ms-excel") || contentType.includes("vnd.openxmlformats-officedocument.spreadsheetml.sheet") ||
-        name.endsWith(".xls") || name.endsWith(".xlsx");
+        contentType.includes("octet-stream") || contentType.includes("zip") ||
+        fullSourceStr.includes(".xls") || fullSourceStr.includes(".xlsx") || fullSourceStr.includes("excel:") || fullSourceStr.includes("spreadsheet:");
 
       if (isPDF) {
         setSourcesDrawerPreviewType("pdf");
@@ -2235,23 +2308,37 @@ export default function ChatPlaygroundPage() {
       } else if (isCSV || isExcel) {
         setSourcesDrawerPreviewType(isCSV ? "csv" : "excel");
         const arrayBuffer = await blob.arrayBuffer();
-        const XLSX = await import("xlsx");
-        const workbook = XLSX.read(arrayBuffer, { type: "array" });
+        excelArrayBufferRef.current = arrayBuffer;
 
-        const sheetsData: { [sheetName: string]: string[][] } = {};
-        workbook.SheetNames.forEach((sheetName) => {
-          const worksheet = workbook.Sheets[sheetName];
+        const XLSX = await import("xlsx");
+        // 1. Read sheet names first (extremely fast!)
+        const workbook = XLSX.read(arrayBuffer, { type: "array", bookSheets: true });
+        setExcelSheetNames(workbook.SheetNames);
+
+        if (workbook.SheetNames.length > 0) {
+          const firstSheet = workbook.SheetNames[0];
+          setActiveExcelSheet(firstSheet);
+
+          // 2. Parse only the active sheet on load (skips all other sheets)
+          const partialWorkbook = XLSX.read(arrayBuffer, {
+            type: "array",
+            sheets: [firstSheet],
+            cellFormula: false,
+            cellHTML: false,
+            cellText: false,
+            cellDates: true
+          });
+
+          const worksheet = partialWorkbook.Sheets[firstSheet];
           const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
-          sheetsData[sheetName] = jsonData.map((row: any) =>
+          const formattedData = jsonData.map((row: any) =>
             Array.isArray(row)
               ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
               : []
           );
-        });
-
-        setExcelSheets(sheetsData);
-        setExcelSheetNames(workbook.SheetNames);
-        setActiveExcelSheet(workbook.SheetNames[0] || "");
+          setExcelSheets({ [firstSheet]: formattedData });
+        }
+        setExcelPage(1);
       } else {
         setSourcesDrawerPreviewType("other");
       }
@@ -2405,6 +2492,32 @@ export default function ChatPlaygroundPage() {
 
   return (
     <div className="h-[calc(100vh-96px)] w-full flex bg-[var(--app-surface)] antialiased selection:bg-[#0fb5a1] selection:text-white overflow-hidden relative">
+      <style>{`
+        @keyframes blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
+        }
+        .typing-cursor {
+          display: inline-block;
+          animation: blink 1s infinite;
+          vertical-align: middle;
+          font-size: 14px;
+        }
+        @keyframes bounce {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-4px); }
+        }
+        .typing-dot {
+          display: inline-block;
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background-color: currentColor;
+          animation: bounce 1.4s infinite ease-in-out;
+        }
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+      `}</style>
       {/* Desktop Left Sidebar */}
       {screen.md && (
         <div
@@ -2589,7 +2702,10 @@ export default function ChatPlaygroundPage() {
                                 <FiRotateCw size={16} strokeWidth={2} />
                               </button>
                             </Tooltip>
-                            {showSources && msg.sources && msg.sources.length > 0 && (() => {
+                            {(() => {
+                              const uniqueSources = deduplicateSources(msg.sources || []);
+                              if (!showSources || uniqueSources.length === 0 || msg.content?.includes("Something went wrong") || msg.content?.includes("trouble connecting")) return null;
+                              
                               const getFileIcon = (src: string) => {
                                 const s = (src || "").toLowerCase();
                                 if (s.endsWith(".pdf")) return "📄";
@@ -2600,10 +2716,11 @@ export default function ChatPlaygroundPage() {
                               };
                               return (
                                 <div className="flex flex-wrap gap-1.5 mt-2 w-full">
-                                  {msg.sources.map((src: SourceMetadata, idx: number) => {
-                                    const name = getFileName(src.source) || src.source || "Source";
+                                  {uniqueSources.map((src: any, idx: number) => {
+                                    const sourceUrl = src.source || src;
+                                    const name = getFileName(sourceUrl) || getCleanFileName(sourceUrl) || "Source";
                                     const shortName = name.length > 22 ? name.slice(0, 20) + "…" : name;
-                                    const icon = getFileIcon(src.source);
+                                    const icon = getFileIcon(sourceUrl);
                                     return (
                                       <button
                                         key={idx}
@@ -2802,8 +2919,8 @@ export default function ChatPlaygroundPage() {
             </div>
           </div>
 
-          {/* Large Unified Input Card with dynamic purple borders */}
-          <div id="tour-chat-input-card" className="bg-white dark:bg-[#0b0f19] border-2 border-purple-500/30 dark:border-purple-500/25 rounded-3xl p-3 shadow-lg transition-all focus-within:border-purple-500/70 focus-within:ring-4 focus-within:ring-purple-500/5 flex flex-col gap-2">
+          {/* Large Unified Input Card with dynamic theme color borders */}
+          <div id="tour-chat-input-card" className="bg-white dark:bg-[#0b0f19] border-2 border-[#0fb5a1]/30 dark:border-[#0fb5a1]/40 rounded-3xl p-3 shadow-lg transition-all focus-within:border-[#0fb5a1] focus-within:ring-4 focus-within:ring-[#0fb5a1]/10 flex flex-col gap-2 overflow-hidden">
 
             {/* Real-time Dynamic Upload Preview Attachment Frame */}
             {attachedFile && (
@@ -2883,15 +3000,17 @@ export default function ChatPlaygroundPage() {
                     }}
                     trigger={["click"]}
                   >
-                    <button id="tour-agent-select" className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#ffffff] hover:bg-gray-100 dark:bg-[#12352f]/30 dark:hover:bg-[#12352f]/50 border border-[#0fb5a1]/30 dark:border-[#34d399]/40 rounded-full text-xs font-black text-[#0fb5a1] dark:text-[#34d399] cursor-pointer select-none transition-all outline-none focus:outline-none ml-1 animate-in fade-in duration-200 shadow-sm">
-                      <div className="w-5 h-5 rounded-full bg-[#e3f7f3] dark:bg-[#12352f] flex items-center justify-center text-[#0fb5a1] dark:text-[#34d399] shrink-0">
-                        <LuBot size={11} className="text-[#0fb5a1] dark:text-[#34d399]" />
-                      </div>
-                      <span className="truncate max-w-[120px] text-[#0fb5a1] dark:text-[#34d399] font-black">
-                        {agent ? agent.name : "Select Agent"}
-                      </span>
-                      <span className="text-[9px] opacity-100 ml-0.5 text-[#0fb5a1] dark:text-[#34d399] font-black">▼</span>
-                    </button>
+                    <div className="inline-flex bg-transparent rounded-full overflow-hidden">
+                      <button id="tour-agent-select" className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#0fb5a1]/15 hover:bg-[#0fb5a1]/25 dark:bg-[#0fb5a1]/25 dark:hover:bg-[#0fb5a1]/35 border-2 border-[#0fb5a1] dark:border-[#34d399] rounded-full text-xs font-black text-[#0fb5a1] dark:text-[#34d399] cursor-pointer select-none transition-all outline-none focus:outline-none ml-1 animate-in fade-in duration-200 shadow-sm">
+                        <div className="w-5 h-5 rounded-full bg-[#e3f7f3] dark:bg-[#12352f] flex items-center justify-center text-[#0fb5a1] dark:text-[#34d399] shrink-0">
+                          <LuBot size={11} className="text-[#0fb5a1] dark:text-[#34d399]" />
+                        </div>
+                        <span className="truncate max-w-[120px] text-[#0fb5a1] dark:text-[#34d399] font-black">
+                          {agent ? agent.name : "Select Agent"}
+                        </span>
+                        <span className="text-[9px] opacity-100 ml-0.5 text-[#0fb5a1] dark:text-[#34d399] font-black">▼</span>
+                      </button>
+                    </div>
                   </Dropdown>
                 )}
               </Flex>
@@ -3083,54 +3202,126 @@ export default function ChatPlaygroundPage() {
 
                     {(sourcesDrawerPreviewType === "excel" || sourcesDrawerPreviewType === "csv") && excelSheetNames.length > 0 && (
                       <div className="w-full h-full flex flex-col overflow-hidden bg-[var(--app-surface)]">
-                        {/* Excel Multi-sheet Switcher */}
-                        {sourcesDrawerPreviewType === "excel" && excelSheetNames.length > 1 && (
-                          <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
-                            {excelSheetNames.map(sheetName => {
-                              const isActive = activeExcelSheet === sheetName;
-                              return (
-                                <button
-                                  key={sheetName}
-                                  onClick={() => setActiveExcelSheet(sheetName)}
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
-                                    ? "bg-[#0fb5a1] text-white shadow-sm"
-                                    : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
-                                    }`}
-                                >
-                                  {sheetName}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
+                    {/* Excel Multi-sheet Switcher */}
+                    {sourcesDrawerPreviewType === "excel" && excelSheetNames.length > 1 && (
+                      <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
+                        {excelSheetNames.map(sheetName => {
+                          const isActive = activeExcelSheet === sheetName;
+                          return (
+                            <button
+                              key={sheetName}
+                              onClick={async () => {
+                                if (!excelSheets[sheetName] && excelArrayBufferRef.current) {
+                                  setSourcesDrawerPreviewLoading(true);
+                                  try {
+                                    const XLSX = await import("xlsx");
+                                    const partialWorkbook = XLSX.read(excelArrayBufferRef.current, {
+                                      type: "array",
+                                      sheets: [sheetName],
+                                      cellFormula: false,
+                                      cellHTML: false,
+                                      cellText: false,
+                                      cellDates: true
+                                    });
+                                    const worksheet = partialWorkbook.Sheets[sheetName];
+                                    const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+                                    const formattedData = jsonData.map((row: any) =>
+                                      Array.isArray(row)
+                                        ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+                                        : []
+                                    );
+                                    setExcelSheets(prev => ({ ...prev, [sheetName]: formattedData }));
+                                  } catch (err) {
+                                    console.error("Failed to parse sheet:", sheetName, err);
+                                  } finally {
+                                    setSourcesDrawerPreviewLoading(false);
+                                  }
+                                }
+                                setActiveExcelSheet(sheetName);
+                                setExcelPage(1);
+                              }}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
+                                ? "bg-[#0fb5a1] text-white shadow-sm"
+                                : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
+                                }`}
+                            >
+                              {sheetName}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
 
-                        {/* Spreadsheet Grid */}
-                        <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
-                          {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
-                            <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
-                              <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
-                                <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
-                                  <tr>
-                                    {excelSheets[activeExcelSheet][0].map((cell, idx) => (
-                                      <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
-                                        {cell || `Column ${idx + 1}`}
-                                      </th>
-                                    ))}
-                                  </tr>
-                                </thead>
-                                <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
-                                  {excelSheets[activeExcelSheet].slice(1).map((row, rowIdx) => (
-                                    <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
-                                      {excelSheets[activeExcelSheet][0].map((_, colIdx) => (
-                                        <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
-                                          {row[colIdx] || ""}
-                                        </td>
+                    {/* Spreadsheet Grid */}
+                    <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
+                      {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
+                        (() => {
+                          const activeSheetData = excelSheets[activeExcelSheet];
+                          const totalRows = activeSheetData.length > 0 ? activeSheetData.length - 1 : 0;
+                          const PAGE_SIZE = 100;
+                          const totalPages = Math.ceil(totalRows / PAGE_SIZE);
+                          const displayedRows = activeSheetData.slice(
+                            1 + (excelPage - 1) * PAGE_SIZE,
+                            1 + excelPage * PAGE_SIZE
+                          );
+
+                          return (
+                            <div className="flex flex-col gap-4">
+                              <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
+                                <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
+                                  <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
+                                    <tr>
+                                      {activeSheetData[0].map((cell, idx) => (
+                                        <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
+                                          {cell || `Column ${idx + 1}`}
+                                        </th>
                                       ))}
                                     </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+                                  </thead>
+                                  <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
+                                    {displayedRows.map((row, rowIdx) => (
+                                      <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
+                                        {activeSheetData[0].map((_, colIdx) => (
+                                          <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
+                                            {row[colIdx] || ""}
+                                          </td>
+                                        ))}
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              
+                              {/* Pagination footer */}
+                              {totalPages > 1 && (
+                                <div className="flex items-center justify-between p-3 border border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 select-none rounded-xl">
+                                  <span className="text-xs text-[var(--app-text-soft)] font-bold">
+                                    Showing {1 + (excelPage - 1) * PAGE_SIZE} - {Math.min(excelPage * PAGE_SIZE, totalRows)} of {totalRows} rows
+                                  </span>
+                                  <div className="flex gap-2">
+                                    <button
+                                      disabled={excelPage === 1}
+                                      onClick={() => setExcelPage(prev => Math.max(prev - 1, 1))}
+                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                    >
+                                      Previous
+                                    </button>
+                                    <span className="text-xs self-center px-1 font-bold text-[var(--app-text)]">
+                                      Page {excelPage} of {totalPages}
+                                    </span>
+                                    <button
+                                      disabled={excelPage === totalPages}
+                                      onClick={() => setExcelPage(prev => Math.min(prev + 1, totalPages))}
+                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                    >
+                                      Next
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
+                          );
+                        })()
                           ) : (
                             <Flex vertical align="center" justify="center" className="py-20 text-[var(--app-text-soft)] h-full">
                               <LuFileText size={32} className="mb-2 opacity-55" />

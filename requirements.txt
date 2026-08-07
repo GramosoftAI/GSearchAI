@@ -149,9 +149,14 @@ opentelemetry-sdk==1.39.1
 opentelemetry-semantic-conventions==0.60b1
 opentelemetry-util-http==0.60b1
 orjson==3.11.8
+<<<<<<< HEAD
 ormsgpack==1.12.2
 packaging==25.0
 pandas==3.0.2
+=======
+packaging>=24.0
+pandas==2.3.3
+>>>>>>> staging
 passlib==1.7.4
 pathable==0.5.0
 pathspec==1.0.4
@@ -166,7 +171,11 @@ polars-runtime-32==1.43.0
 prometheus_client==0.25.0
 prompt_toolkit==3.0.52
 propcache==0.4.1
+<<<<<<< HEAD
 protobuf==6.33.6
+=======
+protobuf>=5.0.0
+>>>>>>> staging
 psutil==7.2.2
 psycopg==3.3.4
 psycopg-binary==3.3.4
@@ -180,7 +189,11 @@ pycodestyle==2.11.1
 pycparser==3.0
 pydantic==2.13.3
 pydantic-settings==2.14.0
+<<<<<<< HEAD
 pydantic_core==2.46.3
+=======
+pydantic_core>=2.41.5
+>>>>>>> staging
 pydeck==0.9.1
 pyflakes==3.1.0
 Pygments==2.20.0
@@ -246,6 +259,13 @@ watchfiles==1.1.1
 wcwidth==0.6.0
 websockets==16.0
 wrapt==1.17.3
+<<<<<<< HEAD
+xai-sdk==1.12.1
+xxhash==3.7.0
+yarl==1.23.0
+zipp==3.23.1
+zstandard==0.25.0
+=======
 yarl==1.23.0
 zipp==3.23.1
 
@@ -265,7 +285,7 @@ polars==1.43.1
 fastexcel
 pyarrow
 openpyxl
-
-xai-sdk==1.12.1
-xxhash==3.7.0
-zstandard==0.25.0
+duckdb==1.1.0
+duckdb-engine==0.13.0
+pandas==2.3.3
+>>>>>>> staging

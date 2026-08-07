@@ -137,7 +137,6 @@ export default function UserTable({
   return (
     <Card className="bg-[var(--app-surface)] border-[var(--app-border)] shadow-sm rounded-2xl p-4 overflow-hidden">
       <Space direction="vertical" size={16} className="w-full">
-        {/* Search Filter input */}
         <div style={{ maxWidth: 360 }}>
           <Input
             placeholder="Search users..."
@@ -148,7 +147,6 @@ export default function UserTable({
           />
         </div>
 
-        {/* Antd Table */}
         <Table
           columns={columns}
           dataSource={users}

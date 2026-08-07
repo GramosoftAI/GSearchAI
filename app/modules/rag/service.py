@@ -102,7 +102,6 @@ class RAGService:
         on_usage_callback: Optional[Callable[[dict], None]] = None,
         chat_history: Optional[str] = None,
         skip_search: bool = False,
-        memory_enabled: bool = True,
     ):
         logger.info(f" RAG Service: Streaming answer for agent={agent_id}, kb={kb_id}")
 
@@ -127,77 +126,153 @@ class RAGService:
             else:
                 doc_kbs.append(kb)
 
-        # ============= MEMORY-API: RECALL USER PREFERENCES & EPISODIC GUIDANCE =============
-        episodic_guidance = await self._fetch_episodic_guidance(query, agent_id, user_id, memory_enabled)
-
-        # Upfront Query Classification and Decomposition
-        from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer
-        analyzer = QueryAnalyzer()
-        tabular_query = query
-        vector_query = query
-        try:
-            analysis_res = await analyzer.analyze_query(query)
-            if analysis_res and analysis_res.metadata:
-                corrected = getattr(analysis_res.metadata, "corrected_query", None)
-                if corrected:
-                    query = corrected
-                    tabular_query = corrected
-                    vector_query = corrected
-                
-                tab_sub = getattr(analysis_res.metadata, "tabular_subquery", None)
-                vec_sub = getattr(analysis_res.metadata, "vector_subquery", None)
-                if tab_sub:
-                    logger.info(f"Decomposed tabular sub-query: {tab_sub}")
-                    tabular_query = tab_sub
-                if vec_sub:
-                    logger.info(f"Decomposed vector sub-query: {vec_sub}")
-                    vector_query = vec_sub
-        except Exception as e:
-            logger.error(f"QueryAnalyzer upfront decomposition failed: {e}")
-
         # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
         hybrid_merge_context = ""
-        sql_task = None
         if excel_kbs:
-            is_tabular = True
-            if analysis_res is not None:
-                is_tabular = getattr(analysis_res, "is_tabular", True)
-            if not doc_kbs:
-                is_tabular = True
-                
-            if is_tabular:
-                from app.core.parquet_ingester import ParquetIngester
-                from app.modules.rag.pandas_engine import PandasQueryEngine
-                import os
-                active_paths = []
-                path_mapping = {}
-                for ekb in excel_kbs:
-                    dataset_name = getattr(ekb, "parsed_path", None) or getattr(ekb, "s3_path", None)
-                    if dataset_name:
-                        p = ParquetIngester.get_active_dataset(dataset_name)
-                        if p:
-                            active_paths.append(p)
-                            # Clean original filename from "Spreadsheet: " prefix
-                            orig_name = getattr(ekb, "name", "dataset")
-                            if orig_name.startswith("Spreadsheet: "):
-                                orig_name = orig_name[len("Spreadsheet: "):]
-                            elif orig_name.startswith("PDF: "):
-                                orig_name = orig_name[len("PDF: "):]
-                            path_mapping[os.path.basename(p)] = orig_name
-                            
-                if not active_paths and not doc_kbs:
-                    yield json.dumps({"error": "Active parquet datasets for Excel Knowledge Bases not found."})
-                    return
-                    
-                if active_paths:
-                    engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths, path_mapping=path_mapping)
-                    sql_task = asyncio.create_task(engine.execute_query(tabular_query, synthesize=(not doc_kbs), episodic_guidance=episodic_guidance))
+            from app.core.parquet_ingester import ParquetIngester
+            from app.modules.rag.pandas_engine import PandasQueryEngine
+
+            active_paths = []
+            for ekb in excel_kbs:
+                dataset_name = getattr(ekb, "parsed_path", None) or getattr(
+                    ekb, "s3_path", None
+                )
+                if dataset_name:
+                    p = ParquetIngester.get_active_dataset(dataset_name)
+                    if p:
+                        active_paths.append(p)
+
+            if not active_paths and not doc_kbs:
+                yield json.dumps(
+                    {
+                        "error": "Active parquet datasets for Excel Knowledge Bases not found."
+                    }
+                )
+                return
+
+            if active_paths:
+<<<<<<< HEAD
+                engine = PandasQueryEngine(
+                    active_paths[0], all_dataset_paths=active_paths
+                )
+                # 1. Schema-Aware Enterprise Hybrid Routing (TABULAR_SQL vs VECTOR_DOCS vs HYBRID_MERGE)
+                route_to_excel = True
+                if doc_kbs:
+                    try:
+                        from app.modules.rag.hybrid_router import EnterpriseHybridRouter
+
+                        cols_list = engine.get_schema_columns()
+                        decision = await EnterpriseHybridRouter.classify(
+                            query=query,
+                            columns=cols_list,
+                            doc_kbs_count=len(doc_kbs),
+                            llm=getattr(engine, "router_llm", engine.llm),
+                        )
+                        logger.info(
+                            f"[EnterpriseHybridRouter] Engine={decision.target_engine} | Conf={decision.confidence:.2f} | Cols={decision.matched_columns} | Reason={decision.reasoning}"
+                        )
+                        if decision.target_engine == "VECTOR_DOCS":
+                            route_to_excel = False
+                        elif decision.target_engine == "HYBRID_MERGE":
+                            logger.info(
+                                "[EnterpriseHybridRouter] Executing HYBRID_MERGE: Gathering tabular SQL context to enrich Document RAG..."
+                            )
+                            try:
+                                sql_res = await engine.execute_query(query)
+                                unmatched_signals = [
+                                    "not present in dataset",
+                                    "no records matched",
+                                    "error",
+                                    "0 rows",
+                                    "empty dataframe",
+                                ]
+                                if sql_res and not any(
+                                    sig in str(sql_res).lower()
+                                    for sig in unmatched_signals
+                                ):
+                                    hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                            except Exception as merge_err:
+                                logger.warning(
+                                    f"[EnterpriseHybridRouter] HYBRID_MERGE tabular step error: {merge_err}"
+                                )
+                            route_to_excel = False  # Continue into doc_kbs vector retrieval with hybrid_merge_context injected!
+                    except Exception as router_err:
+                        logger.warning(
+                            f"[EnterpriseHybridRouter] Enterprise router failed ({router_err}), defaulting to Excel check."
+                        )
+
+                # 2. Execute Excel Engine if routed strictly to TABULAR_SQL
+                if route_to_excel:
+                    try:
+                        result = await engine.execute_query(query)
+                        result_str = str(result)
+                        unmatched_signals = [
+                            "not present in dataset",
+                            "no records matched",
+                            "error",
+                            "0 rows",
+                            "empty dataframe",
+                        ]
+                        is_unmatched = any(
+                            sig in result_str.lower() for sig in unmatched_signals
+                        )
+                        explicit_math_keywords = [
+                            "sum of",
+                            "average of",
+                            "count of",
+                            "total of",
+                            "how many rows",
+                            "group by",
+                            "calculate the",
+                            "what is the average",
+                            "what is the sum",
+                            "what is the total",
+                        ]
+                        is_pure_math = any(
+                            kw in query.lower() for kw in explicit_math_keywords
+                        )
+                        if doc_kbs and is_unmatched:
+                            logger.info(
+                                f"[EnterpriseHybridRouter] Excel dataset lacked answer ({result_str}). Falling back to PDF/URL knowledge bases..."
+                            )
+                        elif doc_kbs and not is_pure_math:
+                            logger.info(
+                                "[EnterpriseHybridRouter] Mixed sources: Injecting tabular result into hybrid context and also searching PDFs/URLs..."
+                            )
+                            hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{result_str}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                            route_to_excel = False
+                        else:
+                            yield json.dumps(
+                                {
+                                    "type": "metadata",
+                                    "sources": [],
+                                    "kb_name": ", ".join(
+                                        getattr(ek, "name", "Excel Parquet")
+                                        for ek in excel_kbs
+                                    ),
+                                    "context_type": "duckdb_parquet",
+                                }
+                            )
+                            yield result_str
+                            return
+                    except Exception as e:
+                        logger.error(f"PandasQueryEngine stream failed: {e}")
+                        if not doc_kbs:
+                            yield json.dumps({"error": str(e)})
+                            return
+                        logger.info(
+                            "[EnterpriseHybridRouter] Excel execution failed, falling through to PDF/URL knowledge bases..."
+                        )
+
+=======
+                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                sql_task = asyncio.create_task(engine.execute_query(query))
 
         vector_task = None
         if not skip_search and (doc_kbs or not excel_kbs):
             vector_task = asyncio.create_task(
                 self.pipeline.query(
-                    query=vector_query,
+                    query=query,
                     agent_id=agent_id,
                     kb_id=kb_ids,
                     user_id=user_id,
@@ -226,7 +301,7 @@ class RAGService:
                     "sources": [
                         {
                             "chunk_id": c.chunk_id,
-                            "source": clean_source_name(getattr(c, "s3_path", None) or c.source),
+                            "source": c.source,
                             "score": round(c.hybrid_score, 3),
                             "position": c.position,
                             "reason": c.reason,
@@ -234,17 +309,6 @@ class RAGService:
                             "content_type": getattr(c, "content_type", "original")
                         }
                         for c in context.chunks
-                    ] + [
-                        {
-                            "chunk_id": f"tabular_{ek.id}",
-                            "source": getattr(ek, "name", "").replace("Spreadsheet: ", "").replace("PDF: ", "") if getattr(ek, "name", None) else "Excel Parquet",
-                            "score": 1.0,
-                            "position": 0,
-                            "reason": "Tabular query match",
-                            "kb_id": str(ek.id),
-                            "content_type": "tabular"
-                        }
-                        for ek in excel_kbs
                     ],
                     "triplets": [
                         {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
@@ -263,22 +327,21 @@ class RAGService:
 
             # Now wait for SQL task which is running in parallel
             try:
-                sql_res = await asyncio.wait_for(sql_task, timeout=120.0)
+                sql_res = await asyncio.wait_for(sql_task, timeout=60.0)
             except Exception as e:
                 sql_res = e
                 
             if not isinstance(sql_res, Exception) and sql_res:
                 unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
                 if not any(sig in str(sql_res).lower() for sig in unmatched_signals):
-                    excel_filenames = ", ".join(getattr(ek, "name", "dataset") for ek in excel_kbs if getattr(ek, "name", None))
-                    hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS ({excel_filenames})]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                    hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
             elif isinstance(sql_res, Exception):
                 logger.warning(f"Parallel TABULAR_SQL failed: {sql_res}")
 
         elif sql_task:
             logger.info("Executing TABULAR_SQL standalone...")
             try:
-                sql_res = await asyncio.wait_for(sql_task, timeout=120.0)
+                sql_res = await asyncio.wait_for(sql_task, timeout=30.0)
                 unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
                 is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
                 if is_unmatched:
@@ -286,19 +349,8 @@ class RAGService:
                 else:
                     yield json.dumps({
                         "type": "metadata",
-                        "sources": [
-                            {
-                                "chunk_id": f"tabular_{ek.id}",
-                                "source": getattr(ek, "name", "").replace("Spreadsheet: ", "").replace("PDF: ", "") if getattr(ek, "name", None) else "Excel Parquet",
-                                "score": 1.0,
-                                "position": 0,
-                                "reason": "Tabular query match",
-                                "kb_id": str(ek.id),
-                                "content_type": "tabular"
-                            }
-                            for ek in excel_kbs
-                        ],
-                        "kb_name": ", ".join(getattr(ek, "name", "").replace("Spreadsheet: ", "").replace("PDF: ", "") for ek in excel_kbs if getattr(ek, "name", None)),
+                        "sources": [],
+                        "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
                         "context_type": "duckdb_parquet"
                     })
                     yield str(sql_res)
@@ -322,6 +374,8 @@ class RAGService:
                 return
 
         skip_search = True  # Bypass redundant sequential search below
+            
+>>>>>>> staging
         if len(kb_ids) > 1:
             logger.info(
                 f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
@@ -438,16 +492,11 @@ Use paragraphs for explanations.
 ==================================================
 SOURCE CITATION RULES
 ==================================================
-Cite all the UNIQUE document/data sources that were used to formulate your answer.
-Format each citation at the very end of your response on a single line:
-[Source: <source_1>, <source_2>]
+Cite all the sources that were used to formulate your answer.
+Format each citation as: [Source: <s3_path_or_filename>]
 
-Rules:
-- List every unique source used (e.g. clean file names like ARUN_N.pdf, data.xlsx).
-- Deduplicate sources so each unique filename appears ONLY ONCE.
-- Do NOT repeat the same filename multiple times.
-- If tabular database/spreadsheet insights were used, cite the specific filename(s) shown in the header (e.g. "[Source: employees.csv]" or "[Source: data.xlsx]") as the source.
-- The source citation line must appear only once at the very end of the response.
+If multiple sources were used, list them separated by commas like this: [Source: <source_1>, <source_2>]
+The source citation must appear only once at the very end of the response.
 
 ==================================================
 FINAL RESPONSE FORMAT
@@ -459,7 +508,7 @@ If you'd like, I can also:
 - ...
 - ...
 
-[Source: <source_1>, <source_2>]
+[Source: <filename>]
 """.strip()
 
         agent_persona = {
@@ -481,7 +530,7 @@ If you'd like, I can also:
             try:
                 context = await asyncio.wait_for(
                     self.pipeline.query(
-                        query=vector_query,
+                        query=query,
                         agent_id=agent_id,
                         kb_id=kb_ids,
                         user_id=user_id,
@@ -517,6 +566,49 @@ If you'd like, I can also:
                 logger.info(f"Relevance Filter: Dropped {dropped} irrelevant chunks (score < {min_score}) to prevent hallucination.")
 
         # 3. Yield metadata first
+<<<<<<< HEAD
+        if context:
+            for c in context.chunks:
+                logger.info(
+                    f"Chunk={c.chunk_id} Source={c.source} Score={c.hybrid_score}"
+                )
+
+            metadata = {
+                "type": "metadata",
+                "sources": [
+                    {
+                        "chunk_id": c.chunk_id,
+                        "source": c.source,
+                        "score": round(c.hybrid_score, 3),
+                        "position": c.position,
+                        "reason": c.reason,
+                        "kb_id": c.kb_id,
+                        "content_type": getattr(c, "content_type", "original"),
+                    }
+                    for c in context.chunks
+                ],
+                "triplets": [
+                    {
+                        "subject": t["subject"],
+                        "predicate": t["predicate"],
+                        "object": t["object"],
+                    }
+                    for t in (context.triplets or [])
+                ],
+                "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                "augmented_query": query,
+                "authoritative_entities": context.authoritative_entities or [],
+            }
+        else:
+            metadata = {
+                "type": "metadata",
+                "sources": [],
+                "triplets": [],
+                "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                "augmented_query": query,
+                "authoritative_entities": [],
+            }
+=======
         if not metadata_yielded:
             if context:
                 for c in context.chunks:
@@ -527,7 +619,7 @@ If you'd like, I can also:
                     "sources": [
                         {
                             "chunk_id": c.chunk_id,
-                            "source": clean_source_name(getattr(c, "s3_path", None) or c.source),
+                            "source": c.source,
                             "score": round(c.hybrid_score, 3),
                             "position": c.position,
                             "reason": c.reason,
@@ -553,6 +645,7 @@ If you'd like, I can also:
                     "augmented_query": query,
                     "authoritative_entities": []
                 }
+>>>>>>> staging
 
             yield json.dumps(metadata)
 
@@ -589,39 +682,46 @@ If you'd like, I can also:
                 yield clean_triplet
                 has_direct_output = True
 
-            # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
-            # Collect unique clean source file names from context chunks if available
-            try:
-                unique_srcs = []
-                if context and context.chunks:
-                    for chk in context.chunks:
-                        s_name = clean_source_name(getattr(chk, "s3_path", None) or chk.source)
-                        if s_name and s_name not in unique_srcs:
-                            unique_srcs.append(s_name)
-                if not unique_srcs:
-                    raw_kb_src = (getattr(kb, "source", None) or getattr(kb, "s3_path", None) or getattr(kb, "name", None)) if kb else ("Dataset" if not kb_ids else kb_ids[0])
-                    if kb and "ENTERPRISE SPREADSHEET ANALYSIS" in str(getattr(kb, "name", "")).upper() and getattr(kb, "source", None):
-                        raw_kb_src = kb.source
-                    clean_kb = clean_source_name(str(raw_kb_src))
-                    unique_srcs = [clean_kb]
-                _src_name = ", ".join(unique_srcs)
-                yield f"\n\n[Source: {_src_name}]"
-            except Exception:
-                pass
-            return
+            if has_direct_output:
+                # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
+                # Use the kb object already fetched for metadata (line 661 scope)
+                try:
+                    _src_name = (
+                        kb.name
+                        if len(kb_ids) == 1
+                        else (kb_ids[0] if kb_ids else "Dataset")
+                    )
+                    yield f"\n\n[Source: {_src_name}]"
+                except Exception:
+                    pass
+                return
+            else:
+                logger.warning(
+                    f"[{context.search_type}] mode yielded no direct entities or triplets. Falling through to standard LLM chunk generation!"
+                )
 
-        if (not context or not context.chunks) and not chat_history and not hybrid_merge_context and not episodic_guidance:
+        if (not context or not context.chunks) and not chat_history and not hybrid_merge_context:
+<<<<<<< HEAD
+            logger.info(
+                "Empty context retrieved for stream, returning fallback message."
+            )
+=======
             logger.info("Empty context retrieved for stream, returning fallback message.")
+>>>>>>> staging
             yield "I'm sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
             return
 
         # 4. Stream chunks
+<<<<<<< HEAD
+        formatted_context = (
+            self._format_context(context, hybrid_merge_context=hybrid_merge_context)
+            if context
+            else (hybrid_merge_context or "")
+        )
+=======
         formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
-        if episodic_guidance:
-            formatted_context = (
-                "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
-                f"{episodic_guidance}\n\n"
-            ) + formatted_context
+
+>>>>>>> staging
         start_time = datetime.now()
 
         full_answer = []
@@ -740,9 +840,8 @@ If you'd like, I can also:
         if excel_kbs:
             from app.core.parquet_ingester import ParquetIngester
             from app.modules.rag.pandas_engine import PandasQueryEngine
-            import os
+
             active_paths = []
-            path_mapping = {}
             for ek in excel_kbs:
                 dataset_name = getattr(ek, "parsed_path", None) or getattr(
                     ek, "s3_path", None
@@ -751,17 +850,12 @@ If you'd like, I can also:
                     p = ParquetIngester.get_active_dataset(dataset_name)
                     if p:
                         active_paths.append(p)
-                        # Clean original filename from "Spreadsheet: " prefix
-                        orig_name = getattr(ek, "name", "dataset")
-                        if orig_name.startswith("Spreadsheet: "):
-                            orig_name = orig_name[len("Spreadsheet: "):]
-                        elif orig_name.startswith("PDF: "):
-                            orig_name = orig_name[len("PDF: "):]
-                        path_mapping[os.path.basename(p)] = orig_name
             if active_paths:
-                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths, path_mapping=path_mapping)
+                engine = PandasQueryEngine(
+                    active_paths[0], all_dataset_paths=active_paths
+                )
                 try:
-                    result = await engine.execute_query(query, synthesize=(not doc_kbs))
+                    result = await engine.execute_query(query)
                     result_str = str(result)
                     unmatched_signals = [
                         "not present in dataset",
@@ -795,25 +889,14 @@ If you'd like, I can also:
                             f"[generate_answer] Excel dataset lacked answer ({result_str}). Falling back to PDF/URL knowledge bases..."
                         )
                     elif doc_kbs and not is_pure_math:
-                        logger.info("[generate_answer] Mixed sources: Injecting tabular result and searching PDFs/URLs...")
-                        excel_filenames = ", ".join(getattr(ek, "name", "dataset") for ek in excel_kbs if getattr(ek, "name", None))
-                        hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS ({excel_filenames})]\n{result_str}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                        logger.info(
+                            "[generate_answer] Mixed sources: Injecting tabular result and searching PDFs/URLs..."
+                        )
+                        hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{result_str}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
                     else:
-                        excel_filenames = ", ".join(getattr(ek, "name", "dataset") for ek in excel_kbs if getattr(ek, "name", None))
                         return {
                             "answer": result_str,
-                            "sources": [
-                                {
-                                    "chunk_id": f"tabular_{ek.id}",
-                                    "source": getattr(ek, "name", "").replace("Spreadsheet: ", "").replace("PDF: ", "") if getattr(ek, "name", None) else "Excel Parquet",
-                                    "score": 1.0,
-                                    "position": 0,
-                                    "reason": "Tabular query match",
-                                    "kb_id": str(ek.id),
-                                    "content_type": "tabular"
-                                }
-                                for ek in excel_kbs
-                            ],
+                            "sources": [],
                             "context": {"type": "duckdb_parquet"},
                             "stats": {},
                         }
@@ -876,7 +959,34 @@ If you'd like, I can also:
             logger.warning(f"Failed fetching active ontology for RAG prompt: {e}")
             ontology_rules_str = ""
 
-        # episodic_guidance was fetched at the start of the stream to support parallel tasks.
+        # ============= MEMORY-API: RECALL USER PREFERENCES & EPISODIC GUIDANCE =============
+        episodic_guidance = ""
+        if memory_enabled and user_id:
+            import httpx
+            import uuid
+            MEMORY_API_BASE_URL = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
+            MEMORY_API_URL = f"{MEMORY_API_BASE_URL}/api/v1/memory"
+            async with httpx.AsyncClient() as client:
+                try:
+                    mem_resp = await client.post(
+                        f"{MEMORY_API_URL}/process-turn",
+                        json={
+                            "query": query,
+                            "session_id": str(uuid.uuid4()),
+                            "agent_id": agent_id,
+                            "user_id": user_id,
+                            "tenant_id": self.tenant_id
+                        },
+                        timeout=8.0
+                    )
+                    if mem_resp.status_code == 200:
+                        mem_data = mem_resp.json()
+                        episodic_guidance = mem_data.get("guidance_context") or ""
+                        logger.info(f"Memory API returned guidance_context: {episodic_guidance!r}")
+                    else:
+                        logger.warning(f"memory-api process-turn status={mem_resp.status_code}: {mem_resp.text}")
+                except Exception as e:
+                    logger.warning(f"memory-api process-turn unreachable, continuing without memory: {e}")
 
         injected_system_prompt = f"""
 [PERSONALITY MODE: STRICT]
@@ -935,16 +1045,11 @@ FORMATTING RULES
 ==================================================
 SOURCE CITATION RULES
 ==================================================
-Cite all the UNIQUE document/data sources that were used to formulate your answer.
-Format each citation at the very end of your response on a single line:
-[Source: <source_1>, <source_2>]
+Cite all the sources that were used to formulate your answer.
+Format each citation as: [Source: <s3_path_or_filename>]
 
-Rules:
-- List every unique source used (e.g. clean file names like ARUN_N.pdf, data.xlsx).
-- Deduplicate sources so each unique filename appears ONLY ONCE.
-- Do NOT repeat the same filename multiple times.
-- If tabular database/spreadsheet insights were used, cite the specific filename(s) shown in the header (e.g. "[Source: employees.csv]" or "[Source: data.xlsx]") as the source.
-- The source citation line must appear only once at the very end of the response.
+If multiple sources were used, list them separated by commas like this: [Source: <source_1>, <source_2>]
+The source citation must appear only once at the very end of the response.
 
 ==================================================
 RESPONSE FORMAT
@@ -956,7 +1061,7 @@ If you'd like, I can also:
 - ...
 - ...
 
-[Source: <source_1>, <source_2>]
+[Source: <filename>]
 """.strip()
 
         agent_persona = {
@@ -1172,6 +1277,13 @@ If you'd like, I can also:
             }
 
         # Step 4: Format Context & LLM Generation
+<<<<<<< HEAD
+        formatted_context = (
+            self._format_context(context, hybrid_merge_context=hybrid_merge_context)
+            if context
+            else (hybrid_merge_context or "")
+        )
+=======
         formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
         
         if episodic_guidance:
@@ -1179,6 +1291,7 @@ If you'd like, I can also:
                 "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
                 f"{episodic_guidance}\n\n"
             ) + formatted_context
+>>>>>>> staging
         llm_response = await self._generate_answer_llm(
             query=query,
             context=formatted_context,
@@ -1207,18 +1320,6 @@ If you'd like, I can also:
             }
             for chunk in context.chunks
         ]
-        if excel_kbs:
-            for ek in excel_kbs:
-                sources.append({
-                    "chunk_id": f"tabular_{ek.id}",
-                    "score": 1.0,
-                    "position": 0,
-                    "reason": "Tabular query match",
-                    "source": getattr(ek, "name", "").replace("Spreadsheet: ", "").replace("PDF: ", "") if getattr(ek, "name", None) else "Excel Parquet",
-                    "s3_path": getattr(ek, "s3_path", None),
-                    "kb_id": str(ek.id),
-                    "content_type": "tabular"
-                })
 
         nodes_used = len(context.chunks) + len(context.entity_mentions)
         confidence = (
@@ -1293,38 +1394,9 @@ If you'd like, I can also:
         self._cache_response(cache_key, response)
         return response
 
-    async def _fetch_episodic_guidance(self, query: str, agent_id: str, user_id: Optional[str], memory_enabled: bool) -> str:
-        if not memory_enabled or not user_id:
-            return ""
-        import httpx
-        import uuid
-        import os
-        MEMORY_API_BASE_URL = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
-        MEMORY_API_URL = f"{MEMORY_API_BASE_URL}/api/v1/memory"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=0.5)) as client:
-            try:
-                mem_resp = await client.post(
-                    f"{MEMORY_API_URL}/process-turn",
-                    json={
-                        "query": query,
-                        "session_id": str(uuid.uuid4()),
-                        "agent_id": agent_id,
-                        "user_id": user_id,
-                        "tenant_id": self.tenant_id
-                    }
-                )
-                if mem_resp.status_code == 200:
-                    mem_data = mem_resp.json()
-                    guidance = mem_data.get("guidance_context") or ""
-                    logger.info(f"Memory API returned guidance_context: {guidance!r}")
-                    return guidance
-                else:
-                    logger.warning(f"memory-api process-turn status={mem_resp.status_code}: {mem_resp.text}")
-            except Exception as e:
-                logger.warning(f"memory-api process-turn unreachable, continuing without memory: {e}")
-        return ""
-
-    def _make_cache_key(self, query: str, agent_id: str, kb_id: str, kb_version: int = 0) -> str:
+    def _make_cache_key(
+        self, query: str, agent_id: str, kb_id: str, kb_version: int = 0
+    ) -> str:
         key_str = f"{query}|{agent_id}|{kb_id}|v{kb_version}"
         return hashlib.sha256(key_str.encode()).hexdigest()
 
@@ -1364,9 +1436,14 @@ If you'd like, I can also:
             context_text += f"{hybrid_merge_context}\n" + "=" * 60 + "\n"
 
         for i, chunk in enumerate(context.chunks, 1):
+<<<<<<< HEAD
+            source_info = (
+                clean_source_name(chunk.source) if chunk.source else "Unknown Source"
+            )
+=======
             s3_path = getattr(chunk, "s3_path", None)
-            raw_src = s3_path or chunk.source
-            source_info = clean_source_name(raw_src) if raw_src else "Unknown Source"
+            source_info = s3_path if s3_path else (clean_source_name(chunk.source) if chunk.source else "Unknown Source")
+>>>>>>> staging
             context_text += f"\n[Chunk {i}/{len(context.chunks)} - Source: {source_info} - Position {chunk.position}]"
             context_text += f"\nScore: {chunk.hybrid_score:.3f} (Semantic: {chunk.embedding_similarity:.3f}, Graph: {chunk.graph_score:.3f})"
             context_text += f"\n{'-' * 40}\n{chunk.text}\n"
