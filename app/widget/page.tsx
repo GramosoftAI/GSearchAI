@@ -504,6 +504,10 @@ function WidgetContent() {
   const themeColor = searchParams.get("themeColor") || "#0fb5a1";
   const headerLogo = searchParams.get("headerLogo") || "";
   const headerAlign = searchParams.get("headerAlign") || "center";
+  const headerNameParam = searchParams.get("headerName");
+  const headerName = headerNameParam !== null ? headerNameParam : "Gsearch AI";
+  const agentLabelParam = searchParams.get("agentLabel");
+  const agentLabel = agentLabelParam !== null ? agentLabelParam : "Agent";
   const botAvatar = searchParams.get("botAvatar") || "";
   const buttonIcon = searchParams.get("buttonIcon") || "";
   const initialMessageParam = searchParams.get("initialMessage") || "";
@@ -672,11 +676,16 @@ function WidgetContent() {
     if (!url) return url;
     const cleanUrl = url.split("?")[0];
     const s3Match = cleanUrl.match(/amazonaws\.com\/grag\/logos\/(.+)/);
-    const proxyMatch = cleanUrl.match(/\/embed\/logo\/render\/(.+)/);
-    const baseUrl = getApiBaseUrl();
     if (s3Match) {
+      const baseUrl = getApiBaseUrl();
       return `${baseUrl}/embed/logo/render/${s3Match[1]}`;
-    } else if (proxyMatch) {
+    }
+    if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("blob:") || url.startsWith("data:")) {
+      return url;
+    }
+    const proxyMatch = cleanUrl.match(/\/embed\/logo\/render\/(.+)/);
+    if (proxyMatch) {
+      const baseUrl = getApiBaseUrl();
       return `${baseUrl}/embed/logo/render/${proxyMatch[1]}`;
     }
     return url;
@@ -1133,6 +1142,12 @@ function WidgetContent() {
   const connectWs = useCallback(() => {
     if (!agentId || !tenantId || tenantId === "null" || tenantId === "undefined") return;
 
+    if (ws.current) {
+      try {
+        ws.current.close();
+      } catch (e) {}
+    }
+
     const wsHost = (process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:4915").replace(/\/$/, "");
     const wsBaseUrl = wsHost.includes("/api/v1") ? wsHost : `${wsHost}/api/v1`;
     const wsUrl = `${wsBaseUrl}/embed/chats/${agentId}/ws?tenant_id=${tenantId}`;
@@ -1339,7 +1354,14 @@ function WidgetContent() {
     setMessages((prev) => [...prev, { role: "user", content: message }]);
     setIsTyping(true);
     startTypingTimeout();
-    ws.current?.send(JSON.stringify({ message: message, query: message, embed: true, is_embed: true }));
+    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+      ws.current.send(JSON.stringify({ message: message, query: message, embed: true, is_embed: true }));
+    } else if (ws.current && ws.current.readyState === WebSocket.CONNECTING) {
+      pendingQueryRef.current = message;
+    } else {
+      pendingQueryRef.current = message;
+      connectWs();
+    }
     setInput("");
   };
 
@@ -1462,9 +1484,9 @@ function WidgetContent() {
             width: "100%",
             justifyContent: headerAlign === "center" ? "center" : "flex-start"
           }}>
-            {showInHeader && (customizationLogoUrl || resolvedHeaderLogo) ? (
+            {(showInHeader || resolvedHeaderLogo) && (resolvedHeaderLogo || customizationLogoUrl) ? (
               <div style={{ height: "36px", display: "flex", alignItems: "center" }}>
-                <img src={customizationLogoUrl || resolvedHeaderLogo} alt="Header Logo" style={{ maxHeight: "36px", maxWidth: "120px", objectFit: "contain" }} />
+                <img src={resolvedHeaderLogo || customizationLogoUrl} alt="Header Logo" style={{ maxHeight: "36px", maxWidth: "120px", objectFit: "contain" }} />
               </div>
             ) : (
               <div style={{
@@ -1477,7 +1499,7 @@ function WidgetContent() {
 
             <div>
               <div style={{ fontWeight: 600, fontSize: "15px", color: "#171717", display: "flex", alignItems: "center", gap: "6px" }}>
-                Gsearch AI
+                {headerName}
                 <span style={{ fontSize: "10px", color: wsStatus === "open" ? "#22c55e" : "#ef4444" }}>●</span>
               </div>
               <div style={{ fontSize: "12px", color: "#737373" }}>
@@ -1691,13 +1713,13 @@ function WidgetContent() {
                     width: "100%",
                   }}
                 >
-                  {!isUser && (
+                  {!isUser && resolvedBotAvatar !== "none" && (
                     <div style={{
                       width: "28px", height: "28px", borderRadius: "50%", background: themeColor,
                       display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
                       flexShrink: 0, marginTop: "16px"
                     }}>
-                      {showInChat && customizationLogoUrl ? (
+                      {showInChat && customizationLogoUrl && (resolvedBotAvatar === "chat" || !resolvedBotAvatar) ? (
                         <img src={customizationLogoUrl} alt="Bot Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                       ) : (
                         renderBotAvatar(resolvedBotAvatar, themeColor)
@@ -1713,7 +1735,7 @@ function WidgetContent() {
                     }}
                   >
                     <div style={{ fontSize: "11px", color: "#a3a3a3", marginBottom: "4px" }}>
-                      {isUser ? "You" : "Gsearch • AI Agent"}
+                      {isUser ? "You" : agentLabel}
                     </div>
 
                     <div
@@ -1852,19 +1874,28 @@ function WidgetContent() {
 
                         <button
                           onClick={() => {
-                            const prevUserMsg = messages.slice(0, index).reverse().find(m => m.role === "user");
-                            if (prevUserMsg && ws.current && ws.current.readyState === WebSocket.OPEN) {
+                            let userMessageIndex = -1;
+                            for (let j = index; j >= 0; j--) {
+                              if (messages[j].role === "user") {
+                                userMessageIndex = j;
+                                break;
+                              }
+                            }
+                            if (userMessageIndex !== -1) {
+                              const prevUserMsg = messages[userMessageIndex];
                               bufferRef.current = "";
                               setIsTyping(true);
                               startTypingTimeout();
-                              setMessages((prev) => {
-                                const updated = [...prev];
-                                if (updated[index]) {
-                                  updated[index] = { ...updated[index], content: "", sources: undefined };
-                                }
-                                return updated;
-                              });
-                              ws.current.send(JSON.stringify({ message: prevUserMsg.content, query: prevUserMsg.content, embed: true, is_embed: true }));
+                              setMessages(messages.slice(0, userMessageIndex + 1));
+                              
+                              if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+                                ws.current.send(JSON.stringify({ message: prevUserMsg.content, query: prevUserMsg.content, embed: true, is_embed: true }));
+                              } else if (ws.current && ws.current.readyState === WebSocket.CONNECTING) {
+                                pendingQueryRef.current = prevUserMsg.content;
+                              } else {
+                                pendingQueryRef.current = prevUserMsg.content;
+                                connectWs();
+                              }
                             }
                           }}
                           style={{
@@ -1916,7 +1947,7 @@ function WidgetContent() {
                                     title={hasMultiple ? `${effectiveSources.length} Sources available` : "View Source"}
                                   >
                                     <SiCrowdsource size={14} style={{ color: "#1e293b" }} />
-                                    <span style={{ color: "#0066cc", fontWeight: "700" }}>
+                                    <span style={{ color: "#000000", fontWeight: "700" }}>
                                       {hasMultiple ? `Sources (${effectiveSources.length})` : "Source"}
                                     </span>
                                     {hasMultiple && (
@@ -2024,13 +2055,13 @@ function WidgetContent() {
             {/* Typing Indicator (Only when waiting for first token) */}
             {isTyping && (!messages.length || messages[messages.length - 1].role === "user") && (
               <div style={{ display: "flex", gap: "8px", alignItems: "flex-start", width: "100%" }}>
-                {showInChat && (customizationLogoUrl || (resolvedBotAvatar && resolvedBotAvatar !== "none")) && (
+                {resolvedBotAvatar !== "none" && (
                   <div style={{
                     width: "28px", height: "28px", borderRadius: "50%", background: themeColor,
                     display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
                     flexShrink: 0, marginTop: "16px"
                   }}>
-                    {showInChat && customizationLogoUrl ? (
+                    {showInChat && customizationLogoUrl && (resolvedBotAvatar === "chat" || !resolvedBotAvatar) ? (
                       <img src={customizationLogoUrl} alt="Bot Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     ) : (
                       renderBotAvatar(resolvedBotAvatar, themeColor)
@@ -2038,7 +2069,7 @@ function WidgetContent() {
                   </div>
                 )}
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-                  <div style={{ fontSize: "11px", color: "#a3a3a3", marginBottom: "4px" }}>Gsearch is typing...</div>
+                  <div style={{ fontSize: "11px", color: "#a3a3a3", marginBottom: "4px" }}>{agentLabel} is typing...</div>
                   <div style={{ padding: "12px 16px", borderRadius: "18px", background: "#ffffff", border: "1px solid #e4e4e7", display: "flex", gap: "4px" }}>
                     <span className="typing-dot"></span>
                     <span className="typing-dot"></span>
@@ -2159,7 +2190,7 @@ function WidgetContent() {
           cursor: "pointer",
         }}
       >
-        Powerd by <span style={{ fontWeight: 600, color: "#52525b" }}>Gsearch</span>
+        Powered by <span style={{ fontWeight: 600, color: "#52525b" }}>Gsearch</span>
       </a>
       {/* Link Safety Modal */}
       {safetyModalUrl && (

@@ -81,16 +81,20 @@ const AVATAR_PRESET_INFO = "";
 const AVATAR_PRESET_BOOK = "";
 const AVATAR_PRESET_QUESTION = "";
 
-// Convert S3 logo URLs to backend proxy render URLs (S3 returns 403 Forbidden)
 const toProxyLogoUrl = (url: string): string => {
   if (!url) return url;
   const cleanUrl = url.split("?")[0];
   const s3Match = cleanUrl.match(/amazonaws\.com\/grag\/logos\/(.+)/);
-  const proxyMatch = cleanUrl.match(/\/embed\/logo\/render\/(.+)/);
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "";
   if (s3Match) {
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "";
     return `${apiBase}/embed/logo/render/${s3Match[1]}`;
-  } else if (proxyMatch) {
+  }
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("blob:") || url.startsWith("data:")) {
+    return url;
+  }
+  const proxyMatch = cleanUrl.match(/\/embed\/logo\/render\/(.+)/);
+  if (proxyMatch) {
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "";
     return `${apiBase}/embed/logo/render/${proxyMatch[1]}`;
   }
   return url;
@@ -112,13 +116,18 @@ export default function EmbedScriptSection() {
   const [position, setPosition] = useState<"center" | "right">("center");
   const [placeholderText, setPlaceholderText] = useState("Ask about web scraping, Zyte API, anything data extraction...");
   const [themeColor, setThemeColor] = useState("#0fb5a1");
+  const [themeTextColor, setThemeTextColor] = useState<string>("#ffffff");
+  const [btnBgColor, setBtnBgColor] = useState<string>("#0fb5a1");
+  const [btnBorderColor, setBtnBorderColor] = useState<string>("#0fb5a1");
 
   // 2. Header Styles States
   const [headerLogo, setHeaderLogo] = useState<string>(LOGO_PRESET_DARK);
   const [headerAlignment, setHeaderAlignment] = useState<"left" | "center">("center");
+  const [headerName, setHeaderName] = useState<string>("Gsearch AI");
 
   // 3. Bot Identity States
   const [botAvatar, setBotAvatar] = useState<string>("chat");
+  const [agentLabel, setAgentLabel] = useState<string>("Agent");
 
   // 4. Entry Button States
   const [buttonIcon, setButtonIcon] = useState<string>("chat");
@@ -153,10 +162,15 @@ export default function EmbedScriptSection() {
   const [draftPosition, setDraftPosition] = useState<"center" | "right">("center");
   const [draftPlaceholderText, setDraftPlaceholderText] = useState("Ask about web scraping, Zyte API, anything data extraction...");
   const [draftThemeColor, setDraftThemeColor] = useState("#0fb5a1");
+  const [draftThemeTextColor, setDraftThemeTextColor] = useState<string>("#ffffff");
+  const [draftBtnBgColor, setDraftBtnBgColor] = useState<string>("#0fb5a1");
+  const [draftBtnBorderColor, setDraftBtnBorderColor] = useState<string>("#0fb5a1");
 
   const [draftHeaderLogo, setDraftHeaderLogo] = useState<string>(headerLogo);
   const [draftHeaderAlignment, setDraftHeaderAlignment] = useState<"left" | "center">(headerAlignment);
+  const [draftHeaderName, setDraftHeaderName] = useState<string>("Gsearch AI");
   const [draftBotAvatar, setDraftBotAvatar] = useState<string>("chat");
+  const [draftAgentLabel, setDraftAgentLabel] = useState<string>("Agent");
 
   // Logo Placement Visibility States
   const [showInHeader, setShowInHeader] = useState<boolean>(true);
@@ -319,9 +333,14 @@ export default function EmbedScriptSection() {
     setDraftPosition(position);
     setDraftPlaceholderText(placeholderText);
     setDraftThemeColor(themeColor);
+    setDraftThemeTextColor(themeTextColor);
+    setDraftBtnBgColor(btnBgColor);
+    setDraftBtnBorderColor(btnBorderColor);
     setDraftHeaderLogo(headerLogo);
     setDraftHeaderAlignment(headerAlignment);
+    setDraftHeaderName(headerName);
     setDraftBotAvatar(botAvatar);
+    setDraftAgentLabel(agentLabel);
     setDraftButtonIcon(buttonIcon);
     setDraftButtonAlignment(buttonAlignment);
     setDraftShowButtonText(showButtonText);
@@ -354,9 +373,14 @@ export default function EmbedScriptSection() {
     setPosition(draftPosition);
     setPlaceholderText(draftPlaceholderText);
     setThemeColor(draftThemeColor);
+    setThemeTextColor(draftThemeTextColor);
+    setBtnBgColor(draftBtnBgColor);
+    setBtnBorderColor(draftBtnBorderColor);
     setHeaderLogo(draftHeaderLogo);
     setHeaderAlignment(draftHeaderAlignment);
+    setHeaderName(draftHeaderName);
     setBotAvatar(draftBotAvatar);
+    setAgentLabel(draftAgentLabel);
     setButtonIcon(draftButtonIcon);
     setButtonAlignment(draftButtonAlignment);
     setShowButtonText(draftShowButtonText);
@@ -450,9 +474,14 @@ export default function EmbedScriptSection() {
     setDraftPosition(position);
     setDraftPlaceholderText(placeholderText);
     setDraftThemeColor(themeColor);
+    setDraftThemeTextColor(themeTextColor);
+    setDraftBtnBgColor(btnBgColor);
+    setDraftBtnBorderColor(btnBorderColor);
     setDraftHeaderLogo(headerLogo);
     setDraftHeaderAlignment(headerAlignment);
+    setDraftHeaderName(headerName);
     setDraftBotAvatar(botAvatar);
+    setDraftAgentLabel(agentLabel);
     setDraftButtonIcon(buttonIcon);
     setDraftButtonAlignment(buttonAlignment);
     setDraftShowButtonText(showButtonText);
@@ -581,8 +610,13 @@ export default function EmbedScriptSection() {
   data-tenant-id="${agentresp?.[0]?.tenant_id || "YOUR_TENANT_ID"}"
   data-chat-type="${chatType}"${chatType === "search" ? `\n  data-position="${position}"\n  data-placeholder="${placeholderText}"` : ""}
   data-theme-color="${themeColor}"
+  data-theme-text-color="${themeTextColor}"
+  data-btn-bg-color="${btnBgColor}"
+  data-btn-border-color="${btnBorderColor}"
   data-header-logo="${headerLogo}"
   data-header-align="${headerAlignment}"
+  data-header-name="${headerName}"
+  data-agent-label="${agentLabel}"
   data-bot-avatar="${botAvatar}"
   data-button-icon="${buttonIcon}"
   data-button-align="${buttonAlignment}"
@@ -791,11 +825,26 @@ export default function EmbedScriptSection() {
                 <span className="text-[#3b82f6]">data-theme-color=</span>
                 <span className="text-emerald-500">{`"${themeColor}"`}</span>
                 {"\n  "}
+                <span className="text-[#3b82f6]">data-theme-text-color=</span>
+                <span className="text-emerald-500">{`"${themeTextColor}"`}</span>
+                {"\n  "}
+                <span className="text-[#3b82f6]">data-btn-bg-color=</span>
+                <span className="text-emerald-500">{`"${btnBgColor}"`}</span>
+                {"\n  "}
+                <span className="text-[#3b82f6]">data-btn-border-color=</span>
+                <span className="text-emerald-500">{`"${btnBorderColor}"`}</span>
+                {"\n  "}
                 <span className="text-[#3b82f6]">data-header-logo=</span>
                 <span className="text-emerald-500">{`"${headerLogo}"`}</span>
                 {"\n  "}
                 <span className="text-[#3b82f6]">data-header-align=</span>
                 <span className="text-emerald-500">{`"${headerAlignment}"`}</span>
+                {"\n  "}
+                <span className="text-[#3b82f6]">data-header-name=</span>
+                <span className="text-emerald-500">{`"${headerName}"`}</span>
+                {"\n  "}
+                <span className="text-[#3b82f6]">data-agent-label=</span>
+                <span className="text-emerald-500">{`"${agentLabel}"`}</span>
                 {"\n  "}
                 <span className="text-[#3b82f6]">data-bot-avatar=</span>
                 <span className="text-emerald-500">{`"${botAvatar}"`}</span>
@@ -965,6 +1014,17 @@ export default function EmbedScriptSection() {
                         <p className="text-[10px] text-slate-400 mt-1.5 mb-0">Recommended size: 120 × 40 px or 3:1 aspect ratio (PNG, SVG, JPG, max 2MB)</p>
                       </div>
 
+                      {/* Header Title */}
+                      <div>
+                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Header Title</label>
+                        <Input
+                          value={draftHeaderName}
+                          onChange={(e) => setDraftHeaderName(e.target.value)}
+                          placeholder="Gsearch AI"
+                          className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
+                        />
+                      </div>
+
                       {/* Logo Alignment */}
                       <div>
                         <label className="text-xs font-semibold text-slate-500 block mb-1.5">Alignment</label>
@@ -989,6 +1049,22 @@ export default function EmbedScriptSection() {
                   ),
                   children: (
                     <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-3.5 min-h-[350px] max-h-[450px] overflow-y-auto custom-scrollbar">
+                      {/* Agent Message Label */}
+                      <div>
+                        <label className="font-bold text-xs text-slate-800 dark:text-slate-200 block mb-0.5">
+                          Agent Chat Label
+                        </label>
+                        <p className="text-[10px] text-slate-400 m-0 mb-1.5 leading-normal">
+                          This label will appear above all responses sent by the agent in the chat feed.
+                        </p>
+                        <Input
+                          value={draftAgentLabel}
+                          onChange={(e) => setDraftAgentLabel(e.target.value)}
+                          placeholder="Agent"
+                          className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
+                        />
+                      </div>
+
                       {/* Initial Message Section */}
                       <div>
                         <label className="font-bold text-xs text-slate-800 dark:text-slate-200 block mb-0.5">
@@ -1410,7 +1486,7 @@ export default function EmbedScriptSection() {
 
                       <div className="space-y-2 pt-1">
                         <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
-                          Select Theme Color
+                          Select Theme Color (Background)
                         </label>
                         <div className="flex items-center gap-2.5">
                           {COLOR_PRESETS.map((color) => (
@@ -1441,6 +1517,131 @@ export default function EmbedScriptSection() {
                             />
                             <span className="text-[10px] font-mono text-slate-500 font-bold select-all uppercase">
                               {draftThemeColor}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 pt-1">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
+                          Select Button Background Color (Inner Color)
+                        </label>
+                        <div className="flex items-center gap-2.5">
+                          {COLOR_PRESETS.map((color) => (
+                            <button
+                              key={color.hex}
+                              onClick={() => setDraftBtnBgColor(color.hex)}
+                              style={{ background: color.hex }}
+                              className={`w-7 h-7 rounded-full border-2 transition-transform duration-200 active:scale-90 relative cursor-pointer ${draftBtnBgColor.toLowerCase() === color.hex.toLowerCase()
+                                ? "border-slate-800 scale-110 shadow-md"
+                                : "border-transparent hover:scale-105"
+                                }`}
+                              title={color.name}
+                            >
+                              {draftBtnBgColor.toLowerCase() === color.hex.toLowerCase() && (
+                                <span className="absolute inset-0 flex items-center justify-center text-white text-[10px]">
+                                  ✓
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                          <div className="flex items-center gap-1.5 border border-slate-200 dark:border-slate-800 rounded-lg p-1 bg-white dark:bg-slate-950 ml-1">
+                            <input
+                              type="color"
+                              value={draftBtnBgColor}
+                              onChange={(e) => setDraftBtnBgColor(e.target.value)}
+                              className="w-6 h-6 rounded-md border-0 cursor-pointer p-0 bg-transparent shrink-0 outline-none"
+                              title="Custom hex color"
+                            />
+                            <span className="text-[10px] font-mono text-slate-500 font-bold select-all uppercase">
+                              {draftBtnBgColor}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 pt-1">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
+                          Select Button Border Color (Outer Border Color)
+                        </label>
+                        <div className="flex items-center gap-2.5">
+                          {COLOR_PRESETS.map((color) => (
+                            <button
+                              key={color.hex}
+                              onClick={() => setDraftBtnBorderColor(color.hex)}
+                              style={{ background: color.hex }}
+                              className={`w-7 h-7 rounded-full border-2 transition-transform duration-200 active:scale-90 relative cursor-pointer ${draftBtnBorderColor.toLowerCase() === color.hex.toLowerCase()
+                                ? "border-slate-800 scale-110 shadow-md"
+                                : "border-transparent hover:scale-105"
+                                }`}
+                              title={color.name}
+                            >
+                              {draftBtnBorderColor.toLowerCase() === color.hex.toLowerCase() && (
+                                <span className="absolute inset-0 flex items-center justify-center text-white text-[10px]">
+                                  ✓
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                          <div className="flex items-center gap-1.5 border border-slate-200 dark:border-slate-800 rounded-lg p-1 bg-white dark:bg-slate-950 ml-1">
+                            <input
+                              type="color"
+                              value={draftBtnBorderColor}
+                              onChange={(e) => setDraftBtnBorderColor(e.target.value)}
+                              className="w-6 h-6 rounded-md border-0 cursor-pointer p-0 bg-transparent shrink-0 outline-none"
+                              title="Custom hex color"
+                            />
+                            <span className="text-[10px] font-mono text-slate-500 font-bold select-all uppercase">
+                              {draftBtnBorderColor}
+                            </span>
+                          </div>
+                          <Button
+                            size="small"
+                            type="dashed"
+                            onClick={() => setDraftBtnBorderColor(draftBtnBgColor)}
+                            className="text-[10px] h-8 rounded-lg !border-slate-300 hover:!border-[#0fb5a1] hover:!text-[#0fb5a1]"
+                          >
+                            Match Background
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 pt-1">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
+                          Select Text & Icon Color
+                        </label>
+                        <div className="flex items-center gap-2.5">
+                          {[
+                            { name: "White", hex: "#ffffff" },
+                            { name: "Black", hex: "#000000" }
+                          ].map((color) => (
+                            <button
+                              key={color.hex}
+                              onClick={() => setDraftThemeTextColor(color.hex)}
+                              style={{ background: color.hex, border: "1px solid #cbd5e1" }}
+                              className={`w-7 h-7 rounded-full border-2 transition-transform duration-200 active:scale-90 relative cursor-pointer ${draftThemeTextColor.toLowerCase() === color.hex.toLowerCase()
+                                ? "border-slate-800 scale-110 shadow-md"
+                                : "border-transparent hover:scale-105"
+                                }`}
+                              title={color.name}
+                            >
+                              {draftThemeTextColor.toLowerCase() === color.hex.toLowerCase() && (
+                                <span className="absolute inset-0 flex items-center justify-center text-slate-800 text-[10px]">
+                                  ✓
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                          <div className="flex items-center gap-1.5 border border-slate-200 dark:border-slate-800 rounded-lg p-1 bg-white dark:bg-slate-950 ml-1">
+                            <input
+                              type="color"
+                              value={draftThemeTextColor}
+                              onChange={(e) => setDraftThemeTextColor(e.target.value)}
+                              className="w-6 h-6 rounded-md border-0 cursor-pointer p-0 bg-transparent shrink-0 outline-none"
+                              title="Custom hex color"
+                            />
+                            <span className="text-[10px] font-mono text-slate-500 font-bold select-all uppercase">
+                              {draftThemeTextColor}
                             </span>
                           </div>
                         </div>
@@ -1536,8 +1737,9 @@ export default function EmbedScriptSection() {
                   <div
                     onClick={() => setPreviewIsOpen(!previewIsOpen)}
                     style={{
-                      background: draftThemeColor,
-                      color: "#ffffff",
+                      background: draftBtnBgColor || draftThemeColor,
+                      border: `2px solid ${draftBtnBorderColor || draftBtnBgColor || draftThemeColor}`,
+                      color: draftThemeTextColor,
                     }}
                     className={`absolute bottom-5 z-30 px-3.5 py-2.5 rounded-full shadow-xl flex items-center gap-2 cursor-pointer hover:scale-105 transition-all duration-200 animate-bounce [animation-duration:3s] ${draftButtonAlignment === "left" ? "left-5" : "right-5"
                       }`}
@@ -1546,22 +1748,22 @@ export default function EmbedScriptSection() {
                     {draftButtonIcon.startsWith("http") || draftButtonIcon.startsWith("blob:") || draftButtonIcon.startsWith("data:") ? (
                       <img src={draftButtonIcon} alt="Icon" className="w-5 h-5 rounded-full object-contain" />
                     ) : draftButtonIcon === "robot" ? (
-                      <RobotOutlined className="text-lg text-white" />
+                      <RobotOutlined className="text-lg" style={{ color: draftThemeTextColor }} />
                     ) : draftButtonIcon === "setting" ? (
-                      <SettingOutlined className="text-lg text-white" />
+                      <SettingOutlined className="text-lg" style={{ color: draftThemeTextColor }} />
                     ) : draftButtonIcon === "question" ? (
-                      <QuestionCircleOutlined className="text-lg text-white" />
+                      <QuestionCircleOutlined className="text-lg" style={{ color: draftThemeTextColor }} />
                     ) : draftButtonIcon === "book" ? (
-                      <BookOutlined className="text-lg text-white" />
+                      <BookOutlined className="text-lg" style={{ color: draftThemeTextColor }} />
                     ) : draftButtonIcon === "chat2" ? (
-                      <CommentOutlined className="text-lg text-white" />
+                      <CommentOutlined className="text-lg" style={{ color: draftThemeTextColor }} />
                     ) : (
-                      <MessageOutlined className="text-lg text-white" />
+                      <MessageOutlined className="text-lg" style={{ color: draftThemeTextColor }} />
                     )}
 
                     {/* Show Button Text if enabled */}
                     {draftShowButtonText && (
-                      <span className="text-xs font-bold pr-0.5 select-none">{draftButtonText || "Help"}</span>
+                      <span className="text-xs font-bold pr-0.5 select-none" style={{ color: draftThemeTextColor }}>{draftButtonText || "Help"}</span>
                     )}
                   </div>
                 )}
@@ -1658,7 +1860,7 @@ export default function EmbedScriptSection() {
                             style={{ color: isDarkTheme ? "#ffffff" : "#1e293b" }}
                             className="text-xs font-bold flex items-center gap-1 leading-none"
                           >
-                            {agent?.name || "Gsearch AI"}
+                            {draftHeaderName !== undefined && draftHeaderName !== null ? draftHeaderName : (agent?.name || "Gsearch AI")}
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                           </div>
                         </div>
@@ -1743,7 +1945,7 @@ export default function EmbedScriptSection() {
                                         </div>
                                       )}
                                       <div className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}>
-                                        <span className="text-[8px] text-slate-400 mb-0.5">{isUser ? "You" : agent?.name || "Agent"}</span>
+                                        <span className="text-[8px] text-slate-400 mb-0.5">{isUser ? "You" : draftAgentLabel !== undefined && draftAgentLabel !== null ? draftAgentLabel : (agent?.name || "Agent")}</span>
                                         <div
                                           style={{
                                             background: isUser
@@ -1783,7 +1985,7 @@ export default function EmbedScriptSection() {
                                               </>
                                             )}
                                             {draftDisplaySources && (
-                                              <div className="text-[11px] text-[#0066cc] font-bold flex items-center gap-1 cursor-pointer ml-25">
+                                              <div className="text-[11px] text-[#000000] font-bold flex items-center gap-1 cursor-pointer ml-25">
                                                 <SiCrowdsource className="text-slate-800 text-[13px]" />
                                                 <span>Source</span>
                                               </div>

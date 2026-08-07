@@ -11,6 +11,15 @@
   // Custom design & branding attributes
   const headerLogo = script.getAttribute("data-header-logo") || "";
   const headerAlign = script.getAttribute("data-header-align") || "center";
+  const headerNameAttr = script.getAttribute("data-header-name");
+  const headerName = headerNameAttr !== null ? headerNameAttr : "Gsearch AI";
+  const agentLabelAttr = script.getAttribute("data-agent-label");
+  const agentLabel = agentLabelAttr !== null ? agentLabelAttr : "Agent";
+  const themeTextColor = script.getAttribute("data-theme-text-color") || "#ffffff";
+  const btnBgColorAttr = script.getAttribute("data-btn-bg-color");
+  const btnBgColor = btnBgColorAttr !== null ? btnBgColorAttr : themeColor;
+  const btnBorderColorAttr = script.getAttribute("data-btn-border-color");
+  const btnBorderColor = btnBorderColorAttr !== null ? btnBorderColorAttr : btnBgColor;
   const botAvatar = script.getAttribute("data-bot-avatar") || "";
   const buttonIcon = script.getAttribute("data-button-icon") || "";
   const buttonAlign = script.getAttribute("data-button-align") || "right";
@@ -43,6 +52,27 @@
   } catch (e) {
     console.error("GragWidget: Error parsing script URL, falling back.", e);
   }
+
+  const toProxyUrl = (url) => {
+    if (!url) return url;
+    const cleanUrl = url.split("?")[0];
+    const s3Match = cleanUrl.match(/amazonaws\.com\/grag\/logos\/(.+)/);
+    if (s3Match) {
+      return `${baseUrl.endsWith("/api/v1") ? baseUrl : baseUrl + "/api/v1"}/embed/logo/render/${s3Match[1]}`;
+    }
+    if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("blob:") || url.startsWith("data:")) {
+      return url;
+    }
+    const proxyMatch = cleanUrl.match(/\/embed\/logo\/render\/(.+)/);
+    if (proxyMatch) {
+      return `${baseUrl.endsWith("/api/v1") ? baseUrl : baseUrl + "/api/v1"}/embed/logo/render/${proxyMatch[1]}`;
+    }
+    return url;
+  };
+
+  const resolvedHeaderLogo = toProxyUrl(headerLogo);
+  const resolvedBotAvatar = toProxyUrl(botAvatar);
+  const resolvedButtonIcon = toProxyUrl(buttonIcon);
 
   // --- Style Elements (Keyframes & Animations) ---
   const styleEl = document.createElement("style");
@@ -98,9 +128,9 @@
       height: 60px;
       border-radius: 50%;
       cursor: pointer;
-      background: #ffffff;
-      border: 2px solid ${themeColor};
-      box-shadow: 0 6px 20px ${themeColor}40;
+      background: ${btnBgColor};
+      border: 2px solid ${btnBorderColor};
+      box-shadow: 0 6px 20px ${btnBgColor}40;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -146,7 +176,7 @@
   iframe.style.borderRadius = "24px";
   iframe.style.zIndex = "2147483647";
   iframe.setAttribute("allowtransparency", "true");
-  iframe.src = `${baseUrl}/widget?agentId=${agentId}&tenantId=${tenantId}&chatType=${chatType}&themeColor=${encodeURIComponent(themeColor)}&headerLogo=${encodeURIComponent(headerLogo)}&headerAlign=${encodeURIComponent(headerAlign)}&botAvatar=${encodeURIComponent(botAvatar)}&buttonIcon=${encodeURIComponent(buttonIcon)}&buttonAlign=${encodeURIComponent(buttonAlign)}&showButtonText=${showButtonText}&buttonText=${encodeURIComponent(buttonText)}&initialMessage=${encodeURIComponent(initialMessage)}&displaySources=${displaySources}&allowDownloads=${allowDownloads}&displayCopy=${displayCopy}&displayFeedback=${displayFeedback}&linkSafety=${linkSafety}&leadCollection=${leadCollection}&leadFields=${encodeURIComponent(leadFields)}&leadTiming=${leadTiming}&escalationEnabled=${escalationEnabled}&escalationLink=${encodeURIComponent(escalationLink)}`;
+  iframe.src = `${baseUrl}/widget?agentId=${agentId}&tenantId=${tenantId}&chatType=${chatType}&themeColor=${encodeURIComponent(themeColor)}&headerLogo=${encodeURIComponent(resolvedHeaderLogo)}&headerAlign=${encodeURIComponent(headerAlign)}&headerName=${encodeURIComponent(headerName)}&agentLabel=${encodeURIComponent(agentLabel)}&themeTextColor=${encodeURIComponent(themeTextColor)}&botAvatar=${encodeURIComponent(resolvedBotAvatar)}&buttonIcon=${encodeURIComponent(resolvedButtonIcon)}&buttonAlign=${encodeURIComponent(buttonAlign)}&showButtonText=${showButtonText}&buttonText=${encodeURIComponent(buttonText)}&initialMessage=${encodeURIComponent(initialMessage)}&displaySources=${displaySources}&allowDownloads=${allowDownloads}&displayCopy=${displayCopy}&displayFeedback=${displayFeedback}&linkSafety=${linkSafety}&leadCollection=${leadCollection}&leadFields=${encodeURIComponent(leadFields)}&leadTiming=${leadTiming}&escalationEnabled=${escalationEnabled}&escalationLink=${encodeURIComponent(escalationLink)}`;
 
 
   // Declared search wrapper reference
@@ -397,7 +427,7 @@
     poweredBy.style.userSelect = "none";
     poweredBy.style.textDecoration = "none";
     poweredBy.style.cursor = "pointer";
-    poweredBy.innerHTML = `Powerd by <span style="font-weight: 600; color: #71717a;">Gsearch</span>`;
+    poweredBy.innerHTML = `Powered by <span style="font-weight: 600; color: #71717a;">Gsearch</span>`;
 
     // Assemble and render elements
     inputBar.appendChild(leftIcon);
@@ -419,28 +449,28 @@
     }
 
     let iconHtml = "";
-    if (buttonIcon && (buttonIcon.startsWith("http") || buttonIcon.startsWith("blob:") || buttonIcon.startsWith("data:"))) {
-      iconHtml = `<img src="${buttonIcon}" style="width: 28px; height: 28px; border-radius: 50%; object-fit: contain;" />`;
-    } else if (buttonIcon === "robot") {
-      iconHtml = `<div style="width: 28px; height: 28px; border-radius: 50%; background: ${themeColor}; display: flex; items-center: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2" fill="none"/><circle cx="8.5" cy="15.5" r="1.5" fill="white"/><circle cx="15.5" cy="15.5" r="1.5" fill="white"/><path d="M12 2v6M9 5h6"/></svg></div>`;
-    } else if (buttonIcon === "setting") {
-      iconHtml = `<div style="width: 28px; height: 28px; border-radius: 50%; background: ${themeColor}; display: flex; items-center: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>`;
-    } else if (buttonIcon === "question") {
-      iconHtml = `<div style="width: 28px; height: 28px; border-radius: 50%; background: ${themeColor}; display: flex; items-center: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>`;
-    } else if (buttonIcon === "book") {
-      iconHtml = `<div style="width: 28px; height: 28px; border-radius: 50%; background: ${themeColor}; display: flex; items-center: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div>`;
+    if (resolvedButtonIcon && (resolvedButtonIcon.startsWith("http") || resolvedButtonIcon.startsWith("blob:") || resolvedButtonIcon.startsWith("data:"))) {
+      iconHtml = `<img src="${resolvedButtonIcon}" style="width: 28px; height: 28px; border-radius: 50%; object-fit: contain;" />`;
+    } else if (resolvedButtonIcon === "robot") {
+      iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2" fill="none"/><circle cx="8.5" cy="15.5" r="1.5" fill="${themeTextColor}"/><circle cx="15.5" cy="15.5" r="1.5" fill="${themeTextColor}"/><path d="M12 2v6M9 5h6"/></svg></div>`;
+    } else if (resolvedButtonIcon === "setting") {
+      iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>`;
+    } else if (resolvedButtonIcon === "question") {
+      iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>`;
+    } else if (resolvedButtonIcon === "book") {
+      iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div>`;
     } else {
       iconHtml = `
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M21 11.5C21 16.7467 16.9706 21 12 21C10.1302 21 8.39632 20.3992 6.97743 19.3722L3 20.5L4.15064 16.6329C3.41732 15.1543 3 13.4754 3 11.5C3 6.25329 7.02944 2 12 2C16.9706 2 21 6.25329 21 11.5Z" fill="${themeColor}" stroke="${themeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          <circle cx="8" cy="11.5" r="1.3" fill="white"/>
-          <circle cx="12" cy="11.5" r="1.3" fill="white"/>
-          <circle cx="16" cy="11.5" r="1.3" fill="white"/>
+          <path d="M21 11.5C21 16.7467 16.9706 21 12 21C10.1302 21 8.39632 20.3992 6.97743 19.3722L3 20.5L4.15064 16.6329C3.41732 15.1543 3 13.4754 3 11.5C3 6.25329 7.02944 2 12 2C16.9706 2 21 6.25329 21 11.5Z" fill="${themeTextColor}" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="8" cy="11.5" r="1.3" fill="${btnBgColor}"/>
+          <circle cx="12" cy="11.5" r="1.3" fill="${btnBgColor}"/>
+          <circle cx="16" cy="11.5" r="1.3" fill="${btnBgColor}"/>
         </svg>
       `;
     }
 
-    button.innerHTML = iconHtml + (showButtonText && buttonText ? `<span style="font-weight: 700; font-size: 14px; color: ${themeColor}; font-family: sans-serif;">${buttonText}</span>` : "");
+    button.innerHTML = iconHtml + (showButtonText && buttonText ? `<span style="font-weight: 700; font-size: 14px; color: ${themeTextColor}; font-family: sans-serif;">${buttonText}</span>` : "");
 
     document.body.appendChild(button);
 
@@ -452,9 +482,10 @@
           .then(res => res.json())
           .then(result => {
             const data = result.data || result;
-            if (data && data.logo_url && data.show_in_embed && button) {
-              const imgHtml = `<img src="${data.logo_url}" style="width: 28px; height: 28px; border-radius: 50%; object-fit: contain;" />`;
-              button.innerHTML = imgHtml + (showButtonText && buttonText ? `<span style="font-weight: 700; font-size: 14px; color: ${themeColor}; font-family: sans-serif;">${buttonText}</span>` : "");
+            if (data && data.logo_url && data.show_in_embed && button && (buttonIcon === "chat" || !buttonIcon)) {
+              const proxyLogo = toProxyUrl(data.logo_url);
+              const imgHtml = `<img src="${proxyLogo}" style="width: 28px; height: 28px; border-radius: 50%; object-fit: contain;" />`;
+              button.innerHTML = imgHtml + (showButtonText && buttonText ? `<span style="font-weight: 700; font-size: 14px; color: ${themeTextColor}; font-family: sans-serif;">${buttonText}</span>` : "");
             }
           })
           .catch(e => console.warn("GragWidget: Customization fetch error", e));
