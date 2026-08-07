@@ -84,28 +84,6 @@ class PandasQueryEngine:
             self.llm_client = data_path_or_client
         self.all_dataset_paths = all_dataset_paths or ([self.data_path] if self.data_path else [])
         
-<<<<<<< HEAD
-        api_key = getattr(settings, "deepinfra_api_key", "")
-        base_url = getattr(settings, "deepinfra_api_url", "https://api.deepinfra.com/v1/openai")
-        model_name = settings.model_answer
-        self.llm = ChatOpenAI(
-            model=model_name,
-            api_key=api_key,
-            base_url=base_url,
-            temperature=0.0,
-            max_tokens=2048,
-            extra_body={"enable_thinking": False}
-        )
-        router_model_name = getattr(settings, "model_intent", model_name)
-        self.router_llm = ChatOpenAI(
-            model=router_model_name,
-            api_key=api_key,
-            base_url=base_url,
-            temperature=0.0,
-            max_tokens=512,
-            extra_body={"enable_thinking": False}
-        )
-=======
         if not self.llm_client:
             from app.core.llm.deepinfra_llm import DeepInfraLLMClient
             self.llm_client = DeepInfraLLMClient()
@@ -117,7 +95,6 @@ class PandasQueryEngine:
             return await self.llm_client.generate_cloud(prompt=text)
             
         self.llm = RunnableLambda(_ainvoke)
->>>>>>> staging
 
     def _build_union_query(self, paths: List[str], with_row_id: bool = False) -> str:
         """Builds a DuckDB UNION ALL BY NAME query across all provided CSV/Parquet dataset paths."""
@@ -358,7 +335,6 @@ class PandasQueryEngine:
                         logger.error(f"Self-healing SQL retry failed: {e_retry}", exc_info=True)
                         return f"Error executing SQL ({sql_query}): {str(e)}"
                         
-<<<<<<< HEAD
             if not rows and "WHERE " in sql_query.upper():
                 logger.warning(f"Query returned 0 rows with WHERE filter ({sql_query}). Attempting Layer 3 fuzzy string matching retry...")
                 try:
@@ -389,35 +365,6 @@ class PandasQueryEngine:
                     query_plan = fuzzy_plan
                 except Exception as fuzzy_err:
                     logger.warning(f"Fuzzy retry failed: {fuzzy_err}")
-=======
-                if not rows and "WHERE " in sql_query.upper():
-                    logger.warning(f"Query returned 0 rows with WHERE filter ({sql_query}). Attempting Layer 3 fuzzy string matching retry...")
-                    try:
-                        fuzzy_prompt = ChatPromptTemplate.from_messages([
-                            ("system",
-                             "You are an enterprise DuckDB SQL expert. The previous SQL query returned 0 rows because the WHERE filter was too strict.\n"
-                             "Rewrite the DuckDB SELECT query on table 'dataset' using case-insensitive partial string matching (ILIKE or LOWER(\"col\") LIKE '%val%') so matching rows are found.\n\n"
-                             "Available columns in 'dataset':\n{columns}\n\n"
-                             "Return ONLY valid JSON with 'sql' and 'explanation' without markdown fences."),
-                            ("user",
-                             "User Question: {question}\nPrevious SQL that returned 0 rows:\n{sql}")
-                        ])
-                        fuzzy_chain = fuzzy_prompt | self.llm | StrOutputParser() | parse_json_from_thinking
-                        fuzzy_dict = await fuzzy_chain.ainvoke({
-                            "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns),
-                            "question": query,
-                            "sql": sql_query
-                        })
-                        fuzzy_plan = DuckDBSemanticQuery(**fuzzy_dict)
-                        sql_query = fuzzy_plan.sql.strip().rstrip(";") + ";"
-                        logger.info(f"Layer 3 Healed DuckDB SQL: {sql_query} | Explanation: {fuzzy_plan.explanation}")
-                        result = conn.execute(text(sql_query))
-                        rows = result.fetchall()
-                        col_names = list(result.keys())
-                        query_plan = fuzzy_plan
-                    except Exception as fuzzy_err:
-                        logger.warning(f"Fuzzy retry failed: {fuzzy_err}")
->>>>>>> staging
 
             if not rows:
                 return f"{query_plan.explanation}\nNo records matched your query."

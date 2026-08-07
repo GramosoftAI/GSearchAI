@@ -2080,14 +2080,6 @@ class RAGPipeline:
             return None
             
         kb_names = {str(r.id): r.name for r in kb_rows}
-<<<<<<< HEAD
-        
-        dataset_schema = {}
-        for r in kb_rows:
-            if r.dataset_schema:
-                dataset_schema.update(r.dataset_schema)
-=======
-
         # --- DEFINITIVE FIX: Use ParquetIngester registry to resolve local parquet path ---
         # The CSV ingestion pipeline converts CSV→Parquet and registers the path in
         # data/parquet/active_datasets.json under the key kb.parsed_path (e.g. 'dummy_employees_details').
@@ -2140,8 +2132,6 @@ class RAGPipeline:
         dataset_schema = non_excel_rows[0].dataset_schema if non_excel_rows else kb_rows[0].dataset_schema
         parsed_path = non_excel_rows[0].parsed_path if non_excel_rows else kb_rows[0].parsed_path
         source = non_excel_rows[0].source if non_excel_rows else kb_rows[0].source
-
->>>>>>> staging
 
         # Fallback to standard SQL generation over document_table_rows
         if not dataset_schema:
