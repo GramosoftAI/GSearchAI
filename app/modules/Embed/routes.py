@@ -854,107 +854,60 @@ async def websocket_chat_endpoint(
                     "session_id": session_id
                 })
                 
-                # C. Save User message to history
-                user_msg = await chat_service.chat_repo.add_message(
-                    session_id=session_id,
-                    role="user",
-                    content=message_text
-                )
-                await db.commit() # Commit user message first
-                
-                # D. Resolve Agent Knowledge Bases
+                # C. Resolve Agent Knowledge Bases
                 kbs, _ = await chat_service.kb_repo.list_by_agent(agent_id, limit=10)
                 kb_ids = [str(kb.id) for kb in kbs] if kbs else []
                 kb_id_used = kb_ids[0] if kb_ids else None
                 
-                # E. Inject memory (recent messages)
-                memory_window = 10
-                augmented_query = message_text
-                memory_used = False
-                conversation_turns = 0
-                
-                if session.message_count > 1:
-                    try:
-                        memory_messages = await chat_service.chat_repo.get_recent_messages(
-                            session_id=session_id,
-                            count=memory_window
-                        )
-                        history_messages = [
-                            m for m in memory_messages if str(m.id) != str(user_msg.id)
-                        ]
-                        if history_messages:
-                            augmented_query = chat_service._format_memory_context(
-                                history=history_messages,
-                                current_query=message_text
-                            )
-                            memory_used = True
-                            conversation_turns = sum(1 for m in history_messages if m.role == "user")
-                    except Exception as me:
-                        logger.warning(f"WebSocket memory injection failed: {me}")
-                        
-                # F. Open RAG Service stream
-                from ..rag.service import RAGService
-                rag_service = RAGService(db=db, tenant_id=tenant_id)
+                # D. DELEGATE TO CHAT PIPELINE
+                from ..rag.chat_pipeline import ChatPipeline
+                from ..rag.stream.response_chunk import ChunkType
+                chat_pipeline = ChatPipeline(db=db, tenant_id=tenant_id)
                 
                 full_response_chunks = []
                 sources = []
                 
                 try:
-                    # stream_rag_answer streams chunks
-                    async for chunk in rag_service.stream_rag_answer(
-                        query=augmented_query,
+                    async for chunk in chat_pipeline.stream_response(
+                        query=message_text,
+                        session_id=session_id,
                         agent_id=agent_id,
-                        kb_id=kb_ids,
                         user_id=str(widget_user.id),
+                        kb_ids=kb_ids,
+                        enhance_prompt=True,
                         top_k=top_k,
                         max_depth=max_depth
                     ):
-                        # Chunk can be metadata (json string) or standard text
-                        if chunk.startswith("{") and "type" in chunk and "sources" in chunk:
-                            # It's the metadata frame!
-                            try:
-                                meta_payload = json.loads(chunk)
-                                sources = meta_payload.get("sources", [])
-                                await websocket.send_json({
-                                    "type": "sources",
-                                    "sources": sources
-                                })
-                            except Exception:
-                                pass
-                        else:
-                            # Standard text token chunk
-                            full_response_chunks.append(chunk)
+                        if chunk.type == ChunkType.CONTENT:
+                            full_response_chunks.append(chunk.text)
                             await websocket.send_json({
                                 "type": "content",
-                                "delta": chunk
+                                "delta": chunk.text
                             })
-                            
-                    # G. Stream Completed! Compile full answer
-                    compiled_answer = "".join(full_response_chunks)
-                    if not compiled_answer:
-                        compiled_answer = "I'm sorry, I couldn't generate an answer from the retrieved knowledge."
-                        
-                    # H. Save Assistant response to database
-                    assistant_metadata = {
-                        "sources": sources,
-                        "memory_used": memory_used,
-                        "conversation_turns": conversation_turns
-                    }
-                    
-                    await chat_service.chat_repo.add_message(
-                        session_id=session_id,
-                        role="assistant",
-                        content=compiled_answer,
-                        metadata=assistant_metadata
-                    )
-                    await db.commit()
-                    
-                    # I. Send terminal done frame
-                    await websocket.send_json({
-                        "type": "done",
-                        "session_id": session_id,
-                        "answer": compiled_answer
-                    })
+                        elif chunk.type == ChunkType.METADATA:
+                            chunk_sources = chunk.data.get("sources", [])
+                            sources.extend(chunk_sources)
+                            await websocket.send_json({
+                                "type": "sources",
+                                "sources": chunk_sources
+                            })
+                        elif chunk.type == ChunkType.STATUS:
+                            await websocket.send_json({
+                                "type": "status",
+                                "message": chunk.text
+                            })
+                        elif chunk.type == ChunkType.ERROR:
+                            await websocket.send_json({
+                                "type": "error",
+                                "detail": chunk.text
+                            })
+                        elif chunk.type == ChunkType.DONE:
+                            compiled_answer = "".join(full_response_chunks)
+                            await websocket.send_json({
+                                "type": "done",
+                                "session_id": session_id,
+                                "answer": compiled_answer
+                            })
                     
                     # J. Trigger Knowledge Flywheel background task
                     if compiled_answer and sources:

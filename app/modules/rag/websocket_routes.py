@@ -167,335 +167,36 @@ async def rag_websocket(
                 active_session_id = str(session.id)
 
                 # ============================================================
-                # MEMORY-API STEP 1: TRIAGE + RECALL (Scoped by Agent, User, Tenant)
+                # DELEGATE TO CHAT PIPELINE
                 # ============================================================
-                episodic_guidance = ""
-                is_feedback_only = False
-                is_history_query = False
-                router_category = None
-
-                memory_api_url = f"{resolve_memory_api_base_url()}/api/v1/memory"
-
-                async with httpx.AsyncClient() as client:
-                    try:
-                        mem_resp = await client.post(
-                            f"{memory_api_url}/process-turn",
-                            json={
-                                "query": query,
-                                "session_id": active_session_id,
-                                "agent_id": agent_id,
-                                "user_id": user_id,
-                                "tenant_id": tenant_id,
-                            },
-                            timeout=8.0,
-                        )
-                        if mem_resp.status_code == 200:
-                            mem_data = mem_resp.json()
-                            episodic_guidance = mem_data.get("guidance_context") or ""
-                            is_feedback_only = mem_data.get("is_feedback_only", False)
-                            is_history_query = mem_data.get("is_history_query", False)
-                            # Forwarded to /save-turn so the background ingest step reuses
-                            # this exact classification instead of re-running the router
-                            # and potentially disagreeing with it.
-                            router_category = mem_data.get("category")
-                        else:
-                            logger.warning(
-                                f"memory-api process-turn status={mem_resp.status_code}: {mem_resp.text}"
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            f"memory-api process-turn unreachable, continuing without memory: {e}"
-                        )
-
-                # 7. SAVE USER MESSAGE TO CHAT DB
-                user_msg = await chat_service.chat_repo.add_message(
-                    session_id=active_session_id, role="user", content=query
-                )
-                await db.commit()
-
-                # Handle feedback-only turns
-                # If the memory API returned stored preferences (episodic_guidance is set),
-                # it means the query may need an answer from memory (e.g., "what is my name?"
-                # was mis-classified as PREFERENCE_UPDATE). Fall through to the RAG path so
-                # the AI can answer using that memory context.
-                # Only short-circuit when there is truly nothing to recall.
-                if is_feedback_only:
-                    acknowledgment = "Understood! I've updated your preferences and saved them to my long-term memory."
-                    async with httpx.AsyncClient() as client:
-                        try:
-                            await client.post(
-                                f"{memory_api_url}/save-turn",
-                                json={
-                                    "query": query,
-                                    "ai_response": acknowledgment,
-                                    "session_id": active_session_id,
-                                    "agent_id": agent_id,
-                                    "user_id": user_id,
-                                    "tenant_id": tenant_id,
-                                    "is_feedback_only": True,
-                                    "metadata": {"router_category": router_category},
-                                },
-                                timeout=3.0,
-                            )
-                        except Exception as e:
-                            logger.warning(
-                                f"memory-api save-turn (feedback) failed: {e}"
-                            )
-
-                    await chat_service.chat_repo.add_message(
-                        session_id=active_session_id,
-                        role="assistant",
-                        content=acknowledgment,
-                        metadata={"feedback_turn": True},
-                    )
-                    await db.commit()
-
-                    await websocket.send_text(
-                        json.dumps(
-                            {
-                                "type": "status",
-                                "message": "Preferences recorded successfully.",
-                            }
-                        )
-                    )
-                    await websocket.send_text(json.dumps({"type": "done"}))
-                    continue
-                # If is_feedback_only but episodic_guidance exists, fall through to RAG
-                # so the AI can answer using stored preferences.
-
-                # ============================================================
-                # META-HISTORY SHORT-CIRCUIT (COGNEE STRUCTURAL RECALL)
-                # If asking "What did we discuss?", bypass Document RAG entirely.
-                # ============================================================
-                if is_history_query:
-                    history_prompt = (
-                        "You are a helpful assistant. The user is asking about past chat history.\n"
-                        "Answer their question using ONLY the provided conversation context and graph facts below.\n\n"
-                        f"{episodic_guidance if episodic_guidance else 'No previous chat history found for this user.'}\n\n"
-                        f"User Question: {query}\n\n"
-                        "Provide a clear, concise summary of what was discussed:"
-                    )
-
-                    full_response_text = ""
-                    history_stream_error = None
-                    try:
-                        full_response_text = (
-                            await rag_service.llm_client.generate_cloud(
-                                prompt=history_prompt
-                            )
-                        )
-                        await websocket.send_text(full_response_text)
-                    except Exception as direct_err:
-                        # Log the FULL traceback + prompt size, not just str(err) —
-                        # a bare message hides whether this was a timeout, an
-                        # oversized prompt, a bad response shape, etc.
-                        logger.error(
-                            f"Direct memory streaming failed: {type(direct_err).__name__}: {direct_err} | "
-                            f"history_prompt_chars={len(history_prompt)} | "
-                            f"episodic_guidance_chars={len(episodic_guidance)}",
-                            exc_info=True,
-                        )
-                        history_stream_error = (
-                            f"{type(direct_err).__name__}: {direct_err}"
-                        )
-                        full_response_text = "I attempted to review our past chats, but ran into an error processing the summaries."
-                        await websocket.send_text(full_response_text)
-
-                    # Save Assistant Turn & Memory
-                    await chat_service.chat_repo.add_message(
-                        session_id=active_session_id,
-                        role="assistant",
-                        content=full_response_text,
-                        metadata={
-                            "memory_used": True,
-                            "direct_history_recall": True,
-                            "error": history_stream_error,
-                        },
-                    )
-                    await db.commit()
-
-                    async with httpx.AsyncClient() as client:
-                        try:
-                            await client.post(
-                                f"{memory_api_url}/save-turn",
-                                json={
-                                    "query": query,
-                                    "ai_response": full_response_text,
-                                    "session_id": active_session_id,
-                                    "agent_id": agent_id,
-                                    "user_id": user_id,
-                                    "tenant_id": tenant_id,
-                                    "metadata": {"router_category": router_category},
-                                },
-                                timeout=3.0,
-                            )
-                        except Exception as e:
-                            logger.warning(f"memory-api save-turn failed: {e}")
-
-                    await websocket.send_text(json.dumps({"type": "done"}))
-                    continue
-                # 8. FETCH RECENT HISTORY
-                history_messages = []
-                conversation_turns = 0
-                if session.message_count > 1:
-                    try:
-                        memory_messages = (
-                            await chat_service.chat_repo.get_recent_messages(
-                                session_id=active_session_id, count=10
-                            )
-                        )
-                        history_messages = [
-                            m for m in memory_messages if str(m.id) != str(user_msg.id)
-                        ]
-                        conversation_turns = sum(
-                            1 for m in history_messages if m.role == "user"
-                        )
-                    except Exception as me:
-                        logger.warning(f"Failed to fetch recent memory messages: {me}")
-
-                # 9. PROMPT ENHANCER / QUERY REWRITING
-                enhanced_query = query
-                is_enhanced = False
-                if enhance_prompt or history_messages:
-                    try:
-                        rewritten = await query_rewriter.rewrite_query(
-                            query, history=history_messages
-                        )
-                        if rewritten and rewritten != query:
-                            enhanced_query = rewritten
-                            is_enhanced = True
-                    except Exception as e:
-                        logger.error(f"Prompt enhancement failed: {e}", exc_info=True)
-
-                # 10. PREPARE CONTEXT FOR FINAL LLM GENERATION
-                chat_history_str = None
-                memory_used = False
-                if history_messages:
-                    chat_history_str = chat_service._format_memory_context(
-                        history=history_messages, current_query=enhanced_query
-                    )
-                    memory_used = True
-
-                if episodic_guidance:
-                    guidance_block = (
-                        "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
-                        f"{episodic_guidance}\n"
-                    )
-                    chat_history_str = guidance_block + (
-                        "\n" + chat_history_str if chat_history_str else ""
-                    )
-                    memory_used = True
-
-                skip_search = False
-                if enhanced_query.startswith("[HISTORY_FILTER]"):
-                    skip_search = True
-                    enhanced_query = enhanced_query.replace(
-                        "[HISTORY_FILTER]", ""
-                    ).strip()
-
-                # 11. STREAM RAG ANSWER FROM KNOWLEDGE BASE
-                full_response_text = ""
-                sources = []
-                has_error = False
-
-                token_usage = {}
-
-                def capture_usage(usage_dict):
-                    token_usage.update(usage_dict)
-
-                async for chunk in rag_service.stream_rag_answer(
-                    query=enhanced_query,
-                    agent_id=agent_id,
-                    kb_id=kb_ids,
-                    user_id=user_id,
+                from .stream.response_chunk import ChunkType
+                from .chat_pipeline import ChatPipeline
+                chat_pipeline = ChatPipeline(db=db, tenant_id=tenant_id)
+                
+                async for chunk in chat_pipeline.stream_response(
+                    query=query,
                     session_id=active_session_id,
-                    on_usage_callback=capture_usage,
-                    chat_history=chat_history_str,
-                    skip_search=skip_search,
+                    agent_id=agent_id,
+                    user_id=user_id,
+                    kb_ids=kb_ids,
+                    enhance_prompt=enhance_prompt
                 ):
-                    is_control_frame = False
                     try:
-                        parsed = json.loads(chunk)
-                        if isinstance(parsed, dict):
-                            if parsed.get("type") == "metadata":
-                                parsed["session_id"] = active_session_id
-                                if is_enhanced:
-                                    parsed["is_enhanced"] = True
-                                    parsed["enhanced_query"] = enhanced_query
-                                sources = parsed.get("sources", [])
-                                await websocket.send_text(json.dumps(parsed))
-                                is_control_frame = True
-
-                            elif "error" in parsed:
-                                await websocket.send_text(chunk)
-                                full_response_text = parsed["error"]
-                                has_error = True
-                                break
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-
-                    if is_control_frame:
-                        continue
-
-                    try:
-                        await websocket.send_text(chunk)
+                        if chunk.type == ChunkType.CONTENT:
+                            await websocket.send_text(chunk.text)
+                        elif chunk.type == ChunkType.METADATA:
+                            await websocket.send_text(json.dumps(chunk.data))
+                        elif chunk.type == ChunkType.ERROR:
+                            # The original route sometimes sent raw text for errors and sometimes JSON. 
+                            # We send JSON here, or raw text if preferred, but JSON is safer.
+                            await websocket.send_text(json.dumps({"type": "error", "message": chunk.text}))
+                        elif chunk.type == ChunkType.STATUS:
+                            await websocket.send_text(json.dumps({"type": "status", "message": chunk.text}))
+                        elif chunk.type == ChunkType.DONE:
+                            await websocket.send_text(json.dumps({"type": "done"}))
                     except Exception as ws_err:
                         logger.error(f"Failed to send chunk to websocket: {ws_err}")
-                        has_error = True
                         break
-
-                    full_response_text += chunk
-
-                # 11. PERSIST ASSISTANT MESSAGE
-                assistant_metadata = {
-                    "sources": sources,
-                    "memory_used": memory_used,
-                    "conversation_turns": conversation_turns,
-                }
-                if has_error:
-                    assistant_metadata["error"] = True
-
-                if token_usage:
-                    assistant_metadata["stats"] = {
-                        "llm_input_tokens": token_usage.get("prompt_tokens", 0),
-                        "llm_output_tokens": token_usage.get("completion_tokens", 0),
-                        "total_tokens": token_usage.get("total_tokens", 0),
-                        "model": os.environ.get("MODEL_ANSWER", getattr(settings, "model_answer", "deepseek-ai/DeepSeek-V3-2")),
-                    }
-                await chat_service.chat_repo.add_message(
-                    session_id=active_session_id,
-                    role="assistant",
-                    content=full_response_text,
-                    metadata=assistant_metadata,
-                )
-                await db.commit()
-
-                # 12. SAVE TURN TO MEMORY API
-                if not has_error and full_response_text:
-                    async with httpx.AsyncClient() as client:
-                        try:
-                            await client.post(
-                                f"{memory_api_url}/save-turn",
-                                json={
-                                    "query": query,
-                                    "ai_response": full_response_text,
-                                    "session_id": active_session_id,
-                                    "agent_id": agent_id,
-                                    "user_id": user_id,
-                                    "tenant_id": tenant_id,
-                                    "metadata": {
-                                        "source_doc_count": len(sources),
-                                        "router_category": router_category,
-                                    },
-                                },
-                                timeout=3.0,
-                            )
-                        except Exception as e:
-                            logger.warning(f"memory-api save-turn failed: {e}")
-
-                # 13. SIGNAL COMPLETION
-                if not has_error:
-                    await websocket.send_text(json.dumps({"type": "done"}))
 
         except WebSocketDisconnect:
             logger.info(f"WebSocket disconnected: Agent={agent_id}")
