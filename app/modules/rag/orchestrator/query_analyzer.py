@@ -53,6 +53,17 @@ class QueryAnalyzer:
         """
         Uses LLM to extract intent and metadata in a single pass.
         """
+        q_strip = query.strip()
+        # Fast-Path 1: Simple greetings & casual chat (0 ms overhead, no LLM call needed!)
+        if re.match(r'^(hello|hi|hey|good\s+morning|good\s+afternoon|good\s+evening|howdy|greetings|thanks|thank\s+you|how\s+are\s+you)[!.,?]*$', q_strip, re.IGNORECASE):
+            return AnalysisResult(
+                intent=QueryIntent.FACT,
+                metadata=QueryMetadata(keywords=[q_strip], corrected_query=q_strip),
+                is_tabular=False,
+                confidence=1.0,
+                reasoning="Fast-path greeting regex match"
+            )
+
         prompt = f"""
 You are an Expert Knowledge Retrieval Query Analyzer.
 Your task is to classify the user's query into one of the exact intents below and extract structured metadata.

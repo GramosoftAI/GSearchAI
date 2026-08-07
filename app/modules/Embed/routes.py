@@ -965,6 +965,7 @@ async def websocket_chat_endpoint(
                                     tenant_id=tenant_id,
                                     session_id=session_id,
                                     kb_id=kb_id_used,
+                                    chunk_id=top_chunk_id,
                                     user_message=message_text,
                                     assistant_message=compiled_answer
                                 )

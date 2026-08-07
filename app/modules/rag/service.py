@@ -151,120 +151,115 @@ class RAGService:
                 return
 
             if active_paths:
-<<<<<<< HEAD
-                engine = PandasQueryEngine(
-                    active_paths[0], all_dataset_paths=active_paths
+                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                sql_task = asyncio.create_task(engine.execute_query(query))
+
+        vector_task = None
+        if not skip_search and (doc_kbs or not excel_kbs):
+            vector_task = asyncio.create_task(
+                self.pipeline.query(
+                    query=query,
+                    agent_id=agent_id,
+                    kb_id=kb_ids,
+                    user_id=user_id,
+                    top_k=top_k,
+                    max_depth=max_depth,
                 )
-                # 1. Schema-Aware Enterprise Hybrid Routing (TABULAR_SQL vs VECTOR_DOCS vs HYBRID_MERGE)
-                route_to_excel = True
-                if doc_kbs:
-                    try:
-                        from app.modules.rag.hybrid_router import EnterpriseHybridRouter
+            )
 
-                        cols_list = engine.get_schema_columns()
-                        decision = await EnterpriseHybridRouter.classify(
-                            query=query,
-                            columns=cols_list,
-                            doc_kbs_count=len(doc_kbs),
-                            llm=getattr(engine, "router_llm", engine.llm),
-                        )
-                        logger.info(
-                            f"[EnterpriseHybridRouter] Engine={decision.target_engine} | Conf={decision.confidence:.2f} | Cols={decision.matched_columns} | Reason={decision.reasoning}"
-                        )
-                        if decision.target_engine == "VECTOR_DOCS":
-                            route_to_excel = False
-                        elif decision.target_engine == "HYBRID_MERGE":
-                            logger.info(
-                                "[EnterpriseHybridRouter] Executing HYBRID_MERGE: Gathering tabular SQL context to enrich Document RAG..."
-                            )
-                            try:
-                                sql_res = await engine.execute_query(query)
-                                unmatched_signals = [
-                                    "not present in dataset",
-                                    "no records matched",
-                                    "error",
-                                    "0 rows",
-                                    "empty dataframe",
-                                ]
-                                if sql_res and not any(
-                                    sig in str(sql_res).lower()
-                                    for sig in unmatched_signals
-                                ):
-                                    hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
-                            except Exception as merge_err:
-                                logger.warning(
-                                    f"[EnterpriseHybridRouter] HYBRID_MERGE tabular step error: {merge_err}"
-                                )
-                            route_to_excel = False  # Continue into doc_kbs vector retrieval with hybrid_merge_context injected!
-                    except Exception as router_err:
-                        logger.warning(
-                            f"[EnterpriseHybridRouter] Enterprise router failed ({router_err}), defaulting to Excel check."
-                        )
+        context = None
+        metadata_yielded = False
+        if excel_kbs and sql_task and vector_task:
+            logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
+            
+            # Wait for vector_task first to yield metadata early
+            try:
+                context_res = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
+            except Exception as e:
+                context_res = e
+            
+            if not isinstance(context_res, Exception):
+                context = context_res
+                
+                # Yield metadata immediately so the UI doesn't hang!
+                metadata = {
+                    "type": "metadata",
+                    "sources": [
+                        {
+                            "chunk_id": c.chunk_id,
+                            "source": c.source,
+                            "score": round(c.hybrid_score, 3),
+                            "position": c.position,
+                            "reason": c.reason,
+                            "kb_id": c.kb_id,
+                            "content_type": getattr(c, "content_type", "original")
+                        }
+                        for c in context.chunks
+                    ],
+                    "triplets": [
+                        {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
+                        for t in (context.triplets or [])
+                    ],
+                    "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                    "augmented_query": query,
+                    "authoritative_entities": context.authoritative_entities or []
+                }
+                yield json.dumps(metadata)
+                metadata_yielded = True
+            else:
+                logger.error(f"Parallel RAG Retrieval failed: {context_res}")
+                yield json.dumps({"error": f"Retrieval failed: {str(context_res)}"})
+                return
 
-                # 2. Execute Excel Engine if routed strictly to TABULAR_SQL
-                if route_to_excel:
-                    try:
-                        result = await engine.execute_query(query)
-                        result_str = str(result)
-                        unmatched_signals = [
-                            "not present in dataset",
-                            "no records matched",
-                            "error",
-                            "0 rows",
-                            "empty dataframe",
-                        ]
-                        is_unmatched = any(
-                            sig in result_str.lower() for sig in unmatched_signals
-                        )
-                        explicit_math_keywords = [
-                            "sum of",
-                            "average of",
-                            "count of",
-                            "total of",
-                            "how many rows",
-                            "group by",
-                            "calculate the",
-                            "what is the average",
-                            "what is the sum",
-                            "what is the total",
-                        ]
-                        is_pure_math = any(
-                            kw in query.lower() for kw in explicit_math_keywords
-                        )
-                        if doc_kbs and is_unmatched:
-                            logger.info(
-                                f"[EnterpriseHybridRouter] Excel dataset lacked answer ({result_str}). Falling back to PDF/URL knowledge bases..."
-                            )
-                        elif doc_kbs and not is_pure_math:
-                            logger.info(
-                                "[EnterpriseHybridRouter] Mixed sources: Injecting tabular result into hybrid context and also searching PDFs/URLs..."
-                            )
-                            hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{result_str}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
-                            route_to_excel = False
-                        else:
-                            yield json.dumps(
-                                {
-                                    "type": "metadata",
-                                    "sources": [],
-                                    "kb_name": ", ".join(
-                                        getattr(ek, "name", "Excel Parquet")
-                                        for ek in excel_kbs
-                                    ),
-                                    "context_type": "duckdb_parquet",
-                                }
-                            )
-                            yield result_str
-                            return
-                    except Exception as e:
-                        logger.error(f"PandasQueryEngine stream failed: {e}")
-                        if not doc_kbs:
-                            yield json.dumps({"error": str(e)})
-                            return
-                        logger.info(
-                            "[EnterpriseHybridRouter] Excel execution failed, falling through to PDF/URL knowledge bases..."
-                        )
+            # Now wait for SQL task which is running in parallel
+            try:
+                sql_res = await asyncio.wait_for(sql_task, timeout=60.0)
+            except Exception as e:
+                sql_res = e
+                
+            if not isinstance(sql_res, Exception) and sql_res:
+                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                if not any(sig in str(sql_res).lower() for sig in unmatched_signals):
+                    hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+            elif isinstance(sql_res, Exception):
+                logger.warning(f"Parallel TABULAR_SQL failed: {sql_res}")
 
-=======
+        elif sql_task:
+            logger.info("Executing TABULAR_SQL standalone...")
+            try:
+                sql_res = await asyncio.wait_for(sql_task, timeout=30.0)
+                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
+                if is_unmatched:
+                    logger.info(f"Excel dataset lacked answer ({sql_res}).")
+                else:
+                    yield json.dumps({
+                        "type": "metadata",
+                        "sources": [],
+                        "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
+                        "context_type": "duckdb_parquet"
+                    })
+                    yield str(sql_res)
+                    return
+            except Exception as e:
+                logger.error(f"PandasQueryEngine stream failed: {e}")
+                yield json.dumps({"error": str(e)})
+                return
+
+        elif vector_task:
+            logger.info("Executing VECTOR_DOCS standalone...")
+            try:
+                context = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
+                yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
+                return
+            except Exception as e:
+                logger.error(f"RAG Retrieval failed for stream: {e}")
+                yield json.dumps({"error": f"Retrieval failed: {e}"})
+                return
+
+        skip_search = True  # Bypass redundant sequential search below
                 engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
                 sql_task = asyncio.create_task(engine.execute_query(query))
 
@@ -375,7 +370,7 @@ class RAGService:
 
         skip_search = True  # Bypass redundant sequential search below
             
->>>>>>> staging
+
         if len(kb_ids) > 1:
             logger.info(
                 f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
@@ -476,7 +471,7 @@ If retrieved passages conflict, state the conflict. Do not resolve it yourself.
   "I couldn't find it."
 - If only part of the answer exists, answer only that part.
 - Mention the relevant source at the end.
-- Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
+- Answer ONLY the specific question asked by the user. If the user asks a complex or multi-part question, you MUST address EVERY part of the question in your response. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
 - Be concise. Focus strictly on direct answers and avoid filler.
 - TRANSACTION CLASSIFICATION: Categorize transactions strictly:
   * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
@@ -490,25 +485,27 @@ Use bullet points when listing multiple items.
 Use paragraphs for explanations.
 
 ==================================================
-SOURCE CITATION RULES
+SOURCE CITATION RULES (STRICT)
 ==================================================
-Cite all the sources that were used to formulate your answer.
-Format each citation as: [Source: <s3_path_or_filename>]
+1. GREETINGS & CASUAL CONVERSATION (CRITICAL):
+- If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, DO NOT output any source citation tag at all.
+- NEVER include [Source: ...] for greetings, introduction messages, or general chitchat.
 
-If multiple sources were used, list them separated by commas like this: [Source: <source_1>, <source_2>]
-The source citation must appear only once at the very end of the response.
+2. DOCUMENT CONTENT & ACCURATE CITATIONS:
+- Cite a source ONLY IF information from retrieved document/data chunks was ACTUALLY USED to answer the user's specific question.
+- Cite ONLY the specific filename(s) from which relevant facts were extracted.
+- Single Source: If the answer came from only one document (e.g. ARUN_N.pdf), cite ONLY that single document: [Source: ARUN_N.pdf]. Do NOT list other unused files.
+- Multi Source: If the answer combined information from multiple documents, list only those specific documents: [Source: file1.pdf, file2.pdf].
+- Deduplicate sources so each unique filename appears ONLY ONCE.
+- Format the citation at the very end of your response on its own single line:
+  [Source: filename1, filename2]
 
 ==================================================
 FINAL RESPONSE FORMAT
 ==================================================
-Answer:
 <grounded answer>
 
-If you'd like, I can also:
-- ...
-- ...
-
-[Source: <filename>]
+[Source: <only include source file(s) actually used to answer document questions>]
 """.strip()
 
         agent_persona = {
@@ -566,49 +563,6 @@ If you'd like, I can also:
                 logger.info(f"Relevance Filter: Dropped {dropped} irrelevant chunks (score < {min_score}) to prevent hallucination.")
 
         # 3. Yield metadata first
-<<<<<<< HEAD
-        if context:
-            for c in context.chunks:
-                logger.info(
-                    f"Chunk={c.chunk_id} Source={c.source} Score={c.hybrid_score}"
-                )
-
-            metadata = {
-                "type": "metadata",
-                "sources": [
-                    {
-                        "chunk_id": c.chunk_id,
-                        "source": c.source,
-                        "score": round(c.hybrid_score, 3),
-                        "position": c.position,
-                        "reason": c.reason,
-                        "kb_id": c.kb_id,
-                        "content_type": getattr(c, "content_type", "original"),
-                    }
-                    for c in context.chunks
-                ],
-                "triplets": [
-                    {
-                        "subject": t["subject"],
-                        "predicate": t["predicate"],
-                        "object": t["object"],
-                    }
-                    for t in (context.triplets or [])
-                ],
-                "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-                "augmented_query": query,
-                "authoritative_entities": context.authoritative_entities or [],
-            }
-        else:
-            metadata = {
-                "type": "metadata",
-                "sources": [],
-                "triplets": [],
-                "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-                "augmented_query": query,
-                "authoritative_entities": [],
-            }
-=======
         if not metadata_yielded:
             if context:
                 for c in context.chunks:
@@ -645,7 +599,6 @@ If you'd like, I can also:
                     "augmented_query": query,
                     "authoritative_entities": []
                 }
->>>>>>> staging
 
             yield json.dumps(metadata)
 
@@ -701,27 +654,12 @@ If you'd like, I can also:
                 )
 
         if (not context or not context.chunks) and not chat_history and not hybrid_merge_context:
-<<<<<<< HEAD
-            logger.info(
-                "Empty context retrieved for stream, returning fallback message."
-            )
-=======
             logger.info("Empty context retrieved for stream, returning fallback message.")
->>>>>>> staging
             yield "I'm sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
             return
 
         # 4. Stream chunks
-<<<<<<< HEAD
-        formatted_context = (
-            self._format_context(context, hybrid_merge_context=hybrid_merge_context)
-            if context
-            else (hybrid_merge_context or "")
-        )
-=======
         formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
-
->>>>>>> staging
         start_time = datetime.now()
 
         full_answer = []
@@ -1030,7 +968,7 @@ If retrieved passages conflict, state the conflict. Do not resolve it yourself.
   "I couldn't find it."
 - If only part of the answer exists, answer only that part.
 - Mention the relevant source at the end.
-- Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
+- Answer ONLY the specific question asked by the user. If the user asks a complex or multi-part question, you MUST address EVERY part of the question in your response. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
 - Be concise. Focus strictly on direct answers and avoid filler.
 - TRANSACTION CLASSIFICATION: Categorize transactions strictly:
   * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
@@ -1045,23 +983,28 @@ FORMATTING RULES
 ==================================================
 SOURCE CITATION RULES
 ==================================================
-Cite all the sources that were used to formulate your answer.
-Format each citation as: [Source: <s3_path_or_filename>]
+==================================================
+SOURCE CITATION RULES (STRICT)
+==================================================
+1. GREETINGS & CASUAL CONVERSATION (CRITICAL):
+- If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, DO NOT output any source citation tag at all.
+- NEVER include [Source: ...] for greetings, introduction messages, or general chitchat.
 
-If multiple sources were used, list them separated by commas like this: [Source: <source_1>, <source_2>]
-The source citation must appear only once at the very end of the response.
+2. DOCUMENT CONTENT & ACCURATE CITATIONS:
+- Cite a source ONLY IF information from retrieved document/data chunks was ACTUALLY USED to answer the user's specific question.
+- Cite ONLY the specific filename(s) from which relevant facts were extracted.
+- Single Source: If the answer came from only one document (e.g. ARUN_N.pdf), cite ONLY that single document: [Source: ARUN_N.pdf]. Do NOT list other unused files.
+- Multi Source: If the answer combined information from multiple documents, list only those specific documents: [Source: file1.pdf, file2.pdf].
+- Deduplicate sources so each unique filename appears ONLY ONCE.
+- Format the citation at the very end of your response on its own single line:
+  [Source: filename1, filename2]
 
 ==================================================
 RESPONSE FORMAT
 ==================================================
-Answer:
 <grounded answer>
 
-If you'd like, I can also:
-- ...
-- ...
-
-[Source: <filename>]
+[Source: <only include source file(s) actually used to answer document questions>]
 """.strip()
 
         agent_persona = {

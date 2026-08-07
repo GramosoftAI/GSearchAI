@@ -212,28 +212,16 @@ class DeepInfraLLMClient:
         self.api_key = settings.deepinfra_api_key
         self.base_url = settings.deepinfra_api_url
 
-<<<<<<< HEAD
         # Task-specific model assignments — all from settings, never hardcoded
-        self.model_answer      = settings.model_answer
-        self.model_extraction  = settings.active_model("extraction")
-        self.model_intent      = settings.model_intent
-        self.model_nl_to_cypher = settings.active_model("nl_to_cypher")
-        self.model_reranker    = settings.active_model("reranker")
-        self.model_memory      = settings.model_memory
-        self.model_vision      = settings.model_vision
-=======
-        # Ingestion / Extraction Configuration (now using DeepInfra instead of local gateway)
-        import os
-        from dotenv import load_dotenv
-        load_dotenv()
-        self.gateway_api_key = os.environ.get("LLM_GATEWAY_API_KEY") or getattr(settings, 'llm_gateway_api_key', "")
-        base_url = getattr(settings, 'llm_base_url', 'http://103.191.132.28:7218')
-        if base_url == "https://api.deepinfra.com/v1/openai":
-            self.gateway_base_url = f"{base_url}/chat/completions"
-        else:
-            self.gateway_base_url = f"{base_url}/v1/chat/completions" if not base_url.endswith("/v1/chat/completions") else base_url
-        self.gateway_model = os.environ.get("LLM_GATEWAY_MODEL") or getattr(settings, "llm_gateway_model", "qwen2.5:3b")
->>>>>>> staging
+        self.model_answer          = settings.model_answer
+        self.model_answer_fallback = getattr(settings, "model_answer_fallback", "deepseek-ai/DeepSeek-V3")
+        self.model_answer_try      = getattr(settings, "model_answer_try", 3)
+        self.model_extraction      = settings.active_model("extraction")
+        self.model_intent          = settings.model_intent
+        self.model_nl_to_cypher    = settings.active_model("nl_to_cypher")
+        self.model_reranker        = settings.active_model("reranker")
+        self.model_memory          = settings.model_memory
+        self.model_vision          = settings.model_vision
 
         # Token limits — all from settings
         self.max_tokens_answer       = settings.max_tokens_answer
@@ -253,13 +241,13 @@ class DeepInfraLLMClient:
         self.gateway_api_key = self.api_key
 
         self.timeout = 60.0  # Enterprise timeout cap against stalled sockets (60s for high-concurrency extraction)
-        self.max_retries = 3  # Number of retry attempts
+        self.max_retries = self.model_answer_try  # Configurable retry attempts from settings
         self.max_tokens = self.max_tokens_answer  # Max output tokens
         self.max_answer_length = 2000  # Max chars in answer
         self.temperature = 0.0
 
         logger.info(
-            f"LLM Client init: Answer -> {self.model_answer}, Extraction -> {self.model_extraction}"
+            f"LLM Client init: Answer -> {self.model_answer} (Fallback: {self.model_answer_fallback}, Max Retries: {self.max_retries}), Extraction -> {self.model_extraction}"
         )
 
 
@@ -592,106 +580,163 @@ class DeepInfraLLMClient:
                 "Please try a related query or provide additional context.\""
             )
 
-        payload = {
-            "model": self.model_answer,
-            "messages": [
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens_answer,
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
-        # Force thinking to false to save tokens for DeepInfra answer generation
-        payload["enable_thinking"] = False
-        payload["reasoning_effort"] = "none"
-        
-        think_state = 0
-        think_buf = ""
-        try:
-            client = await self.get_client()
-            stream_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=30.0)
-            
-            start_time = time.time()
-            logger.info(f"LLM Stream Starting for {self.deepinfra_model} (read_timeout=None)")
-            
-            async with client.stream("POST", self.deepinfra_base_url, headers=headers, json=payload, timeout=stream_timeout) as response:
-                if response.status_code != 200:
-                    logger.error(f"LLM API Error: {response.status_code}")
-                    yield f"Error: LLM API returned {response.status_code}"
-                    return
-                    
-                async for line in response.aiter_lines():
-                    if not line or line.strip() == "":
-                        continue
-                        
-                    if line.startswith("data: "):
-                        data_str = line[6:].strip()
-                        if data_str == "[DONE]":
-                            break
-                            
-                        try:
-                            data = json.loads(data_str)
-                            
-                            # Handle usage statistics payload in the stream
-                            if "usage" in data and data["usage"] is not None:
-                                if on_usage_callback:
-                                    on_usage_callback(data["usage"])
+        models_to_try = [self.model_answer]
+        if self.model_answer_fallback and self.model_answer_fallback != self.model_answer:
+            models_to_try.append(self.model_answer_fallback)
+
+        client = await self.get_client()
+        stream_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=30.0)
+
+        for model_idx, target_model in enumerate(models_to_try):
+            is_fallback_model = (model_idx > 0)
+            max_attempts = self.model_answer_try if not is_fallback_model else 2
+
+            for attempt in range(1, max_attempts + 1):
+                logger.info(
+                    f"LLM Stream Attempt {attempt}/{max_attempts} for model '{target_model}' "
+                    f"({'FALLBACK' if is_fallback_model else 'PRIMARY'})"
+                )
+
+                payload = {
+                    "model": target_model,
+                    "messages": [
+                        {"role": "system", "content": system_content},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens_answer,
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                    "enable_thinking": False,
+                    "reasoning_effort": "none",
+                }
+
+                think_state = 0
+                think_buf = ""
+                full_text = ""
+                chunk_yielded = False
+                start_time = time.time()
+
+                try:
+                    async with client.stream("POST", self.deepinfra_base_url, headers=headers, json=payload, timeout=stream_timeout) as response:
+                        if response.status_code != 200:
+                            logger.warning(
+                                f"LLM API Error {response.status_code} for model '{target_model}' (Attempt {attempt}/{max_attempts})"
+                            )
+                            if attempt < max_attempts:
+                                await asyncio.sleep(1.0 * attempt)
                                 continue
-                                
-                            if not data.get("choices"):
+                            else:
+                                break  # Move to fallback model if available
+
+                        async for line in response.aiter_lines():
+                            if not line or line.strip() == "":
                                 continue
-                                
-                            chunk = data["choices"][0]["delta"].get("content", "")
-                            if not chunk: continue
-                            
-                            delta = chunk
-                            
-                            # State machine to filter <think> tags from true deltas
-                            clean_delta = ""
-                            if think_state == 0:
-                                think_buf += delta
-                                b = think_buf.lstrip()
-                                
-                                if b.startswith("<think>"):
-                                    think_state = 1
-                                    think_buf = b[7:]
-                                    if "</think>" in think_buf:
-                                        think_state = 2
-                                        clean_delta = think_buf.split("</think>", 1)[1].lstrip("\n")
-                                        think_buf = ""
-                                elif "<think>".startswith(b):
+
+                            if line.startswith("data: "):
+                                data_str = line[6:].strip()
+                                if data_str == "[DONE]":
+                                    break
+
+                                try:
+                                    data = json.loads(data_str)
+
+                                    if "usage" in data and data["usage"] is not None:
+                                        if on_usage_callback:
+                                            on_usage_callback(data["usage"])
+                                        continue
+
+                                    if not data.get("choices"):
+                                        continue
+
+                                    chunk = data["choices"][0]["delta"].get("content", "")
+                                    if not chunk:
+                                        continue
+
+                                    delta = chunk
+
+                                    # Filter <think> tags
                                     clean_delta = ""
-                                else:
-                                    think_state = 2
-                                    clean_delta = think_buf
-                                    think_buf = ""
-                                    
-                            elif think_state == 1:
-                                think_buf += delta
-                                if "</think>" in think_buf:
-                                    think_state = 2
-                                    clean_delta = think_buf.split("</think>", 1)[1].lstrip("\n")
-                                    think_buf = ""
-                                    
-                            elif think_state == 2:
-                                clean_delta = delta
-                                
-                            if clean_delta:
-                                yield clean_delta
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"  Response parsing error in stream: {e} for line {data_str}")
-                            continue
-                            
-            logger.info(f"LLM Stream Completed in {time.time() - start_time:.2f}s")
-            
-        except httpx.ReadTimeout:
-            logger.error(f"LLM Stream Failed: ReadTimeout after {time.time() - start_time:.2f}s")
-            yield "Error: LLM generation timed out."
-        except Exception as e:
-            logger.error(f"LLM Stream Failed: {e}", exc_info=True)
-            yield f"Error: LLM streaming failed."
+                                    if think_state == 0:
+                                        think_buf += delta
+                                        b = think_buf.lstrip()
+
+                                        if b.startswith("<think>"):
+                                            think_state = 1
+                                            think_buf = b[7:]
+                                            if "</think>" in think_buf:
+                                                think_state = 2
+                                                clean_delta = think_buf.split("</think>", 1)[1].lstrip("\n")
+                                                think_buf = ""
+                                        elif "<think>".startswith(b):
+                                            clean_delta = ""
+                                        else:
+                                            think_state = 2
+                                            clean_delta = think_buf
+                                            think_buf = ""
+
+                                    elif think_state == 1:
+                                        think_buf += delta
+                                        if "</think>" in think_buf:
+                                            think_state = 2
+                                            clean_delta = think_buf.split("</think>", 1)[1].lstrip("\n")
+                                            think_buf = ""
+
+                                    elif think_state == 2:
+                                        clean_delta = delta
+
+                                    if clean_delta:
+                                        full_text += clean_delta
+                                        chunk_yielded = True
+                                        yield clean_delta
+                                except json.JSONDecodeError as e:
+                                    logger.warning(f"Response parsing error in stream: {e} for line {data_str}")
+                                    continue
+
+                    if think_state == 0 and think_buf and not "<think>".startswith(think_buf.lstrip()):
+                        full_text += think_buf
+                        chunk_yielded = True
+                        yield think_buf
+
+                    if "[Source:" in full_text:
+                        last_source_idx = full_text.rfind("[Source:")
+                        last_close_idx = full_text.rfind("]", last_source_idx)
+                        if last_close_idx == -1:
+                            yield "]"
+
+                    logger.info(
+                        f"LLM Stream Completed in {time.time() - start_time:.2f}s using model '{target_model}'"
+                    )
+                    return  # Success! Exit function.
+
+                except httpx.ReadTimeout:
+                    logger.error(
+                        f"LLM Stream ReadTimeout after {time.time() - start_time:.2f}s for model '{target_model}' (Attempt {attempt}/{max_attempts})"
+                    )
+                    if chunk_yielded:
+                        yield " [Error: Stream timed out]"
+                        return
+                    if attempt < max_attempts:
+                        await asyncio.sleep(1.0 * attempt)
+                except Exception as e:
+                    logger.error(
+                        f"LLM Stream Exception for model '{target_model}' (Attempt {attempt}/{max_attempts}): {e}"
+                    )
+                    if chunk_yielded:
+                        yield f" [Error: Stream interrupted - {e}]"
+                        return
+                    if attempt < max_attempts:
+                        await asyncio.sleep(1.0 * attempt)
+
+            if is_fallback_model:
+                logger.error(f"Fallback model '{target_model}' also failed.")
+            else:
+                logger.warning(
+                    f"Primary model '{target_model}' failed after {max_attempts} attempts. "
+                    f"Switching to fallback model '{models_to_try[1] if len(models_to_try) > 1 else 'None'}'..."
+                )
+
+        yield "Error: All answer generation models (primary & fallback) failed to respond."
 
 
 

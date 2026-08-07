@@ -37,6 +37,30 @@ def resolve_memory_api_base_url() -> str:
     return "http://127.0.0.1:8001"
 
 
+async def call_memory_api(endpoint: str, json_data: dict, method: str = "POST", timeout: float = 5.0):
+    MEMORY_API_URL = resolve_memory_api_base_url()
+    candidate_urls = [
+        f"{MEMORY_API_URL.rstrip('/')}{endpoint}",
+        f"http://localhost:4917/api/v1/memory{endpoint}",
+        f"http://127.0.0.1:4917/api/v1/memory{endpoint}",
+        f"http://localhost:8002/api/v1/memory{endpoint}",
+        f"http://memory-api:8001/api/v1/memory{endpoint}"
+    ]
+
+
+    urls = list(dict.fromkeys(candidate_urls))
+    
+    async with httpx.AsyncClient() as client:
+        for url in urls:
+            try:
+                resp = await client.request(method, url, json=json_data, timeout=timeout)
+                if resp.status_code == 200:
+                    return resp
+                logger.warning(f"Memory API {url} returned status {resp.status_code}: {resp.text}")
+            except Exception as e:
+                logger.debug(f"Memory API {url} unreachable: {e}")
+    return None
+
 @router.websocket("/{agent_id}")
 async def rag_websocket(
     websocket: WebSocket,
@@ -87,14 +111,6 @@ async def rag_websocket(
         rag_service = RAGService(db=db, tenant_id=tenant_id)
         kb_repo = KnowledgeBaseRepository(db, tenant_id)
 
-<<<<<<< HEAD
-        kbs, _ = await kb_repo.list_by_agent(agent_id, limit=10)
-        if not kbs:
-            await websocket.send_text(
-                json.dumps({"type": "error", "message": "Knowledge Base not found"})
-            )
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-=======
         try:
             kbs, _ = await kb_repo.list_by_agent(agent_id, limit=10)
             if not kbs:
@@ -103,7 +119,6 @@ async def rag_websocket(
                 return
         except WebSocketDisconnect:
             logger.info(f"WebSocket disconnected before initialization completed: Agent={agent_id}")
->>>>>>> staging
             return
 
         kb_ids = [str(kb.id) for kb in kbs]

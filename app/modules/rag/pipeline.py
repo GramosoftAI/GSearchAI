@@ -20,6 +20,7 @@ Phase 2 Step 4: Transforms Graph Intelligence into Production RAG
 
 import json
 import logging
+import asyncio
 
 
 
@@ -487,12 +488,6 @@ class RAGPipeline:
 
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
 
-<<<<<<< HEAD
-        # --- EXCLUSIVE PANDAS BYPASS REMOVED ---
-        # Table analytics is handled purely via router intent and _execute_table_analytics.
-        # -------------------------------
-=======
-
         # --- SUPPLEMENTARY PANDAS CSV EXTRACTION ---
         # Uses description='excel_parquet' as the authoritative detection flag.
         # parsed_path is a bare dataset name; actual data is in local parquet via ParquetIngester.
@@ -516,8 +511,6 @@ class RAGPipeline:
         except Exception as e:
             logger.error(f"Failed supplementary CSV extraction: {e}", exc_info=True)
         # ---------------------------------------------
-
->>>>>>> staging
 
         # Populate KB metadata (names, total chunks)
         if self.db:
@@ -589,15 +582,17 @@ class RAGPipeline:
         planner_time = time.time() - start_time
         engine_start = time.time()
         
-        # --- PHASE 1: CANDIDATE SECTION GATHERING ---
-        candidate_sections = []
-        for task in plan.tasks:
-            setattr(task, "top_k", top_k)
-            engine_cls = CapabilityRegistry.get_engine_class(task.engine_name)
+        # --- PHASE 1: CANDIDATE SECTION GATHERING (PARALLEL) ---
+        async def _fetch_sections(t):
+            setattr(t, "top_k", top_k)
+            engine_cls = CapabilityRegistry.get_engine_class(t.engine_name)
             if engine_cls:
                 engine = engine_cls(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
-                secs = await engine.get_candidate_sections(task, kb_ids)
-                candidate_sections.extend(secs)
+                return await engine.get_candidate_sections(t, kb_ids)
+            return []
+
+        section_results = await asyncio.gather(*[_fetch_sections(t) for t in plan.tasks])
+        candidate_sections = [sec for secs in section_results for sec in secs]
                 
         # --- PHASE 2: SECTION RANKING ---
         ranker = SectionRanker()
@@ -610,14 +605,16 @@ class RAGPipeline:
             if task_sections:
                 setattr(task, "target_section_ids", task_sections)
                 
-        # --- PHASE 3: CHUNK RETRIEVAL ---
-        all_chunks = []
-        for task in plan.tasks:
-            engine_cls = CapabilityRegistry.get_engine_class(task.engine_name)
+        # --- PHASE 3: CHUNK RETRIEVAL (PARALLEL) ---
+        async def _retrieve_chunks(t):
+            engine_cls = CapabilityRegistry.get_engine_class(t.engine_name)
             if engine_cls:
                 engine = engine_cls(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
-                chunks = await engine.retrieve(task, kb_ids)
-                all_chunks.extend(chunks)
+                return await engine.retrieve(t, kb_ids)
+            return []
+
+        chunk_results = await asyncio.gather(*[_retrieve_chunks(t) for t in plan.tasks])
+        all_chunks = [c for chunks in chunk_results for c in chunks]
                 
         # COVERAGE VALIDATION LOOP
         retrieved_nodes = {c.ontology_node for c in all_chunks if getattr(c, "ontology_node", None)}
@@ -1762,7 +1759,7 @@ class RAGPipeline:
         if 'extractive_context_text' in locals() and extractive_context_text:
             final_triplet_context = extractive_context_text + final_triplet_context
             
-        final_triplet_context += supplementary_csv_context
+
             
         return RAGContext(
 
@@ -2074,7 +2071,7 @@ class RAGPipeline:
         
         # 1. Fetch schema, name, parsed_path AND s3_path for target KBs
         import uuid
-        kb_query = "SELECT id, name, dataset_schema, parsed_path, s3_path, source FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id;"
+        kb_query = "SELECT id, name, dataset_schema, parsed_path, s3_path, source, description FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id;"
         result = await self.db.execute(text(kb_query), {"kb_ids": kb_ids, "tenant_id": uuid.UUID(str(self.tenant_id))})
         kb_rows = result.all()
         

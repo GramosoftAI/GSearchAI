@@ -245,8 +245,6 @@ rename_key.py
 !app/memory/app/schema/
 !app/memory/app/main.py
 server.py
-<<<<<<< HEAD
-
 # ==========================================================
 # Strict Security, Credentials, Datasets & Tests Exclusion
 # ==========================================================
@@ -281,8 +279,7 @@ testing/
 test_*.py
 *_test.py
 *cleanup*
-=======
+
 frontend/
 data/parquet/*.parquet
 repair.py
->>>>>>> staging

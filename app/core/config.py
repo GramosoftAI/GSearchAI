@@ -212,8 +212,10 @@ class Settings(BaseSettings):
     model_memory: str = "meta-llama/Llama-3.1-8B-Instruct-Turbo"
     max_tokens_memory: int = 512
 
-    model_answer: str = "deepseek-ai/DeepSeek-V3-2"
-    max_tokens_answer: int = 1024
+    model_answer: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    model_answer_fallback: str = "deepseek-ai/DeepSeek-V3"
+    model_answer_try: int = 3
+    max_tokens_answer: int = 4096
 
     model_vision: str = "meta-llama/Llama-3.2-11B-Vision-Instruct"
     max_tokens_vision: int = 1024
@@ -223,6 +225,7 @@ class Settings(BaseSettings):
     model_extraction_fallback: str = "meta-llama/Llama-3.1-8B-Instruct-Turbo"
     model_nl_to_cypher_fallback: str = "deepinfra/gpt-oss-20b"
     model_reranker_fallback: str = "Qwen/Qwen3-Reranker-0.6B"
+    model_answer_fallback: str = "deepseek-ai/DeepSeek-V3"
 
     # --- Concurrency ---
     llm_live_concurrency: int = 10

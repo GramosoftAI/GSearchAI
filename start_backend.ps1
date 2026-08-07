@@ -14,7 +14,7 @@ Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Change to project directory
-Set-Location v:\graphmind
+Set-Location $PSScriptRoot
 
 # Start uvicorn with debug logging
 # --log-level debug shows all request/response details
@@ -26,5 +26,11 @@ Write-Host "  ✓ Every HTTP request/response" -ForegroundColor Green
 Write-Host "  ✓ Authentication attempts" -ForegroundColor Green
 Write-Host "  ✓ All errors with details" -ForegroundColor Green
 Write-Host ""
+Write-Host "🚀 Launching Memory API on port 4917 in a new window..." -ForegroundColor Yellow
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$PSScriptRoot'; python -m uvicorn app.memory.app.main:app --port 4917 --reload"
 
-uvicorn app.main:app --reload --port 8001 --log-level debug
+
+
+Write-Host "🚀 Launching Main API on port 4915..." -ForegroundColor Yellow
+uvicorn app.main:app --reload --port 4915 --log-level debug
+

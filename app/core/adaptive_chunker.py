@@ -552,6 +552,18 @@ class PDFStructureParser:
         def traverse(element):
             nonlocal current_section, current_heading_level
             
+            from bs4 import NavigableString
+            if isinstance(element, NavigableString):
+                text = str(element).strip()
+                if text:
+                    segments.append({
+                        "type": "text",
+                        "text": text,
+                        "section": current_section,
+                        "heading_level": current_heading_level
+                    })
+                return
+            
             if element.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
                 level = int(element.name[1])
                 text = element.get_text().strip()
@@ -683,9 +695,8 @@ class PDFStructureParser:
                     })
                 return
 
-            for child in element.children:
-                if child.name is not None:
-                    traverse(child)
+            for child in getattr(element, "children", []):
+                traverse(child)
                     
         traverse(body)
         return segments
