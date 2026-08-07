@@ -6,6 +6,17 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from pgvector.sqlalchemy import VECTOR
+from dotenv import load_dotenv
+
+# Find and load the root .env file
+current_dir = os.path.dirname(os.path.abspath(__file__))
+for _ in range(5):
+    env_path = os.path.join(current_dir, ".env")
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        break
+    current_dir = os.path.dirname(current_dir)
+
 
 def get_db_url() -> str:
     url = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL") or os.getenv("POSTGRES_URI")

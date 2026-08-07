@@ -247,6 +247,7 @@ rename_key.py
 server.py
 frontend/
 data/parquet/*.parquet
+data/parquet/active_datasets.json
 repair.py
 
 # ==========================================================

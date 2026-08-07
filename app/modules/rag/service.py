@@ -422,7 +422,7 @@ If retrieved passages conflict, state the conflict. Do not resolve it yourself.
   "I couldn't find it."
 - If only part of the answer exists, answer only that part.
 - Mention the relevant source at the end.
-- Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
+- Answer ONLY the specific question asked by the user. If the user asks a complex or multi-part question, you MUST address EVERY part of the question in your response. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
 - Be concise. Focus strictly on direct answers and avoid filler.
 - TRANSACTION CLASSIFICATION: Categorize transactions strictly:
   * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
@@ -436,30 +436,27 @@ Use bullet points when listing multiple items.
 Use paragraphs for explanations.
 
 ==================================================
-SOURCE CITATION RULES
+SOURCE CITATION RULES (STRICT)
 ==================================================
-Cite all the UNIQUE document/data sources that were used to formulate your answer.
-Format each citation at the very end of your response on a single line:
-[Source: <source_1>, <source_2>]
+1. GREETINGS & CASUAL CONVERSATION (CRITICAL):
+- If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, DO NOT output any source citation tag at all.
+- NEVER include [Source: ...] for greetings, introduction messages, or general chitchat.
 
-Rules:
-- List every unique source used (e.g. clean file names like ARUN_N.pdf, data.xlsx).
+2. DOCUMENT CONTENT & ACCURATE CITATIONS:
+- Cite a source ONLY IF information from retrieved document/data chunks was ACTUALLY USED to answer the user's specific question.
+- Cite ONLY the specific filename(s) from which relevant facts were extracted.
+- Single Source: If the answer came from only one document (e.g. ARUN_N.pdf), cite ONLY that single document: [Source: ARUN_N.pdf]. Do NOT list other unused files.
+- Multi Source: If the answer combined information from multiple documents, list only those specific documents: [Source: file1.pdf, file2.pdf].
 - Deduplicate sources so each unique filename appears ONLY ONCE.
-- Do NOT repeat the same filename multiple times.
-- If tabular database/spreadsheet insights were used, cite the specific filename(s) shown in the header (e.g. "[Source: employees.csv]" or "[Source: data.xlsx]") as the source.
-- The source citation line must appear only once at the very end of the response.
+- Format the citation at the very end of your response on its own single line:
+  [Source: filename1, filename2]
 
 ==================================================
 FINAL RESPONSE FORMAT
 ==================================================
-Answer:
 <grounded answer>
 
-If you'd like, I can also:
-- ...
-- ...
-
-[Source: <source_1>, <source_2>]
+[Source: <only include source file(s) actually used to answer document questions>]
 """.strip()
 
         agent_persona = {
@@ -920,7 +917,7 @@ If retrieved passages conflict, state the conflict. Do not resolve it yourself.
   "I couldn't find it."
 - If only part of the answer exists, answer only that part.
 - Mention the relevant source at the end.
-- Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
+- Answer ONLY the specific question asked by the user. If the user asks a complex or multi-part question, you MUST address EVERY part of the question in your response. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
 - Be concise. Focus strictly on direct answers and avoid filler.
 - TRANSACTION CLASSIFICATION: Categorize transactions strictly:
   * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
@@ -935,28 +932,28 @@ FORMATTING RULES
 ==================================================
 SOURCE CITATION RULES
 ==================================================
-Cite all the UNIQUE document/data sources that were used to formulate your answer.
-Format each citation at the very end of your response on a single line:
-[Source: <source_1>, <source_2>]
+==================================================
+SOURCE CITATION RULES (STRICT)
+==================================================
+1. GREETINGS & CASUAL CONVERSATION (CRITICAL):
+- If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, DO NOT output any source citation tag at all.
+- NEVER include [Source: ...] for greetings, introduction messages, or general chitchat.
 
-Rules:
-- List every unique source used (e.g. clean file names like ARUN_N.pdf, data.xlsx).
+2. DOCUMENT CONTENT & ACCURATE CITATIONS:
+- Cite a source ONLY IF information from retrieved document/data chunks was ACTUALLY USED to answer the user's specific question.
+- Cite ONLY the specific filename(s) from which relevant facts were extracted.
+- Single Source: If the answer came from only one document (e.g. ARUN_N.pdf), cite ONLY that single document: [Source: ARUN_N.pdf]. Do NOT list other unused files.
+- Multi Source: If the answer combined information from multiple documents, list only those specific documents: [Source: file1.pdf, file2.pdf].
 - Deduplicate sources so each unique filename appears ONLY ONCE.
-- Do NOT repeat the same filename multiple times.
-- If tabular database/spreadsheet insights were used, cite the specific filename(s) shown in the header (e.g. "[Source: employees.csv]" or "[Source: data.xlsx]") as the source.
-- The source citation line must appear only once at the very end of the response.
+- Format the citation at the very end of your response on its own single line:
+  [Source: filename1, filename2]
 
 ==================================================
 RESPONSE FORMAT
 ==================================================
-Answer:
 <grounded answer>
 
-If you'd like, I can also:
-- ...
-- ...
-
-[Source: <source_1>, <source_2>]
+[Source: <only include source file(s) actually used to answer document questions>]
 """.strip()
 
         agent_persona = {

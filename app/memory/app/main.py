@@ -9,6 +9,16 @@ from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy import select, delete
 from neo4j import AsyncGraphDatabase
+from dotenv import load_dotenv
+
+# Find and load the root .env file
+current_dir = os.path.dirname(os.path.abspath(__file__))
+for _ in range(5):
+    env_path = os.path.join(current_dir, ".env")
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        break
+    current_dir = os.path.dirname(current_dir)
 
 from schema.database import AsyncSessionLocal, EpisodicMemory, UserPreference, init_db
 import httpx
@@ -72,7 +82,7 @@ HISTORY_QUERY_PATTERN = re.compile(
 )
 
 _PREFERENCE_PATTERNS = re.compile(
-    r"\b(remember (that|to|my|i|this|it)|please remember|note (that|down)|"
+    r"\b(remember|please remember|note (that|down)|"
     r"always (respond|answer|reply|format|use)|"
     r"from now on|i prefer|my preferred|please (always|remember)|"
     r"don'?t (use|do)|stop (using|doing)|never (use|do)|"
@@ -97,17 +107,21 @@ _RAG_COMMAND_PATTERN = re.compile(
 )
 
 _DYNAMIC_FACT_PATTERN = re.compile(
-    r".*?\b(?:my\s+)?(?P<key>[a-zA-Z0-9_\-']+)\s+"
+    r".*?\b(?:my\s+)?(?P<key>[a-zA-Z0-9_\-'\s]+?)\s+"
     r"(?:is|are|=|:|was|not\s+.*?\s+(?:it'?s|into|to)|to|into|changed?\s+to|upgraded?\s+to|upgrad\s+into)\s+"
-    r"(?P<value>[a-zA-Z0-9%\s_\-']+)",
+    r"(?P<value>[a-zA-Z0-9%\s_\-'\.]+)",
     re.IGNORECASE,
 )
 
 
 def _is_deterministic_preference_statement(query: str) -> bool:
-    if _QUESTION_INDICATOR.search(query) or _RAG_COMMAND_PATTERN.search(query):
+    if _QUESTION_INDICATOR.search(query):
         return False
-    return bool(_PREFERENCE_PATTERNS.search(query))
+    if _PREFERENCE_PATTERNS.search(query):
+        return True
+    if _DYNAMIC_FACT_PATTERN.search(query):
+        return True
+    return False
 
 
 def _is_delete_statement(query: str) -> bool:
@@ -361,10 +375,10 @@ def _extract_entity_names(raw_json_text: str) -> List[str]:
 
 PREFERENCE_EXTRACTION_PROMPT = (
     "You are a strict JSON extractor for preference/fact updates and corrections.\n"
-    "CRITICAL INSTRUCTION: DO NOT extract anything for standard search queries, questions, or one-off commands (e.g. 'i need full detail about this company pincode 110025'). ONLY extract persistent personal facts or explicit preferences.\n"
+    "CRITICAL INSTRUCTION: DO NOT extract anything for standard search queries, questions, or one-off commands (e.g. 'i need full detail about this company pincode 110025'). ONLY extract persistent facts, personal facts, or explicit preferences.\n"
     "If the query is just a search question or command, return an empty JSON object: {}\n"
     "Otherwise, extract the updated preference or fact into EXACTLY ONE JSON object with two keys: 'key' and 'value'.\n"
-    "CRITICAL: The 'key' MUST be a clean canonical attribute name (e.g. 'wife_name', 'user_name', 'grade_10_mark').\n"
+    "CRITICAL: The 'key' MUST be a clean canonical attribute name (e.g. 'wife_name', 'user_name', 'grade_10_mark', 'ceo_tamil_nadu', 'vijay_role').\n"
     "NEVER append action words like '_update', '_change', '_correction', or '_error' to the key name.\n"
     "DO NOT use keys like 'context', 'name', 'details', or 'instruction'. ONLY use 'key' and 'value'.\n\n"
     "Schema:\n"
@@ -379,7 +393,9 @@ PREFERENCE_EXTRACTION_PROMPT = (
     "4. Query: 'I prefer using PostgreSQL over MongoDB'\n"
     "   JSON: {\"key\": \"database_preference\", \"value\": \"PostgreSQL over MongoDB\"}\n"
     "5. Query: 'i need full detail about this company pincode 110025'\n"
-    "   JSON: {}\n\n"
+    "   JSON: {}\n"
+    "6. Query: 'please remember vijay is Chief Executive Officer of Tamil Nadu'\n"
+    "   JSON: {\"key\": \"ceo_tamil_nadu\", \"value\": \"vijay\"}\n\n"
     "Return ONLY valid JSON. No explanations, no markdown block syntax."
 )
 
@@ -715,7 +731,7 @@ async def _query_graph_relations(tenant_id: str, user_id: str, agent_id: str, co
 async def startup_event():
     logger.info("[STARTUP] Initializing Relational DB schemas...")
     await init_db()
-    logger.info("[STARTUP] Memory Core API ready.")
+    logger.info("[STARTUP] Memory Core API ready.") 
 
 
 @app.on_event("shutdown")
@@ -730,11 +746,11 @@ async def shutdown_event():
 # ============================================================================
 @app.post("/api/v1/memory/process-turn")
 async def process_turn(payload: MemoryProcessRequest):
-    if _QUESTION_INDICATOR.search(payload.query) or _RAG_COMMAND_PATTERN.search(payload.query):
+    if _is_deterministic_preference_statement(payload.query):
+        is_feedback_only = True
+    elif _QUESTION_INDICATOR.search(payload.query) or _RAG_COMMAND_PATTERN.search(payload.query):
         is_feedback_only = False
     elif _is_delete_statement(payload.query):
-        is_feedback_only = True
-    elif _is_deterministic_preference_statement(payload.query):
         is_feedback_only = True
     else:
         triage_prompt = (
@@ -903,7 +919,8 @@ async def async_ingest_turn(payload: MemorySaveRequest):
             "couldn't find", "could not find", "don't know", "do not know",
             "no mention", "no information", "not present in dataset",
             "not found", "unable to find", "no matching record",
-            "does not exist", "unanswered"
+            "does not exist", "unanswered",
+            "don't have any specific information", "don’t have any specific information"
         ]
         ai_resp_lower = payload.ai_response.lower()
         if any(indicator in ai_resp_lower for indicator in negative_indicators):
