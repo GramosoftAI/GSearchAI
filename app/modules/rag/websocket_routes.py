@@ -131,77 +131,22 @@ async def rag_websocket(
         query_rewriter = QueryRewriter()
 
         try:
-            while True:
-                # 5. WAIT FOR MESSAGE
-                data = await websocket.receive_text()
-                try:
-                    msg = json.loads(data)
-                    query = msg.get("query", "").strip() if msg.get("query") else ""
-                    session_id = msg.get("session_id")
-                    enhance_prompt = msg.get("prompt_enhancer", False) or msg.get(
-                        "enhance_prompt", False
-                    )
-                except json.JSONDecodeError:
-                    await websocket.send_text(
-                        json.dumps({"type": "error", "message": "Invalid JSON format"})
-                    )
-                    continue
+            from .adapters import DashboardAdapter
+            from .websocket_core import run_unified_rag_websocket_loop
 
-                if not query:
-                    continue
+            await run_unified_rag_websocket_loop(
+                websocket=websocket,
+                db=db,
+                agent_id=agent_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                kb_ids=kb_ids,
+                adapter=DashboardAdapter(),
+                chat_service=chat_service,
+                query_rewriter=query_rewriter,
+                rag_service=rag_service
+            )
 
-                # 6. RESOLVE OR CREATE CHAT SESSION
-                session = None
-                if session_id:
-                    session = await chat_service.chat_repo.get_session_by_id(session_id)
-                    if not session:
-                        logger.warning(
-                            f"Session {session_id} not found in WS, creating new"
-                        )
-
-                if session is None:
-                    session = await chat_service.chat_repo.create_session(
-                        agent_id=agent_id, user_id=user_id
-                    )
-
-                active_session_id = str(session.id)
-
-                # ============================================================
-                # DELEGATE TO CHAT PIPELINE
-                # ============================================================
-                from .stream.response_chunk import ChunkType
-                from .chat_pipeline import ChatPipeline
-                chat_pipeline = ChatPipeline(db=db, tenant_id=tenant_id)
-                
-                async for chunk in chat_pipeline.stream_response(
-                    query=query,
-                    session_id=active_session_id,
-                    agent_id=agent_id,
-                    user_id=user_id,
-                    kb_ids=kb_ids,
-                    enhance_prompt=enhance_prompt
-                ):
-                    try:
-                        if chunk.type == ChunkType.CONTENT:
-                            await websocket.send_text(chunk.text)
-                        elif chunk.type == ChunkType.METADATA:
-                            meta_payload = chunk.data.model_dump()
-                            meta_payload["type"] = "metadata"
-                            await websocket.send_text(json.dumps(meta_payload))
-                        elif chunk.type == ChunkType.ERROR:
-                            # The original route sometimes sent raw text for errors and sometimes JSON. 
-                            # We send JSON here, or raw text if preferred, but JSON is safer.
-                            await websocket.send_text(json.dumps({"type": "error", "message": chunk.text}))
-                        elif chunk.type == ChunkType.STATUS:
-                            await websocket.send_text(json.dumps({"type": "status", "message": chunk.text}))
-                        elif chunk.type == ChunkType.DONE:
-                            await websocket.send_text(json.dumps({"type": "done"}))
-                    except Exception as ws_err:
-                        logger.error(f"Failed to send chunk to websocket: {ws_err}")
-                        break
-
-        except WebSocketDisconnect:
-            logger.info(f"WebSocket disconnected: Agent={agent_id}")
         except Exception as e:
             logger.error(f"WebSocket session error: {e}", exc_info=True)
             try:

@@ -130,19 +130,40 @@ async def verify_agent_belongs_to_tenant(db, tenant_id: str, agent_id: str) -> b
 
 
 
-async def get_or_create_widget_user(db, tenant_id: str) -> User:
-
+async def resolve_or_issue_visitor_id(websocket: WebSocket, tenant_id: str) -> str:
     """
-
-    Retrieve or create a single system-designated user for this tenant
-
-    to own all widget conversation histories.
-
+    Widget JS sends back a previously-issued visitor token (from cookie or
+    localStorage) if it has one. If absent, invalid, or not signed by us,
+    issue a fresh one server-side. Never trust a bare client-supplied ID.
     """
+    from ...core.security import verify_visitor_token_signature, issue_signed_visitor_token
+    
+    candidate = websocket.query_params.get("vtoken")
+    if candidate:
+        visitor_id = verify_visitor_token_signature(candidate, tenant_id)
+        if visitor_id:
+            return visitor_id
 
+    # If no valid token, issue a new one
+    new_token = issue_signed_visitor_token(tenant_id)
+    # The client must receive this, but since we are handling this before entering the main loop,
+    # we will send it immediately to the client.
+    await websocket.send_json({"type": "session", "vtoken": new_token})
+    
+    return verify_visitor_token_signature(new_token, tenant_id)
+
+
+async def get_or_create_widget_user(db, tenant_id: str, visitor_id: str = None) -> User:
+    """
+    Retrieve or create a unique system-designated user for this specific widget visitor
+    to own their specific conversation histories.
+    """
     tenant_uuid = uuid.UUID(tenant_id)
-
-    widget_email = f"widget_user_{tenant_id[:8]}@graphmind.local"
+    # Make email unique to visitor_id if provided, else fallback to tenant_id for legacy HTTP
+    if visitor_id:
+        widget_email = f"widget_{visitor_id[:8]}@graphmind.local"
+    else:
+        widget_email = f"widget_user_{tenant_id[:8]}@graphmind.local"
 
     
 
@@ -802,148 +823,40 @@ async def websocket_chat_endpoint(
     logger.info(f" WebSocket connection accepted: agent={agent_id}, tenant={tenant_id}")
     
     try:
-        while True:
-            # 1. Receive JSON message frame
-            try:
-                data = await websocket.receive_json()
-            except Exception:
-                # Malformed JSON or disconnection during recv
-                break
-                
-            message_text = data.get("message", "").strip()
-            session_id = data.get("session_id")
-            top_k = data.get("top_k", 10)
-            max_depth = data.get("max_depth", 2)
+        async with get_db_with_tenant(tenant_id) as db:
+            valid = await verify_agent_belongs_to_tenant(db, tenant_id, agent_id)
+            if not valid:
+                await websocket.send_json({"type": "error", "detail": "Agent unauthorized or not found"})
+                return
+
+            visitor_id = await resolve_or_issue_visitor_id(websocket, tenant_id)
+            widget_user = await get_or_create_widget_user(db, tenant_id, visitor_id)
             
-            if not message_text:
-                await websocket.send_json({"type": "error", "detail": "Message cannot be empty"})
-                continue
-                
-            # 2. Process within isolated RLS DB session
-            async with get_db_with_tenant(tenant_id) as db:
-                # A. Enforce multi-tenancy security
-                valid = await verify_agent_belongs_to_tenant(db, tenant_id, agent_id)
-                if not valid:
-                    await websocket.send_json({"type": "error", "detail": "Agent unauthorized or not found"})
-                    continue
-                    
-                # B. Provision visitor user and resolve session
-                widget_user = await get_or_create_widget_user(db, tenant_id)
-                chat_service = ChatService(db=db, tenant_id=tenant_id)
-                
-                if session_id:
-                    session = await chat_service.chat_repo.get_session_by_id(session_id)
-                    if not session or str(session.agent_id) != str(agent_id):
-                        session = await chat_service.create_session(
-                            agent_id=agent_id,
-                            user_id=str(widget_user.id),
-                            title="WebSocket Chat"
-                        )
-                        session_id = str(session.id)
-                else:
-                    session = await chat_service.create_session(
-                        agent_id=agent_id,
-                        user_id=str(widget_user.id),
-                        title="WebSocket Chat"
-                    )
-                    session_id = str(session.id)
-                    
-                # Notify client that session is active
-                await websocket.send_json({
-                    "type": "start",
-                    "session_id": session_id
-                })
-                
-                # C. Resolve Agent Knowledge Bases
-                kbs, _ = await chat_service.kb_repo.list_by_agent(agent_id, limit=10)
-                kb_ids = [str(kb.id) for kb in kbs] if kbs else []
-                kb_id_used = kb_ids[0] if kb_ids else None
-                
-                # D. DELEGATE TO CHAT PIPELINE
-                from ..rag.chat_pipeline import ChatPipeline
-                from ..rag.stream.response_chunk import ChunkType
-                chat_pipeline = ChatPipeline(db=db, tenant_id=tenant_id)
-                
-                full_response_chunks = []
-                sources = []
-                
-                try:
-                    async for chunk in chat_pipeline.stream_response(
-                        query=message_text,
-                        session_id=session_id,
-                        agent_id=agent_id,
-                        user_id=str(widget_user.id),
-                        kb_ids=kb_ids,
-                        enhance_prompt=True,
-                        top_k=top_k,
-                        max_depth=max_depth
-                    ):
-                        if chunk.type == ChunkType.CONTENT:
-                            full_response_chunks.append(chunk.text)
-                            await websocket.send_json({
-                                "type": "content",
-                                "delta": chunk.text
-                            })
-                        elif chunk.type == ChunkType.METADATA:
-                            chunk_sources = [s.model_dump() for s in chunk.data.sources]
-                            sources.extend(chunk_sources)
-                            await websocket.send_json({
-                                "type": "sources",
-                                "sources": chunk_sources
-                            })
-                        elif chunk.type == ChunkType.STATUS:
-                            await websocket.send_json({
-                                "type": "status",
-                                "message": chunk.text
-                            })
-                        elif chunk.type == ChunkType.ERROR:
-                            await websocket.send_json({
-                                "type": "error",
-                                "detail": chunk.text
-                            })
-                        elif chunk.type == ChunkType.DONE:
-                            compiled_answer = "".join(full_response_chunks)
-                            await websocket.send_json({
-                                "type": "done",
-                                "session_id": session_id,
-                                "answer": compiled_answer
-                            })
-                    
-                    # J. Trigger Knowledge Flywheel background task
-                    if compiled_answer and sources:
-                        top_chunk_id = sources[0].get("chunk_id")
-                        if top_chunk_id and kb_id_used:
-                            asyncio.create_task(
-                                ChatKnowledgeService.run_sync_background(
-                                    tenant_id=tenant_id,
-                                    session_id=session_id,
-                                    kb_id=kb_id_used,
-                                    chunk_id=top_chunk_id,
-                                    user_message=message_text,
-                                    assistant_message=compiled_answer
-                                )
-                            )
-                            
-                except Exception as stream_err:
-                    logger.error(f"WebSocket stream processing failed: {stream_err}", exc_info=True)
-                    error_ans = f"I encountered an issue generating a response: {str(stream_err)}"
-                    try:
-                        await chat_service.chat_repo.add_message(
-                            session_id=session_id,
-                            role="assistant",
-                            content=error_ans,
-                            metadata={"error": True, "detail": str(stream_err)}
-                        )
-                        await db.commit()
-                    except Exception:
-                        pass
-                    await websocket.send_json({
-                        "type": "error",
-                        "detail": f"Stream failed: {str(stream_err)}"
-                    })
-                    
-    except WebSocketDisconnect:
-        logger.info(f" WebSocket disconnected: agent={agent_id}")
+            chat_service = ChatService(db=db, tenant_id=tenant_id)
+            kbs, _ = await chat_service.kb_repo.list_by_agent(agent_id, limit=10)
+            kb_ids = [str(kb.id) for kb in kbs] if kbs else []
+
+            from ..rag.websocket_core import run_unified_rag_websocket_loop
+            from ..rag.adapters import EmbedAdapter
+            from ...core.query_rewriter import QueryRewriter
+            from ..rag.service import RAGService
+
+            query_rewriter = QueryRewriter()
+            rag_service = RAGService(db=db, tenant_id=tenant_id)
+
+            await run_unified_rag_websocket_loop(
+                websocket=websocket,
+                db=db,
+                agent_id=agent_id,
+                tenant_id=tenant_id,
+                user_id=str(widget_user.id),
+                kb_ids=kb_ids,
+                adapter=EmbedAdapter(),
+                chat_service=chat_service,
+                query_rewriter=query_rewriter,
+                rag_service=rag_service
+            )
+            
     except Exception as e:
         logger.error(f"WebSocket uncaught exception: {e}", exc_info=True)
 

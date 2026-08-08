@@ -354,3 +354,34 @@ async def verify_refresh_token(token: str, db=None) -> Optional[TokenPayload]:
     except JWTError as e:
         logger.warning(f"Invalid refresh token: {e}")
         return None
+
+# ============= WIDGET VISITOR TOKENS =============
+def issue_signed_visitor_token(tenant_id: str, visitor_id: Optional[str] = None) -> str:
+    """
+    Issue a signed token for an anonymous widget visitor.
+    """
+    if not visitor_id:
+        import uuid
+        visitor_id = str(uuid.uuid4())
+    
+    payload = {
+        "visitor_id": visitor_id,
+        "tenant_id": tenant_id,
+        "type": "widget_visitor",
+        "exp": datetime.now(timezone.utc) + timedelta(days=365) # Long lived for returning visitors
+    }
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+def verify_visitor_token_signature(token: str, expected_tenant: str) -> Optional[str]:
+    """
+    Verify signature and return visitor_id if valid.
+    """
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        if payload.get("type") != "widget_visitor":
+            return None
+        if payload.get("tenant_id") != expected_tenant:
+            return None
+        return payload.get("visitor_id")
+    except JWTError:
+        return None

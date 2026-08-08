@@ -18,7 +18,6 @@ from urllib.parse import urlparse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .pipeline import RAGPipeline, RAGContext
-from .stream.pipeline_context import PipelineContext
 from ..knowledge_bases.repository import KnowledgeBaseRepository
 from ..agents.repository import AgentRepository
 from ..personalities.models import Personality
@@ -93,22 +92,22 @@ class RAGService:
 
     async def stream_rag_answer(
         self,
-        context: PipelineContext,
+        query: str,
+        agent_id: str,
+        kb_id: str | list[str],
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         top_k: int = 30,
         max_depth: int = 2,
         on_usage_callback: Optional[Callable[[dict], None]] = None,
+        chat_history: Optional[str] = None,
         skip_search: bool = False,
     ):
-        query = context.query
-        agent_id = context.agent_id
-        kb_ids = context.kb_ids
-        user_id = context.user_id
-        session_id = context.session_id
-        chat_history = context.memory_context
-
-        logger.info(f" RAG Service: Streaming answer for agent={agent_id}, kb={kb_ids}")
+        logger.info(f" RAG Service: Streaming answer for agent={agent_id}, kb={kb_id}")
 
         # 1. Validate KB ownership
+        kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
+
         # 1. Validate KB ownership and separate Excel vs Document KBs
         excel_kbs = []
         doc_kbs = []
@@ -159,7 +158,10 @@ class RAGService:
         if not skip_search and (doc_kbs or not excel_kbs):
             vector_task = asyncio.create_task(
                 self.pipeline.query(
-                    context=context,
+                    query=query,
+                    agent_id=agent_id,
+                    kb_id=kb_ids,
+                    user_id=user_id,
                     top_k=top_k,
                     max_depth=max_depth,
                 )
@@ -258,7 +260,116 @@ class RAGService:
                 return
 
         skip_search = True  # Bypass redundant sequential search below
+                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                sql_task = asyncio.create_task(engine.execute_query(query))
 
+        vector_task = None
+        if not skip_search and (doc_kbs or not excel_kbs):
+            vector_task = asyncio.create_task(
+                self.pipeline.query(
+                    query=query,
+                    agent_id=agent_id,
+                    kb_id=kb_ids,
+                    user_id=user_id,
+                    top_k=top_k,
+                    max_depth=max_depth,
+                )
+            )
+
+        context = None
+        metadata_yielded = False
+        if excel_kbs and sql_task and vector_task:
+            logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
+            
+            # Wait for vector_task first to yield metadata early
+            try:
+                context_res = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
+            except Exception as e:
+                context_res = e
+            
+            if not isinstance(context_res, Exception):
+                context = context_res
+                
+                # Yield metadata immediately so the UI doesn't hang!
+                metadata = {
+                    "type": "metadata",
+                    "sources": [
+                        {
+                            "chunk_id": c.chunk_id,
+                            "source": c.source,
+                            "score": round(c.hybrid_score, 3),
+                            "position": c.position,
+                            "reason": c.reason,
+                            "kb_id": c.kb_id,
+                            "content_type": getattr(c, "content_type", "original")
+                        }
+                        for c in context.chunks
+                    ],
+                    "triplets": [
+                        {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
+                        for t in (context.triplets or [])
+                    ],
+                    "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                    "augmented_query": query,
+                    "authoritative_entities": context.authoritative_entities or []
+                }
+                yield json.dumps(metadata)
+                metadata_yielded = True
+            else:
+                logger.error(f"Parallel RAG Retrieval failed: {context_res}")
+                yield json.dumps({"error": f"Retrieval failed: {str(context_res)}"})
+                return
+
+            # Now wait for SQL task which is running in parallel
+            try:
+                sql_res = await asyncio.wait_for(sql_task, timeout=60.0)
+            except Exception as e:
+                sql_res = e
+                
+            if not isinstance(sql_res, Exception) and sql_res:
+                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                if not any(sig in str(sql_res).lower() for sig in unmatched_signals):
+                    hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+            elif isinstance(sql_res, Exception):
+                logger.warning(f"Parallel TABULAR_SQL failed: {sql_res}")
+
+        elif sql_task:
+            logger.info("Executing TABULAR_SQL standalone...")
+            try:
+                sql_res = await asyncio.wait_for(sql_task, timeout=30.0)
+                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
+                if is_unmatched:
+                    logger.info(f"Excel dataset lacked answer ({sql_res}).")
+                else:
+                    yield json.dumps({
+                        "type": "metadata",
+                        "sources": [],
+                        "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
+                        "context_type": "duckdb_parquet"
+                    })
+                    yield str(sql_res)
+                    return
+            except Exception as e:
+                logger.error(f"PandasQueryEngine stream failed: {e}")
+                yield json.dumps({"error": str(e)})
+                return
+
+        elif vector_task:
+            logger.info("Executing VECTOR_DOCS standalone...")
+            try:
+                context = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
+                yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
+                return
+            except Exception as e:
+                logger.error(f"RAG Retrieval failed for stream: {e}")
+                yield json.dumps({"error": f"Retrieval failed: {e}"})
+                return
+
+        skip_search = True  # Bypass redundant sequential search below
+            
 
         if len(kb_ids) > 1:
             logger.info(
@@ -1109,17 +1220,21 @@ RESPONSE FORMAT
             }
 
         # Step 4: Format Context & LLM Generation
+<<<<<<< HEAD
         formatted_context = (
             self._format_context(context, hybrid_merge_context=hybrid_merge_context)
             if context
             else (hybrid_merge_context or "")
         )
+=======
+        formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
         
         if episodic_guidance:
             formatted_context = (
                 "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
                 f"{episodic_guidance}\n\n"
             ) + formatted_context
+>>>>>>> staging
         llm_response = await self._generate_answer_llm(
             query=query,
             context=formatted_context,
@@ -1264,8 +1379,14 @@ RESPONSE FORMAT
             context_text += f"{hybrid_merge_context}\n" + "=" * 60 + "\n"
 
         for i, chunk in enumerate(context.chunks, 1):
+<<<<<<< HEAD
+            source_info = (
+                clean_source_name(chunk.source) if chunk.source else "Unknown Source"
+            )
+=======
             s3_path = getattr(chunk, "s3_path", None)
             source_info = s3_path if s3_path else (clean_source_name(chunk.source) if chunk.source else "Unknown Source")
+>>>>>>> staging
             context_text += f"\n[Chunk {i}/{len(context.chunks)} - Source: {source_info} - Position {chunk.position}]"
             context_text += f"\nScore: {chunk.hybrid_score:.3f} (Semantic: {chunk.embedding_similarity:.3f}, Graph: {chunk.graph_score:.3f})"
             context_text += f"\n{'-' * 40}\n{chunk.text}\n"

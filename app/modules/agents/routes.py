@@ -1348,6 +1348,195 @@ async def crawl_url(url: str, mode: str = "single", proxy_mode: str = "basic") -
 
 
 
+@router.post(
+
+    "/{agent_id}/sources/url",
+
+    response_model=dict,
+
+    status_code=status.HTTP_200_OK,
+
+    summary="Instant URL Ingestion",
+
+    description="Automatically crawl a URL and ingest its content into the graph for the given agent.",
+
+)
+
+async def instant_ingest_url(
+
+    request: Request,
+
+    agent_id: str,
+
+    url_data: KBURLIngest,
+
+) -> dict:
+
+    """
+
+    COMBINED ROUTE: Create KB + Crawl URL (Primary/Fallback) + Ingest.
+
+    """
+
+    try:
+        tenant_id, user_id = get_tenant_and_user(request)
+
+<<<<<<< HEAD
+        import time
+        t_total_start = time.time()
+
+        # 1. Crawl URL (Robust primary + Fallback)
+
+        try:
+            t_gcrawl_start = time.time()
+            document_text = await crawl_url(
+
+                url=url_data.url, 
+
+                mode=url_data.crawl_type, 
+
+                proxy_mode="default"
+
+            )
+            t_gcrawl_end = time.time()
+            gcrawl_time_seconds = round(t_gcrawl_end - t_gcrawl_start, 2)
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "Too Many Requests" in err_str:
+                raise HTTPException(
+                    status_code=503,
+                    detail="The web crawling service is currently rate-limited. Please wait a moment and try again."
+                )
+            raise HTTPException(status_code=400, detail=f"Failed to fetch content from URL: {err_str}")
+
+
+
+        if not document_text.strip():
+
+            raise HTTPException(status_code=400, detail="No extractable text content found on the page")
+
+
+
+        async with AsyncSessionLocal() as db:
+
+            # 2. Verify Agent
+
+            agent_service = AgentService(db, tenant_id)
+
+            agent_result = await agent_service.get_agent(agent_id)
+
+            if not agent_result.get("success"):
+
+                raise HTTPException(status_code=404, detail="Agent not found")
+
+
+            kb_result = await kb_service.create_knowledge_base(user_id, kb_request)
+
+            if not kb_result.get("success"):
+
+                raise HTTPException(status_code=500, detail="Backend logic failure")
+
+                
+
+            kb_id = str(kb_result["data"]["kb"].id)
+
+
+
+            # 4. Ingest
+            try:
+                ingest_result = await kb_service.ingest_document(kb_id, document_text)
+                if not ingest_result.get("success"):
+                    try:
+                        logger.info(f"Instant Ingest Text failed. Cleaning up KnowledgeBase {kb_id}.")
+                        await kb_service.delete_kb(kb_id, user_id=user_id)
+                    except Exception as cleanup_err:
+                        logger.error(f"Failed to clean up KnowledgeBase {kb_id} after text ingestion failure: {cleanup_err}")
+                    error_msg = ingest_result.get("error", "Unknown error")
+                    status_code = ingest_result.get("status_code", 400)
+                    raise HTTPException(status_code=status_code, detail=error_msg)
+            except Exception as ingest_err:
+                if isinstance(ingest_err, HTTPException):
+                    raise
+                try:
+                    logger.info(f"Instant Ingest Text encountered error. Cleaning up KnowledgeBase {kb_id}.")
+                    await kb_service.delete_kb(kb_id, user_id=user_id)
+                except Exception as cleanup_err:
+                    logger.error(f"Failed to clean up KnowledgeBase {kb_id} after text ingestion error: {cleanup_err}")
+                raise ingest_err
+
+            # Add agent name to response
+            agent_name = agent_result["data"]["agent"]["name"]
+            ingest_result["data"]["agent_name"] = agent_name
+            ingest_result["meta"]["message"] = f"Text knowledge stored to agent: {agent_name}"
+            
+            return ingest_result
+
+
+
+    except HTTPException:
+
+        raise
+
+    except Exception as e:
+
+        logger.error(f"Instant Ingest Text error: {e}")
+
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+async def crawl_url(url: str, mode: str = "single", proxy_mode: str = "basic") -> str:
+
+    """
+
+    Refactored crawling process using ScraperService.
+
+    Uses Gcrawl API as primary with BS4 fallback.
+
+    """
+
+    logger.info(f" ScraperService Crawl: {url} (mode: {mode}, proxy: {proxy_mode})")
+
+    
+
+    documents = await ScraperService.extract_website_content(
+
+        url=url,
+
+        crawl_type=mode,
+
+        proxy_mode=proxy_mode
+
+    )
+
+    
+
+    if not documents:
+
+        return ""
+
+        
+
+    # Combine content from all pages
+
+    final_doc = ""
+
+    for doc in documents:
+
+        if len(documents) > 1:
+
+            final_doc += f"\n\n# SOURCE: {doc['source']}\n\n"
+
+        final_doc += doc["content"]
+
+        
+
+    return final_doc.strip()
+
+
 
 
 
@@ -1384,12 +1573,52 @@ async def instant_ingest_url(
     try:
 
         tenant_id, user_id = get_tenant_and_user(request)
+
+        import time
+        t_total_start = time.time()
+
+        # 1. Crawl URL (Robust primary + Fallback)
+
+        try:
+            t_gcrawl_start = time.time()
+            document_text = await crawl_url(
+
+                url=url_data.url, 
+
+                mode=url_data.crawl_type, 
+
+                proxy_mode="default"
+
+            )
+            t_gcrawl_end = time.time()
+            gcrawl_time_seconds = round(t_gcrawl_end - t_gcrawl_start, 2)
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "Too Many Requests" in err_str:
+                raise HTTPException(
+                    status_code=503,
+                    detail="The web crawling service is currently rate-limited. Please wait a moment and try again."
+                )
+            raise HTTPException(status_code=400, detail=f"Failed to fetch content from URL: {err_str}")
+
+
+
+        if not document_text.strip():
+
+            raise HTTPException(status_code=400, detail="No extractable text content found on the page")
+
+
+=======
         # ----------------------------------------------------
         # DOCUMENT PIPELINE (BACKGROUND JOBS)
         # ----------------------------------------------------
         from app.modules.jobs.service import JobService
         from app.modules.jobs.schemas import JobCreate
         from app.modules.jobs.worker import run_url_ingestion_job
+>>>>>>> staging
 
         async with AsyncSessionLocal() as db:
             # Set context
@@ -1398,8 +1627,47 @@ async def instant_ingest_url(
                 text("SELECT set_config('app.current_tenant', :tenant_id, false)"),
                 {"tenant_id": str(tenant_id)}
             )
+<<<<<<< HEAD
+
+            kb_result = await kb_service.create_knowledge_base(user_id, kb_request)
+            kb_id = str(kb_result["data"]["kb"].id)
+
+            # 4. Ingest
+            try:
+                t_process_start = time.time()
+                ingest_result = await kb_service.ingest_document(kb_id, document_text)
+                t_process_end = time.time()
+                processing_time_seconds = round(t_process_end - t_process_start, 2)
+
+                if not ingest_result.get("success"):
+                    try:
+                        logger.info(f"Instant Ingest URL failed. Cleaning up KnowledgeBase {kb_id}.")
+                        await kb_service.delete_kb(kb_id, user_id=user_id)
+                    except Exception as cleanup_err:
+                        logger.error(f"Failed to clean up KnowledgeBase {kb_id} after URL ingestion failure: {cleanup_err}")
+                    error_msg = ingest_result.get("error", "Unknown error")
+                    status_code = ingest_result.get("status_code", 400)
+                    raise HTTPException(status_code=status_code, detail=error_msg)
+            except Exception as ingest_err:
+                if isinstance(ingest_err, HTTPException):
+                    raise
+                try:
+                    logger.info(f"Instant Ingest URL encountered error. Cleaning up KnowledgeBase {kb_id}.")
+                    await kb_service.delete_kb(kb_id, user_id=user_id)
+                except Exception as cleanup_err:
+                    logger.error(f"Failed to clean up KnowledgeBase {kb_id} after URL ingestion error: {cleanup_err}")
+                raise ingest_err
+
+            t_total_end = time.time()
+            total_time_seconds = round(t_total_end - t_total_start, 2)
+
+            # Add agent name to response
+            agent_name = agent_result["data"]["agent"]["name"]
+            ingest_result["data"]["agent_name"] = agent_name
+=======
             
             job_service = JobService(db, tenant_id)
+>>>>>>> staging
             
             # Create a tracking job
             job_req = JobCreate(
@@ -1432,6 +1700,18 @@ async def instant_ingest_url(
         raise
     except Exception as e:
         logger.error(f"Instant Ingest URL error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+    except HTTPException:
+
+        raise
+
+    except Exception as e:
+
+        logger.error(f"Instant Ingest URL error: {e}")
+
         raise HTTPException(status_code=500, detail=str(e))
 
 
