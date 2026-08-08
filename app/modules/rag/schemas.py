@@ -113,6 +113,7 @@ class UnifiedChatRequest(BaseModel):
     query: str
     top_k: int = 10
     max_depth: int = 2
+    session_id: Optional[str] = None
 
     @classmethod
     def from_raw(cls, payload: dict) -> "UnifiedChatRequest":
@@ -123,4 +124,5 @@ class UnifiedChatRequest(BaseModel):
             query=query,
             top_k=payload.get("top_k", 10),
             max_depth=payload.get("max_depth", 2),
+            session_id=payload.get("session_id"),
         )
