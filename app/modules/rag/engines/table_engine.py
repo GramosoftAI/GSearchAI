@@ -37,7 +37,7 @@ class TableEngine(BaseEngine):
         
     async def get_candidate_sections(self, task: Any, kb_ids: List[str]) -> List[Dict[str, Any]]:
         cypher = """
-        MATCH (kb:KnowledgeBase)-[:HAS_DOCUMENT]->(doc)-[:HAS_SECTION*0..2]->(sec)-[:HAS_TABLE]->(t:Table)
+        MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(t:Table)
         WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
         RETURN DISTINCT sec.id as section_id, sec.title as title, doc.type as doc_type, t.name as table_name
         LIMIT 50
@@ -73,7 +73,7 @@ class TableEngine(BaseEngine):
             return []
             
         cypher = """
-        MATCH (kb:KnowledgeBase)-[:HAS_DOCUMENT]->(doc)-[:HAS_SECTION*0..2]->(sec)-[:HAS_TABLE]->(t:Table)-[:HAS_ROW]->(r:Row)
+        MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(t:Table)-[:HAS_ROW]->(r:Row)
         WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
         """
         params = {"kb_ids": kb_ids, "tenant_id": self.tenant_id, "keywords": keywords}

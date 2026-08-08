@@ -977,7 +977,7 @@ class DeepInfraLLMClient:
 
         payload = {
 
-            "model": self.model_answer,
+            "model": kwargs.get("model", self.model_answer),
 
             "messages": [
 

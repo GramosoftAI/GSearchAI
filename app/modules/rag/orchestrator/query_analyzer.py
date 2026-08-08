@@ -22,6 +22,7 @@ class QueryIntent(Enum):
     UNKNOWN = "UNKNOWN"
 
 class QueryMetadata(BaseModel):
+    query_embedding: Optional[List[float]] = None
     quarter: Optional[str] = Field(None, description="E.g., Q1, Q2, Q3, Q4")
     year: Optional[str] = Field(None, description="E.g., 2023, 2024, FY23")
     company: Optional[str] = Field(None, description="Company name mentioned in query")
