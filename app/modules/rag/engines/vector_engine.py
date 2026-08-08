@@ -41,10 +41,10 @@ class VectorEngine(BaseEngine):
             keywords = [task.query.split()[0]] if task.query else []
             
         cypher = """
-        MATCH (kb:KnowledgeBase)-[:HAS_DOCUMENT]->(doc)-[:HAS_SECTION*0..2]->(sec)-[:HAS_TEXT]->(c:Chunk)
+        MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk)
         WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
         AND any(word IN $keywords WHERE toLower(c.text) CONTAINS toLower(word))
-        RETURN DISTINCT sec.id as section_id, sec.title as title, doc.type as doc_type
+        RETURN DISTINCT c.section as title, c.source_type as doc_type, c.id as section_id
         LIMIT 50
         """
         try:
@@ -85,7 +85,9 @@ class VectorEngine(BaseEngine):
                 from app.modules.knowledge_bases.models import DocumentChunk, KnowledgeBase
                 from uuid import UUID
 
-                query_embedding = await EmbeddingGenerator.generate_embedding(task.query)
+                query_embedding = getattr(task.metadata_filters, "query_embedding", None) if getattr(task, "metadata_filters", None) else None
+                if not query_embedding:
+                    query_embedding = await EmbeddingGenerator.generate_embedding(task.query)
                 
                 top_k = getattr(task, "top_k", 15)
                 candidate_limit = max(top_k, 15)
@@ -160,19 +162,18 @@ class VectorEngine(BaseEngine):
 
         # Cypher fallback
         cypher = """
-        MATCH (kb:KnowledgeBase)-[:HAS_DOCUMENT]->(doc)-[:HAS_SECTION*0..2]->(sec)
+        MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk)
         WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
         """
         params = {"kb_ids": kb_ids, "tenant_id": self.tenant_id, "keywords": keywords}
         
         if target_section_ids:
-            cypher += " AND sec.id IN $target_section_ids "
+            cypher += " AND c.id IN $target_section_ids "
             params["target_section_ids"] = target_section_ids
             
         cypher += """
-        MATCH (sec)-[:HAS_TEXT]->(c:Chunk)
-        WHERE any(word IN $keywords WHERE toLower(c.text) CONTAINS toLower(word))
-        RETURN c.id as chunk_id, c.text as text, sec.title as section
+        AND any(word IN $keywords WHERE toLower(c.text) CONTAINS toLower(word))
+        RETURN c.id as chunk_id, c.text as text, c.section as section
         LIMIT 5
         """
         try:

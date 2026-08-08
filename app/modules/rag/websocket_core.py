@@ -67,6 +67,8 @@ async def run_unified_rag_websocket_loop(
     """
     memory_api_url = f"{resolve_memory_api_base_url()}/api/v1/memory"
     
+    active_session_id = session_id
+    
     while True:
         try:
             raw_payload = await adapter.receive(websocket)
@@ -79,8 +81,8 @@ async def run_unified_rag_websocket_loop(
             await adapter.send_error(websocket, str(e))
             continue
 
-        # Use request session_id if provided, otherwise the one passed in, or create new
-        active_session_id = request.session_id or session_id
+        if not active_session_id and request.session_id:
+            active_session_id = request.session_id
         session = None
         if active_session_id:
             session = await chat_service.chat_repo.get_session_by_id(active_session_id)
@@ -239,7 +241,7 @@ async def run_unified_rag_websocket_loop(
 
             if has_error:
                 await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, "rag_error")
-                continue
+                break
 
             # 5. DB Persistence
             await chat_service.chat_repo.add_message(

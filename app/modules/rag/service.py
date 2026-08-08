@@ -104,426 +104,64 @@ class RAGService:
         skip_search: bool = False,
     ):
         logger.info(f" RAG Service: Streaming answer for agent={agent_id}, kb={kb_id}")
-
-        # 1. Validate KB ownership
-        kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
-
-        # 1. Validate KB ownership and separate Excel vs Document KBs
-        excel_kbs = []
-        doc_kbs = []
-        for kid in kb_ids:
-            kb = await self.kb_repo.get_by_id(kid)
-            if not kb:
-                yield json.dumps({"error": f"Knowledge Base {kid} not found"})
-                return
-            if str(kb.agent_id) != str(agent_id):
-                yield json.dumps(
-                    {"error": "Unauthorized: Agent does not own this Knowledge Base"}
-                )
-                return
-            if getattr(kb, "description", "") == "excel_parquet":
-                excel_kbs.append(kb)
-            else:
-                doc_kbs.append(kb)
-
-        # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
-        hybrid_merge_context = ""
-        if excel_kbs:
-            from app.core.parquet_ingester import ParquetIngester
-            from app.modules.rag.pandas_engine import PandasQueryEngine
-
-            active_paths = []
-            for ekb in excel_kbs:
-                dataset_name = getattr(ekb, "parsed_path", None) or getattr(
-                    ekb, "s3_path", None
-                )
-                if dataset_name:
-                    p = ParquetIngester.get_active_dataset(dataset_name)
-                    if p:
-                        active_paths.append(p)
-
-            if not active_paths and not doc_kbs:
-                yield json.dumps(
-                    {
-                        "error": "Active parquet datasets for Excel Knowledge Bases not found."
-                    }
-                )
-                return
-
-            if active_paths:
-                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
-                sql_task = asyncio.create_task(engine.execute_query(query))
-
+        
+        sql_task = None
         vector_task = None
-        if not skip_search and (doc_kbs or not excel_kbs):
-            vector_task = asyncio.create_task(
-                self.pipeline.query(
-                    query=query,
-                    agent_id=agent_id,
-                    kb_id=kb_ids,
-                    user_id=user_id,
-                    top_k=top_k,
-                    max_depth=max_depth,
-                )
-            )
-
-        context = None
-        metadata_yielded = False
-        if excel_kbs and sql_task and vector_task:
-            logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
-            
-            # Wait for vector_task first to yield metadata early
-            try:
-                context_res = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
-            except Exception as e:
-                context_res = e
-            
-            if not isinstance(context_res, Exception):
-                context = context_res
-                
-                # Yield metadata immediately so the UI doesn't hang!
-                metadata = {
-                    "type": "metadata",
-                    "sources": [
-                        {
-                            "chunk_id": c.chunk_id,
-                            "source": c.source,
-                            "score": round(c.hybrid_score, 3),
-                            "position": c.position,
-                            "reason": c.reason,
-                            "kb_id": c.kb_id,
-                            "content_type": getattr(c, "content_type", "original")
-                        }
-                        for c in context.chunks
-                    ],
-                    "triplets": [
-                        {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
-                        for t in (context.triplets or [])
-                    ],
-                    "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-                    "augmented_query": query,
-                    "authoritative_entities": context.authoritative_entities or []
-                }
-                yield json.dumps(metadata)
-                metadata_yielded = True
-            else:
-                logger.error(f"Parallel RAG Retrieval failed: {context_res}")
-                yield json.dumps({"error": f"Retrieval failed: {str(context_res)}"})
-                return
-
-            # Now wait for SQL task which is running in parallel
-            try:
-                sql_res = await asyncio.wait_for(sql_task, timeout=60.0)
-            except Exception as e:
-                sql_res = e
-                
-            if not isinstance(sql_res, Exception) and sql_res:
-                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                if not any(sig in str(sql_res).lower() for sig in unmatched_signals):
-                    hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
-            elif isinstance(sql_res, Exception):
-                logger.warning(f"Parallel TABULAR_SQL failed: {sql_res}")
-
-        elif sql_task:
-            logger.info("Executing TABULAR_SQL standalone...")
-            try:
-                sql_res = await asyncio.wait_for(sql_task, timeout=30.0)
-                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
-                if is_unmatched:
-                    logger.info(f"Excel dataset lacked answer ({sql_res}).")
-                else:
-                    yield json.dumps({
-                        "type": "metadata",
-                        "sources": [],
-                        "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
-                        "context_type": "duckdb_parquet"
-                    })
-                    yield str(sql_res)
-                    return
-            except Exception as e:
-                logger.error(f"PandasQueryEngine stream failed: {e}")
-                yield json.dumps({"error": str(e)})
-                return
-
-        elif vector_task:
-            logger.info("Executing VECTOR_DOCS standalone...")
-            try:
-                context = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
-            except asyncio.TimeoutError:
-                logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
-                yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
-                return
-            except Exception as e:
-                logger.error(f"RAG Retrieval failed for stream: {e}")
-                yield json.dumps({"error": f"Retrieval failed: {e}"})
-                return
-
-        skip_search = True  # Bypass redundant sequential search below
-
-        vector_task = None
-        if not skip_search and (doc_kbs or not excel_kbs):
-            vector_task = asyncio.create_task(
-                self.pipeline.query(
-                    query=query,
-                    agent_id=agent_id,
-                    kb_id=kb_ids,
-                    user_id=user_id,
-                    top_k=top_k,
-                    max_depth=max_depth,
-                )
-            )
-
-        context = None
-        metadata_yielded = False
-        if excel_kbs and sql_task and vector_task:
-            logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
-            
-            # Wait for vector_task first to yield metadata early
-            try:
-                context_res = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
-            except Exception as e:
-                context_res = e
-            
-            if not isinstance(context_res, Exception):
-                context = context_res
-                
-                # Yield metadata immediately so the UI doesn't hang!
-                metadata = {
-                    "type": "metadata",
-                    "sources": [
-                        {
-                            "chunk_id": c.chunk_id,
-                            "source": c.source,
-                            "score": round(c.hybrid_score, 3),
-                            "position": c.position,
-                            "reason": c.reason,
-                            "kb_id": c.kb_id,
-                            "content_type": getattr(c, "content_type", "original")
-                        }
-                        for c in context.chunks
-                    ],
-                    "triplets": [
-                        {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
-                        for t in (context.triplets or [])
-                    ],
-                    "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-                    "augmented_query": query,
-                    "authoritative_entities": context.authoritative_entities or []
-                }
-                yield json.dumps(metadata)
-                metadata_yielded = True
-            else:
-                logger.error(f"Parallel RAG Retrieval failed: {context_res}")
-                yield json.dumps({"error": f"Retrieval failed: {str(context_res)}"})
-                return
-
-            # Now wait for SQL task which is running in parallel
-            try:
-                sql_res = await asyncio.wait_for(sql_task, timeout=60.0)
-            except Exception as e:
-                sql_res = e
-                
-            if not isinstance(sql_res, Exception) and sql_res:
-                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                if not any(sig in str(sql_res).lower() for sig in unmatched_signals):
-                    hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
-            elif isinstance(sql_res, Exception):
-                logger.warning(f"Parallel TABULAR_SQL failed: {sql_res}")
-
-        elif sql_task:
-            logger.info("Executing TABULAR_SQL standalone...")
-            try:
-                sql_res = await asyncio.wait_for(sql_task, timeout=30.0)
-                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
-                if is_unmatched:
-                    logger.info(f"Excel dataset lacked answer ({sql_res}).")
-                else:
-                    yield json.dumps({
-                        "type": "metadata",
-                        "sources": [],
-                        "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
-                        "context_type": "duckdb_parquet"
-                    })
-                    yield str(sql_res)
-                    return
-            except Exception as e:
-                logger.error(f"PandasQueryEngine stream failed: {e}")
-                yield json.dumps({"error": str(e)})
-                return
-
-        elif vector_task:
-            logger.info("Executing VECTOR_DOCS standalone...")
-            try:
-                context = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
-            except asyncio.TimeoutError:
-                logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
-                yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
-                return
-            except Exception as e:
-                logger.error(f"RAG Retrieval failed for stream: {e}")
-                yield json.dumps({"error": f"Retrieval failed: {e}"})
-                return
-
-        skip_search = True  # Bypass redundant sequential search below
-            
-
-        if len(kb_ids) > 1:
-            logger.info(
-                f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
-            )
-
-        agent = await self.agent_repo.get_by_id(agent_id)
-        if not agent:
-            yield json.dumps(
-                {
-                    "error": f"Agent {agent_id} not found or inactive under the current tenant"
-                }
-            )
-            return
-
-        base_prompt = agent.system_prompt or ""
-        personality_description = (
-            agent.personality
-            or "You are a warm, approachable, and supportive assistant."
-        )
-
-        if agent.personality_id:
-            personality = await self.db.get(Personality, agent.personality_id)
-            if personality:
-                personality_description = personality.description or personality.name
-
-        accuracy_directives = (
-            "\n- Enforce 100% factual accuracy based strictly on the retrieved context."
-            "\n- Correct any obvious spelling or grammatical errors found in the source documents; do not copy typos."
-            "\n- Verify timelines, chronologies, and locations strictly to avoid historical or situational errors."
-        )
-        if "factual accuracy" not in personality_description.lower():
-            personality_description += accuracy_directives
-
-        # Ontology Grounding
-        from ..ontology.service import OntologyService
+        memory_task = None
 
         try:
-            ont_svc = OntologyService(self.tenant_id)
-            ontology = await ont_svc.get_ontology()
-            ontology_rules_str = ""
-            if ontology and ontology.get("rules"):
-                rules_list = [
-                    f"({r['source_class']})-[:{r['relation']}]->({r['target_class']})"
-                    for r in ontology["rules"]
-                    if r.get("source_class")
-                ]
-                if rules_list:
-                    ontology_rules_str = (
-                        "\n\n[ENTERPRISE ONTOLOGY RULES (STRICT GROUNDING)]\n"
-                        + "\n".join(rules_list)
-                        + "\nAlign your reasoning strictly with these established business relationships. Do not hallucinate relationships outside of this schema."
+            # 1. Validate KB ownership
+            kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
+    
+            # 1. Validate KB ownership and separate Excel vs Document KBs
+            excel_kbs = []
+            doc_kbs = []
+            for kid in kb_ids:
+                kb = await self.kb_repo.get_by_id(kid)
+                if not kb:
+                    yield json.dumps({"error": f"Knowledge Base {kid} not found"})
+                    return
+                if str(kb.agent_id) != str(agent_id):
+                    yield json.dumps(
+                        {"error": "Unauthorized: Agent does not own this Knowledge Base"}
                     )
-        except Exception as e:
-            logger.warning(f"Failed fetching active ontology for RAG prompt: {e}")
-            ontology_rules_str = ""
-
-        injected_system_prompt = f"""
-[PERSONALITY MODE: STRICT]
-
-You MUST strictly follow the personality defined below.
-Every response MUST reflect this personality strongly in tone, wording, and structure.
-Deviation is NOT allowed.
-
-Personality Definition:
-{personality_description}
-
-Base Instruction:
-{base_prompt}{ontology_rules_str}
-
-{hybrid_merge_context}
-
-You are an enterprise AI assistant.
-
-==================================================
-MEMORY AUTHORITY (HIGHEST PRIORITY — READ FIRST)
-==================================================
-If the user's message contains a section beginning with:
-  "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES"
-then you MUST treat everything in that section as VERIFIED GROUND TRUTH about the user.
-- These facts are authoritative and override document context.
-- Use them to answer personal questions directly (e.g., "what is my name?", "what is my 10th grade mark?").
-- You are ALLOWED and REQUIRED to answer from this memory section even if the answer is not in the documents.
-- Do NOT say "I couldn't find it" if the answer is present in the memory/preferences section.
-- When answering from memory, say "Based on your saved profile, ..." to be transparent.
-
-==================================================
-GROUNDING RULES & HALLUCINATION PREVENTION
-==================================================
-Never complete missing information using prior knowledge.
-If retrieved passages conflict, state the conflict. Do not resolve it yourself.
-- Answer ONLY using the provided context OR verified user memory (see MEMORY AUTHORITY above).
-- Before answering, verify that every factual statement in your response is explicitly supported by the retrieved context or user memory.
-- If a statement is not directly supported by either source, do not include it.
-- Do not combine information from your general knowledge with the retrieved context.
-- Never use outside knowledge.
-- Never invent, infer, estimate, or assume facts.
-- If the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
-  "I couldn't find it."
-- If only part of the answer exists, answer only that part.
-- Mention the relevant source at the end.
-- Answer ONLY the specific question asked by the user. If the user asks a complex or multi-part question, you MUST address EVERY part of the question in your response. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
-- Be concise. Focus strictly on direct answers and avoid filler.
-- TRANSACTION CLASSIFICATION: Categorize transactions strictly:
-  * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
-  * Debit (Withdrawal/Outgoing/Payment): ATM withdrawals, payments to merchants, fees, taxes, outgoing transfers.
-
-==================================================
-FORMATTING RULES
-==================================================
-Use Markdown tables whenever information is easier to compare in rows and columns.
-Use bullet points when listing multiple items.
-Use paragraphs for explanations.
-
-==================================================
-SOURCE CITATION RULES (STRICT)
-==================================================
-1. GREETINGS & CASUAL CONVERSATION (CRITICAL):
-- If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, DO NOT output any source citation tag at all.
-- NEVER include [Source: ...] for greetings, introduction messages, or general chitchat.
-
-2. DOCUMENT CONTENT & ACCURATE CITATIONS:
-- Cite a source ONLY IF information from retrieved document/data chunks was ACTUALLY USED to answer the user's specific question.
-- Cite ONLY the specific filename(s) from which relevant facts were extracted.
-- Single Source: If the answer came from only one document (e.g. ARUN_N.pdf), cite ONLY that single document: [Source: ARUN_N.pdf]. Do NOT list other unused files.
-- Multi Source: If the answer combined information from multiple documents, list only those specific documents: [Source: file1.pdf, file2.pdf].
-- Deduplicate sources so each unique filename appears ONLY ONCE.
-- Format the citation at the very end of your response on its own single line:
-  [Source: filename1, filename2]
-
-==================================================
-FINAL RESPONSE FORMAT
-==================================================
-<grounded answer>
-
-[Source: <only include source file(s) actually used to answer document questions>]
-""".strip()
-
-        agent_persona = {
-            "name": agent.name if agent else "Assistant",
-            "personality": personality_description,
-            "system_prompt": injected_system_prompt,
-        }
-
-        if chat_history:
-            agent_persona[
-                "system_prompt"
-            ] += f"\n\n==================================================\nCONVERSATION HISTORY\n==================================================\n{chat_history}\n\nCRITICAL INSTRUCTION: If the user's current question asks to filter, modify, or extract from the 'above' or 'previous' answer, you MUST use the CONVERSATION HISTORY as your primary source of truth and ignore any conflicting retrieved documents below."
-
-        # 2. Retrieve Context
-        if 'context' not in locals():
-            context = None
-            
-        if not skip_search:
-            try:
-                context = await asyncio.wait_for(
+                    return
+                if getattr(kb, "description", "") == "excel_parquet":
+                    excel_kbs.append(kb)
+                else:
+                    doc_kbs.append(kb)
+    
+            # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
+            hybrid_merge_context = ""
+            if excel_kbs:
+                from app.core.parquet_ingester import ParquetIngester
+                from app.modules.rag.pandas_engine import PandasQueryEngine
+    
+                active_paths = []
+                for ekb in excel_kbs:
+                    dataset_name = getattr(ekb, "parsed_path", None) or getattr(
+                        ekb, "s3_path", None
+                    )
+                    if dataset_name:
+                        p = ParquetIngester.get_active_dataset(dataset_name)
+                        if p:
+                            active_paths.append(p)
+    
+                if not active_paths and not doc_kbs:
+                    yield json.dumps(
+                        {
+                            "error": "Active parquet datasets for Excel Knowledge Bases not found."
+                        }
+                    )
+                    return
+    
+                if active_paths:
+                    engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                    sql_task = asyncio.create_task(engine.execute_query(query))
+    
+            vector_task = None
+            if not skip_search and (doc_kbs or not excel_kbs):
+                vector_task = asyncio.create_task(
                     self.pipeline.query(
                         query=query,
                         agent_id=agent_id,
@@ -531,204 +169,583 @@ FINAL RESPONSE FORMAT
                         user_id=user_id,
                         top_k=top_k,
                         max_depth=max_depth,
-                    ),
-                    timeout=_RAG_TIMEOUT_SECONDS,
+                    )
                 )
-            except asyncio.TimeoutError:
-                logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
+    
+            context = None
+            metadata_yielded = False
+            if excel_kbs and sql_task and vector_task:
+                logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
+                
+                # Wait for vector_task first to yield metadata early
+                try:
+                    context_res = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
+                except Exception as e:
+                    context_res = e
+                
+                if not isinstance(context_res, Exception):
+                    context = context_res
+                    
+                    # Yield metadata immediately so the UI doesn't hang!
+                    metadata = {
+                        "type": "metadata",
+                        "sources": [
+                            {
+                                "chunk_id": c.chunk_id,
+                                "source": c.source,
+                                "score": round(c.hybrid_score, 3),
+                                "position": c.position,
+                                "reason": c.reason,
+                                "kb_id": c.kb_id,
+                                "content_type": getattr(c, "content_type", "original")
+                            }
+                            for c in context.chunks
+                        ],
+                        "triplets": [
+                            {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
+                            for t in (context.triplets or [])
+                        ],
+                        "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                        "augmented_query": query,
+                        "authoritative_entities": context.authoritative_entities or []
+                    }
+                    yield json.dumps(metadata)
+                    metadata_yielded = True
+                else:
+                    logger.error(f"Parallel RAG Retrieval failed: {context_res}")
+                    yield json.dumps({"error": f"Retrieval failed: {str(context_res)}"})
+                    return
+    
+                # Now wait for SQL task which is running in parallel
+                try:
+                    sql_res = await asyncio.wait_for(sql_task, timeout=60.0)
+                except Exception as e:
+                    sql_res = e
+                    
+                if not isinstance(sql_res, Exception) and sql_res:
+                    unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                    if not any(sig in str(sql_res).lower() for sig in unmatched_signals):
+                        hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                elif isinstance(sql_res, Exception):
+                    logger.warning(f"Parallel TABULAR_SQL failed: {sql_res}")
+    
+            elif sql_task:
+                logger.info("Executing TABULAR_SQL standalone...")
+                try:
+                    sql_res = await asyncio.wait_for(sql_task, timeout=30.0)
+                    unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                    is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
+                    if is_unmatched:
+                        logger.info(f"Excel dataset lacked answer ({sql_res}).")
+                    else:
+                        yield json.dumps({
+                            "type": "metadata",
+                            "sources": [],
+                            "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
+                            "context_type": "duckdb_parquet"
+                        })
+                        yield str(sql_res)
+                        return
+                except Exception as e:
+                    logger.error(f"PandasQueryEngine stream failed: {e}")
+                    yield json.dumps({"error": str(e)})
+                    return
+    
+            elif vector_task:
+                logger.info("Executing VECTOR_DOCS standalone...")
+                try:
+                    context = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
+                except asyncio.TimeoutError:
+                    logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
+                    yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
+                    return
+                except Exception as e:
+                    logger.error(f"RAG Retrieval failed for stream: {e}")
+                    yield json.dumps({"error": f"Retrieval failed: {e}"})
+                    return
+    
+            skip_search = True  # Bypass redundant sequential search below
+    
+            vector_task = None
+            if not skip_search and (doc_kbs or not excel_kbs):
+                vector_task = asyncio.create_task(
+                    self.pipeline.query(
+                        query=query,
+                        agent_id=agent_id,
+                        kb_id=kb_ids,
+                        user_id=user_id,
+                        top_k=top_k,
+                        max_depth=max_depth,
+                    )
+                )
+    
+            context = None
+            metadata_yielded = False
+            if excel_kbs and sql_task and vector_task:
+                logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
+                
+                # Wait for vector_task first to yield metadata early
+                try:
+                    context_res = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
+                except Exception as e:
+                    context_res = e
+                
+                if not isinstance(context_res, Exception):
+                    context = context_res
+                    
+                    # Yield metadata immediately so the UI doesn't hang!
+                    metadata = {
+                        "type": "metadata",
+                        "sources": [
+                            {
+                                "chunk_id": c.chunk_id,
+                                "source": c.source,
+                                "score": round(c.hybrid_score, 3),
+                                "position": c.position,
+                                "reason": c.reason,
+                                "kb_id": c.kb_id,
+                                "content_type": getattr(c, "content_type", "original")
+                            }
+                            for c in context.chunks
+                        ],
+                        "triplets": [
+                            {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
+                            for t in (context.triplets or [])
+                        ],
+                        "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                        "augmented_query": query,
+                        "authoritative_entities": context.authoritative_entities or []
+                    }
+                    yield json.dumps(metadata)
+                    metadata_yielded = True
+                else:
+                    logger.error(f"Parallel RAG Retrieval failed: {context_res}")
+                    yield json.dumps({"error": f"Retrieval failed: {str(context_res)}"})
+                    return
+    
+                # Now wait for SQL task which is running in parallel
+                try:
+                    sql_res = await asyncio.wait_for(sql_task, timeout=60.0)
+                except Exception as e:
+                    sql_res = e
+                    
+                if not isinstance(sql_res, Exception) and sql_res:
+                    unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                    if not any(sig in str(sql_res).lower() for sig in unmatched_signals):
+                        hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                elif isinstance(sql_res, Exception):
+                    logger.warning(f"Parallel TABULAR_SQL failed: {sql_res}")
+    
+            elif sql_task:
+                logger.info("Executing TABULAR_SQL standalone...")
+                try:
+                    sql_res = await asyncio.wait_for(sql_task, timeout=30.0)
+                    unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                    is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
+                    if is_unmatched:
+                        logger.info(f"Excel dataset lacked answer ({sql_res}).")
+                    else:
+                        yield json.dumps({
+                            "type": "metadata",
+                            "sources": [],
+                            "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
+                            "context_type": "duckdb_parquet"
+                        })
+                        yield str(sql_res)
+                        return
+                except Exception as e:
+                    logger.error(f"PandasQueryEngine stream failed: {e}")
+                    yield json.dumps({"error": str(e)})
+                    return
+    
+            elif vector_task:
+                logger.info("Executing VECTOR_DOCS standalone...")
+                try:
+                    context = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
+                except asyncio.TimeoutError:
+                    logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
+                    yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
+                    return
+                except Exception as e:
+                    logger.error(f"RAG Retrieval failed for stream: {e}")
+                    yield json.dumps({"error": f"Retrieval failed: {e}"})
+                    return
+    
+            skip_search = True  # Bypass redundant sequential search below
+                
+    
+            if len(kb_ids) > 1:
+                logger.info(
+                    f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
+                )
+    
+            agent = await self.agent_repo.get_by_id(agent_id)
+            if not agent:
                 yield json.dumps(
                     {
-                        "error": "The AI provider is taking too long to respond. Please try again later."
+                        "error": f"Agent {agent_id} not found or inactive under the current tenant"
                     }
                 )
                 return
-            except Exception as e:
-                error_msg = str(e) if str(e) else e.__class__.__name__
-                logger.error(f"RAG Retrieval failed for stream: {error_msg}")
-                yield json.dumps({"error": f"Retrieval failed: {error_msg}"})
-                return
-                
-        # ==================================================
-        # RELEVANCE FILTER (Context Poisoning Protection)
-        # ==================================================
-        import os
-        min_score = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.6"))
-        if context and context.chunks:
-            original_count = len(context.chunks)
-            context.chunks = [c for c in context.chunks if getattr(c, "hybrid_score", 0.0) >= min_score]
-            dropped = original_count - len(context.chunks)
-            if dropped > 0:
-                logger.info(f"Relevance Filter: Dropped {dropped} irrelevant chunks (score < {min_score}) to prevent hallucination.")
-
-        # 3. Yield metadata first
-        if not metadata_yielded:
-            if context:
-                for c in context.chunks:
-                    logger.info(f"Chunk={c.chunk_id} Source={c.source} Score={c.hybrid_score}")
-
-                metadata = {
-                    "type": "metadata",
-                    "sources": [
-                        {
-                            "chunk_id": c.chunk_id,
-                            "source": c.source,
-                            "score": round(c.hybrid_score, 3),
-                            "position": c.position,
-                            "reason": c.reason,
-                            "kb_id": c.kb_id,
-                            "content_type": getattr(c, "content_type", "original")
-                        }
-                        for c in context.chunks
-                    ],
-                    "triplets": [
-                        {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
-                        for t in (context.triplets or [])
-                    ],
-                    "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-                    "augmented_query": query,
-                    "authoritative_entities": context.authoritative_entities or []
-                }
-            else:
-                metadata = {
-                    "type": "metadata",
-                    "sources": [],
-                    "triplets": [],
-                    "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-                    "augmented_query": query,
-                    "authoritative_entities": []
-                }
-
-            yield json.dumps(metadata)
-
-        is_extractive = context.search_type == "EXTRACTIVE" if context else False
-        is_table_analytics = (
-            context.search_type == "TABLE_ANALYTICS" if context else False
-        )
-
-        if is_extractive or is_table_analytics:
-            logger.info(f"Checking direct extraction for {context.search_type} mode.")
-            has_direct_output = False
-            if getattr(context, "authoritative_entities", None):
-                for ent in context.authoritative_entities:
-                    clean_name = ent["entity_type"].replace("_", " ").title()
-                    clean_src = clean_source_name(
-                        ent.get("source", "document_entities")
-                    )
-                    yield f"**{clean_name}:** {ent['value']} (Page {ent.get('page', 1)}) [Source: {clean_src}]\n"
-                    has_direct_output = True
-                if has_direct_output:
-                    yield "\n"
-
-            # Strip any <think> tags from triplet_context (gateway LLM leak guard)
-            import re as _re
-
-            clean_triplet = context.triplet_context or ""
-            clean_triplet = _re.sub(
-                r"<think>.*?</think>", "", clean_triplet, flags=_re.DOTALL
-            ).strip()
-            if "<think>" in clean_triplet:
-                clean_triplet = clean_triplet[: clean_triplet.index("<think>")].strip()
-
-            if clean_triplet:
-                yield clean_triplet
-                has_direct_output = True
-
-            if has_direct_output:
-                # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
-                # Use the kb object already fetched for metadata (line 661 scope)
-                try:
-                    _src_name = (
-                        kb.name
-                        if len(kb_ids) == 1
-                        else (kb_ids[0] if kb_ids else "Dataset")
-                    )
-                    yield f"\n\n[Source: {_src_name}]"
-                except Exception:
-                    pass
-                return
-            else:
-                logger.warning(
-                    f"[{context.search_type}] mode yielded no direct entities or triplets. Falling through to standard LLM chunk generation!"
-                )
-
-        if (not context or not context.chunks) and not chat_history and not hybrid_merge_context:
-            logger.info("Empty context retrieved for stream, returning fallback message.")
-            yield "I'm sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
-            return
-
-        # 4. Stream chunks
-        formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
-        start_time = datetime.now()
-
-        full_answer = []
-        token_usage = {}
-
-        def handle_usage(usage_dict):
-            token_usage.update(usage_dict)
-            if on_usage_callback:
-                on_usage_callback(usage_dict)
-
-        async for chunk in self.llm_client.stream_answer(
-            query,
-            formatted_context,
-            agent_persona=agent_persona,
-            enable_thinking=False,
-            on_usage_callback=handle_usage,
-        ):
-            yield chunk
-
-        # 5. ASYNC LOGGING (Background)
-        latency_ms = (datetime.now() - start_time).total_seconds() * 1000
-        confidence = (
-            sum(c.hybrid_score for c in context.chunks) / len(context.chunks)
-            if (context and context.chunks)
-            else 0.0
-        )
-        status = (
-            ResponseStatus.SUCCESS
-            if (context and context.chunks)
-            else (ResponseStatus.SUCCESS if chat_history else ResponseStatus.UNANSWERED)
-        )
-
-        llm_input_tokens = token_usage.get("prompt_tokens", 0)
-        llm_output_tokens = token_usage.get("completion_tokens", 0)
-        embedding_tokens = getattr(context, "query_embedding_tokens", 0) or max(
-            1, len(query) // 4
-        )
-
-        llm_cost_usd = (llm_input_tokens / 1000000.0) * 0.10 + (
-            llm_output_tokens / 1000000.0
-        ) * 0.15
-        embedding_cost_usd = (embedding_tokens / 1000000.0) * 0.01
-        total_cost_usd = llm_cost_usd + embedding_cost_usd
-
-        try:
-            analytics_repo = AnalyticsRepository(self.db, UUID(self.tenant_id))
-            await analytics_repo.create_query_log(
-                {
-                    "query": query,
-                    "response_status": status,
-                    "confidence_score": confidence,
-                    "latency_ms": latency_ms,
-                    "session_id": UUID(session_id) if session_id else None,
-                    "user_id": UUID(user_id) if user_id else None,
-                    "llm_input_tokens": llm_input_tokens,
-                    "llm_output_tokens": llm_output_tokens,
-                    "embedding_tokens": embedding_tokens,
-                    "llm_cost_usd": llm_cost_usd,
-                    "embedding_cost_usd": embedding_cost_usd,
-                    "total_cost_usd": total_cost_usd,
-                }
+    
+            base_prompt = agent.system_prompt or ""
+            personality_description = (
+                agent.personality
+                or "You are a warm, approachable, and supportive assistant."
             )
-            await self.db.commit()
-        except Exception as ae:
-            logger.warning(f"Failed to log analytics for stream: {ae}")
+    
+            if agent.personality_id:
+                personality = await self.db.get(Personality, agent.personality_id)
+                if personality:
+                    personality_description = personality.description or personality.name
+    
+            accuracy_directives = (
+                "\n- Enforce 100% factual accuracy based strictly on the retrieved context."
+                "\n- Correct any obvious spelling or grammatical errors found in the source documents; do not copy typos."
+                "\n- Verify timelines, chronologies, and locations strictly to avoid historical or situational errors."
+            )
+            if "factual accuracy" not in personality_description.lower():
+                personality_description += accuracy_directives
+    
+            # Ontology Grounding
+            from ..ontology.service import OntologyService
+    
             try:
-                await self.db.rollback()
-            except Exception as rollback_err:
-                logger.error(
-                    f"Failed to rollback analytics transaction: {rollback_err}"
+                ont_svc = OntologyService(self.tenant_id)
+                ontology = await ont_svc.get_ontology()
+                ontology_rules_str = ""
+                if ontology and ontology.get("rules"):
+                    rules_list = [
+                        f"({r['source_class']})-[:{r['relation']}]->({r['target_class']})"
+                        for r in ontology["rules"]
+                        if r.get("source_class")
+                    ]
+                    if rules_list:
+                        ontology_rules_str = (
+                            "\n\n[ENTERPRISE ONTOLOGY RULES (STRICT GROUNDING)]\n"
+                            + "\n".join(rules_list)
+                            + "\nAlign your reasoning strictly with these established business relationships. Do not hallucinate relationships outside of this schema."
+                        )
+            except Exception as e:
+                logger.warning(f"Failed fetching active ontology for RAG prompt: {e}")
+                ontology_rules_str = ""
+    
+            injected_system_prompt = f"""
+    [PERSONALITY MODE: STRICT]
+    
+    You MUST strictly follow the personality defined below.
+    Every response MUST reflect this personality strongly in tone, wording, and structure.
+    Deviation is NOT allowed.
+    
+    Personality Definition:
+    {personality_description}
+    
+    Base Instruction:
+    {base_prompt}{ontology_rules_str}
+    
+    {hybrid_merge_context}
+    
+    You are an enterprise AI assistant.
+    
+    ==================================================
+    MEMORY AUTHORITY (HIGHEST PRIORITY — READ FIRST)
+    ==================================================
+    If the user's message contains a section beginning with:
+      "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES"
+    then you MUST treat everything in that section as VERIFIED GROUND TRUTH about the user.
+    - These facts are authoritative and override document context.
+    - Use them to answer personal questions directly (e.g., "what is my name?", "what is my 10th grade mark?").
+    - You are ALLOWED and REQUIRED to answer from this memory section even if the answer is not in the documents.
+    - Do NOT say "I couldn't find it" if the answer is present in the memory/preferences section.
+    - When answering from memory, say "Based on your saved profile, ..." to be transparent.
+    
+    ==================================================
+    GROUNDING RULES & HALLUCINATION PREVENTION
+    ==================================================
+    Never complete missing information using prior knowledge.
+    If retrieved passages conflict, state the conflict. Do not resolve it yourself.
+    - Answer ONLY using the provided context OR verified user memory (see MEMORY AUTHORITY above).
+    - Before answering, verify that every factual statement in your response is explicitly supported by the retrieved context or user memory.
+    - If a statement is not directly supported by either source, do not include it.
+    - Do not combine information from your general knowledge with the retrieved context.
+    - Never use outside knowledge.
+    - Never invent, infer, estimate, or assume facts.
+    - If the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
+      "I couldn't find it."
+    - If only part of the answer exists, answer only that part.
+    - Mention the relevant source at the end.
+    - Answer ONLY the specific question asked by the user. If the user asks a complex or multi-part question, you MUST address EVERY part of the question in your response. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
+    - Be concise. Focus strictly on direct answers and avoid filler.
+    - TRANSACTION CLASSIFICATION: Categorize transactions strictly:
+      * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
+      * Debit (Withdrawal/Outgoing/Payment): ATM withdrawals, payments to merchants, fees, taxes, outgoing transfers.
+    
+    ==================================================
+    FORMATTING RULES
+    ==================================================
+    Use Markdown tables whenever information is easier to compare in rows and columns.
+    Use bullet points when listing multiple items.
+    Use paragraphs for explanations.
+    
+    ==================================================
+    SOURCE CITATION RULES (STRICT)
+    ==================================================
+    1. GREETINGS & CASUAL CONVERSATION (CRITICAL):
+    - If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, DO NOT output any source citation tag at all.
+    - NEVER include [Source: ...] for greetings, introduction messages, or general chitchat.
+    
+    2. DOCUMENT CONTENT & ACCURATE CITATIONS:
+    - Cite a source ONLY IF information from retrieved document/data chunks was ACTUALLY USED to answer the user's specific question.
+    - Cite ONLY the specific filename(s) from which relevant facts were extracted.
+    - Single Source: If the answer came from only one document (e.g. ARUN_N.pdf), cite ONLY that single document: [Source: ARUN_N.pdf]. Do NOT list other unused files.
+    - Multi Source: If the answer combined information from multiple documents, list only those specific documents: [Source: file1.pdf, file2.pdf].
+    - Deduplicate sources so each unique filename appears ONLY ONCE.
+    - Format the citation at the very end of your response on its own single line:
+      [Source: filename1, filename2]
+    
+    ==================================================
+    FINAL RESPONSE FORMAT
+    ==================================================
+    <grounded answer>
+    
+    [Source: <only include source file(s) actually used to answer document questions>]
+    """.strip()
+    
+            agent_persona = {
+                "name": agent.name if agent else "Assistant",
+                "personality": personality_description,
+                "system_prompt": injected_system_prompt,
+            }
+    
+            if chat_history:
+                agent_persona[
+                    "system_prompt"
+                ] += f"\n\n==================================================\nCONVERSATION HISTORY\n==================================================\n{chat_history}\n\nCRITICAL INSTRUCTION: If the user's current question asks to filter, modify, or extract from the 'above' or 'previous' answer, you MUST use the CONVERSATION HISTORY as your primary source of truth and ignore any conflicting retrieved documents below."
+    
+            # 2. Retrieve Context
+            if 'context' not in locals():
+                context = None
+                
+            if not skip_search:
+                try:
+                    context = await asyncio.wait_for(
+                        self.pipeline.query(
+                            query=query,
+                            agent_id=agent_id,
+                            kb_id=kb_ids,
+                            user_id=user_id,
+                            top_k=top_k,
+                            max_depth=max_depth,
+                        ),
+                        timeout=_RAG_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
+                    yield json.dumps(
+                        {
+                            "error": "The AI provider is taking too long to respond. Please try again later."
+                        }
+                    )
+                    return
+                except Exception as e:
+                    error_msg = str(e) if str(e) else e.__class__.__name__
+                    logger.error(f"RAG Retrieval failed for stream: {error_msg}")
+                    yield json.dumps({"error": f"Retrieval failed: {error_msg}"})
+                    return
+                    
+            # ==================================================
+            # RELEVANCE FILTER (Context Poisoning Protection)
+            # ==================================================
+            import os
+            min_score = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.6"))
+            if context and context.chunks:
+                original_count = len(context.chunks)
+                context.chunks = [c for c in context.chunks if getattr(c, "hybrid_score", 0.0) >= min_score]
+                dropped = original_count - len(context.chunks)
+                if dropped > 0:
+                    logger.info(f"Relevance Filter: Dropped {dropped} irrelevant chunks (score < {min_score}) to prevent hallucination.")
+    
+            # 3. Yield metadata first
+            if not metadata_yielded:
+                if context:
+                    for c in context.chunks:
+                        logger.info(f"Chunk={c.chunk_id} Source={c.source} Score={c.hybrid_score}")
+    
+                    metadata = {
+                        "type": "metadata",
+                        "sources": [
+                            {
+                                "chunk_id": c.chunk_id,
+                                "source": c.source,
+                                "score": round(c.hybrid_score, 3),
+                                "position": c.position,
+                                "reason": c.reason,
+                                "kb_id": c.kb_id,
+                                "content_type": getattr(c, "content_type", "original")
+                            }
+                            for c in context.chunks
+                        ],
+                        "triplets": [
+                            {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
+                            for t in (context.triplets or [])
+                        ],
+                        "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                        "augmented_query": query,
+                        "authoritative_entities": context.authoritative_entities or []
+                    }
+                else:
+                    metadata = {
+                        "type": "metadata",
+                        "sources": [],
+                        "triplets": [],
+                        "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                        "augmented_query": query,
+                        "authoritative_entities": []
+                    }
+    
+                yield json.dumps(metadata)
+    
+            is_extractive = context.search_type == "EXTRACTIVE" if context else False
+            is_table_analytics = (
+                context.search_type == "TABLE_ANALYTICS" if context else False
+            )
+    
+            if is_extractive or is_table_analytics:
+                logger.info(f"Checking direct extraction for {context.search_type} mode.")
+                has_direct_output = False
+                if getattr(context, "authoritative_entities", None):
+                    for ent in context.authoritative_entities:
+                        clean_name = ent["entity_type"].replace("_", " ").title()
+                        clean_src = clean_source_name(
+                            ent.get("source", "document_entities")
+                        )
+                        yield f"**{clean_name}:** {ent['value']} (Page {ent.get('page', 1)}) [Source: {clean_src}]\n"
+                        has_direct_output = True
+                    if has_direct_output:
+                        yield "\n"
+    
+                # Strip any <think> tags from triplet_context (gateway LLM leak guard)
+                import re as _re
+    
+                clean_triplet = context.triplet_context or ""
+                clean_triplet = _re.sub(
+                    r"<think>.*?</think>", "", clean_triplet, flags=_re.DOTALL
+                ).strip()
+                if "<think>" in clean_triplet:
+                    clean_triplet = clean_triplet[: clean_triplet.index("<think>")].strip()
+    
+                if clean_triplet:
+                    yield clean_triplet
+                    has_direct_output = True
+    
+                if has_direct_output:
+                    # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
+                    # Use the kb object already fetched for metadata (line 661 scope)
+                    try:
+                        _src_name = (
+                            kb.name
+                            if len(kb_ids) == 1
+                            else (kb_ids[0] if kb_ids else "Dataset")
+                        )
+                        yield f"\n\n[Source: {_src_name}]"
+                    except Exception:
+                        pass
+                    return
+                else:
+                    logger.warning(
+                        f"[{context.search_type}] mode yielded no direct entities or triplets. Falling through to standard LLM chunk generation!"
+                    )
+    
+            if (not context or not context.chunks) and not chat_history and not hybrid_merge_context:
+                logger.info("Empty context retrieved for stream, returning fallback message.")
+                yield "I'm sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
+                return
+    
+            # 4. Stream chunks
+            formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
+            start_time = datetime.now()
+    
+            full_answer = []
+            token_usage = {}
+    
+            def handle_usage(usage_dict):
+                token_usage.update(usage_dict)
+                if on_usage_callback:
+                    on_usage_callback(usage_dict)
+    
+            async for chunk in self.llm_client.stream_answer(
+                query,
+                formatted_context,
+                agent_persona=agent_persona,
+                enable_thinking=False,
+                on_usage_callback=handle_usage,
+            ):
+                yield chunk
+    
+            # 5. ASYNC LOGGING (Background)
+            latency_ms = (datetime.now() - start_time).total_seconds() * 1000
+            confidence = (
+                sum(c.hybrid_score for c in context.chunks) / len(context.chunks)
+                if (context and context.chunks)
+                else 0.0
+            )
+            status = (
+                ResponseStatus.SUCCESS
+                if (context and context.chunks)
+                else (ResponseStatus.SUCCESS if chat_history else ResponseStatus.UNANSWERED)
+            )
+    
+            llm_input_tokens = token_usage.get("prompt_tokens", 0)
+            llm_output_tokens = token_usage.get("completion_tokens", 0)
+            embedding_tokens = getattr(context, "query_embedding_tokens", 0) or max(
+                1, len(query) // 4
+            )
+    
+            llm_cost_usd = (llm_input_tokens / 1000000.0) * 0.10 + (
+                llm_output_tokens / 1000000.0
+            ) * 0.15
+            embedding_cost_usd = (embedding_tokens / 1000000.0) * 0.01
+            total_cost_usd = llm_cost_usd + embedding_cost_usd
+    
+            try:
+                analytics_repo = AnalyticsRepository(self.db, UUID(self.tenant_id))
+                await analytics_repo.create_query_log(
+                    {
+                        "query": query,
+                        "response_status": status,
+                        "confidence_score": confidence,
+                        "latency_ms": latency_ms,
+                        "session_id": UUID(session_id) if session_id else None,
+                        "user_id": UUID(user_id) if user_id else None,
+                        "llm_input_tokens": llm_input_tokens,
+                        "llm_output_tokens": llm_output_tokens,
+                        "embedding_tokens": embedding_tokens,
+                        "llm_cost_usd": llm_cost_usd,
+                        "embedding_cost_usd": embedding_cost_usd,
+                        "total_cost_usd": total_cost_usd,
+                    }
                 )
+                await self.db.commit()
+            except Exception as ae:
+                logger.warning(f"Failed to log analytics for stream: {ae}")
+                try:
+                    await self.db.rollback()
+                except Exception as rollback_err:
+                    logger.error(
+                        f"Failed to rollback analytics transaction: {rollback_err}"
+                    )
+        finally:
+            current_task = asyncio.current_task()
+            tasks = (sql_task, vector_task, memory_task)
+            pending_tasks = [
+                task for task in tasks
+                if task is not None and task is not current_task and not task.done()
+            ]
+            for task in pending_tasks:
+                task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
+
 
     async def generate_answer(
         self,
@@ -895,34 +912,35 @@ FINAL RESPONSE FORMAT
             logger.warning(f"Failed fetching active ontology for RAG prompt: {e}")
             ontology_rules_str = ""
 
-        # ============= MEMORY-API: RECALL USER PREFERENCES & EPISODIC GUIDANCE =============
-        episodic_guidance = ""
+        # ============= MEMORY-API: BACKGROUND TURN PROCESSING =============
+        memory_enabled = (
+            str(getattr(get_settings(), "memory_enabled", "True")).strip().lower()
+            in ("true", "1", "yes")
+        )
         if memory_enabled and user_id:
             import httpx
             import uuid
             MEMORY_API_BASE_URL = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
             MEMORY_API_URL = f"{MEMORY_API_BASE_URL}/api/v1/memory"
-            async with httpx.AsyncClient() as client:
+            
+            async def _process_memory_bg():
                 try:
-                    mem_resp = await client.post(
-                        f"{MEMORY_API_URL}/process-turn",
-                        json={
-                            "query": query,
-                            "session_id": str(uuid.uuid4()),
-                            "agent_id": agent_id,
-                            "user_id": user_id,
-                            "tenant_id": self.tenant_id
-                        },
-                        timeout=8.0
-                    )
-                    if mem_resp.status_code == 200:
-                        mem_data = mem_resp.json()
-                        episodic_guidance = mem_data.get("guidance_context") or ""
-                        logger.info(f"Memory API returned guidance_context: {episodic_guidance!r}")
-                    else:
-                        logger.warning(f"memory-api process-turn status={mem_resp.status_code}: {mem_resp.text}")
+                    async with httpx.AsyncClient() as client:
+                        await client.post(
+                            f"{MEMORY_API_URL}/process-turn",
+                            json={
+                                "query": query,
+                                "session_id": str(uuid.uuid4()),
+                                "agent_id": agent_id,
+                                "user_id": user_id,
+                                "tenant_id": self.tenant_id
+                            },
+                            timeout=8.0
+                        )
                 except Exception as e:
-                    logger.warning(f"memory-api process-turn unreachable, continuing without memory: {e}")
+                    logger.warning(f"memory-api process-turn background task failed: {e}")
+            
+            memory_task = asyncio.create_task(_process_memory_bg())
 
         injected_system_prompt = f"""
 [PERSONALITY MODE: STRICT]

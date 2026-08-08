@@ -31,6 +31,7 @@ class QueryMetadata(BaseModel):
     corrected_query: Optional[str] = Field(None, description="The query with spelling or typo corrections applied")
     tabular_subquery: Optional[str] = Field(None, description="Extracted sub-query meant for structured tabular/spreadsheet data with pronouns resolved.")
     vector_subquery: Optional[str] = Field(None, description="Extracted sub-query meant for unstructured document/text data with pronouns resolved.")
+    query_embedding: Optional[List[float]] = Field(None, description="Cached embedding of the query")
 
 
 class AnalysisResult(BaseModel):

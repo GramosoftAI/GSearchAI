@@ -575,6 +575,11 @@ class RAGPipeline:
         if getattr(analysis.metadata, "corrected_query", None):
             logger.info(f"Query spell checked: '{query}' -> '{analysis.metadata.corrected_query}'")
             query = analysis.metadata.corrected_query
+            
+        # Ensure embedding is generated ONCE for the entire pipeline
+        from app.core.embeddings import EmbeddingGenerator
+        query_embedding_val, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(query)
+        analysis.metadata.query_embedding = query_embedding_val
         
         planner = AdaptivePlanner(self.neo4j_repo, self.tenant_id)
         plan = await planner.create_plan(analysis, query)
@@ -1148,7 +1153,12 @@ class RAGPipeline:
 
 
 
-        query_embedding, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(query)
+        if 'analysis' in locals() and analysis and analysis.metadata and analysis.metadata.query_embedding:
+            query_embedding = analysis.metadata.query_embedding
+            emb_tokens = getattr(locals().get('emb_tokens'), 'emb_tokens', 10)
+        else:
+            from app.core.embeddings import EmbeddingGenerator
+            query_embedding, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(query)
 
 
 
