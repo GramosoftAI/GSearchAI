@@ -59,3 +59,96 @@ async def test_vector_engine_reuses_embedding():
         
         # Ensure generate_embedding was NOT called because it reused task.metadata_filters.query_embedding
         mock_gen.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_fact_query_bypasses_router_call_1():
+    from app.modules.rag.pipeline import RAGPipeline
+    from app.modules.rag.orchestrator.query_analyzer import AnalysisResult, QueryIntent, QueryMetadata
+    from app.modules.rag.pipeline import RAGContext, RetrievedChunk
+    from app.modules.rag.query_router import RouteResult, SearchType
+
+    pipeline = RAGPipeline("12345678-1234-5678-1234-567812345678", db=AsyncMock())
+    pipeline.router.route_query = AsyncMock(return_value=RouteResult(intent=SearchType.CHUNK_SEARCH, confidence=1.0))
+
+    analysis_res = AnalysisResult(
+        intent=QueryIntent.FACT,
+        metadata=QueryMetadata(keywords=["thambi"]),
+        is_tabular=False,
+        confidence=0.95,
+        reasoning="Fact lookup"
+    )
+
+    with patch("app.modules.rag.orchestrator.query_analyzer.QueryAnalyzer.analyze_query", new_callable=AsyncMock) as mock_analyze, \
+         patch("app.core.embeddings.EmbeddingGenerator.generate_embedding_with_usage", new_callable=AsyncMock) as mock_emb, \
+         patch("app.modules.rag.engines.financial_engine.FinancialEngine.get_candidate_sections", new_callable=AsyncMock) as mock_cand, \
+         patch("app.modules.rag.engines.financial_engine.FinancialEngine.retrieve", new_callable=AsyncMock) as mock_ret:
+
+        mock_analyze.return_value = analysis_res
+        mock_emb.return_value = ([0.1, 0.2, 0.3], 5)
+        mock_cand.return_value = [{"section_id": "s1", "task_id": "fact_1_fallback"}]
+        mock_ret.return_value = [
+            RetrievedChunk(
+                chunk_id="c1",
+                text="Thambi is a younger brother.",
+                kb_id="kb1",
+                position=0,
+                embedding_similarity=0.9,
+                graph_score=0.9,
+                hybrid_score=0.9,
+                reason="FACT",
+                source="doc1"
+            )
+        ]
+
+        context = await pipeline.query(
+            query="who is the thambi",
+            agent_id="agent1",
+            kb_id="kb1"
+        )
+
+        assert context is not None
+        assert context.query == "who is the thambi"
+        # Verify QueryRouter Call #1 was NOT invoked for FACT query
+        pipeline.router.route_query.assert_not_called()
+        # Verify QueryAnalyzer was invoked
+        mock_analyze.assert_called_once_with("who is the thambi")
+
+@pytest.mark.asyncio
+async def test_table_query_triggers_table_analytics_without_router_call_1():
+    from app.modules.rag.pipeline import RAGPipeline
+    from app.modules.rag.orchestrator.query_analyzer import AnalysisResult, QueryIntent, QueryMetadata
+    from app.modules.rag.query_router import RouteResult, SearchType
+
+    pipeline = RAGPipeline("12345678-1234-5678-1234-567812345678", db=AsyncMock())
+    pipeline.router.route_query = AsyncMock(return_value=RouteResult(intent=SearchType.CHUNK_SEARCH, confidence=1.0))
+    pipeline._execute_table_analytics = AsyncMock(return_value="Average Salary: $100,000")
+
+    analysis_res = AnalysisResult(
+        intent=QueryIntent.CALCULATION,
+        metadata=QueryMetadata(keywords=["average", "salary"]),
+        is_tabular=True,
+        confidence=0.95,
+        reasoning="Table calculation"
+    )
+
+    with patch("app.modules.rag.orchestrator.query_analyzer.QueryAnalyzer.analyze_query", new_callable=AsyncMock) as mock_analyze, \
+         patch("app.core.embeddings.EmbeddingGenerator.generate_embedding_with_usage", new_callable=AsyncMock) as mock_emb, \
+         patch("app.modules.rag.engines.table_engine.TableEngine.get_candidate_sections", new_callable=AsyncMock) as mock_cand, \
+         patch("app.modules.rag.engines.table_engine.TableEngine.retrieve", new_callable=AsyncMock) as mock_ret:
+
+        mock_analyze.return_value = analysis_res
+        mock_emb.return_value = ([0.1, 0.2, 0.3], 5)
+        mock_cand.return_value = []
+        mock_ret.return_value = []
+
+        context = await pipeline.query(
+            query="what is the average salary?",
+            agent_id="agent1",
+            kb_id="kb1"
+        )
+
+        # QueryRouter Call #1 was NOT invoked because is_tabular handled it
+        # Only Call #2 fallback ran since candidate chunks was empty
+        pipeline.router.route_query.assert_called_once_with("what is the average salary?", tenant_id="12345678-1234-5678-1234-567812345678")
+        # _execute_table_analytics was called BEFORE AdaptivePlanner
+        pipeline._execute_table_analytics.assert_called_with("what is the average salary?", ["kb1"])

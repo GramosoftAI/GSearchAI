@@ -531,31 +531,11 @@ class RAGPipeline:
                 logger.error(f"Error prefetching KB metadata: {e}")
 
 
-        # STAGE 0.1: EARLY INTERCEPT FOR TABLE ANALYTICS (Deterministic SQL Execution)
-        table_analytics_attempted = False
-        extractive_context_text = ""
-        try:
-            route_result = await self.router.route_query(query, tenant_id=str(self.tenant_id))
-            # If the user uploads CSV/Excel, we want to try executing table analytics if the intent matches
-            if route_result.intent == SearchType.TABLE_ANALYTICS:
-                table_analytics_attempted = True
-                logger.info("   -> Intercepting query for SQL Table Analytics engine BEFORE Adaptive Planner!")
-                table_results = await self._execute_table_analytics(query, kb_ids)
-                if table_results and "validation error" not in table_results.lower():
-                    extractive_context_text = f"### Table Analytics Results\n\n{table_results}\n\n"
-                    logger.info("   -> Table analytics successful. Appended to extractive context. Continuing to Adaptive Planner for cross-source retrieval.")
-                else:
-                    logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to Adaptive Planner.")
-        except Exception as e:
-            logger.error(f"   -> SQL Table Analytics preprocessing failed: {e}. Falling back to Adaptive Planner.", exc_info=True)
-            if self.db:
-                await self.db.rollback()
-
         # STEP 0: ROUTE QUERY TO OPTIMAL SEARCH STRATEGY (USING NEW ADAPTIVE PLANNER)
         import time
         start_time = time.time()
         
-        from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer
+        from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer, QueryIntent
         from app.modules.rag.orchestrator.planner import AdaptivePlanner
         from app.modules.rag.orchestrator.aggregator import EvidenceAggregator
         from app.modules.rag.orchestrator.conflict_detector import ConflictDetector
@@ -592,7 +572,26 @@ class RAGPipeline:
             original_query,
             query,
         )
-        
+
+        # STAGE 0.1: EARLY INTERCEPT FOR TABLE ANALYTICS (Deterministic SQL Execution)
+        table_analytics_attempted = False
+        extractive_context_text = ""
+        is_table_query = analysis.is_tabular or analysis.intent in (QueryIntent.CALCULATION, QueryIntent.TABLE)
+        if is_table_query:
+            try:
+                table_analytics_attempted = True
+                logger.info("   -> Intercepting query for SQL Table Analytics engine BEFORE Adaptive Planner!")
+                table_results = await self._execute_table_analytics(query, kb_ids)
+                if table_results and "validation error" not in table_results.lower():
+                    extractive_context_text = f"### Table Analytics Results\n\n{table_results}\n\n"
+                    logger.info("   -> Table analytics successful. Appended to extractive context. Continuing to Adaptive Planner for cross-source retrieval.")
+                else:
+                    logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to Adaptive Planner.")
+            except Exception as e:
+                logger.error(f"   -> SQL Table Analytics preprocessing failed: {e}. Falling back to Adaptive Planner.", exc_info=True)
+                if self.db:
+                    await self.db.rollback()
+
         # Ensure embedding is generated ONCE for the entire pipeline
         from app.core.embeddings import EmbeddingGenerator
         query_embedding_val, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(query)
