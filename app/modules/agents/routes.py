@@ -1381,43 +1381,6 @@ async def instant_ingest_url(
     try:
         tenant_id, user_id = get_tenant_and_user(request)
 
-<<<<<<< HEAD
-        import time
-        t_total_start = time.time()
-
-        # 1. Crawl URL (Robust primary + Fallback)
-
-        try:
-            t_gcrawl_start = time.time()
-            document_text = await crawl_url(
-
-                url=url_data.url, 
-
-                mode=url_data.crawl_type, 
-
-                proxy_mode="default"
-
-            )
-            t_gcrawl_end = time.time()
-            gcrawl_time_seconds = round(t_gcrawl_end - t_gcrawl_start, 2)
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            err_str = str(e)
-            if "429" in err_str or "Too Many Requests" in err_str:
-                raise HTTPException(
-                    status_code=503,
-                    detail="The web crawling service is currently rate-limited. Please wait a moment and try again."
-                )
-            raise HTTPException(status_code=400, detail=f"Failed to fetch content from URL: {err_str}")
-
-
-
-        if not document_text.strip():
-
-            raise HTTPException(status_code=400, detail="No extractable text content found on the page")
-
 
 
         async with AsyncSessionLocal() as db:
@@ -1602,23 +1565,12 @@ async def instant_ingest_url(
                     status_code=503,
                     detail="The web crawling service is currently rate-limited. Please wait a moment and try again."
                 )
-            raise HTTPException(status_code=400, detail=f"Failed to fetch content from URL: {err_str}")
-
-
-
-        if not document_text.strip():
-
-            raise HTTPException(status_code=400, detail="No extractable text content found on the page")
-
-
-=======
         # ----------------------------------------------------
         # DOCUMENT PIPELINE (BACKGROUND JOBS)
         # ----------------------------------------------------
         from app.modules.jobs.service import JobService
         from app.modules.jobs.schemas import JobCreate
         from app.modules.jobs.worker import run_url_ingestion_job
->>>>>>> staging
 
         async with AsyncSessionLocal() as db:
             # Set context
@@ -1627,47 +1579,7 @@ async def instant_ingest_url(
                 text("SELECT set_config('app.current_tenant', :tenant_id, false)"),
                 {"tenant_id": str(tenant_id)}
             )
-<<<<<<< HEAD
-
-            kb_result = await kb_service.create_knowledge_base(user_id, kb_request)
-            kb_id = str(kb_result["data"]["kb"].id)
-
-            # 4. Ingest
-            try:
-                t_process_start = time.time()
-                ingest_result = await kb_service.ingest_document(kb_id, document_text)
-                t_process_end = time.time()
-                processing_time_seconds = round(t_process_end - t_process_start, 2)
-
-                if not ingest_result.get("success"):
-                    try:
-                        logger.info(f"Instant Ingest URL failed. Cleaning up KnowledgeBase {kb_id}.")
-                        await kb_service.delete_kb(kb_id, user_id=user_id)
-                    except Exception as cleanup_err:
-                        logger.error(f"Failed to clean up KnowledgeBase {kb_id} after URL ingestion failure: {cleanup_err}")
-                    error_msg = ingest_result.get("error", "Unknown error")
-                    status_code = ingest_result.get("status_code", 400)
-                    raise HTTPException(status_code=status_code, detail=error_msg)
-            except Exception as ingest_err:
-                if isinstance(ingest_err, HTTPException):
-                    raise
-                try:
-                    logger.info(f"Instant Ingest URL encountered error. Cleaning up KnowledgeBase {kb_id}.")
-                    await kb_service.delete_kb(kb_id, user_id=user_id)
-                except Exception as cleanup_err:
-                    logger.error(f"Failed to clean up KnowledgeBase {kb_id} after URL ingestion error: {cleanup_err}")
-                raise ingest_err
-
-            t_total_end = time.time()
-            total_time_seconds = round(t_total_end - t_total_start, 2)
-
-            # Add agent name to response
-            agent_name = agent_result["data"]["agent"]["name"]
-            ingest_result["data"]["agent_name"] = agent_name
-=======
-            
             job_service = JobService(db, tenant_id)
->>>>>>> staging
             
             # Create a tracking job
             job_req = JobCreate(

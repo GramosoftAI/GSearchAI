@@ -260,8 +260,6 @@ class RAGService:
                 return
 
         skip_search = True  # Bypass redundant sequential search below
-                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
-                sql_task = asyncio.create_task(engine.execute_query(query))
 
         vector_task = None
         if not skip_search and (doc_kbs or not excel_kbs):
@@ -1220,21 +1218,17 @@ RESPONSE FORMAT
             }
 
         # Step 4: Format Context & LLM Generation
-<<<<<<< HEAD
         formatted_context = (
             self._format_context(context, hybrid_merge_context=hybrid_merge_context)
             if context
             else (hybrid_merge_context or "")
         )
-=======
-        formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
         
         if episodic_guidance:
             formatted_context = (
                 "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
                 f"{episodic_guidance}\n\n"
             ) + formatted_context
->>>>>>> staging
         llm_response = await self._generate_answer_llm(
             query=query,
             context=formatted_context,
@@ -1379,14 +1373,8 @@ RESPONSE FORMAT
             context_text += f"{hybrid_merge_context}\n" + "=" * 60 + "\n"
 
         for i, chunk in enumerate(context.chunks, 1):
-<<<<<<< HEAD
-            source_info = (
-                clean_source_name(chunk.source) if chunk.source else "Unknown Source"
-            )
-=======
             s3_path = getattr(chunk, "s3_path", None)
             source_info = s3_path if s3_path else (clean_source_name(chunk.source) if chunk.source else "Unknown Source")
->>>>>>> staging
             context_text += f"\n[Chunk {i}/{len(context.chunks)} - Source: {source_info} - Position {chunk.position}]"
             context_text += f"\nScore: {chunk.hybrid_score:.3f} (Semantic: {chunk.embedding_similarity:.3f}, Graph: {chunk.graph_score:.3f})"
             context_text += f"\n{'-' * 40}\n{chunk.text}\n"
