@@ -125,10 +125,8 @@ async def rag_websocket(
         logger.info(f"Session ready: Agent={agent_id}, KBs={len(kb_ids)}")
 
         from ..chats.service import ChatService
-        from ...core.query_rewriter import QueryRewriter
 
         chat_service = ChatService(db=db, tenant_id=tenant_id)
-        query_rewriter = QueryRewriter()
 
         try:
             from .adapters import DashboardAdapter
@@ -143,8 +141,7 @@ async def rag_websocket(
                 kb_ids=kb_ids,
                 adapter=DashboardAdapter(),
                 chat_service=chat_service,
-                query_rewriter=query_rewriter,
-                rag_service=rag_service
+                rag_service=rag_service,
             )
 
         except Exception as e:

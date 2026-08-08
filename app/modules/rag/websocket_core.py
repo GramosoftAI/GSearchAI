@@ -58,7 +58,6 @@ async def run_unified_rag_websocket_loop(
     kb_ids: list,
     adapter: ChannelAdapter,
     chat_service,
-    query_rewriter,
     rag_service,
     session_id: str = None
 ) -> None:
@@ -184,45 +183,39 @@ async def run_unified_rag_websocket_loop(
                 except Exception as e:
                     raise e
                     
-            # 2. Query Rewriter
+            # 2. Chat History for Memory Context (used only as context, never to rewrite the query)
             history_messages = []
             if session.message_count > 1:
-                memory_messages = await chat_service.chat_repo.get_recent_messages(session_id=active_session_id, count=10)
+                memory_messages = await chat_service.chat_repo.get_recent_messages(
+                    session_id=active_session_id, count=10
+                )
                 history_messages = [m for m in memory_messages if str(m.id) != str(user_msg.id)]
-                
-            rewritten_query = request.query
-            if history_messages:
-                try:
-                    rw = await query_rewriter.rewrite_query(request.query, history=history_messages)
-                    if rw and rw != request.query:
-                        rewritten_query = rw
-                except Exception as e:
-                    logger.error(f"Prompt enhancement failed: {e}")
+
+            # Original query is immutable from this point forward
+            original_query = request.query
+            logger.info("QUERY_FIDELITY | original=%r | rewriter=removed", original_query)
 
             # 3. Graph Memory Context Formatting
             chat_history_str = None
             if history_messages:
-                chat_history_str = chat_service._format_memory_context(history=history_messages, current_query=rewritten_query)
-            
+                chat_history_str = chat_service._format_memory_context(
+                    history=history_messages, current_query=original_query
+                )
+
             if episodic_guidance:
                 guidance_block = f"### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n{episodic_guidance}\n"
                 chat_history_str = guidance_block + ("\n" + chat_history_str if chat_history_str else "")
 
             # 4. RAG Streamer -> internal LoopEvents
-            skip_search = False
-            if rewritten_query.startswith("[HISTORY_FILTER]"):
-                skip_search = True
-                rewritten_query = rewritten_query.replace("[HISTORY_FILTER]", "").strip()
-
             has_error = False
             async for chunk in rag_service.stream_rag_answer(
-                query=rewritten_query,
+                query=original_query,
                 agent_id=agent_id,
                 kb_id=kb_ids,
                 user_id=user_id,
                 session_id=active_session_id,
                 chat_history=chat_history_str,
-                skip_search=skip_search,
+                skip_search=False,
                 top_k=request.top_k,
                 max_depth=request.max_depth
             ):

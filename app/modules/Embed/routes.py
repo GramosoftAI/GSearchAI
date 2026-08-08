@@ -838,10 +838,8 @@ async def websocket_chat_endpoint(
 
             from ..rag.websocket_core import run_unified_rag_websocket_loop
             from ..rag.adapters import EmbedAdapter
-            from ...core.query_rewriter import QueryRewriter
             from ..rag.service import RAGService
 
-            query_rewriter = QueryRewriter()
             rag_service = RAGService(db=db, tenant_id=tenant_id)
 
             await run_unified_rag_websocket_loop(
@@ -853,8 +851,7 @@ async def websocket_chat_endpoint(
                 kb_ids=kb_ids,
                 adapter=EmbedAdapter(),
                 chat_service=chat_service,
-                query_rewriter=query_rewriter,
-                rag_service=rag_service
+                rag_service=rag_service,
             )
             
     except Exception as e:

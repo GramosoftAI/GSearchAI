@@ -571,11 +571,28 @@ class RAGPipeline:
         
         analyzer = QueryAnalyzer()
         analysis = await analyzer.analyze_query(query)
+
+        # Preserve the original query as an immutable reference throughout this pipeline run
+        original_query = query
+        corrected = getattr(analysis.metadata, "corrected_query", None)
+        logger.info(
+            "QUERY_FIDELITY | original=%r | analyzer_corrected=%r",
+            original_query,
+            corrected,
+        )
+
+        if corrected and corrected.lower().strip() != original_query.lower().strip():
+            logger.info(
+                "Query spell checked: %r -> %r", original_query, corrected
+            )
+            query = corrected
+
+        logger.info(
+            "RAG_QUERY_FINAL | original=%r | effective=%r",
+            original_query,
+            query,
+        )
         
-        if getattr(analysis.metadata, "corrected_query", None):
-            logger.info(f"Query spell checked: '{query}' -> '{analysis.metadata.corrected_query}'")
-            query = analysis.metadata.corrected_query
-            
         # Ensure embedding is generated ONCE for the entire pipeline
         from app.core.embeddings import EmbeddingGenerator
         query_embedding_val, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(query)
