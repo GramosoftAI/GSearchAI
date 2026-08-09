@@ -38,7 +38,7 @@ def _rag_chunk_to_loop_event(chunk: str) -> LoopEvent:
     # RAGService yields chunks. If it's a JSON string with type "metadata", it's sources.
     # Otherwise it's a content token.
     try:
-        if chunk.startswith("{") and "type" in chunk:
+        if chunk.startswith("{") and ("type" in chunk or "error" in chunk):
             parsed = json.loads(chunk)
             if parsed.get("type") == "metadata":
                 return LoopEvent(type="sources", sources=parsed.get("sources", []))
@@ -59,7 +59,8 @@ async def run_unified_rag_websocket_loop(
     adapter: ChannelAdapter,
     chat_service,
     rag_service,
-    session_id: str = None
+    session_id: str = None,
+    enable_memory: bool = True
 ) -> None:
     """
     Channel-agnostic execution core.
@@ -108,30 +109,52 @@ async def run_unified_rag_websocket_loop(
         is_feedback_only = False
         is_history_query = False
         router_category = None
+        
+        # 0. Fast-path for greetings
+        import re
+        import random
+        clean_query = request.query.strip().lower()
+        if re.fullmatch(r"hi|hello|hey|good morning|good evening|good afternoon|greetings|howdy|what's up", clean_query):
+            greetings = [
+                "Hello! How can I assist you today?",
+                "Hi there! What can I help you with?",
+                "Greetings! How may I be of service?",
+                "Hello! It's nice to meet you. Is there something I can help you with or would you like to know more about our services?",
+                "Hi! I'm here to help. What's on your mind?"
+            ]
+            ack = random.choice(greetings)
+            await chat_service.chat_repo.add_message(
+                session_id=active_session_id, role="assistant", content=ack, metadata={"is_greeting": True}
+            )
+            await db.commit()
+            await adapter.send(websocket, LoopEvent(type="token", text=ack))
+            await adapter.send(websocket, LoopEvent(type="done"))
+            continue
 
         try:
             # 1. Memory API Triage
-            async with httpx.AsyncClient() as client:
-                try:
-                    mem_resp = await client.post(
-                        f"{memory_api_url}/process-turn",
-                        json={
-                            "query": request.query,
-                            "session_id": active_session_id,
-                            "agent_id": agent_id,
-                            "user_id": user_id,
-                            "tenant_id": tenant_id,
-                        },
-                        timeout=8.0,
-                    )
-                    if mem_resp.status_code == 200:
-                        mem_data = mem_resp.json()
-                        episodic_guidance = mem_data.get("guidance_context") or ""
-                        is_feedback_only = mem_data.get("is_feedback_only", False)
-                        is_history_query = mem_data.get("is_history_query", False)
-                        router_category = mem_data.get("category")
-                except Exception as e:
-                    logger.warning(f"memory-api process-turn unreachable: {e}")
+            if enable_memory:
+                async with httpx.AsyncClient() as client:
+                    try:
+                        mem_resp = await client.post(
+                            f"{memory_api_url}/process-turn",
+                            json={
+                                "query": request.query,
+                                "session_id": active_session_id,
+                                "agent_id": agent_id,
+                                "user_id": user_id,
+                                "tenant_id": tenant_id,
+                            },
+                            timeout=8.0,
+                        )
+                        if mem_resp.status_code == 200:
+                            mem_data = mem_resp.json()
+                            episodic_guidance = mem_data.get("guidance_context") or ""
+                            is_feedback_only = mem_data.get("is_feedback_only", False)
+                            is_history_query = mem_data.get("is_history_query", False)
+                            router_category = mem_data.get("category")
+                    except Exception as e:
+                        logger.warning(f"memory-api process-turn unreachable: {e}")
 
             if is_feedback_only:
                 ack = "Understood! I've updated your preferences and saved them to my long-term memory."
@@ -246,26 +269,27 @@ async def run_unified_rag_websocket_loop(
             await db.commit()
 
             # 6. Memory API Persistence
-            async with httpx.AsyncClient() as client:
-                try:
-                    await client.post(
-                        f"{memory_api_url}/save-turn",
-                        json={
-                            "query": request.query,
-                            "ai_response": full_response,
-                            "session_id": active_session_id,
-                            "agent_id": agent_id,
-                            "user_id": user_id,
-                            "tenant_id": tenant_id,
-                            "metadata": {"router_category": router_category},
-                        },
-                        timeout=3.0,
-                    )
-                except Exception as e:
-                    logger.warning(f"memory-api save-turn failed: {e}")
+            if enable_memory:
+                async with httpx.AsyncClient() as client:
+                    try:
+                        await client.post(
+                            f"{memory_api_url}/save-turn",
+                            json={
+                                "query": request.query,
+                                "ai_response": full_response,
+                                "session_id": active_session_id,
+                                "agent_id": agent_id,
+                                "user_id": user_id,
+                                "tenant_id": tenant_id,
+                                "metadata": {"router_category": router_category},
+                            },
+                            timeout=3.0,
+                        )
+                    except Exception as e:
+                        logger.warning(f"memory-api save-turn failed: {e}")
 
             # 7. Knowledge Flywheel Background Sync
-            if collected_sources:
+            if enable_memory and collected_sources:
                 top_chunk_id = collected_sources[0].get("chunk_id") if isinstance(collected_sources[0], dict) else getattr(collected_sources[0], "chunk_id", None)
                 kb_id = kb_ids[0] if kb_ids else None
                 if top_chunk_id and kb_id:

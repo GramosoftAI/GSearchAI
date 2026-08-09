@@ -43,7 +43,7 @@ class EmbedAdapter:
         elif event.type == "sources":
             await websocket.send_json({"type": "sources", "sources": event.sources})
         elif event.type == "done":
-            await websocket.send_json({"type": "content", "delta": "", "done": True})
+            await websocket.send_json({"type": "done"})
 
     async def send_error(self, websocket: WebSocket, message: str) -> None:
         await websocket.send_json({"type": "error", "delta": message})

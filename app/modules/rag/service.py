@@ -266,114 +266,6 @@ class RAGService:
     
             skip_search = True  # Bypass redundant sequential search below
     
-            vector_task = None
-            if not skip_search and (doc_kbs or not excel_kbs):
-                vector_task = asyncio.create_task(
-                    self.pipeline.query(
-                        query=query,
-                        agent_id=agent_id,
-                        kb_id=kb_ids,
-                        user_id=user_id,
-                        top_k=top_k,
-                        max_depth=max_depth,
-                    )
-                )
-    
-            context = None
-            metadata_yielded = False
-            if excel_kbs and sql_task and vector_task:
-                logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
-                
-                # Wait for vector_task first to yield metadata early
-                try:
-                    context_res = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
-                except Exception as e:
-                    context_res = e
-                
-                if not isinstance(context_res, Exception):
-                    context = context_res
-                    
-                    # Yield metadata immediately so the UI doesn't hang!
-                    metadata = {
-                        "type": "metadata",
-                        "sources": [
-                            {
-                                "chunk_id": c.chunk_id,
-                                "source": c.source,
-                                "score": round(c.hybrid_score, 3),
-                                "position": c.position,
-                                "reason": c.reason,
-                                "kb_id": c.kb_id,
-                                "content_type": getattr(c, "content_type", "original")
-                            }
-                            for c in context.chunks
-                        ],
-                        "triplets": [
-                            {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
-                            for t in (context.triplets or [])
-                        ],
-                        "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-                        "augmented_query": query,
-                        "authoritative_entities": context.authoritative_entities or []
-                    }
-                    yield json.dumps(metadata)
-                    metadata_yielded = True
-                else:
-                    logger.error(f"Parallel RAG Retrieval failed: {context_res}")
-                    yield json.dumps({"error": f"Retrieval failed: {str(context_res)}"})
-                    return
-    
-                # Now wait for SQL task which is running in parallel
-                try:
-                    sql_res = await asyncio.wait_for(sql_task, timeout=60.0)
-                except Exception as e:
-                    sql_res = e
-                    
-                if not isinstance(sql_res, Exception) and sql_res:
-                    unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                    if not any(sig in str(sql_res).lower() for sig in unmatched_signals):
-                        hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
-                elif isinstance(sql_res, Exception):
-                    logger.warning(f"Parallel TABULAR_SQL failed: {sql_res}")
-    
-            elif sql_task:
-                logger.info("Executing TABULAR_SQL standalone...")
-                try:
-                    sql_res = await asyncio.wait_for(sql_task, timeout=30.0)
-                    unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                    is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
-                    if is_unmatched:
-                        logger.info(f"Excel dataset lacked answer ({sql_res}).")
-                    else:
-                        yield json.dumps({
-                            "type": "metadata",
-                            "sources": [],
-                            "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
-                            "context_type": "duckdb_parquet"
-                        })
-                        yield str(sql_res)
-                        return
-                except Exception as e:
-                    logger.error(f"PandasQueryEngine stream failed: {e}")
-                    yield json.dumps({"error": str(e)})
-                    return
-    
-            elif vector_task:
-                logger.info("Executing VECTOR_DOCS standalone...")
-                try:
-                    context = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
-                except asyncio.TimeoutError:
-                    logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
-                    yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
-                    return
-                except Exception as e:
-                    logger.error(f"RAG Retrieval failed for stream: {e}")
-                    yield json.dumps({"error": f"Retrieval failed: {e}"})
-                    return
-    
-            skip_search = True  # Bypass redundant sequential search below
-                
-    
             if len(kb_ids) > 1:
                 logger.info(
                     f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
@@ -656,7 +548,9 @@ class RAGService:
                         f"[{context.search_type}] mode yielded no direct entities or triplets. Falling through to standard LLM chunk generation!"
                     )
     
-            if (not context or not context.chunks) and not chat_history and not hybrid_merge_context:
+            has_valid_chunks = context and context.chunks
+            has_valid_triplets = context and context.triplets
+            if not has_valid_chunks and not has_valid_triplets and not chat_history and not hybrid_merge_context:
                 logger.info("Empty context retrieved for stream, returning fallback message.")
                 yield "I'm sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
                 return

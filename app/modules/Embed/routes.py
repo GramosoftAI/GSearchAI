@@ -852,6 +852,7 @@ async def websocket_chat_endpoint(
                 adapter=EmbedAdapter(),
                 chat_service=chat_service,
                 rag_service=rag_service,
+                enable_memory=False,
             )
             
     except Exception as e:
