@@ -647,6 +647,32 @@ const renderFormattedContent = (content: string, isUser: boolean, themeColor: st
   });
 };
 
+const STAGES = [
+  { at: 0,    label: "Searching knowledge base..." },
+  { at: 3000, label: "Reading relevant documents..." },
+  { at: 8000, label: "Analyzing context..." },
+  { at: 15000, label: "Generating answer..." },
+  { at: 30000, label: "Still working — complex query, almost there..." },
+];
+
+function useProgressLabel(isLoading: boolean) {
+  const [label, setLabel] = useState(STAGES[0].label);
+  useEffect(() => {
+    if (!isLoading) {
+      setLabel(STAGES[0].label);
+      return;
+    }
+    const start = Date.now();
+    const id = setInterval(() => {
+      const elapsed = Date.now() - start;
+      const stage = [...STAGES].reverse().find(s => elapsed >= s.at);
+      if (stage) setLabel(stage.label);
+    }, 500);
+    return () => clearInterval(id);
+  }, [isLoading]);
+  return label;
+}
+
 function WidgetContent() {
   const searchParams = useSearchParams();
   const agentId = searchParams.get("agentId");
@@ -763,6 +789,7 @@ function WidgetContent() {
   const [input, setInput] = useState("");
   const [wsStatus, setWsStatus] = useState<"connecting" | "open" | "closed" | "error">("closed");
   const [isTyping, setIsTyping] = useState(false);
+  const progressLabel = useProgressLabel(isTyping);
   const isTypingRef = useRef(false);
 
   // Lead Collection State
@@ -2452,7 +2479,7 @@ function WidgetContent() {
                   </div>
                 )}
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-                  <div style={{ fontSize: "11px", color: "#a3a3a3", marginBottom: "4px" }}>{agentLabel} is typing...</div>
+                  <div style={{ fontSize: "11px", color: "#a3a3a3", marginBottom: "4px" }}>{agentLabel} is {progressLabel.toLowerCase()}</div>
                   <div style={{ padding: "12px 16px", borderRadius: "18px", background: "#ffffff", border: "1px solid #e4e4e7", display: "flex", gap: "4px" }}>
                     <span className="typing-dot"></span>
                     <span className="typing-dot"></span>
