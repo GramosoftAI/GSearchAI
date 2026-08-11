@@ -2603,16 +2603,16 @@ function WidgetContent() {
           display: "block",
           textAlign: "center",
           marginTop: "6px",
-          fontSize: "11px",
-          color: "#031c52ff",
-          fontWeight: 400,
+          fontSize: "12px",
+          color: "#001c49",
+          fontWeight: 700,
           letterSpacing: "0.2px",
           userSelect: "none",
           textDecoration: "none",
           cursor: "pointer",
         }}
       >
-        Powered by <span style={{ fontWeight: 600, color: "#07142f" }}>Gsearch</span>
+        Powered by <span style={{ fontWeight: 700, color: "#001c49" }}>Gsearch</span>
       </a>
       {/* Link Safety Modal */}
       {safetyModalUrl && (
