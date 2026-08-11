@@ -380,7 +380,7 @@ function getCleanSourceName(rawName: string): string {
   if (!rawName) return "";
   let cleaned = rawName;
   cleaned = cleaned.replace(/^text source:\s*/i, "").trim();
-  
+
   if (cleaned.startsWith("http://") || cleaned.startsWith("https://")) {
     if (cleaned.endsWith("...")) {
       return cleaned;
@@ -390,7 +390,7 @@ function getCleanSourceName(rawName: string): string {
     if (lastPart.length > 3) return lastPart;
     return cleaned;
   }
-  
+
   if (cleaned.includes("/") || cleaned.includes("\\")) {
     const parts = cleaned.split(/[/\\]/);
     cleaned = parts[parts.length - 1] || cleaned;
@@ -489,8 +489,7 @@ function cleanAndExtractSources(content: string, existingSources?: SourceMetadat
   const citedFilenames = extractCitedFilenames(stripped);
 
   const cleanedContent = stripped
-    .replace(/(?:\[Source:[^\]]*\]?)/gi, "")
-    .replace(/(?:\(Source:[^)]*\)?)/gi, "")
+    .replace(/(?:\[Source:\s*.+?\]|\(Source:\s*.+?\))/g, "")
     .trim();
 
   let finalSources: SourceMetadata[] = existingSources && existingSources.length > 0 ? [...existingSources] : [];
@@ -859,7 +858,6 @@ export default function ChatPlaygroundPage() {
   const [activeMode, setActiveMode] = useState<'search' | 'agent'>('agent');
   const [selectedModel, setSelectedModel] = useState<'Flash' | 'Pro' | 'Ultra'>('Flash');
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [agentSearchText, setAgentSearchText] = useState<string>("");
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Feedback states
@@ -1048,29 +1046,21 @@ export default function ChatPlaygroundPage() {
               const matchedSession = data.find(s => s.id === urlSessionId);
               if (matchedSession) {
                 setCurrentSessionId(matchedSession.id);
-                (async () => {
-                  let rawMessages = matchedSession.messages || [];
-                  const fetched = await fetchSessionMessages(matchedAgent.id, matchedSession.id);
-                  if (fetched && fetched.length > 0) {
-                    rawMessages = fetched;
-                  }
-                  const mappedMessages = rawMessages.map((msg: any) => {
-                    const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
-                    const msgTime = msg.created_at || msg.createdAt || msg.timestamp;
-                    return {
-                      id: msg.message_id || msg.id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
-                      role: msg.role,
-                      content: cleanedContent,
-                      file: msg.file,
-                      sources: sources.length > 0 ? sources : undefined,
-                      feedback: msg.feedback_type || msg.feedback,
-                      timestamp: msgTime
-                        ? new Date(msgTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                        : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-                    };
-                  });
-                  setMessages(mappedMessages);
-                })();
+                const mappedMessages = (matchedSession.messages || []).map((msg: any) => {
+                  const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
+                  return {
+                    id: msg.message_id || msg.id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
+                    role: msg.role,
+                    content: cleanedContent,
+                    file: msg.file,
+                    sources: sources.length > 0 ? sources : undefined,
+                    feedback: msg.feedback_type || msg.feedback,
+                    timestamp: msg.created_at
+                      ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                      : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                  };
+                });
+                setMessages(mappedMessages);
               }
             } else {
               // Start a new session (show "New chat" by default on agent load)
@@ -1252,8 +1242,7 @@ export default function ChatPlaygroundPage() {
           console.log("DELTA:", accumulated);
           const textContent = accumulated
             .replace(/<think>[\s\S]*?<\/think>/g, "")
-            .replace(/(?:\[Source:[^\]]*\]?)/gi, "")
-            .replace(/(?:\(Source:[^)]*\)?)/gi, "")
+            .replace(/(?:\[Source:\s*.+?\]|\(Source:\s*.+?\))/g, "")
             .trim();
 
           const citedFilenames = extractCitedFilenames(accumulated);
@@ -1331,7 +1320,6 @@ export default function ChatPlaygroundPage() {
               if (rawMsgs.length > 0) {
                 const mappedMessages = rawMsgs.map((msg: any) => {
                   const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
-                  const msgTime = msg.created_at || msg.createdAt || msg.timestamp;
                   return {
                     id: msg.id || msg.message_id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
                     role: msg.role,
@@ -1339,8 +1327,8 @@ export default function ChatPlaygroundPage() {
                     file: msg.file,
                     sources: sources.length > 0 ? sources : undefined,
                     feedback: msg.feedback_type || msg.feedback,
-                    timestamp: msgTime
-                      ? new Date(msgTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                    timestamp: msg.created_at
+                      ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
                       : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
                   };
                 });
@@ -1472,7 +1460,6 @@ export default function ChatPlaygroundPage() {
 
     const mappedMessages = rawMessages.map((msg: any) => {
       const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
-      const msgTime = msg.created_at || msg.createdAt || msg.timestamp;
       return {
         id: msg.message_id || msg.id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
         role: msg.role,
@@ -1480,8 +1467,8 @@ export default function ChatPlaygroundPage() {
         file: msg.file,
         sources: sources.length > 0 ? sources : undefined,
         feedback: msg.feedback_type || msg.feedback,
-        timestamp: msgTime
-          ? new Date(msgTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        timestamp: msg.created_at
+          ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
           : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
     });
@@ -1552,8 +1539,12 @@ export default function ChatPlaygroundPage() {
   };
 
   const handleRegenerate = (index: number) => {
-    if (wsStatus !== "open") {
-      message.error("WebSocket link is not stable. Please wait.");
+    if (wsStatus !== "open" || isTyping) {
+      if (isTyping) {
+        message.warning("A response is already being generated. Please wait.");
+      } else {
+        message.error("WebSocket link is not stable. Please wait.");
+      }
       return;
     }
 
@@ -1621,7 +1612,7 @@ export default function ChatPlaygroundPage() {
 
   const handleSend = () => {
     const trimmed = input.trim();
-    if ((!trimmed && !attachedFile) || !agent?.id || wsStatus !== "open") return;
+    if ((!trimmed && !attachedFile) || !agent?.id || wsStatus !== "open" || isTyping) return;
 
     const titleText = trimmed || (attachedFile ? attachedFile.name : "New Chat");
     const displayTitle = titleText.length > 30 ? titleText.slice(0, 30) + "..." : titleText;
@@ -2077,7 +2068,7 @@ export default function ChatPlaygroundPage() {
   };
 
   const handleSaveEdit = (index: number) => {
-    if (!tempEditText.trim() || !agent?.id || wsStatus !== "open") return;
+    if (!tempEditText.trim() || !agent?.id || wsStatus !== "open" || isTyping) return;
 
     // 1. Logic Fix: Edited message-oda cut panni, pazhaya bot responses-ai remove panniduvom
     const updatedMessages = messages.slice(0, index + 1);
@@ -2684,36 +2675,40 @@ export default function ChatPlaygroundPage() {
                         </Tooltip>
 
                         {isUser ? (
-                          <Tooltip title="Edit message" placement="bottom">
+                          <Tooltip title={isTyping ? "Generation in progress" : "Edit message"} placement="bottom">
                             <button
-                              onClick={() => handleEditMessage(i, msg.content)}
-                              className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80"
+                              onClick={() => !isTyping && handleEditMessage(i, msg.content)}
+                              disabled={isTyping}
+                              className={`p-2 font-bold transition-colors ${isTyping ? "text-gray-400 cursor-not-allowed opacity-40" : "text-[var(--app-text)] cursor-pointer hover:opacity-80"}`}
                             >
                               <FiEdit2 size={16} strokeWidth={2} />
                             </button>
                           </Tooltip>
                         ) : (
                           <>
-                            <Tooltip title="Helpful" placement="bottom">
+                            <Tooltip title={isTyping ? "Generation in progress" : "Helpful"} placement="bottom">
                               <button
-                                onClick={() => handleThumbsUp(msg.id)}
-                                className={`p-2 cursor-pointer transition-colors hover:opacity-80 ${msg.feedback === "thumbs_up" ? "text-emerald-500 font-bold" : "text-[var(--app-text)] font-bold"}`}
+                                onClick={() => !isTyping && handleThumbsUp(msg.id)}
+                                disabled={isTyping}
+                                className={`p-2 transition-colors ${isTyping ? "text-gray-400 cursor-not-allowed opacity-40" : `cursor-pointer hover:opacity-80 ${msg.feedback === "thumbs_up" ? "text-emerald-500 font-bold" : "text-[var(--app-text)] font-bold"}`}`}
                               >
                                 <FiThumbsUp size={16} strokeWidth={msg.feedback === "thumbs_up" ? 2.5 : 2} fill="none" />
                               </button>
                             </Tooltip>
-                            <Tooltip title="Not helpful" placement="bottom">
+                            <Tooltip title={isTyping ? "Generation in progress" : "Not helpful"} placement="bottom">
                               <button
-                                onClick={() => handleThumbsDown(msg.id)}
-                                className={`p-2 cursor-pointer transition-colors hover:opacity-80 ${msg.feedback === "thumbs_down" ? "text-rose-500 font-bold" : "text-[var(--app-text)] font-bold"}`}
+                                onClick={() => !isTyping && handleThumbsDown(msg.id)}
+                                disabled={isTyping}
+                                className={`p-2 transition-colors ${isTyping ? "text-gray-400 cursor-not-allowed opacity-40" : `cursor-pointer hover:opacity-80 ${msg.feedback === "thumbs_down" ? "text-rose-500 font-bold" : "text-[var(--app-text)] font-bold"}`}`}
                               >
                                 <FiThumbsDown size={16} strokeWidth={msg.feedback === "thumbs_down" ? 2.5 : 2} fill="none" />
                               </button>
                             </Tooltip>
-                            <Tooltip title="Regenerate" placement="bottom">
+                            <Tooltip title={isTyping ? "Generation in progress" : "Regenerate"} placement="bottom">
                               <button
-                                onClick={() => handleRegenerate(i)}
-                                className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80"
+                                onClick={() => !isTyping && handleRegenerate(i)}
+                                disabled={isTyping}
+                                className={`p-2 transition-colors ${isTyping ? "text-gray-400 cursor-not-allowed opacity-40" : "text-[var(--app-text)] font-bold cursor-pointer hover:opacity-80"}`}
                               >
                                 <FiRotateCw size={16} strokeWidth={2} />
                               </button>
@@ -2721,39 +2716,34 @@ export default function ChatPlaygroundPage() {
                             {(() => {
                               const uniqueSources = deduplicateSources(msg.sources || []);
                               if (!showSources || uniqueSources.length === 0 || msg.content?.includes("Something went wrong") || msg.content?.includes("trouble connecting")) return null;
-                              
-                              const getFileIcon = (src: string) => {
-                                const s = (src || "").toLowerCase();
-                                if (s.endsWith(".pdf")) return "📄";
-                                if (s.endsWith(".xlsx") || s.endsWith(".xls")) return "📊";
-                                if (s.endsWith(".csv")) return "🗂️";
-                                if (s.startsWith("http://") || s.startsWith("https://")) return "🌐";
-                                return "📋";
-                              };
                               return (
-                                <div className="flex flex-wrap gap-1.5 mt-2 w-full">
-                                  {uniqueSources.map((src: any, idx: number) => {
-                                    const sourceUrl = src.source || src;
-                                    const name = getFileName(sourceUrl) || getCleanFileName(sourceUrl) || "Source";
-                                    const shortName = name.length > 22 ? name.slice(0, 20) + "…" : name;
-                                    const icon = getFileIcon(sourceUrl);
-                                    return (
-                                      <button
-                                        key={idx}
-                                        onClick={() => handleOpenSource(src)}
-                                        title={name}
-                                        style={{
-                                          clipPath: "polygon(8% 0%, 92% 0%, 100% 50%, 92% 100%, 8% 100%, 0% 50%)",
-                                          background: "linear-gradient(135deg, rgba(15,181,161,0.12) 0%, rgba(15,181,161,0.06) 100%)",
-                                          border: "1px solid rgba(15,181,161,0.35)",
-                                        }}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold text-[#0fb5a1] hover:bg-[#0fb5a1]/20 transition-all duration-150 cursor-pointer whitespace-nowrap"
-                                      >
-                                        <span className="text-[11px]">{icon}</span>
-                                        <span className="tracking-wide">{shortName}</span>
+                                <div className="ml-auto flex items-center">
+                                  {uniqueSources.length === 1 ? (
+                                    <button
+                                      onClick={() => handleOpenSource(uniqueSources[0])}
+                                      className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0"
+                                    >
+                                      <SiCrowdsource />
+                                      <span>Source</span>
+                                    </button>
+                                  ) : (
+                                    <Dropdown
+                                      menu={{
+                                        items: uniqueSources.map((src: any, idx: number) => ({
+                                          key: idx.toString(),
+                                          label: getCleanFileName(src),
+                                          onClick: () => handleOpenSource(src),
+                                        })),
+                                      }}
+                                      placement="bottomLeft"
+                                      trigger={['click']}
+                                    >
+                                      <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0">
+                                        <SiCrowdsource />
+                                        <span>Sources</span>
                                       </button>
-                                    );
-                                  })}
+                                    </Dropdown>
+                                  )}
                                 </div>
                               );
                             })()}
@@ -2972,7 +2962,7 @@ export default function ChatPlaygroundPage() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="Ask anything"
-                disabled={!agent || wsStatus !== "open"}
+                disabled={!agent || wsStatus !== "open" || isTyping}
                 variant="borderless"
                 autoSize={{ minRows: 2, maxRows: 6 }}
                 className="w-full !p-1 !bg-transparent !font-semibold !text-xs md:!text-sm !text-[var(--app-text)] !placeholder:text-[var(--app-text-soft)]/50 focus:outline-none resize-none align-middle"
@@ -2987,12 +2977,12 @@ export default function ChatPlaygroundPage() {
                   beforeUpload={handleBeforeUpload}
                   showUploadList={false}
                   accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
-                  disabled={!agent || wsStatus !== "open"}
+                  disabled={!agent || wsStatus !== "open" || isTyping}
                 >
                   <Tooltip title="Share files" placement="topLeft">
                     <Button
                       type="text"
-                      disabled={!agent || wsStatus !== "open"}
+                      disabled={!agent || wsStatus !== "open" || isTyping}
                       icon={<LuPaperclip className="text-base text-[var(--app-text-soft)]" />}
                       className="hover:bg-[var(--app-hover)] !rounded-xl w-8 h-8 flex items-center justify-center transition-colors border-none bg-transparent cursor-pointer"
                     />
@@ -3003,48 +2993,17 @@ export default function ChatPlaygroundPage() {
                 {activeMode === 'agent' && (
                   <Dropdown
                     menu={{
-                      items: (() => {
-                        const filtered = botsCache?.filter((bot) =>
-                          bot.name.toLowerCase().includes(agentSearchText.toLowerCase())
-                        ) || [];
-                        if (filtered.length === 0) {
-                          return [{
-                            key: "no-results",
-                            label: <span className="text-xs text-gray-400 italic">No agents found</span>,
-                            disabled: true
-                          }];
-                        }
-                        return filtered.map((bot) => ({
-                          key: bot.id,
-                          label: <span className="font-semibold text-xs">{bot.name}</span>
-                        }));
-                      })(),
-                      style: { maxHeight: "200px", overflowY: "auto" },
+                      items: botsCache?.map((bot) => ({
+                        key: bot.id,
+                        label: <span className="font-semibold text-xs">{bot.name}</span>
+                      })),
                       onClick: (e) => {
-                        if (e.key === "no-results") return;
                         const selected = botsCache?.find(b => b.id === e.key);
                         if (selected) {
                           handleAgentChange(selected.id, selected.name);
                         }
                       }
                     }}
-                    dropdownRender={(menu) => (
-                      <div
-                        className="bg-white dark:bg-[#0f172a] border border-[var(--app-border)]/40 rounded-xl p-2 shadow-xl"
-                        style={{ minWidth: "160px" }}
-                      >
-                        <Input
-                          placeholder="Search..."
-                          value={agentSearchText}
-                          onChange={(e) => setAgentSearchText(e.target.value)}
-                          onKeyDown={(e) => e.stopPropagation()}
-                          size="small"
-                          className="mb-1.5"
-                          allowClear
-                        />
-                        {menu}
-                      </div>
-                    )}
                     trigger={["click"]}
                   >
                     <div className="inline-flex bg-transparent rounded-full overflow-hidden">
@@ -3065,11 +3024,11 @@ export default function ChatPlaygroundPage() {
               {/* Right actions */}
               <Flex align="center" gap={12} className="shrink-0">
                 {/* Circular Send Arrow button */}
-                <Tooltip title="Press Enter to send" placement="topRight">
+                <Tooltip title={isTyping ? "Generation in progress" : "Press Enter to send"} placement="topRight">
                   <button
                     onClick={handleSend}
-                    disabled={!agent || (!input.trim() && !attachedFile) || wsStatus !== "open"}
-                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer border-none outline-none ${(!agent || (!input.trim() && !attachedFile) || wsStatus !== "open")
+                    disabled={!agent || (!input.trim() && !attachedFile) || wsStatus !== "open" || isTyping}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer border-none outline-none ${(!agent || (!input.trim() && !attachedFile) || wsStatus !== "open" || isTyping)
                       ? "bg-gray-200 dark:bg-gray-800 text-[var(--app-text-soft)] opacity-40 cursor-not-allowed"
                       : "bg-[#0fb5a1] text-white hover:bg-[#0da18f] hover:opacity-90 active:scale-95"
                       }`}
@@ -3249,126 +3208,126 @@ export default function ChatPlaygroundPage() {
 
                     {(sourcesDrawerPreviewType === "excel" || sourcesDrawerPreviewType === "csv") && excelSheetNames.length > 0 && (
                       <div className="w-full h-full flex flex-col overflow-hidden bg-[var(--app-surface)]">
-                    {/* Excel Multi-sheet Switcher */}
-                    {sourcesDrawerPreviewType === "excel" && excelSheetNames.length > 1 && (
-                      <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
-                        {excelSheetNames.map(sheetName => {
-                          const isActive = activeExcelSheet === sheetName;
-                          return (
-                            <button
-                              key={sheetName}
-                              onClick={async () => {
-                                if (!excelSheets[sheetName] && excelArrayBufferRef.current) {
-                                  setSourcesDrawerPreviewLoading(true);
-                                  try {
-                                    const XLSX = await import("xlsx");
-                                    const partialWorkbook = XLSX.read(excelArrayBufferRef.current, {
-                                      type: "array",
-                                      sheets: [sheetName],
-                                      cellFormula: false,
-                                      cellHTML: false,
-                                      cellText: false,
-                                      cellDates: true
-                                    });
-                                    const worksheet = partialWorkbook.Sheets[sheetName];
-                                    const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
-                                    const formattedData = jsonData.map((row: any) =>
-                                      Array.isArray(row)
-                                        ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
-                                        : []
-                                    );
-                                    setExcelSheets(prev => ({ ...prev, [sheetName]: formattedData }));
-                                  } catch (err) {
-                                    console.error("Failed to parse sheet:", sheetName, err);
-                                  } finally {
-                                    setSourcesDrawerPreviewLoading(false);
-                                  }
-                                }
-                                setActiveExcelSheet(sheetName);
-                                setExcelPage(1);
-                              }}
-                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
-                                ? "bg-[#0fb5a1] text-white shadow-sm"
-                                : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
-                                }`}
-                            >
-                              {sheetName}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                        {/* Excel Multi-sheet Switcher */}
+                        {sourcesDrawerPreviewType === "excel" && excelSheetNames.length > 1 && (
+                          <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
+                            {excelSheetNames.map(sheetName => {
+                              const isActive = activeExcelSheet === sheetName;
+                              return (
+                                <button
+                                  key={sheetName}
+                                  onClick={async () => {
+                                    if (!excelSheets[sheetName] && excelArrayBufferRef.current) {
+                                      setSourcesDrawerPreviewLoading(true);
+                                      try {
+                                        const XLSX = await import("xlsx");
+                                        const partialWorkbook = XLSX.read(excelArrayBufferRef.current, {
+                                          type: "array",
+                                          sheets: [sheetName],
+                                          cellFormula: false,
+                                          cellHTML: false,
+                                          cellText: false,
+                                          cellDates: true
+                                        });
+                                        const worksheet = partialWorkbook.Sheets[sheetName];
+                                        const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+                                        const formattedData = jsonData.map((row: any) =>
+                                          Array.isArray(row)
+                                            ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+                                            : []
+                                        );
+                                        setExcelSheets(prev => ({ ...prev, [sheetName]: formattedData }));
+                                      } catch (err) {
+                                        console.error("Failed to parse sheet:", sheetName, err);
+                                      } finally {
+                                        setSourcesDrawerPreviewLoading(false);
+                                      }
+                                    }
+                                    setActiveExcelSheet(sheetName);
+                                    setExcelPage(1);
+                                  }}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
+                                    ? "bg-[#0fb5a1] text-white shadow-sm"
+                                    : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
+                                    }`}
+                                >
+                                  {sheetName}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
 
-                    {/* Spreadsheet Grid */}
-                    <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
-                      {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
-                        (() => {
-                          const activeSheetData = excelSheets[activeExcelSheet];
-                          const totalRows = activeSheetData.length > 0 ? activeSheetData.length - 1 : 0;
-                          const PAGE_SIZE = 100;
-                          const totalPages = Math.ceil(totalRows / PAGE_SIZE);
-                          const displayedRows = activeSheetData.slice(
-                            1 + (excelPage - 1) * PAGE_SIZE,
-                            1 + excelPage * PAGE_SIZE
-                          );
+                        {/* Spreadsheet Grid */}
+                        <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
+                          {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
+                            (() => {
+                              const activeSheetData = excelSheets[activeExcelSheet];
+                              const totalRows = activeSheetData.length > 0 ? activeSheetData.length - 1 : 0;
+                              const PAGE_SIZE = 100;
+                              const totalPages = Math.ceil(totalRows / PAGE_SIZE);
+                              const displayedRows = activeSheetData.slice(
+                                1 + (excelPage - 1) * PAGE_SIZE,
+                                1 + excelPage * PAGE_SIZE
+                              );
 
-                          return (
-                            <div className="flex flex-col gap-4">
-                              <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
-                                <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
-                                  <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
-                                    <tr>
-                                      {activeSheetData[0].map((cell, idx) => (
-                                        <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
-                                          {cell || `Column ${idx + 1}`}
-                                        </th>
-                                      ))}
-                                    </tr>
-                                  </thead>
-                                  <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
-                                    {displayedRows.map((row, rowIdx) => (
-                                      <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
-                                        {activeSheetData[0].map((_, colIdx) => (
-                                          <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
-                                            {row[colIdx] || ""}
-                                          </td>
+                              return (
+                                <div className="flex flex-col gap-4">
+                                  <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
+                                    <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
+                                      <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
+                                        <tr>
+                                          {activeSheetData[0].map((cell, idx) => (
+                                            <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
+                                              {cell || `Column ${idx + 1}`}
+                                            </th>
+                                          ))}
+                                        </tr>
+                                      </thead>
+                                      <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
+                                        {displayedRows.map((row, rowIdx) => (
+                                          <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
+                                            {activeSheetData[0].map((_, colIdx) => (
+                                              <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
+                                                {row[colIdx] || ""}
+                                              </td>
+                                            ))}
+                                          </tr>
                                         ))}
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                              
-                              {/* Pagination footer */}
-                              {totalPages > 1 && (
-                                <div className="flex items-center justify-between p-3 border border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 select-none rounded-xl">
-                                  <span className="text-xs text-[var(--app-text-soft)] font-bold">
-                                    Showing {1 + (excelPage - 1) * PAGE_SIZE} - {Math.min(excelPage * PAGE_SIZE, totalRows)} of {totalRows} rows
-                                  </span>
-                                  <div className="flex gap-2">
-                                    <button
-                                      disabled={excelPage === 1}
-                                      onClick={() => setExcelPage(prev => Math.max(prev - 1, 1))}
-                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
-                                    >
-                                      Previous
-                                    </button>
-                                    <span className="text-xs self-center px-1 font-bold text-[var(--app-text)]">
-                                      Page {excelPage} of {totalPages}
-                                    </span>
-                                    <button
-                                      disabled={excelPage === totalPages}
-                                      onClick={() => setExcelPage(prev => Math.min(prev + 1, totalPages))}
-                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
-                                    >
-                                      Next
-                                    </button>
+                                      </tbody>
+                                    </table>
                                   </div>
+
+                                  {/* Pagination footer */}
+                                  {totalPages > 1 && (
+                                    <div className="flex items-center justify-between p-3 border border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 select-none rounded-xl">
+                                      <span className="text-xs text-[var(--app-text-soft)] font-bold">
+                                        Showing {1 + (excelPage - 1) * PAGE_SIZE} - {Math.min(excelPage * PAGE_SIZE, totalRows)} of {totalRows} rows
+                                      </span>
+                                      <div className="flex gap-2">
+                                        <button
+                                          disabled={excelPage === 1}
+                                          onClick={() => setExcelPage(prev => Math.max(prev - 1, 1))}
+                                          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                        >
+                                          Previous
+                                        </button>
+                                        <span className="text-xs self-center px-1 font-bold text-[var(--app-text)]">
+                                          Page {excelPage} of {totalPages}
+                                        </span>
+                                        <button
+                                          disabled={excelPage === totalPages}
+                                          onClick={() => setExcelPage(prev => Math.min(prev + 1, totalPages))}
+                                          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                        >
+                                          Next
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          );
-                        })()
+                              );
+                            })()
                           ) : (
                             <Flex vertical align="center" justify="center" className="py-20 text-[var(--app-text-soft)] h-full">
                               <LuFileText size={32} className="mb-2 opacity-55" />

@@ -3,7 +3,7 @@
     "apps": [],
     "details": [
       {
-        "appID": "W5265H5W59.com.nextflo.sm",
+        "appID": "<YOUR_APPLE_TEAM_ID>.com.gramo.gsearch",
         "paths": ["/*"]
       }
     ]
