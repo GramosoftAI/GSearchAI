@@ -416,6 +416,33 @@ function deduplicateSources(sources: any[]): any[] {
   });
 }
 
+function deduplicateMessages(msgs: any[]): any[] {
+  if (!msgs || !Array.isArray(msgs)) return [];
+  const result: any[] = [];
+  for (let i = 0; i < msgs.length; i++) {
+    const current = msgs[i];
+    if (current && current.role === "user") {
+      let isDuplicate = false;
+      for (let j = i + 1; j < msgs.length; j++) {
+        if (msgs[j] && msgs[j].role === "user") {
+          if (msgs[j].content === current.content) {
+            isDuplicate = true;
+          }
+          break;
+        }
+      }
+      if (isDuplicate) {
+        if (i + 1 < msgs.length && msgs[i + 1] && msgs[i + 1].role === "assistant") {
+          i++;
+        }
+        continue;
+      }
+    }
+    result.push(current);
+  }
+  return result;
+}
+
 // Classify a source by its extension / URL pattern
 // If the source object has a kb_id it's always a downloadable file (clickable)
 function getSourceType(source: string, kb_id?: string): 'url' | 'pdf' | 'excel' | 'csv' | 'image' | 'text' {
@@ -1060,7 +1087,7 @@ export default function ChatPlaygroundPage() {
                       : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
                   };
                 });
-                setMessages(mappedMessages);
+                setMessages(deduplicateMessages(mappedMessages));
               }
             } else {
               // Start a new session (show "New chat" by default on agent load)
@@ -1332,7 +1359,7 @@ export default function ChatPlaygroundPage() {
                       : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
                   };
                 });
-                setMessages(mappedMessages);
+                setMessages(deduplicateMessages(mappedMessages));
               }
             })();
           }
@@ -1473,7 +1500,7 @@ export default function ChatPlaygroundPage() {
       };
     });
 
-    setMessages(mappedMessages);
+    setMessages(deduplicateMessages(mappedMessages));
     if (agentId) {
       const matched = botsCache?.find(b => b.id === agentId);
       if (matched) {
