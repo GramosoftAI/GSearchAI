@@ -296,7 +296,7 @@ const renderBoldText = (text: string, key: any, isUser: boolean) => {
 
 const renderTextWithLinks = (text: string, isUser: boolean, themeColor: string = "#0fb5a1", onLinkClick?: (url: string) => void) => {
   if (!text) return null;
-  const urlRegex = /(https?:\/\/[^\s]+)/gi;
+  const urlRegex = /(https?:\/\/[^\s]+?(?=[.,;:)\]?!]*(?:\s|$)))/gi;
   const parts = text.split(urlRegex);
   return parts.map((part, index) => {
     if (part.match(urlRegex)) {
@@ -691,7 +691,7 @@ function WidgetContent() {
   const displayCopy = searchParams.get("displayCopy") !== "false";
   const displayFeedback = searchParams.get("displayFeedback") !== "false";
   const allowDownloads = searchParams.get("allowDownloads") !== "false";
-  const linkSafety = searchParams.get("linkSafety") === "true";
+  const linkSafety = searchParams.get("linkSafety") !== "false";
 
   // Lead Collection Config
   const leadCollection = searchParams.get("leadCollection") === "true";
@@ -2178,7 +2178,7 @@ function WidgetContent() {
                     </div>
 
                     {/* Action Toolbar: Copy, Thumbs Up, Thumbs Down, Regenerate, Source (Far Right) */}
-                    {!isUser && (!isTyping || index < messages.length - 1) && (
+                    {!isUser && (!isTyping || index < messages.length - 1) && index !== 0 && (
                       <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "6px", width: "100%", maxWidth: "85%", flexWrap: "wrap" }}>
                         {/* 1. Copy Button */}
                         {displayCopy && (
@@ -2604,7 +2604,7 @@ function WidgetContent() {
           textAlign: "center",
           marginTop: "6px",
           fontSize: "11px",
-          color: "#94a3b8",
+          color: "#031c52ff",
           fontWeight: 400,
           letterSpacing: "0.2px",
           userSelect: "none",
@@ -2612,7 +2612,7 @@ function WidgetContent() {
           cursor: "pointer",
         }}
       >
-        Powered by <span style={{ fontWeight: 600, color: "#94a3b8" }}>Gsearch</span>
+        Powered by <span style={{ fontWeight: 600, color: "#07142f" }}>Gsearch</span>
       </a>
       {/* Link Safety Modal */}
       {safetyModalUrl && (

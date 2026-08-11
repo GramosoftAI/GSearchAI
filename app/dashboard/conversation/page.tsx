@@ -353,6 +353,9 @@ function getFileName(sourceUrlOrName: string | any): string {
   if (!sourceUrlOrName) return "";
   try {
     let name = String(sourceUrlOrName);
+    if (name.includes("(Selected Links)")) {
+      name = name.split("(Selected Links)")[0].trim();
+    }
     if (name.startsWith("http://") || name.startsWith("https://")) {
       const url = new URL(name);
       const pathname = url.pathname;
@@ -379,6 +382,9 @@ function getFileName(sourceUrlOrName: string | any): string {
 function getCleanSourceName(rawName: string): string {
   if (!rawName) return "";
   let cleaned = rawName;
+  if (cleaned.includes("(Selected Links)")) {
+    cleaned = cleaned.split("(Selected Links)")[0].trim();
+  }
   cleaned = cleaned.replace(/^text source:\s*/i, "").trim();
 
   if (cleaned.startsWith("http://") || cleaned.startsWith("https://")) {
@@ -443,6 +449,32 @@ function deduplicateMessages(msgs: any[]): any[] {
   return result;
 }
 
+const STAGES = [
+  { at: 0,    label: "Searching knowledge base..." },
+  { at: 3000, label: "Reading relevant documents..." },
+  { at: 8000, label: "Analyzing context..." },
+  { at: 15000, label: "Generating answer..." },
+  { at: 30000, label: "Still working — complex query, almost there..." },
+];
+
+function useProgressLabel(isLoading: boolean) {
+  const [label, setLabel] = useState(STAGES[0].label);
+  useEffect(() => {
+    if (!isLoading) {
+      setLabel(STAGES[0].label);
+      return;
+    }
+    const start = Date.now();
+    const id = setInterval(() => {
+      const elapsed = Date.now() - start;
+      const stage = [...STAGES].reverse().find(s => elapsed >= s.at);
+      if (stage) setLabel(stage.label);
+    }, 500);
+    return () => clearInterval(id);
+  }, [isLoading]);
+  return label;
+}
+
 // Classify a source by its extension / URL pattern
 // If the source object has a kb_id it's always a downloadable file (clickable)
 function getSourceType(source: string, kb_id?: string): 'url' | 'pdf' | 'excel' | 'csv' | 'image' | 'text' {
@@ -459,11 +491,12 @@ function getSourceType(source: string, kb_id?: string): 'url' | 'pdf' | 'excel' 
 
 // Extract source references from answer text to filter backend sources
 function extractCitedFilenames(text: string): string[] {
-  const regex = /(?:\[Source:\s*|\(Source:\s*)([^\]\)]+)[\]\)]/gi;
+  const regex = /(?:\[Source:\s*([^\]]+)\]|\(Source:\s*([^)]+)\))/gi;
   const filenames = new Set<string>();
   let match;
   while ((match = regex.exec(text)) !== null) {
-    const rawCitation = match[1];
+    const rawCitation = match[1] || match[2];
+    if (!rawCitation) continue;
     const parts = rawCitation.split(",");
     parts.forEach(p => {
       let partClean = p.trim();
@@ -516,7 +549,7 @@ function cleanAndExtractSources(content: string, existingSources?: SourceMetadat
   const citedFilenames = extractCitedFilenames(stripped);
 
   const cleanedContent = stripped
-    .replace(/(?:\[Source:\s*.+?\]|\(Source:\s*.+?\))/g, "")
+    .replace(/(?:\[Source:\s*[^\]]+\]|\(Source:\s*[^)]+\))/gi, "")
     .trim();
 
   let finalSources: SourceMetadata[] = existingSources && existingSources.length > 0 ? [...existingSources] : [];
@@ -579,7 +612,7 @@ const renderBoldText = (text: string, key: any, isUser: boolean) => {
 
 const renderTextWithLinks = (text: string, isUser: boolean) => {
   if (!text) return null;
-  const urlRegex = /(https?:\/\/[^\s]+)/gi;
+  const urlRegex = /(https?:\/\/[^\s]+?(?=[.,;:)\]?!]*(?:\s|$)))/gi;
   const parts = text.split(urlRegex);
   return parts.map((part, index) => {
     if (part.match(urlRegex)) {
@@ -1010,6 +1043,8 @@ export default function ChatPlaygroundPage() {
   const [sourcesDrawerPreviewType, setSourcesDrawerPreviewType] = useState<"pdf" | "csv" | "excel" | "other" | "image">("other");
   const [sourcesDrawerCsvData, setSourcesDrawerCsvData] = useState<string[][]>([]);
   const [sourcesDrawerPreviewLoading, setSourcesDrawerPreviewLoading] = useState(false);
+
+  const progressLabel = useProgressLabel(isTyping && !stripThinking(streamingText).trim());
 
   // New states for parsed previews and Excel rendering
   const [sourcesDrawerPreviewTab, setSourcesDrawerPreviewTab] = useState<"parsed" | "original">("original");
@@ -1738,18 +1773,35 @@ export default function ChatPlaygroundPage() {
     }
 
     let kbId = src.kb_id;
-    if (!kbId && currentSources.length > 0) {
+    let matchedKb: any = null;
+    if (currentSources.length > 0) {
       const fname = getCleanFileName(src).toLowerCase();
-      const matched = currentSources.find(as => {
+      matchedKb = currentSources.find(as => {
         const asName = (as.name || as.source || as.filename || '').toLowerCase();
-        return asName.includes(fname) || fname.includes(asName) || cleanCompare(asName, fname);
+        return (kbId && (as.id === kbId || as.kb_id === kbId)) || asName.includes(fname) || fname.includes(asName) || cleanCompare(asName, fname);
       });
-      if (matched) {
-        kbId = matched.id || matched.kb_id || matched.kbId || '';
+      if (matchedKb && !kbId) {
+        kbId = matchedKb.id || matchedKb.kb_id || matchedKb.kbId || '';
+      }
+    }
+
+    // 1. If name contains "(Selected Links)", open URL directly
+    const rawName = matchedKb?.name || src.name || src.source || "";
+    if (rawName.includes("(Selected Links)")) {
+      const urlPart = rawName.split("(Selected Links)")[0].trim();
+      if (urlPart.startsWith("http://") || urlPart.startsWith("https://")) {
+        window.open(urlPart, '_blank', 'noopener,noreferrer');
+        return;
       }
     }
 
     const stype = getSourceType(src.source, kbId);
+
+    // 2. If it is text source, do nothing
+    if (stype === 'text') {
+      return;
+    }
+
     if (stype === 'url') {
       const rawSrc = src.source || '';
       const urlMatch = rawSrc.match(/(https?:\/\/[^\s]+)/i);
@@ -2883,11 +2935,15 @@ export default function ChatPlaygroundPage() {
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-3">
                         <span className="text-xs text-[var(--app-text-soft)] font-medium">
-                          Thinking...
+                          {progressLabel}
                         </span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#0fb5a1] animate-ping" />
+                        <span className="flex items-center gap-1 shrink-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#0fb5a1] animate-bounce" style={{ animationDelay: "0s" }} />
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#0fb5a1] animate-bounce" style={{ animationDelay: "0.2s" }} />
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#0fb5a1] animate-bounce" style={{ animationDelay: "0.4s" }} />
+                        </span>
                       </div>
                     )}
                   </div>

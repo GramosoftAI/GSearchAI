@@ -763,7 +763,7 @@ export default function KnowledgeBasePage() {
             id: jobId,
             name: fileName,
             type: 'pdf',
-            progress: 10,
+            progress: 0,
             status: 'processing'
           } : j));
         } else {
