@@ -41,7 +41,7 @@ def _rag_chunk_to_loop_event(chunk: str) -> LoopEvent:
         if chunk.startswith("{") and ("type" in chunk or "error" in chunk):
             parsed = json.loads(chunk)
             if parsed.get("type") == "metadata":
-                return LoopEvent(type="sources", sources=parsed.get("sources", []))
+                return LoopEvent(type="sources", sources=parsed.get("sources", []), triplets=parsed.get("triplets", []))
             elif "error" in parsed:
                 return LoopEvent(type="error", error_detail=parsed["error"])
     except (json.JSONDecodeError, TypeError):

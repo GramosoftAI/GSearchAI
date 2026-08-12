@@ -353,7 +353,7 @@ class Settings(BaseSettings):
 
     triplet_max_per_chunk: int = 10  # Max triplets to extract per chunk
 
-    triplet_retrieval_top_k: int = 10  # Triplets to retrieve during RAG query
+    triplet_retrieval_top_k: int = 15  # Triplets to retrieve during RAG query
 
     use_personal_memory: bool = False  # Phase 5: Enable user-specific personalization (Mem0 Pattern)
 
