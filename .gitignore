@@ -283,3 +283,6 @@ test_*.py
 frontend/
 data/parquet/*.parquet
 repair.py
+
+RAG_Test_Analytics_Report_of_gramosoft_site.md
+RAG_Test_Analytics_Report_of_gramosoft_site_old.md

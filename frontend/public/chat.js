@@ -176,6 +176,7 @@
   iframe.style.borderRadius = "24px";
   iframe.style.zIndex = "2147483647";
   iframe.setAttribute("allowtransparency", "true");
+  iframe.setAttribute("allow", "clipboard-write");
   iframe.src = `${baseUrl}/widget?agentId=${agentId}&tenantId=${tenantId}&chatType=${chatType}&themeColor=${encodeURIComponent(themeColor)}&headerLogo=${encodeURIComponent(resolvedHeaderLogo)}&headerAlign=${encodeURIComponent(headerAlign)}&headerName=${encodeURIComponent(headerName)}&agentLabel=${encodeURIComponent(agentLabel)}&themeTextColor=${encodeURIComponent(themeTextColor)}&botAvatar=${encodeURIComponent(resolvedBotAvatar)}&buttonIcon=${encodeURIComponent(resolvedButtonIcon)}&buttonAlign=${encodeURIComponent(buttonAlign)}&showButtonText=${showButtonText}&buttonText=${encodeURIComponent(buttonText)}&initialMessage=${encodeURIComponent(initialMessage)}&displaySources=${displaySources}&allowDownloads=${allowDownloads}&displayCopy=${displayCopy}&displayFeedback=${displayFeedback}&linkSafety=${linkSafety}&leadCollection=${leadCollection}&leadFields=${encodeURIComponent(leadFields)}&leadTiming=${leadTiming}&escalationEnabled=${escalationEnabled}&escalationLink=${encodeURIComponent(escalationLink)}`;
 
 
@@ -271,6 +272,11 @@
     }
 
     iframe.classList.add("show");
+
+    // Focus the input inside the iframe
+    setTimeout(() => {
+      iframe.contentWindow.postMessage({ type: "focus-input" }, "*");
+    }, 200);
 
     // Send initial query via postMessage to avoid slow reloads
     if (initialQuery) {
@@ -368,9 +374,10 @@
       </svg>
     `;
 
-    // Interactivity logic: Change glow & send button color on input focus/type
     input.onfocus = () => {
       glowContainer.classList.add("active");
+      openIframe("");
+      input.blur();
     };
     input.onblur = () => {
       if (input.value.trim() === "") {

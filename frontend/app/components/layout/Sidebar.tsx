@@ -286,7 +286,7 @@ export default function Sidebar({ collapsed, onToggle, onItemClick }: SidebarPro
       </nav>
 
       {/* 3. Footer Section (Only Theme Switch remaining) */}
-      <div className="mt-auto border-t border-[var(--app-border)] p-6 flex flex-col gap-5 bg-[var(--app-surface)] relative z-20">
+      {/* <div className="mt-auto border-t border-[var(--app-border)] p-6 flex flex-col gap-5 bg-[var(--app-surface)] relative z-20">
         <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : "justify-between"} px-2`}>
           {!collapsed && mounted && (
             <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 opacity-50">
@@ -295,7 +295,7 @@ export default function Sidebar({ collapsed, onToggle, onItemClick }: SidebarPro
           )}
           <ThemeModeSwitch checked={isDark} onChange={(checked) => setMode(checked ? "dark" : "light")} />
         </div>
-      </div>
+      </div> */}
 
       <style jsx>{`
         .custom-scrollbar::-webkit-scrollbar {

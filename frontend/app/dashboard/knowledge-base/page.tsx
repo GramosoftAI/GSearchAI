@@ -672,7 +672,7 @@ export default function KnowledgeBasePage() {
         }
       });
       
-      message.success("Successfully imported selected URLs to knowledge base");
+      // message.success("Successfully imported selected URLs to knowledge base");
       setCrawlerModalVisible(false);
       setUrl(''); // clear URL input
       
@@ -763,7 +763,7 @@ export default function KnowledgeBasePage() {
             id: jobId,
             name: fileName,
             type: 'pdf',
-            progress: 10,
+            progress: 0,
             status: 'processing'
           } : j));
         } else {
