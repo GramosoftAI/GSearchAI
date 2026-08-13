@@ -11,6 +11,7 @@ annotated-doc==0.0.4
 annotated-types==0.7.0
 anthropic==0.97.0
 anyio==4.13.0
+arq==0.28.0
 asgiref==3.11.1
 asyncpg==0.31.0
 attrs==26.1.0
@@ -37,6 +38,7 @@ cryptography==46.0.6
 cyclopts==4.11.1
 distro==1.9.0
 dnspython==2.8.0
+docling==2.14.0
 docstring_parser==0.18.0
 docutils==0.22.4
 duckdb==1.5.5
@@ -183,6 +185,7 @@ pycodestyle==2.11.1
 pycparser==3.0
 pydantic>=2.7.0,<3.0.0
 pydantic-settings>=2.0.0,<3.0.0
+pydantic_core>=2.41.5
 pydeck==0.9.1
 pyflakes==3.1.0
 Pygments==2.20.0
@@ -203,6 +206,7 @@ pywin32==311; sys_platform == 'win32'
 pywin32-ctypes==0.2.3; sys_platform == 'win32'
 PyYAML==6.0.3
 RapidFuzz==3.14.5
+redis==5.3.1
 referencing==0.37.0
 regex==2026.4.4
 requests==2.33.1

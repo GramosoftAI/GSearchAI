@@ -22,6 +22,7 @@ class QueryIntent(Enum):
     UNKNOWN = "UNKNOWN"
 
 class QueryMetadata(BaseModel):
+    query_embedding: Optional[List[float]] = None
     quarter: Optional[str] = Field(None, description="E.g., Q1, Q2, Q3, Q4")
     year: Optional[str] = Field(None, description="E.g., 2023, 2024, FY23")
     company: Optional[str] = Field(None, description="Company name mentioned in query")
@@ -31,6 +32,7 @@ class QueryMetadata(BaseModel):
     corrected_query: Optional[str] = Field(None, description="The query with spelling or typo corrections applied")
     tabular_subquery: Optional[str] = Field(None, description="Extracted sub-query meant for structured tabular/spreadsheet data with pronouns resolved.")
     vector_subquery: Optional[str] = Field(None, description="Extracted sub-query meant for unstructured document/text data with pronouns resolved.")
+    query_embedding: Optional[List[float]] = Field(None, description="Cached embedding of the query")
 
 
 class AnalysisResult(BaseModel):
@@ -138,6 +140,7 @@ JSON:
 QUERY:
 {query}
 """
+        from app.core.llm.routing import LLMTask
         try:
             response = await self.llm_client.generate_cloud(
                 prompt=prompt,
@@ -145,7 +148,9 @@ QUERY:
                 temperature=0.0,
                 max_tokens=1024,
                 enable_thinking=False,
-                timeout=8.0
+                model=self.llm_client.model_intent,
+                timeout=15.0, # Increased safety buffer
+                task=LLMTask.INTENT_DETECTION
             )
             
             # Extract JSON block

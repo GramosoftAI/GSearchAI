@@ -18,7 +18,7 @@ const items: CollapseProps["items"] = faqItems.map((item, i) => ({
 
 export default function Faq() {
   return (
-  <section className="gs-block alt">
+  <section className="gs-block alt" id="faq">
     <div className="wrap">
       <div className="gs-sec-center">
         <div className="gs-eyebrow">Good to know</div>

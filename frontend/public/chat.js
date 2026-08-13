@@ -1,15 +1,46 @@
-
 (function () {
   const script = document.currentScript;
-   if (!script) return;
+  if (!script) return;
   const agentId = script.getAttribute("data-agent-id");
   const tenantId = script.getAttribute("data-tenant-id");
   const chatType = script.getAttribute("data-chat-type") || "icon"; // "icon" or "search"
   const position = script.getAttribute("data-position") || "center"; // "center" or "right"
   const placeholder = script.getAttribute("data-placeholder") || "Ask about anything...";
   const themeColor = script.getAttribute("data-theme-color") || "#0fb5a1";
+
+  // Custom design & branding attributes
+  const headerLogo = script.getAttribute("data-header-logo") || "";
+  const headerAlign = script.getAttribute("data-header-align") || "center";
+  const headerNameAttr = script.getAttribute("data-header-name");
+  const headerName = headerNameAttr !== null ? headerNameAttr : "Gsearch AI";
+  const agentLabelAttr = script.getAttribute("data-agent-label");
+  const agentLabel = agentLabelAttr !== null ? agentLabelAttr : "Agent";
+  const themeTextColor = script.getAttribute("data-theme-text-color") || "#ffffff";
+  const btnBgColorAttr = script.getAttribute("data-btn-bg-color");
+  const btnBgColor = btnBgColorAttr !== null ? btnBgColorAttr : themeColor;
+  const btnBorderColorAttr = script.getAttribute("data-btn-border-color");
+  const btnBorderColor = btnBorderColorAttr !== null ? btnBorderColorAttr : btnBgColor;
+  const botAvatar = script.getAttribute("data-bot-avatar") || "";
+  const buttonIcon = script.getAttribute("data-button-icon") || "";
+  const buttonAlign = script.getAttribute("data-button-align") || "right";
+  const showButtonText = script.getAttribute("data-show-button-text") === "true";
+  const buttonText = script.getAttribute("data-button-text") || "";
+  const initialMessage = script.getAttribute("data-initial-message") || "";
+  const displaySources = script.getAttribute("data-display-sources") || "true";
+  const allowDownloads = script.getAttribute("data-allow-downloads") || "false";
+  const displayCopy = script.getAttribute("data-display-copy") || "true";
+  const displayFeedback = script.getAttribute("data-display-feedback") || "true";
+  const linkSafety = script.getAttribute("data-link-safety") || "false";
+
+  // Lead Collection & Support Escalation Attributes
+  const leadCollection = script.getAttribute("data-lead-collection") || "false";
+  const leadFields = script.getAttribute("data-lead-fields") || "";
+  const leadTiming = script.getAttribute("data-lead-timing") || "pre-chat";
+  const escalationEnabled = script.getAttribute("data-escalation-enabled") || "false";
+  const escalationLink = script.getAttribute("data-escalation-link") || "";
+
   // Dynamically detect base URL of the hosting widget
-  let baseUrl = "http://grag.gramopro.ai";
+  let baseUrl = "";
   try {
     const scriptSrc = script.getAttribute("src");
     if (scriptSrc && scriptSrc.startsWith("http")) {
@@ -21,25 +52,115 @@
   } catch (e) {
     console.error("GragWidget: Error parsing script URL, falling back.", e);
   }
-  // --- Common Style Elements (Keyframes & Animations) ---
+
+  const toProxyUrl = (url) => {
+    if (!url) return url;
+    const cleanUrl = url.split("?")[0];
+    const s3Match = cleanUrl.match(/amazonaws\.com\/grag\/logos\/(.+)/);
+    if (s3Match) {
+      return `${baseUrl.endsWith("/api/v1") ? baseUrl : baseUrl + "/api/v1"}/embed/logo/render/${s3Match[1]}`;
+    }
+    if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("blob:") || url.startsWith("data:")) {
+      return url;
+    }
+    const proxyMatch = cleanUrl.match(/\/embed\/logo\/render\/(.+)/);
+    if (proxyMatch) {
+      return `${baseUrl.endsWith("/api/v1") ? baseUrl : baseUrl + "/api/v1"}/embed/logo/render/${proxyMatch[1]}`;
+    }
+    return url;
+  };
+
+  const resolvedHeaderLogo = toProxyUrl(headerLogo);
+  const resolvedBotAvatar = toProxyUrl(botAvatar);
+  const resolvedButtonIcon = toProxyUrl(buttonIcon);
+
+  // --- Style Elements (Keyframes & Animations) ---
   const styleEl = document.createElement("style");
   styleEl.innerHTML = `
     .grag-iframe-container {
-      position: fixed;
-      display: none;
-      border: none;
-      background: transparent;
+      position: fixed !important;
+      border: none !important;
+      background: transparent !important;
       border-radius: 24px;
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.15);
-      z-index: 999999;
+      z-index: 2147483647 !important;
       opacity: 0;
-      transform: translateY(20px);
-      transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      visibility: hidden;
+      transform: translateY(30px);
+      transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1), transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.35s;
+      will-change: transform, opacity;
+      isolation: isolate;
     }
     .grag-iframe-container.show {
-      display: block;
+      visibility: visible;
       opacity: 1;
       transform: translateY(0);
+    }
+    @media (min-width: 641px) {
+      .grag-iframe-container.center-search {
+        transform: translateX(-50%) translateY(30px);
+      }
+      .grag-iframe-container.center-search.show {
+        transform: translateX(-50%) translateY(0);
+      }
+    }
+    .grag-search-glow {
+      padding: 2px;
+      border-radius: 26px;
+      background: linear-gradient(90deg, ${themeColor}, ${themeColor}ee, #ffffff, ${themeColor}ee, ${themeColor});
+      background-size: 300% 100%;
+      animation: borderShift 3s ease infinite;
+      box-shadow: 0 4px 16px ${themeColor}30;
+      transition: box-shadow 0.3s ease;
+    }
+    .grag-search-glow.active, .grag-search-glow:hover {
+      box-shadow: 0 6px 24px ${themeColor}50;
+    }
+    @keyframes borderShift {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    .grag-icon-btn {
+      position: fixed;
+      bottom: 20px;
+      ${buttonAlign === "left" ? "left: 20px; right: auto;" : "right: 20px; left: auto;"}
+      min-width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      cursor: pointer;
+      background: ${btnBgColor};
+      border: 2px solid ${btnBorderColor};
+      box-shadow: 0 6px 20px ${btnBgColor}40;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999999;
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
+      animation: floatPulse 3s ease-in-out infinite;
+    }
+    .grag-icon-btn:hover {
+      transform: scale(1.05) !important;
+      box-shadow: 0 10px 30px ${themeColor}65;
+    }
+    @keyframes floatPulse {
+      0%, 100% {
+        transform: translateY(0) scale(1);
+        box-shadow: 0 6px 20px ${themeColor}40;
+      }
+      50% {
+        transform: translateY(-7px) scale(1.05);
+        box-shadow: 0 12px 28px ${themeColor}60;
+      }
+    }
+    .grag-search-glow button {
+      width: 34px;
+      height: 34px;
+    }
+    @media (max-width: 640px) {
+      .grag-search-glow button {
+        width: 30px !important;
+        height: 30px !important;
+      }
     }
   `;
   document.head.appendChild(styleEl);
@@ -47,133 +168,155 @@
   // Create Iframe element
   const iframe = document.createElement("iframe");
   iframe.className = "grag-iframe-container";
+  if (chatType === "search" && position === "center") {
+    iframe.classList.add("center-search");
+  }
   iframe.style.border = "none";
   iframe.style.background = "transparent";
   iframe.style.borderRadius = "24px";
-  iframe.style.boxShadow = "0 12px 32px rgba(0, 0, 0, 0.15)";
-  iframe.style.zIndex = "999999";
-  iframe.src = `${baseUrl}/widget?agentId=${agentId}&tenantId=${tenantId}&chatType=${chatType}&themeColor=${encodeURIComponent(themeColor)}`;
-  
+  iframe.style.zIndex = "2147483647";
+  iframe.setAttribute("allowtransparency", "true");
+  iframe.setAttribute("allow", "clipboard-write");
+  iframe.src = `${baseUrl}/widget?agentId=${agentId}&tenantId=${tenantId}&chatType=${chatType}&themeColor=${encodeURIComponent(themeColor)}&headerLogo=${encodeURIComponent(resolvedHeaderLogo)}&headerAlign=${encodeURIComponent(headerAlign)}&headerName=${encodeURIComponent(headerName)}&agentLabel=${encodeURIComponent(agentLabel)}&themeTextColor=${encodeURIComponent(themeTextColor)}&botAvatar=${encodeURIComponent(resolvedBotAvatar)}&buttonIcon=${encodeURIComponent(resolvedButtonIcon)}&buttonAlign=${encodeURIComponent(buttonAlign)}&showButtonText=${showButtonText}&buttonText=${encodeURIComponent(buttonText)}&initialMessage=${encodeURIComponent(initialMessage)}&displaySources=${displaySources}&allowDownloads=${allowDownloads}&displayCopy=${displayCopy}&displayFeedback=${displayFeedback}&linkSafety=${linkSafety}&leadCollection=${leadCollection}&leadFields=${encodeURIComponent(leadFields)}&leadTiming=${leadTiming}&escalationEnabled=${escalationEnabled}&escalationLink=${encodeURIComponent(escalationLink)}`;
+
+
   // Declared search wrapper reference
   let searchWrapper = null;
-  
+
   // Global window resize and responsive dimensions
   const updateIframeDimensions = () => {
     const isMobile = window.innerWidth <= 640;
     if (isMobile) {
-      iframe.style.width = "100%";
-      iframe.style.height = "100%";
-      iframe.style.bottom = "0";
-      iframe.style.right = "0";
-      iframe.style.left = "0";
-      iframe.style.borderRadius = "0";
+      iframe.style.width = "calc(100% - 32px)";
+      iframe.style.height = "calc(100% - 40px)";
+      iframe.style.top = "20px";
+      iframe.style.bottom = "20px";
+      iframe.style.right = "16px";
+      iframe.style.left = "16px";
+      iframe.style.borderRadius = "24px";
     } else {
+      iframe.style.top = "auto";
       iframe.style.borderRadius = "24px";
       if (chatType === "search") {
         if (position === "center") {
+          const safeHeight = Math.min(520, window.innerHeight - 60);
           iframe.style.width = "680px";
-          iframe.style.height = "520px";
-          iframe.style.bottom = "30px"; // Position directly at bottom when search bar gets hidden
+          iframe.style.height = safeHeight + "px";
+          iframe.style.bottom = "30px";
           iframe.style.left = "50%";
           iframe.style.right = "auto";
-          iframe.style.transform = iframe.classList.contains("show")
-            ? "translateX(-50%) translateY(0)"
-            : "translateX(-50%) translateY(20px)";
         } else {
-          // right
+          // right search
+          const safeHeight = Math.min(520, window.innerHeight - 60);
           iframe.style.width = "420px";
-          iframe.style.height = "520px";
-          iframe.style.bottom = "30px"
+          iframe.style.height = safeHeight + "px";
+          iframe.style.bottom = "30px";
           iframe.style.right = "40px";
           iframe.style.left = "auto";
         }
       } else {
-        // icon style
+        // icon style - bottom: 95px so safe height = viewport - 95 - 20 top margin
+        const bottomOffset = 95;
+        const safeHeight = Math.min(520, window.innerHeight - bottomOffset - 20);
         iframe.style.width = "420px";
-        iframe.style.height = "520px";
-        iframe.style.bottom = "95px";
+        iframe.style.height = safeHeight + "px";
+        iframe.style.bottom = bottomOffset + "px";
         iframe.style.right = "20px";
         iframe.style.left = "auto";
       }
     }
   };
-  window.addEventListener("resize", updateIframeDimensions);
-  // Set initial position layout for iframe
+
+  const updateSearchWrapperDimensions = () => {
+    if (!searchWrapper) return;
+    const isMobile = window.innerWidth <= 640;
+    if (isMobile) {
+      searchWrapper.style.left = "50%";
+      searchWrapper.style.transform = "translateX(-50%)";
+      searchWrapper.style.right = "auto";
+      searchWrapper.style.width = "92%";
+      searchWrapper.style.bottom = "20px";
+    } else {
+      if (position === "center") {
+        searchWrapper.style.bottom = "30px";
+        searchWrapper.style.left = "50%";
+        searchWrapper.style.transform = "translateX(-50%)";
+        searchWrapper.style.width = "90%";
+        searchWrapper.style.maxWidth = "680px";
+      } else {
+        // right
+        searchWrapper.style.bottom = "30px";
+        searchWrapper.style.right = "40px";
+        searchWrapper.style.left = "auto";
+        searchWrapper.style.transform = "none";
+        searchWrapper.style.width = "90%";
+        searchWrapper.style.maxWidth = "420px";
+      }
+    }
+  };
+
+  window.addEventListener("resize", () => {
+    updateIframeDimensions();
+    updateSearchWrapperDimensions();
+  });
+
+  // Set initial layouts
   updateIframeDimensions();
 
   document.body.appendChild(iframe);
+
   const openIframe = (initialQuery = "") => {
-    let src = `${baseUrl}/widget?agentId=${agentId}&tenantId=${tenantId}&chatType=${chatType}&themeColor=${encodeURIComponent(themeColor)}`;
-    if (initialQuery) {
-      src += `&q=${encodeURIComponent(initialQuery)}`;
-
-    }
-    iframe.src = src;
-    iframe.style.display = "block";
-
     // Hide search bar wrapper to prevent double input boxes
     if (chatType === "search" && searchWrapper) {
       searchWrapper.style.display = "none";
     }
-    
-    // Tiny delay to ensure display:block is registered before adding transition class
-    setTimeout(() => {
-      iframe.classList.add("show");
-      if (chatType === "search" && position === "center" && window.innerWidth > 640) {
-        iframe.style.transform = "translateX(-50%) translateY(0)";
-      }
-    }, 20);
-  };
-const closeIframe = () => {
-    iframe.classList.remove("show");
-    if (chatType === "search" && position === "center" && window.innerWidth > 640) {
-      iframe.style.transform = "translateX(-50%) translateY(20px)";
-    }
 
-     // Show search bar wrapper back
+    iframe.classList.add("show");
+
+    // Focus the input inside the iframe
+    setTimeout(() => {
+      iframe.contentWindow.postMessage({ type: "focus-input" }, "*");
+    }, 200);
+
+    // Send initial query via postMessage to avoid slow reloads
+    if (initialQuery) {
+      setTimeout(() => {
+        iframe.contentWindow.postMessage({ type: "send-query", query: initialQuery }, "*");
+      }, 50);
+    }
+  };
+
+  const closeIframe = () => {
+    iframe.classList.remove("show");
+
+    // Show search bar wrapper back
     if (chatType === "search" && searchWrapper) {
       searchWrapper.style.display = "block";
+      updateSearchWrapperDimensions();
     }
-    setTimeout(() => {
-      if (!iframe.classList.contains("show")) {
-        iframe.style.display = "none";
-      }
-    }, 300);
   };
+
   // Listen to postMessage from the iframe widget to close/collapse the chat window
   window.addEventListener("message", (event) => {
-    if (event.data && event.data.type === "close-chat") {
+    if (event.data && (event.data.type === "close-chat" || event.data.type === "close")) {
       closeIframe();
     }
   });
+
   if (chatType === "search") {
     // --- Style 2: Search Bar Style Chat ---
-    // Create wrapper container to manage margins and positioning on the host site
     searchWrapper = document.createElement("div");
     searchWrapper.style.position = "fixed";
     searchWrapper.style.zIndex = "999998";
     searchWrapper.style.boxSizing = "border-box";
     searchWrapper.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-    if (position === "center") {
-      searchWrapper.style.bottom = "30px";
-      searchWrapper.style.left = "50%";
-      searchWrapper.style.transform = "translateX(-50%)";
-      searchWrapper.style.width = "90%";
-      searchWrapper.style.maxWidth = "680px";
-    } else {
-      // right
-      searchWrapper.style.bottom = "30px";
-      searchWrapper.style.right = "40px";
-      searchWrapper.style.width = "90%";
-      searchWrapper.style.maxWidth = "420px";
-    }
-     // Outer glow container (which handles brand gradient outline on focus/hover)
+
+    updateSearchWrapperDimensions();
+
+    // Outer glow container (which handles brand gradient outline on focus/hover)
     const glowContainer = document.createElement("div");
-    glowContainer.style.padding = "2px";
-    glowContainer.style.borderRadius = "26px";
-    glowContainer.style.background = "#e4e4e7"; // slate border by default
-    glowContainer.style.transition = "background 0.3s ease, box-shadow 0.3s ease";
-    glowContainer.style.boxShadow = "0 8px 24px rgba(0, 0, 0, 0.08)";
+    glowContainer.className = "grag-search-glow";
+
     // Inner input bar container
     const inputBar = document.createElement("div");
     inputBar.style.display = "flex";
@@ -183,6 +326,7 @@ const closeIframe = () => {
     inputBar.style.padding = "6px 8px 6px 18px";
     inputBar.style.gap = "12px";
     inputBar.style.boxSizing = "border-box";
+
     // Left Icon (Clock/History SVG)
     const leftIcon = document.createElement("span");
     leftIcon.style.display = "flex";
@@ -195,6 +339,7 @@ const closeIframe = () => {
         <polyline points="12 6 12 12 16 14"/>
       </svg>
     `;
+
     // Input Element
     const input = document.createElement("input");
     input.type = "text";
@@ -207,6 +352,7 @@ const closeIframe = () => {
     input.style.fontSize = "15px";
     input.style.fontFamily = "inherit";
     input.style.padding = "8px 0";
+
     // Right Send Button
     const sendBtn = document.createElement("button");
     sendBtn.style.width = "34px";
@@ -227,27 +373,32 @@ const closeIframe = () => {
         <polyline points="5 12 12 5 19 12"/>
       </svg>
     `;
-    // Interactivity logic: Change glow & send button color on input focus/type
+
     input.onfocus = () => {
-      glowContainer.style.background = themeColor;
-      glowContainer.style.boxShadow = `0 8px 30px ${themeColor}30`;
+      glowContainer.classList.add("active");
+      openIframe("");
+      input.blur();
     };
     input.onblur = () => {
-      glowContainer.style.background = "#e4e4e7";
-      glowContainer.style.boxShadow = "0 8px 24px rgba(0, 0, 0, 0.08)";
+      if (input.value.trim() === "") {
+        glowContainer.classList.remove("active");
+      }
     };
     input.oninput = (e) => {
       const val = e.target.value.trim();
       if (val.length > 0) {
+        glowContainer.classList.add("active");
         sendBtn.style.background = themeColor;
         sendBtn.style.color = "#ffffff";
         sendBtn.disabled = false;
       } else {
+        glowContainer.classList.remove("active");
         sendBtn.style.background = "#f4f4f5";
         sendBtn.style.color = "#a1a1aa";
         sendBtn.disabled = true;
       }
     };
+
     const handleSearchSubmit = () => {
       const query = input.value.trim();
       if (!query) return;
@@ -256,50 +407,98 @@ const closeIframe = () => {
       sendBtn.style.background = "#f4f4f5";
       sendBtn.style.color = "#a1a1aa";
       sendBtn.disabled = true;
+      glowContainer.classList.remove("active");
     };
+
     input.onkeydown = (e) => {
       if (e.key === "Enter") {
         handleSearchSubmit();
       }
     };
+
     sendBtn.onclick = handleSearchSubmit;
     leftIcon.onclick = () => {
       openIframe("");
     };
+
+    // Powered by Gramosoft label
+    const poweredBy = document.createElement("a");
+    poweredBy.href = "https://gsearchai.com/";
+    poweredBy.target = "_blank";
+    poweredBy.rel = "noopener noreferrer";
+    poweredBy.style.display = "block";
+    poweredBy.style.textAlign = "center";
+    poweredBy.style.marginTop = "6px";
+    poweredBy.style.fontSize = "11px";
+    poweredBy.style.color = "#a1a1aa";
+    poweredBy.style.userSelect = "none";
+    poweredBy.style.textDecoration = "none";
+    poweredBy.style.cursor = "pointer";
+    poweredBy.innerHTML = `Powered by <span style="font-weight: 600; color: #71717a;">Gsearch</span>`;
+
     // Assemble and render elements
     inputBar.appendChild(leftIcon);
     inputBar.appendChild(input);
     inputBar.appendChild(sendBtn);
     glowContainer.appendChild(inputBar);
     searchWrapper.appendChild(glowContainer);
+    searchWrapper.appendChild(poweredBy);
     document.body.appendChild(searchWrapper);
   } else {
-    // --- Style 1: Classic Icon Style Chat (Current Style) ---
+    // --- Style 1: Classic Icon Style Chat ---
     const button = document.createElement("button");
-    button.innerHTML = `
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M21 11.5C21 16.7467 16.9706 21 12 21C10.1302 21 8.39632 20.3992 6.97743 19.3722L3 20.5L4.15064 16.6329C3.41732 15.1543 3 13.4754 3 11.5C3 6.25329 7.02944 2 12 2C16.9706 2 21 6.25329 21 11.5Z" fill="${themeColor}" stroke="${themeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M8 10H16M8 14H14" stroke="white" stroke-width="2" stroke-linecap="round"/>
-      </svg>
-    `;
-    button.style.position = "fixed";
-    button.style.bottom = "20px";
-    button.style.right = "20px";
-    button.style.width = "60px";
-    button.style.height = "60px";
-    button.style.borderRadius = "50%";
-    button.style.cursor = "pointer";
-    button.style.background = "#ffffff";
-    button.style.border = "1px solid #e5e5e5";
-    button.style.boxShadow = "0 4px 16px rgba(0, 0, 0, 0.15)";
-    button.style.display = "flex";
-    button.style.alignItems = "center";
-    button.style.justifyContent = "center";
-    button.style.zIndex = "999999";
-    button.style.transition = "transform 0.2s ease";
-    button.onmouseover = () => button.style.transform = "scale(1.05)";
-    button.onmouseout = () => button.style.transform = "scale(1)";
+    button.className = "grag-icon-btn";
+    if (showButtonText && buttonText) {
+      button.style.width = "auto";
+      button.style.borderRadius = "30px";
+      button.style.padding = "0 18px";
+      button.style.gap = "8px";
+    }
+
+    let iconHtml = "";
+    if (resolvedButtonIcon && (resolvedButtonIcon.startsWith("http") || resolvedButtonIcon.startsWith("blob:") || resolvedButtonIcon.startsWith("data:"))) {
+      iconHtml = `<img src="${resolvedButtonIcon}" style="width: 28px; height: 28px; border-radius: 50%; object-fit: contain;" />`;
+    } else if (resolvedButtonIcon === "robot") {
+      iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2" fill="none"/><circle cx="8.5" cy="15.5" r="1.5" fill="${themeTextColor}"/><circle cx="15.5" cy="15.5" r="1.5" fill="${themeTextColor}"/><path d="M12 2v6M9 5h6"/></svg></div>`;
+    } else if (resolvedButtonIcon === "setting") {
+      iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>`;
+    } else if (resolvedButtonIcon === "question") {
+      iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>`;
+    } else if (resolvedButtonIcon === "book") {
+      iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div>`;
+    } else {
+      iconHtml = `
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M21 11.5C21 16.7467 16.9706 21 12 21C10.1302 21 8.39632 20.3992 6.97743 19.3722L3 20.5L4.15064 16.6329C3.41732 15.1543 3 13.4754 3 11.5C3 6.25329 7.02944 2 12 2C16.9706 2 21 6.25329 21 11.5Z" fill="${themeTextColor}" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="8" cy="11.5" r="1.3" fill="${btnBgColor}"/>
+          <circle cx="12" cy="11.5" r="1.3" fill="${btnBgColor}"/>
+          <circle cx="16" cy="11.5" r="1.3" fill="${btnBgColor}"/>
+        </svg>
+      `;
+    }
+
+    button.innerHTML = iconHtml + (showButtonText && buttonText ? `<span style="font-weight: 700; font-size: 14px; color: ${themeTextColor}; font-family: sans-serif;">${buttonText}</span>` : "");
+
     document.body.appendChild(button);
+
+    // Fetch Customization API if tenantId exists to apply logo_url to embed launch button if show_in_embed is true
+    if (tenantId) {
+      try {
+        const custApiUrl = `${baseUrl.endsWith("/api/v1") ? baseUrl : baseUrl + "/api/v1"}/embed/customization?tenant_id=${tenantId}`;
+        fetch(custApiUrl)
+          .then(res => res.json())
+          .then(result => {
+            const data = result.data || result;
+            if (data && data.logo_url && data.show_in_embed && button && (buttonIcon === "chat" || !buttonIcon)) {
+              const proxyLogo = toProxyUrl(data.logo_url);
+              const imgHtml = `<img src="${proxyLogo}" style="width: 28px; height: 28px; border-radius: 50%; object-fit: contain;" />`;
+              button.innerHTML = imgHtml + (showButtonText && buttonText ? `<span style="font-weight: 700; font-size: 14px; color: ${themeTextColor}; font-family: sans-serif;">${buttonText}</span>` : "");
+            }
+          })
+          .catch(e => console.warn("GragWidget: Customization fetch error", e));
+      } catch (e) { }
+    }
+
     // Toggle click trigger
     button.onclick = () => {
       if (iframe.classList.contains("show")) {

@@ -1,6 +1,6 @@
 "use client";
-import React, { useState, useEffect } from "react";
-import { Button, Drawer, Space } from "antd";
+import React, { useState} from "react";
+import { Button, Drawer } from "antd";
 import { MenuOutlined, GithubOutlined } from "@ant-design/icons";
 import BrandGlyph from "./BrandGlyph";
 import { useRouter } from "next/navigation";
@@ -8,10 +8,12 @@ import { useGithubStars } from "../provider/GithubStarsProvider";
 
 const navLinks = [
   { href: "#product", label: "Product" },
-  { href: "#teams", label: "Solutions" },
+  { href: "#teams", label: "Solution" },
+  { href: "#how", label: "How it works" },
+  { href: "#paths", label: "Pricing" },
   { href: "#connectors", label: "Integrations" },
-  { href: "#security", label: "Enterprise" },
-  { href: "#", label: "Resources" },
+  { href: "#security", label: "Security" },
+  { href: "#faq", label: "FAQ" },
 ];
 
 export default function Navbar() {
@@ -42,11 +44,9 @@ export default function Navbar() {
           className="gs-brand"
           onClick={(e) => handleScroll(e, "#")}
         >
-          <BrandGlyph />
-          GsearchAI
+          <BrandGlyph height={36} />
         </a>
 
-        {/* Desktop nav links — hidden via CSS on mobile */}
         <div className="gs-nav-links">
           {navLinks.map((link) => (
             <a
@@ -59,7 +59,6 @@ export default function Navbar() {
           ))}
         </div>
 
-        {/* Desktop CTA buttons — hidden via CSS on mobile */}
         <div className="gs-nav-cta">
 
           <a
@@ -76,7 +75,7 @@ export default function Navbar() {
           <Button
             // type="text"
             className="signin"
-            onClick={() => router.push("/login")}
+            href="/login"
             style={{ fontWeight: 600, color: "var(--body)", padding: 10 }}
           >
             Log in
@@ -98,7 +97,7 @@ export default function Navbar() {
           </Button> */}
         </div>
 
-        {/* Mobile menu button — only visible on small screens via CSS */}
+        {/* Mobile menu button */}
         <div className="gs-menu-btn">
           <Button
             aria-label="Menu"
@@ -114,8 +113,7 @@ export default function Navbar() {
       <Drawer
         title={
           <span className="gs-brand">
-            <BrandGlyph />
-            GsearchAI
+            <BrandGlyph height={32} />
           </span>
         }
         placement="right"

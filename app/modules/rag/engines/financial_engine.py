@@ -42,16 +42,16 @@ class FinancialEngine(BaseEngine):
             section_filter = task.metadata_filters.primary_topic
             
         cypher = """
-        MATCH (kb:KnowledgeBase)-[:HAS_DOCUMENT]->(doc)-[:HAS_SECTION]->(sec:Section)
+        MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk)
         WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
         """
         params = {"kb_ids": kb_ids, "tenant_id": self.tenant_id}
         
         if section_filter:
-            cypher += " AND toLower(sec.title) CONTAINS toLower($section_filter) "
+            cypher += " AND toLower(c.section) CONTAINS toLower($section_filter) "
             params["section_filter"] = section_filter
             
-        cypher += " RETURN sec.id as section_id, sec.title as title, doc.type as doc_type LIMIT 50 "
+        cypher += " RETURN c.id as section_id, c.section as title, c.source_type as doc_type LIMIT 50 "
         
         try:
             results = await self.neo4j_repo.execute_read(cypher, params)
@@ -83,17 +83,17 @@ class FinancialEngine(BaseEngine):
             return []
             
         cypher = """
-        MATCH (kb:KnowledgeBase)-[:HAS_DOCUMENT]->(doc)-[:HAS_SECTION]->(sec:Section)
+        MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk)
         WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
         """
         
         params = {"kb_ids": kb_ids, "tenant_id": self.tenant_id, "keywords": keywords}
         
         if target_section_ids:
-            cypher += " AND sec.id IN $target_section_ids "
+            cypher += " AND c.id IN $target_section_ids "
             params["target_section_ids"] = target_section_ids
         elif section_filter:
-            cypher += " AND toLower(sec.title) CONTAINS toLower($section_filter) "
+            cypher += " AND toLower(c.section) CONTAINS toLower($section_filter) "
             params["section_filter"] = section_filter
             
         cypher += """

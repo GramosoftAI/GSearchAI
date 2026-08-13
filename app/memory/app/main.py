@@ -28,15 +28,6 @@ logger = logging.getLogger("memory_api")
 
 app = FastAPI(title="Native Vector & Graph Memory Core", version="2.5.0")
 
-@app.on_event("startup")
-async def startup_event():
-    logger.info("[STARTUP] Initializing memory database schema (init_db)...")
-    try:
-        await init_db()
-        logger.info("[STARTUP] Memory database tables (episodic_memories, user_preferences) verified and ready.")
-    except Exception as e:
-        logger.error(f"[STARTUP ERROR] Failed to initialize memory database tables: {e}", exc_info=True)
-
 # Neo4j Driver Connection Setup
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
@@ -45,7 +36,7 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "graphmind_password")
 logger.info(f"[NEO4J INIT] Initializing Neo4j Driver connecting to: {NEO4J_URI}")
 neo4j_driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
-EMBED_DIM = int(os.getenv("EMBEDDING_DIMENSION", "4096"))
+EMBED_DIM = int(os.getenv("EMBEDDING_DIMENSION", "768"))
 
 LIVE_SEMAPHORE = asyncio.Semaphore(int(os.getenv("LLM_LIVE_CONCURRENCY", "10")))
 BACKGROUND_SEMAPHORE = asyncio.Semaphore(int(os.getenv("LLM_BACKGROUND_CONCURRENCY", "5")))
@@ -86,26 +77,22 @@ _PREFERENCE_PATTERNS = re.compile(
     r"always (respond|answer|reply|format|use)|"
     r"from now on|i prefer|my preferred|please (always|remember)|"
     r"don'?t (use|do)|stop (using|doing)|never (use|do)|"
-    r"not\s+.+\s+it'?s|upgrade\s+my\s+[a-z_]+|update\s+my\s+[a-z_]+|change\s+my\s+[a-z_]+|my\s+[a-z0-9_]+\s+is)\b",
+    r"not\s+.+\s+it'?s|upgrade\s+my|update\s+my|change\s+my|my\s+.*is|upgrad|upgrade|change|update)\b",
     re.IGNORECASE,
 )
 
 _DELETE_PATTERNS = re.compile(
-    r"\b(delete|forget|clear|erase)\s+(my|our|the|this)?\s*"
-    r"(conversation|chat|history|session|memory|preference|profile|account)\b",
+    r"\b(delete|forget|remove|clear|erase)\s+(this|my|our|the)?\s*"
+    r"(conversation|chat|history|session|memory|preference|mark|grade|details|info)?\b",
     re.IGNORECASE
 )
 
 _QUESTION_INDICATOR = re.compile(
-    r"^\s*(what|how|when|where|why|who|which|is|are|do|does|did|can|could|would|will|give|show|tell|list|count|find|search|get|fetch|display|provide|summarize|summary|explain|describe|calculate|total)\b|\?\s*$",
+    r"^\s*(what|how|when|where|why|who|which|is|are|do|does|did|can|could|would|will)\b|\?\s*$",
     re.IGNORECASE,
 )
 
-_RAG_COMMAND_PATTERN = re.compile(
-    r"\b(summarize|summrize|summary|overview|explain|list|show|analyze|extract|detail|details|count|total|male|female|employee|python|vishnu|find|search|give|get|know)\b",
-    re.IGNORECASE
-)
-
+# Broadened dynamic regex parser pattern for fallback key-value extraction
 _DYNAMIC_FACT_PATTERN = re.compile(
     r".*?\b(?:my\s+)?(?P<key>[a-zA-Z0-9_\-'\s]+?)\s+"
     r"(?:is|are|=|:|was|not\s+.*?\s+(?:it'?s|into|to)|to|into|changed?\s+to|upgraded?\s+to|upgrad\s+into)\s+"
@@ -141,9 +128,9 @@ async def get_embedding(text: str, priority: str = "live") -> List[float]:
     semaphore = LIVE_SEMAPHORE if priority == "live" else BACKGROUND_SEMAPHORE
     async with semaphore:
         try:
-            llm_base = os.getenv("DEEPINFRA_API_URL", "https://api.deepinfra.com/v1/openai").rstrip('/')
-            api_key = os.getenv("DEEPINFRA_API_KEY", "")
-            embed_model = os.getenv("MODEL_EMBEDDING", "Qwen/Qwen3-Embedding-8B")
+            llm_base = os.getenv("EMBEDDING_BASE_URL", os.getenv("LLM_BASE_URL", "https://api.deepinfra.com/v1/openai")).rstrip('/')
+            api_key = os.getenv("EMBEDDING_API_KEY", os.getenv("LLM_GATEWAY_API_KEY", os.getenv("DEEPINFRA_API_KEY", "")))
+            embed_model = os.getenv("DEEPINFRA_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B")
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
             
             endpoint = f"{llm_base}/embeddings" if not llm_base.endswith("/embeddings") else llm_base
@@ -161,12 +148,9 @@ async def get_embedding(text: str, priority: str = "live") -> List[float]:
                     if len(embedding) != EMBED_DIM:
                         logger.warning(
                             f"Embedding model '{embed_model}' returned {len(embedding)} dims, "
-                            f"adapting to expected {EMBED_DIM} dims."
+                            f"expected {EMBED_DIM}."
                         )
-                    if len(embedding) >= EMBED_DIM:
-                        return embedding[:EMBED_DIM]
-                    else:
-                        return embedding + [0.0] * (EMBED_DIM - len(embedding))
+                    return embedding[:EMBED_DIM] if len(embedding) >= EMBED_DIM else embedding + [0.0] * (EMBED_DIM - len(embedding))
                 logger.error(f"LLM embed error ({resp.status_code}): {resp.text}")
         except Exception as e:
             logger.error(f"Embedding failure: {type(e).__name__}: {e}")
@@ -177,13 +161,12 @@ async def run_llm_completion(system_prompt: str, user_prompt: str, priority: str
     semaphore = LIVE_SEMAPHORE if priority == "live" else BACKGROUND_SEMAPHORE
     async with semaphore:
         try:
-            llm_base = os.getenv("DEEPINFRA_API_URL", "https://api.deepinfra.com/v1/openai").rstrip('/')
-            api_key = os.getenv("DEEPINFRA_API_KEY", "")
-            chat_model = os.getenv("MODEL_MEMORY", "meta-llama/Meta-Llama-3.1-8B-Instruct")
+            llm_base = os.getenv("LLM_BASE_URL", os.getenv("DEEPINFRA_API_URL", "https://api.deepinfra.com/v1/openai")).rstrip('/')
+            api_key = os.getenv("LLM_GATEWAY_API_KEY", os.getenv("DEEPINFRA_API_KEY", ""))
+            chat_model = os.getenv("MEMORY_CHAT_MODEL", os.getenv("MODEL_MEMORY", "meta-llama/Meta-Llama-3.1-8B-Instruct"))
             max_tokens = int(os.getenv("MAX_TOKENS_MEMORY", "512"))
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-            
-            endpoint = f"{llm_base}/chat/completions" if not llm_base.endswith("/chat/completions") else llm_base
+            endpoint = f"{llm_base}/chat/completions" if llm_base.endswith("/openai") else f"{llm_base}/v1/chat/completions"
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     endpoint,
@@ -748,17 +731,16 @@ async def shutdown_event():
 async def process_turn(payload: MemoryProcessRequest):
     if _is_deterministic_preference_statement(payload.query):
         is_feedback_only = True
-    elif _QUESTION_INDICATOR.search(payload.query) or _RAG_COMMAND_PATTERN.search(payload.query):
+    elif _QUESTION_INDICATOR.search(payload.query):
         is_feedback_only = False
     elif _is_delete_statement(payload.query):
         is_feedback_only = True
     else:
         triage_prompt = (
             "You are an agent memory router. Analyze the user's message. "
-            "CRITICAL: If the message is a standard search query, a request for information (e.g. 'i need full detail...'), or a question, reply with EXACTLY 'NORMAL_QUERY'.\n"
-            "Reply with EXACTLY 'FEEDBACK_ONLY' ONLY if the user is explicitly:\n"
-            "- Giving corrective feedback/adjustments about your behavior or deleting facts\n"
-            "- Setting, updating, or stating a long-term personal PREFERENCE or FACT for you to remember\n"
+            "Reply with EXACTLY 'FEEDBACK_ONLY' if the user is:\n"
+            "- Giving corrective feedback/instructions/adjustments or deleting facts\n"
+            "- Setting, updating, or stating a PREFERENCE or FACT for you to remember\n"
             "- Giving a simple acknowledgement ('got it', 'thanks')\n"
             "Otherwise, reply with EXACTLY 'NORMAL_QUERY'."
         )
@@ -778,81 +760,27 @@ async def process_turn(payload: MemoryProcessRequest):
     guidance_blocks = []
     graph_context_elements = []
 
-    # 1. Hoist entity extraction so we can use it for both History and RAG routing
-    entity_extraction_prompt = (
-        "You are a strict data parsing tool. Extract named entities, key concepts, or topics "
-        "from the user query. Do NOT answer the question. Do NOT chat. "
-        "Return ONLY a JSON object: {\"entities\": [\"entity1\", \"entity2\"]}\n"
-        "Example Query: 'what is my 10th grade mark?' -> JSON: {\"entities\": [\"10th grade mark\", \"10th grade\", \"mark\"]}"
-    )
-    entities_raw = await run_llm_completion(entity_extraction_prompt, payload.query, priority="live")
-    entity_names = _extract_entity_names(entities_raw)
-
     if is_history_query:
-        # Filter out generic history words to see if they asked about a specific topic
-        # Use substring checking so phrases like "last chat" or "previous conversation" are properly identified as generic
-        generic_markers = ["discussion", "chat", "session", "last time", "conversation", "turn", "talk", "what", "previous", "history"]
-        specific_entities = [
-            e for e in entity_names 
-            if not any(marker in e.lower() for marker in generic_markers)
-        ]
-
-        if specific_entities:
-            # 2a. Hybrid Topic-History Routing: Use Vector Search strictly on history
-            logger.info(f"Topic-Specific History Query detected. Searching history for entities: {specific_entities}")
-            query_embedding = await get_embedding(payload.query, priority="live")
-            async with AsyncSessionLocal() as db:
-                query_stmt = (
-                    select(EpisodicMemory.summarization)
-                    .filter(
-                        EpisodicMemory.tenant_id == payload.tenant_id,
-                        EpisodicMemory.user_id == payload.user_id,
-                        EpisodicMemory.agent_id == payload.agent_id,
-                        EpisodicMemory.summary_vector.cosine_distance(query_embedding) < 0.35
-                    )
-                    .order_by(EpisodicMemory.summary_vector.cosine_distance(query_embedding))
-                    .limit(10)
+        async with AsyncSessionLocal() as db:
+            query_stmt = (
+                select(EpisodicMemory.summarization)
+                .filter(
+                    EpisodicMemory.tenant_id == payload.tenant_id,
+                    EpisodicMemory.user_id == payload.user_id,
+                    EpisodicMemory.agent_id == payload.agent_id
                 )
-                result = await db.execute(query_stmt)
-                guidance_blocks = [s for s in result.scalars().all() if s]
-        else:
-            # 2b. Generic History Routing: Session-Scoped Rollup
-            logger.info("Generic History Query detected. Performing Session-Scoped Rollup.")
-            async with AsyncSessionLocal() as db:
-                # Find the most recent session_id that is NOT the current one
-                prev_session_stmt = (
-                    select(EpisodicMemory.session_id)
-                    .filter(
-                        EpisodicMemory.tenant_id == payload.tenant_id,
-                        EpisodicMemory.user_id == payload.user_id,
-                        EpisodicMemory.agent_id == payload.agent_id,
-                        EpisodicMemory.session_id != payload.session_id
-                    )
-                    .order_by(EpisodicMemory.created_at.desc())
-                    .limit(1)
-                )
-                prev_session_res = await db.execute(prev_session_stmt)
-                last_session_id = prev_session_res.scalar()
+                .order_by(EpisodicMemory.created_at.desc())
+                .limit(5)
+            )
+            result = await db.execute(query_stmt)
+            matched = result.scalars().all()
+            guidance_blocks = list(reversed([s for s in matched if s]))
 
-                if last_session_id:
-                    # Fetch all summaries for that exact session chronologically
-                    query_stmt = (
-                        select(EpisodicMemory.summarization)
-                        .filter(EpisodicMemory.session_id == last_session_id)
-                        .order_by(EpisodicMemory.created_at.asc())
-                    )
-                    result = await db.execute(query_stmt)
-                    guidance_blocks = list(result.scalars().all())
-                else:
-                    guidance_blocks = []
-
-        # Graph query remains identical for history
         graph_context_elements = await query_session_history_graph(
             payload.tenant_id, payload.user_id, payload.agent_id, payload.session_id
         )
 
     else:
-        # 3. Normal Vector RAG Memory Routing
         query_embedding = await get_embedding(payload.query, priority="live")
         async with AsyncSessionLocal() as db:
             query_stmt = (
@@ -860,8 +788,7 @@ async def process_turn(payload: MemoryProcessRequest):
                 .filter(
                     EpisodicMemory.tenant_id == payload.tenant_id,
                     EpisodicMemory.user_id == payload.user_id,
-                    EpisodicMemory.agent_id == payload.agent_id,
-                    EpisodicMemory.summary_vector.cosine_distance(query_embedding) < 0.35
+                    EpisodicMemory.agent_id == payload.agent_id
                 )
                 .order_by(EpisodicMemory.summary_vector.cosine_distance(query_embedding))
                 .limit(4)
@@ -869,12 +796,36 @@ async def process_turn(payload: MemoryProcessRequest):
             result = await db.execute(query_stmt)
             guidance_blocks = [s for s in result.scalars().all() if s]
 
+        entity_extraction_prompt = (
+            "You are a strict data parsing tool. Extract named entities, key concepts, or topics "
+            "from the user query. Do NOT answer the question. Do NOT chat. "
+            "Return ONLY a JSON object: {\"entities\": [\"entity1\", \"entity2\"]}\n"
+            "Example Query: 'what is my 10th grade mark?' -> JSON: {\"entities\": [\"10th grade mark\", \"10th grade\", \"mark\"]}"
+        )
+        entities_raw = await run_llm_completion(entity_extraction_prompt, payload.query, priority="live")
+        entity_names = _extract_entity_names(entities_raw)
+
         if entity_names:
             graph_context_elements = await _query_graph_relations(
                 payload.tenant_id, payload.user_id, payload.agent_id, entity_names
             )
 
-    # Preferences are saved after AI response via save-turn to reduce latency and capture assistant response context
+    # COMPOUND QUERY SUPPORT: If user is updating a preference AND asking a question in the same turn,
+    # save the preference immediately so it's included in guidance_context for this turn!
+    if _PREFERENCE_PATTERNS.search(payload.query):
+        try:
+            logger.info(f"[COMPOUND QUERY] Extracting and saving preference immediately for turn query: {payload.query!r}")
+            save_req = MemorySaveRequest(
+                query=payload.query,
+                ai_response="",
+                session_id=payload.session_id,
+                agent_id=payload.agent_id,
+                user_id=payload.user_id,
+                tenant_id=payload.tenant_id
+            )
+            await save_user_preference(save_req)
+        except Exception as pe:
+            logger.error(f"[COMPOUND QUERY PREFERENCE ERROR] Failed inline preference update: {pe}")
 
     preferences = await get_user_preferences(payload.tenant_id, payload.user_id, payload.agent_id)
 
@@ -907,83 +858,73 @@ async def save_turn(payload: MemorySaveRequest, background_tasks: BackgroundTask
 
 
 async def async_ingest_turn(payload: MemorySaveRequest):
-    try:
-        logger.info(f"[INGEST] Processing save-turn for session={payload.session_id}, user={payload.user_id}, query={payload.query!r}")
-        if payload.is_feedback_only or _is_delete_statement(payload.query):
-            logger.info(f"[INGEST] Turn classified as feedback/deletion statement. Invoking save_user_preference.")
-            await save_user_preference(payload)
-            return
+    if payload.is_feedback_only or _is_delete_statement(payload.query):
+        await save_user_preference(payload)
+        return
 
-        # Check if the AI response indicates a failure to find information or missing data
-        negative_indicators = [
-            "couldn't find", "could not find", "don't know", "do not know",
-            "no mention", "no information", "not present in dataset",
-            "not found", "unable to find", "no matching record",
-            "does not exist", "unanswered",
-            "don't have any specific information", "don’t have any specific information"
-        ]
-        ai_resp_lower = payload.ai_response.lower()
-        if any(indicator in ai_resp_lower for indicator in negative_indicators):
-            logger.info(f"[INGEST BYPASS] Skipping memory storage because AI response indicates info is missing or not found: {payload.ai_response!r}")
-            return
+    user_interaction = f"User: {payload.query}\nAssistant: {payload.ai_response}"
+    
+    # Check if the AI response indicates a failure to find information or missing data
+    negative_indicators = [
+        "couldn't find", "could not find", "don't know", "do not know",
+        "no mention", "no information", "not present in dataset",
+        "not found", "unable to find", "no matching record",
+        "does not exist", "unanswered",
+        "don't have any specific information", "don’t have any specific information"
+    ]
+    ai_resp_lower = payload.ai_response.lower()
+    if any(indicator in ai_resp_lower for indicator in negative_indicators):
+        logger.info(f"[INGEST BYPASS] Skipping memory storage because AI response indicates info is missing or not found: {payload.ai_response!r}")
+        return
 
-        user_interaction = f"User: {payload.query}\nAssistant: {payload.ai_response}"
+    combined_prompt = (
+        "Analyze this conversation turn and produce BOTH of the following in ONE JSON response:\n\n"
+        "1. SUMMARY: Compress the interaction into a single concise, factual declarative statement. "
+        "Explicitly include the specific topic, entities, numbers, and answers discussed. "
+        "Example: 'User asked about their serial number; Assistant confirmed serial number 23-4583.' "
+        "CRITICAL: Do NOT use placeholder letters like X or Y. Always write out the real topics, parameters, and details.\n\n"
+        "2. TRIPLETS: Extract concrete knowledge triplets. Modify entity subject descriptors dynamically so sub-categories stay attached "
+        "(e.g., use '10th grade mark' as the subject rather than generic 'user').\n"
+        "STRICT RULES for triplets:\n"
+        "- Do NOT create triplets for negative, missing, or empty information (e.g. 'none', 'unknown', 'not present').\n"
+        "- Replace personal pronouns ('I', 'me', 'my') with 'user' or the specific dynamic subject entity.\n"
+        "- Relation must be UPPER_SNAKE_CASE (e.g. HAS_VALUE, HAS_SCORE, IS_NAMED).\n\n"
+        "Return strict JSON only:\n"
+        '{"summary": "User asked X; Answer was Y.", '
+        '"triplets": [{"subject": "10th grade mark", "relation": "HAS_VALUE", "object": "90%"}]}\n\n'
+        f"CONVERSATION:\n{user_interaction}"
+    )
+    combined_raw = await run_llm_completion(
+        "You are a strict extraction system. Return ONLY valid JSON.",
+        combined_prompt,
+        priority="background",
+    )
+    combined_data = _extract_json_block(combined_raw) or {}
 
-        combined_prompt = (
-            "Analyze this conversation turn and produce BOTH of the following in ONE JSON response:\n\n"
-            "1. SUMMARY: Compress the interaction into a single concise, factual declarative statement. "
-            "Explicitly include the specific topic, entities, numbers, and answers discussed. "
-            "Example: 'User asked about their serial number; Assistant confirmed serial number 23-4583.' "
-            "CRITICAL: Do NOT use placeholder letters like X or Y. Always write out the real topics, parameters, and details.\n\n"
-            "2. TRIPLETS: Extract concrete knowledge triplets. Modify entity subject descriptors dynamically so sub-categories stay attached "
-            "(e.g., use '10th grade mark' as the subject rather than generic 'user').\n"
-            "STRICT RULES for triplets:\n"
-            "- Do NOT create triplets for negative, missing, or empty information (e.g. 'none', 'unknown', 'not present').\n"
-            "- Replace personal pronouns ('I', 'me', 'my') with 'user' or the specific dynamic subject entity.\n"
-            "- Relation must be UPPER_SNAKE_CASE (e.g. HAS_VALUE, HAS_SCORE, IS_NAMED).\n\n"
-            "Return strict JSON only:\n"
-            '{"summary": "User asked X; Answer was Y.", '
-            '"triplets": [{"subject": "10th grade mark", "relation": "HAS_VALUE", "object": "90%"}]}\n\n'
-            f"CONVERSATION:\n{user_interaction}"
+    summary_text = str(combined_data.get("summary", "")).strip()
+    if not summary_text:
+        summary_text = f"User interacted regarding: {payload.query[:50]}"
+
+    raw_vector = await get_embedding(f"{payload.query} {payload.ai_response}", priority="background")
+    summary_vector = await get_embedding(summary_text, priority="background")
+
+    async with AsyncSessionLocal() as db:
+        new_memory = EpisodicMemory(
+            user_id=payload.user_id,
+            session_id=payload.session_id,
+            tenant_id=payload.tenant_id,
+            agent_id=payload.agent_id,
+            user_query=payload.query,
+            ai_response=payload.ai_response,
+            summarization=summary_text,
+            raw_vector=raw_vector,
+            summary_vector=summary_vector,
+            metadata_json=payload.metadata or {}
         )
-        combined_data = {}
-        try:
-            combined_raw = await run_llm_completion(
-                "You are a strict extraction system. Return ONLY valid JSON.",
-                combined_prompt,
-                priority="background",
-            )
-            combined_data = _extract_json_block(combined_raw) or {}
-        except Exception as llm_err:
-            logger.warning(f"[INGEST WARNING] LLM summary extraction failed: {llm_err}")
+        db.add(new_memory)
+        await db.commit()
 
-        summary_text = str(combined_data.get("summary", "")).strip()
-        if not summary_text:
-            summary_text = f"User asked: {payload.query[:100]} | Assistant answered: {payload.ai_response[:150]}"
-
-        raw_vector = await get_embedding(f"{payload.query} {payload.ai_response}", priority="background")
-        summary_vector = await get_embedding(summary_text, priority="background")
-
-        async with AsyncSessionLocal() as db:
-            new_memory = EpisodicMemory(
-                user_id=payload.user_id,
-                session_id=payload.session_id,
-                tenant_id=payload.tenant_id,
-                agent_id=payload.agent_id,
-                user_query=payload.query,
-                ai_response=payload.ai_response,
-                summarization=summary_text,
-                raw_vector=raw_vector,
-                summary_vector=summary_vector,
-                metadata_json=payload.metadata or {}
-            )
-            db.add(new_memory)
-            await db.commit()
-            logger.info(f"[INGEST SUCCESS] Saved episodic memory record {new_memory.id} to episodic_memories table.")
-
-        triplets_json = json.dumps({"triplets": combined_data.get("triplets", [])})
-        await push_triplets_to_isolated_graph(
-            payload.tenant_id, payload.user_id, payload.agent_id, payload.session_id, triplets_json
-        )
-    except Exception as e:
-        logger.error(f"[INGEST ERROR] Failed to ingest turn into episodic_memories: {e}", exc_info=True)
+    triplets_json = json.dumps({"triplets": combined_data.get("triplets", [])})
+    await push_triplets_to_isolated_graph(
+        payload.tenant_id, payload.user_id, payload.agent_id, payload.session_id, triplets_json
+    )

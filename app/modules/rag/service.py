@@ -92,6 +92,32 @@ class RAGService:
         self.agent_repo = AgentRepository(db, self.tenant_id)
         self.llm_client = DeepInfraLLMClient()
 
+    async def _fetch_episodic_guidance(
+        self, query: str, agent_id: str, user_id: Optional[str], memory_enabled: bool = True
+    ) -> str:
+        if not memory_enabled or not user_id:
+            return ""
+        try:
+            import httpx
+            base_url = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
+            async with httpx.AsyncClient() as client:
+                res = await client.post(
+                    f"{base_url}/api/v1/memory/process-turn",
+                    json={
+                        "query": query,
+                        "agent_id": str(agent_id),
+                        "user_id": str(user_id),
+                        "tenant_id": str(self.tenant_id),
+                    },
+                    timeout=4.0,
+                )
+                if res.status_code == 200:
+                    data = res.json()
+                    return data.get("guidance_context") or ""
+        except Exception as e:
+            logger.debug(f"Failed to fetch episodic guidance: {e}")
+        return ""
+
     async def stream_rag_answer(
         self,
         query: str,
@@ -176,227 +202,199 @@ class RAGService:
         # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
         hybrid_merge_context = ""
         sql_task = None
-        if excel_kbs:
-            is_tabular = True
-            if analysis_res is not None:
-                is_tabular = getattr(analysis_res, "is_tabular", True)
-            if not doc_kbs:
-                is_tabular = True
-                
-            if is_tabular:
+        vector_task = None
+        memory_task = None
+
+        try:
+            if excel_kbs:
                 from app.core.parquet_ingester import ParquetIngester
                 from app.modules.rag.pandas_engine import PandasQueryEngine
-                import os
+
                 active_paths = []
-                path_mapping = {}
                 for ekb in excel_kbs:
-                    dataset_name = getattr(ekb, "parsed_path", None) or getattr(ekb, "s3_path", None)
+                    dataset_name = getattr(ekb, "parsed_path", None) or getattr(
+                        ekb, "s3_path", None
+                    )
                     if dataset_name:
                         p = ParquetIngester.get_active_dataset(dataset_name)
                         if p:
                             active_paths.append(p)
-                            # Clean original filename from "Spreadsheet: " prefix
-                            orig_name = getattr(ekb, "name", "dataset")
-                            if orig_name.startswith("Spreadsheet: "):
-                                orig_name = orig_name[len("Spreadsheet: "):]
-                            elif orig_name.startswith("PDF: "):
-                                orig_name = orig_name[len("PDF: "):]
-                            path_mapping[os.path.basename(p)] = orig_name
-                            
+
                 if not active_paths and not doc_kbs:
-                    yield json.dumps({"error": "Active parquet datasets for Excel Knowledge Bases not found."})
+                    yield json.dumps(
+                        {
+                            "error": "Active parquet datasets for Excel Knowledge Bases not found."
+                        }
+                    )
                     return
-                    
+
                 if active_paths:
-                    engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths, path_mapping=path_mapping)
-                    sql_task = asyncio.create_task(engine.execute_query(tabular_query, synthesize=(not doc_kbs), episodic_guidance=episodic_guidance))
+                    engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                    sql_task = asyncio.create_task(engine.execute_query(tabular_query))
 
-        vector_task = None
-        if not skip_search and (doc_kbs or not excel_kbs):
-            vector_task = asyncio.create_task(
-                self.pipeline.query(
-                    query=vector_query,
-                    agent_id=agent_id,
-                    kb_id=kb_ids,
-                    user_id=user_id,
-                    top_k=top_k,
-                    max_depth=max_depth,
+            if not skip_search and (doc_kbs or not excel_kbs):
+                vector_task = asyncio.create_task(
+                    self.pipeline.query(
+                        query=vector_query,
+                        agent_id=agent_id,
+                        kb_id=kb_ids,
+                        user_id=user_id,
+                        top_k=top_k,
+                        max_depth=max_depth,
+                    )
                 )
-            )
 
-        context = None
-        metadata_yielded = False
-        if excel_kbs and sql_task and vector_task:
-            logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
-            
-            # Wait for vector_task first to yield metadata early
-            try:
-                context_res = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
-            except Exception as e:
-                context_res = e
-            
-            if not isinstance(context_res, Exception):
-                context = context_res
+            context = None
+            metadata_yielded = False
+            if excel_kbs and sql_task and vector_task:
+                logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
                 
-                # Yield metadata immediately so the UI doesn't hang!
-                metadata = {
-                    "type": "metadata",
-                    "sources": [
-                        {
-                            "chunk_id": c.chunk_id,
-                            "source": clean_source_name(getattr(c, "s3_path", None) or c.source),
-                            "score": round(c.hybrid_score, 3),
-                            "position": c.position,
-                            "reason": c.reason,
-                            "kb_id": c.kb_id,
-                            "content_type": getattr(c, "content_type", "original")
-                        }
-                        for c in context.chunks
-                    ] + [
-                        {
-                            "chunk_id": f"tabular_{ek.id}",
-                            "source": getattr(ek, "name", "").replace("Spreadsheet: ", "").replace("PDF: ", "") if getattr(ek, "name", None) else "Excel Parquet",
-                            "score": 1.0,
-                            "position": 0,
-                            "reason": "Tabular query match",
-                            "kb_id": str(ek.id),
-                            "content_type": "tabular"
-                        }
-                        for ek in excel_kbs
-                    ],
-                    "triplets": [
-                        {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
-                        for t in (context.triplets or [])
-                    ],
-                    "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-                    "augmented_query": query,
-                    "authoritative_entities": context.authoritative_entities or []
-                }
-                yield json.dumps(metadata)
-                metadata_yielded = True
-            else:
-                logger.error(f"Parallel RAG Retrieval failed: {context_res}")
-                yield json.dumps({"error": f"Retrieval failed: {str(context_res)}"})
-                return
-
-            # Now wait for SQL task which is running in parallel
-            try:
-                sql_res = await asyncio.wait_for(sql_task, timeout=120.0)
-            except Exception as e:
-                sql_res = e
+                # Wait for vector_task first to yield metadata early
+                try:
+                    context_res = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
+                except Exception as e:
+                    context_res = e
                 
-            if not isinstance(sql_res, Exception) and sql_res:
-                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                if not any(sig in str(sql_res).lower() for sig in unmatched_signals):
-                    excel_filenames = ", ".join(getattr(ek, "name", "dataset") for ek in excel_kbs if getattr(ek, "name", None))
-                    hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS ({excel_filenames})]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
-            elif isinstance(sql_res, Exception):
-                logger.warning(f"Parallel TABULAR_SQL failed: {sql_res}")
-
-        elif sql_task:
-            logger.info("Executing TABULAR_SQL standalone...")
-            try:
-                sql_res = await asyncio.wait_for(sql_task, timeout=120.0)
-                unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
-                if is_unmatched:
-                    logger.info(f"Excel dataset lacked answer ({sql_res}).")
-                else:
-                    yield json.dumps({
+                if not isinstance(context_res, Exception):
+                    context = context_res
+                    
+                    # Yield metadata immediately so the UI doesn't hang!
+                    metadata = {
                         "type": "metadata",
                         "sources": [
                             {
-                                "chunk_id": f"tabular_{ek.id}",
-                                "source": getattr(ek, "name", "").replace("Spreadsheet: ", "").replace("PDF: ", "") if getattr(ek, "name", None) else "Excel Parquet",
-                                "score": 1.0,
-                                "position": 0,
-                                "reason": "Tabular query match",
-                                "kb_id": str(ek.id),
-                                "content_type": "tabular"
+                                "chunk_id": c.chunk_id,
+                                "source": clean_source_name(getattr(c, "s3_path", None) or c.source),
+                                "score": round(c.hybrid_score, 3),
+                                "position": c.position,
+                                "reason": c.reason,
+                                "kb_id": c.kb_id,
+                                "content_type": getattr(c, "content_type", "original")
                             }
-                            for ek in excel_kbs
+                            for c in context.chunks
                         ],
-                        "kb_name": ", ".join(getattr(ek, "name", "").replace("Spreadsheet: ", "").replace("PDF: ", "") for ek in excel_kbs if getattr(ek, "name", None)),
-                        "context_type": "duckdb_parquet"
-                    })
-                    yield str(sql_res)
+                        "triplets": [
+                            {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
+                            for t in (context.triplets or [])
+                        ],
+                        "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                        "augmented_query": query,
+                        "authoritative_entities": context.authoritative_entities or []
+                    }
+                    yield json.dumps(metadata)
+                    metadata_yielded = True
+                else:
+                    logger.error(f"Parallel RAG Retrieval failed: {context_res}")
+                    yield json.dumps({"error": f"Retrieval failed: {str(context_res)}"})
                     return
-            except Exception as e:
-                logger.error(f"PandasQueryEngine stream failed: {e}")
-                yield json.dumps({"error": str(e)})
+
+                # Now wait for SQL task which is running in parallel
+                try:
+                    sql_res = await asyncio.wait_for(sql_task, timeout=60.0)
+                except Exception as e:
+                    sql_res = e
+                    
+                if not isinstance(sql_res, Exception) and sql_res:
+                    unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                    if not any(sig in str(sql_res).lower() for sig in unmatched_signals):
+                        hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                elif isinstance(sql_res, Exception):
+                    logger.warning(f"Parallel TABULAR_SQL failed: {sql_res}")
+
+            elif sql_task:
+                logger.info("Executing TABULAR_SQL standalone...")
+                try:
+                    sql_res = await asyncio.wait_for(sql_task, timeout=30.0)
+                    unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                    is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
+                    if is_unmatched:
+                        logger.info(f"Excel dataset lacked answer ({sql_res}).")
+                    else:
+                        yield json.dumps({
+                            "type": "metadata",
+                            "sources": [],
+                            "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
+                            "context_type": "duckdb_parquet"
+                        })
+                        yield str(sql_res)
+                        return
+                except Exception as e:
+                    logger.error(f"PandasQueryEngine stream failed: {e}")
+                    yield json.dumps({"error": str(e)})
+                    return
+
+            elif vector_task:
+                logger.info("Executing VECTOR_DOCS standalone...")
+                try:
+                    context = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
+                except asyncio.TimeoutError:
+                    logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
+                    yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
+                    return
+                except Exception as e:
+                    logger.error(f"RAG Retrieval failed for stream: {e}")
+                    yield json.dumps({"error": f"Retrieval failed: {e}"})
+                    return
+
+            skip_search = True  # Bypass redundant sequential search below
+
+            if len(kb_ids) > 1:
+                logger.info(
+                    f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
+                )
+
+            agent = await self.agent_repo.get_by_id(agent_id)
+            if not agent:
+                yield json.dumps(
+                    {
+                        "error": f"Agent {agent_id} not found or inactive under the current tenant"
+                    }
+                )
                 return
 
-        elif vector_task:
-            logger.info("Executing VECTOR_DOCS standalone...")
+            base_prompt = agent.system_prompt or ""
+            personality_description = (
+                agent.personality
+                or "You are a warm, approachable, and supportive assistant."
+            )
+
+            if agent.personality_id:
+                personality = await self.db.get(Personality, agent.personality_id)
+                if personality:
+                    personality_description = personality.description or personality.name
+
+            accuracy_directives = (
+                "\n- Enforce 100% factual accuracy based strictly on the retrieved context."
+                "\n- Correct any obvious spelling or grammatical errors found in the source documents; do not copy typos."
+                "\n- Verify timelines, chronologies, and locations strictly to avoid historical or situational errors."
+            )
+            if "factual accuracy" not in personality_description.lower():
+                personality_description += accuracy_directives
+
+            # Ontology Grounding
+            from ..ontology.service import OntologyService
+
             try:
-                context = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
-            except asyncio.TimeoutError:
-                logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
-                yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
-                return
+                ont_svc = OntologyService(self.tenant_id)
+                ontology = await ont_svc.get_ontology()
+                ontology_rules_str = ""
+                if ontology and ontology.get("rules"):
+                    rules_list = [
+                        f"({r['source_class']})-[:{r['relation']}]->({r['target_class']})"
+                        for r in ontology["rules"]
+                        if r.get("source_class")
+                    ]
+                    if rules_list:
+                        ontology_rules_str = (
+                            "\n\n[ENTERPRISE ONTOLOGY RULES (STRICT GROUNDING)]\n"
+                            + "\n".join(rules_list)
+                            + "\nAlign your reasoning strictly with these established business relationships. Do not hallucinate relationships outside of this schema."
+                        )
             except Exception as e:
-                logger.error(f"RAG Retrieval failed for stream: {e}")
-                yield json.dumps({"error": f"Retrieval failed: {e}"})
-                return
+                logger.warning(f"Failed fetching active ontology for RAG prompt: {e}")
+                ontology_rules_str = ""
 
-        skip_search = True  # Bypass redundant sequential search below
-        if len(kb_ids) > 1:
-            logger.info(
-                f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
-            )
-
-        agent = await self.agent_repo.get_by_id(agent_id)
-        if not agent:
-            yield json.dumps(
-                {
-                    "error": f"Agent {agent_id} not found or inactive under the current tenant"
-                }
-            )
-            return
-
-        base_prompt = agent.system_prompt or ""
-        personality_description = (
-            agent.personality
-            or "You are a warm, approachable, and supportive assistant."
-        )
-
-        if agent.personality_id:
-            personality = await self.db.get(Personality, agent.personality_id)
-            if personality:
-                personality_description = personality.description or personality.name
-
-        accuracy_directives = (
-            "\n- Enforce 100% factual accuracy based strictly on the retrieved context."
-            "\n- Correct any obvious spelling or grammatical errors found in the source documents; do not copy typos."
-            "\n- Verify timelines, chronologies, and locations strictly to avoid historical or situational errors."
-        )
-        if "factual accuracy" not in personality_description.lower():
-            personality_description += accuracy_directives
-
-        # Ontology Grounding
-        from ..ontology.service import OntologyService
-
-        try:
-            ont_svc = OntologyService(self.tenant_id)
-            ontology = await ont_svc.get_ontology()
-            ontology_rules_str = ""
-            if ontology and ontology.get("rules"):
-                rules_list = [
-                    f"({r['source_class']})-[:{r['relation']}]->({r['target_class']})"
-                    for r in ontology["rules"]
-                    if r.get("source_class")
-                ]
-                if rules_list:
-                    ontology_rules_str = (
-                        "\n\n[ENTERPRISE ONTOLOGY RULES (STRICT GROUNDING)]\n"
-                        + "\n".join(rules_list)
-                        + "\nAlign your reasoning strictly with these established business relationships. Do not hallucinate relationships outside of this schema."
-                    )
-        except Exception as e:
-            logger.warning(f"Failed fetching active ontology for RAG prompt: {e}")
-            ontology_rules_str = ""
-
-        injected_system_prompt = f"""
+            injected_system_prompt = f"""
 [PERSONALITY MODE: STRICT]
 
 You MUST strictly follow the personality defined below.
@@ -477,245 +475,229 @@ FINAL RESPONSE FORMAT
 [Source: <only include source file(s) actually used to answer document questions>]
 """.strip()
 
-        agent_persona = {
-            "name": agent.name if agent else "Assistant",
-            "personality": personality_description,
-            "system_prompt": injected_system_prompt,
-        }
+            agent_persona = {
+                "name": agent.name if agent else "Assistant",
+                "personality": personality_description,
+                "system_prompt": injected_system_prompt,
+            }
 
-        if chat_history:
-            agent_persona[
-                "system_prompt"
-            ] += f"\n\n==================================================\nCONVERSATION HISTORY\n==================================================\n{chat_history}\n\nCRITICAL INSTRUCTION: If the user's current question asks to filter, modify, or extract from the 'above' or 'previous' answer, you MUST use the CONVERSATION HISTORY as your primary source of truth and ignore any conflicting retrieved documents below."
+            if chat_history:
+                agent_persona[
+                    "system_prompt"
+                ] += f"\n\n==================================================\nCONVERSATION HISTORY\n==================================================\n{chat_history}\n\nCRITICAL INSTRUCTION: If the user's current question asks to filter, modify, or extract from the 'above' or 'previous' answer, you MUST use the CONVERSATION HISTORY as your primary source of truth and ignore any conflicting retrieved documents below."
 
-        # 2. Retrieve Context
-        if 'context' not in locals():
-            context = None
-            
-        if not skip_search:
+            # Relevance filter (Context Poisoning Protection)
+            import os
+            min_score = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.6"))
+            if context and context.chunks:
+                original_count = len(context.chunks)
+                context.chunks = [c for c in context.chunks if getattr(c, "hybrid_score", 0.0) >= min_score]
+                dropped = original_count - len(context.chunks)
+                if dropped > 0:
+                    logger.info(f"Relevance Filter: Dropped {dropped} irrelevant chunks (score < {min_score}) to prevent hallucination.")
+
+            # 3. Yield metadata first
+            if not metadata_yielded:
+                if context:
+                    for c in context.chunks:
+                        logger.info(f"Chunk={c.chunk_id} Source={c.source} Score={c.hybrid_score}")
+
+                    metadata = {
+                        "type": "metadata",
+                        "sources": [
+                            {
+                                "chunk_id": c.chunk_id,
+                                "source": clean_source_name(getattr(c, "s3_path", None) or c.source),
+                                "score": round(c.hybrid_score, 3),
+                                "position": c.position,
+                                "reason": c.reason,
+                                "kb_id": c.kb_id,
+                                "content_type": getattr(c, "content_type", "original")
+                            }
+                            for c in context.chunks
+                        ],
+                        "triplets": [
+                            {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
+                            for t in (context.triplets or [])
+                        ],
+                        "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                        "augmented_query": query,
+                        "authoritative_entities": context.authoritative_entities or []
+                    }
+                else:
+                    metadata = {
+                        "type": "metadata",
+                        "sources": [],
+                        "triplets": [],
+                        "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
+                        "augmented_query": query,
+                        "authoritative_entities": []
+                    }
+
+                yield json.dumps(metadata)
+
+            is_extractive = context.search_type == "EXTRACTIVE" if context else False
+            is_table_analytics = (
+                context.search_type == "TABLE_ANALYTICS" if context else False
+            )
+
+            if is_extractive or is_table_analytics:
+                logger.info(f"Checking direct extraction for {context.search_type} mode.")
+                has_direct_output = False
+                if getattr(context, "authoritative_entities", None):
+                    for ent in context.authoritative_entities:
+                        clean_name = ent["entity_type"].replace("_", " ").title()
+                        clean_src = clean_source_name(
+                            ent.get("source", "document_entities")
+                        )
+                        yield f"**{clean_name}:** {ent['value']} (Page {ent.get('page', 1)}) [Source: {clean_src}]\n"
+                        has_direct_output = True
+                    if has_direct_output:
+                        yield "\n"
+
+                # Strip any <think> tags from triplet_context (gateway LLM leak guard)
+                import re as _re
+
+                clean_triplet = context.triplet_context or ""
+                clean_triplet = _re.sub(
+                    r"<think>.*?</think>", "", clean_triplet, flags=_re.DOTALL
+                ).strip()
+                if "<think>" in clean_triplet:
+                    clean_triplet = clean_triplet[: clean_triplet.index("<think>")].strip()
+
+                if clean_triplet:
+                    yield clean_triplet
+                    has_direct_output = True
+
+                if has_direct_output:
+                    try:
+                        unique_srcs = []
+                        if context and context.chunks:
+                            for chk in context.chunks:
+                                s_name = clean_source_name(getattr(chk, "s3_path", None) or chk.source)
+                                if s_name and s_name not in unique_srcs:
+                                    unique_srcs.append(s_name)
+                        if not unique_srcs:
+                            raw_kb_src = (getattr(kb, "source", None) or getattr(kb, "s3_path", None) or getattr(kb, "name", None)) if kb else ("Dataset" if not kb_ids else kb_ids[0])
+                            if kb and "ENTERPRISE SPREADSHEET ANALYSIS" in str(getattr(kb, "name", "")).upper() and getattr(kb, "source", None):
+                                raw_kb_src = kb.source
+                            clean_kb = clean_source_name(str(raw_kb_src))
+                            unique_srcs = [clean_kb]
+                        _src_name = ", ".join(unique_srcs)
+                        yield f"\n\n[Source: {_src_name}]"
+                    except Exception:
+                        pass
+                    return
+                else:
+                    logger.warning(
+                        f"[{context.search_type}] mode yielded no direct entities or triplets. Falling through to standard LLM chunk generation!"
+                    )
+
+            has_valid_chunks = context and context.chunks
+            has_valid_triplets = context and context.triplets
+            if not has_valid_chunks and not has_valid_triplets and not chat_history and not hybrid_merge_context and not episodic_guidance:
+                logger.info("Empty context retrieved for stream, returning fallback message.")
+                yield "I'm sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
+                return
+
+            # 4. Stream chunks
+            formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
+            if episodic_guidance:
+                formatted_context = (
+                    "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
+                    f"{episodic_guidance}\n\n"
+                ) + formatted_context
+            start_time = datetime.now()
+
+            full_answer = []
+            token_usage = {}
+
+            def handle_usage(usage_dict):
+                token_usage.update(usage_dict)
+                if on_usage_callback:
+                    on_usage_callback(usage_dict)
+
+            async for chunk in self.llm_client.stream_answer(
+                query,
+                formatted_context,
+                agent_persona=agent_persona,
+                enable_thinking=False,
+                on_usage_callback=handle_usage,
+                model=active_model,
+            ):
+                yield chunk
+
+            # 5. ASYNC LOGGING (Background)
+            latency_ms = (datetime.now() - start_time).total_seconds() * 1000
+            confidence = (
+                sum(c.hybrid_score for c in context.chunks) / len(context.chunks)
+                if (context and context.chunks)
+                else 0.0
+            )
+            status = (
+                ResponseStatus.SUCCESS
+                if (context and context.chunks)
+                else (ResponseStatus.SUCCESS if chat_history else ResponseStatus.UNANSWERED)
+            )
+
+            model_used = token_usage.get("model_name") or active_model
+            llm_input_tokens = token_usage.get("prompt_tokens", 0)
+            llm_output_tokens = token_usage.get("completion_tokens", 0)
+            total_tokens = token_usage.get("total_tokens", llm_input_tokens + llm_output_tokens)
+            request_id_val = token_usage.get("request_id")
+            embedding_tokens = getattr(context, "query_embedding_tokens", 0) or max(
+                1, len(query) // 4
+            )
+
+            inp_price, out_price = get_model_pricing(model_used)
+            llm_cost_usd = ((llm_input_tokens / 1_000_000.0) * inp_price) + (
+                (llm_output_tokens / 1_000_000.0) * out_price
+            )
+            embedding_cost_usd = (embedding_tokens / 1_000_000.0) * 0.010
+            total_cost_usd = round(llm_cost_usd + embedding_cost_usd, 6)
+
             try:
-                context = await asyncio.wait_for(
-                    self.pipeline.query(
-                        query=vector_query,
-                        agent_id=agent_id,
-                        kb_id=kb_ids,
-                        user_id=user_id,
-                        top_k=top_k,
-                        max_depth=max_depth,
-                    ),
-                    timeout=_RAG_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
-                yield json.dumps(
+                analytics_repo = AnalyticsRepository(self.db, UUID(str(self.tenant_id)))
+                await analytics_repo.create_query_log(
                     {
-                        "error": "The AI provider is taking too long to respond. Please try again later."
+                        "query": query,
+                        "response_status": status,
+                        "confidence_score": confidence,
+                        "latency_ms": latency_ms,
+                        "session_id": UUID(str(session_id)) if session_id else None,
+                        "user_id": UUID(str(user_id)) if user_id else None,
+                        "request_id": request_id_val,
+                        "model_name": model_used,
+                        "llm_input_tokens": llm_input_tokens,
+                        "llm_output_tokens": llm_output_tokens,
+                        "embedding_tokens": embedding_tokens,
+                        "total_tokens": total_tokens,
+                        "llm_cost_usd": llm_cost_usd,
+                        "embedding_cost_usd": embedding_cost_usd,
+                        "total_cost_usd": total_cost_usd,
                     }
                 )
-                return
-            except Exception as e:
-                error_msg = str(e) if str(e) else e.__class__.__name__
-                logger.error(f"RAG Retrieval failed for stream: {error_msg}")
-                yield json.dumps({"error": f"Retrieval failed: {error_msg}"})
-                return
-                
-        # ==================================================
-        # RELEVANCE FILTER (Context Poisoning Protection)
-        # ==================================================
-        import os
-        min_score = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.6"))
-        if context and context.chunks:
-            original_count = len(context.chunks)
-            context.chunks = [c for c in context.chunks if getattr(c, "hybrid_score", 0.0) >= min_score]
-            dropped = original_count - len(context.chunks)
-            if dropped > 0:
-                logger.info(f"Relevance Filter: Dropped {dropped} irrelevant chunks (score < {min_score}) to prevent hallucination.")
-
-        # 3. Yield metadata first
-        if not metadata_yielded:
-            if context:
-                for c in context.chunks:
-                    logger.info(f"Chunk={c.chunk_id} Source={c.source} Score={c.hybrid_score}")
-
-                metadata = {
-                    "type": "metadata",
-                    "sources": [
-                        {
-                            "chunk_id": c.chunk_id,
-                            "source": clean_source_name(getattr(c, "s3_path", None) or c.source),
-                            "score": round(c.hybrid_score, 3),
-                            "position": c.position,
-                            "reason": c.reason,
-                            "kb_id": c.kb_id,
-                            "content_type": getattr(c, "content_type", "original")
-                        }
-                        for c in context.chunks
-                    ],
-                    "triplets": [
-                        {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
-                        for t in (context.triplets or [])
-                    ],
-                    "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-                    "augmented_query": query,
-                    "authoritative_entities": context.authoritative_entities or []
-                }
-            else:
-                metadata = {
-                    "type": "metadata",
-                    "sources": [],
-                    "triplets": [],
-                    "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-                    "augmented_query": query,
-                    "authoritative_entities": []
-                }
-
-            yield json.dumps(metadata)
-
-        is_extractive = context.search_type == "EXTRACTIVE" if context else False
-        is_table_analytics = (
-            context.search_type == "TABLE_ANALYTICS" if context else False
-        )
-
-        if is_extractive or is_table_analytics:
-            logger.info(f"Checking direct extraction for {context.search_type} mode.")
-            has_direct_output = False
-            if getattr(context, "authoritative_entities", None):
-                for ent in context.authoritative_entities:
-                    clean_name = ent["entity_type"].replace("_", " ").title()
-                    clean_src = clean_source_name(
-                        ent.get("source", "document_entities")
+                await self.db.commit()
+            except Exception as ae:
+                logger.warning(f"Failed to log analytics for stream: {ae}")
+                try:
+                    await self.db.rollback()
+                except Exception as rollback_err:
+                    logger.error(
+                        f"Failed to rollback analytics transaction: {rollback_err}"
                     )
-                    yield f"**{clean_name}:** {ent['value']} (Page {ent.get('page', 1)}) [Source: {clean_src}]\n"
-                    has_direct_output = True
-                if has_direct_output:
-                    yield "\n"
+        finally:
+            current_task = asyncio.current_task()
+            tasks = (sql_task, vector_task, memory_task)
+            pending_tasks = [
+                task for task in tasks
+                if task is not None and task is not current_task and not task.done()
+            ]
+            for task in pending_tasks:
+                task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
 
-            # Strip any <think> tags from triplet_context (gateway LLM leak guard)
-            import re as _re
-
-            clean_triplet = context.triplet_context or ""
-            clean_triplet = _re.sub(
-                r"<think>.*?</think>", "", clean_triplet, flags=_re.DOTALL
-            ).strip()
-            if "<think>" in clean_triplet:
-                clean_triplet = clean_triplet[: clean_triplet.index("<think>")].strip()
-
-            if clean_triplet:
-                yield clean_triplet
-                has_direct_output = True
-
-            # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
-            # Collect unique clean source file names from context chunks if available
-            try:
-                unique_srcs = []
-                if context and context.chunks:
-                    for chk in context.chunks:
-                        s_name = clean_source_name(getattr(chk, "s3_path", None) or chk.source)
-                        if s_name and s_name not in unique_srcs:
-                            unique_srcs.append(s_name)
-                if not unique_srcs:
-                    raw_kb_src = (getattr(kb, "source", None) or getattr(kb, "s3_path", None) or getattr(kb, "name", None)) if kb else ("Dataset" if not kb_ids else kb_ids[0])
-                    if kb and "ENTERPRISE SPREADSHEET ANALYSIS" in str(getattr(kb, "name", "")).upper() and getattr(kb, "source", None):
-                        raw_kb_src = kb.source
-                    clean_kb = clean_source_name(str(raw_kb_src))
-                    unique_srcs = [clean_kb]
-                _src_name = ", ".join(unique_srcs)
-                yield f"\n\n[Source: {_src_name}]"
-            except Exception:
-                pass
-            return
-
-        if (not context or not context.chunks) and not chat_history and not hybrid_merge_context and not episodic_guidance:
-            logger.info("Empty context retrieved for stream, returning fallback message.")
-            yield "I'm sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
-            return
-
-        # 4. Stream chunks
-        formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
-        if episodic_guidance:
-            formatted_context = (
-                "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
-                f"{episodic_guidance}\n\n"
-            ) + formatted_context
-        start_time = datetime.now()
-
-        full_answer = []
-        token_usage = {}
-
-        def handle_usage(usage_dict):
-            token_usage.update(usage_dict)
-            if on_usage_callback:
-                on_usage_callback(usage_dict)
-
-        async for chunk in self.llm_client.stream_answer(
-            query,
-            formatted_context,
-            agent_persona=agent_persona,
-            enable_thinking=False,
-            on_usage_callback=handle_usage,
-            model=active_model,
-        ):
-            yield chunk
-
-        # 5. ASYNC LOGGING (Background)
-        latency_ms = (datetime.now() - start_time).total_seconds() * 1000
-        confidence = (
-            sum(c.hybrid_score for c in context.chunks) / len(context.chunks)
-            if (context and context.chunks)
-            else 0.0
-        )
-        status = (
-            ResponseStatus.SUCCESS
-            if (context and context.chunks)
-            else (ResponseStatus.SUCCESS if chat_history else ResponseStatus.UNANSWERED)
-        )
-
-        model_used = token_usage.get("model_name") or active_model
-        llm_input_tokens = token_usage.get("prompt_tokens", 0)
-        llm_output_tokens = token_usage.get("completion_tokens", 0)
-        total_tokens = token_usage.get("total_tokens", llm_input_tokens + llm_output_tokens)
-        request_id_val = token_usage.get("request_id")
-        embedding_tokens = getattr(context, "query_embedding_tokens", 0) or max(
-            1, len(query) // 4
-        )
-
-        inp_price, out_price = get_model_pricing(model_used)
-        llm_cost_usd = ((llm_input_tokens / 1_000_000.0) * inp_price) + (
-            (llm_output_tokens / 1_000_000.0) * out_price
-        )
-        embedding_cost_usd = (embedding_tokens / 1_000_000.0) * 0.010
-        total_cost_usd = round(llm_cost_usd + embedding_cost_usd, 6)
-
-        try:
-            analytics_repo = AnalyticsRepository(self.db, UUID(str(self.tenant_id)))
-            await analytics_repo.create_query_log(
-                {
-                    "query": query,
-                    "response_status": status,
-                    "confidence_score": confidence,
-                    "latency_ms": latency_ms,
-                    "session_id": UUID(str(session_id)) if session_id else None,
-                    "user_id": UUID(str(user_id)) if user_id else None,
-                    "request_id": request_id_val,
-                    "model_name": model_used,
-                    "llm_input_tokens": llm_input_tokens,
-                    "llm_output_tokens": llm_output_tokens,
-                    "embedding_tokens": embedding_tokens,
-                    "total_tokens": total_tokens,
-                    "llm_cost_usd": llm_cost_usd,
-                    "embedding_cost_usd": embedding_cost_usd,
-                    "total_cost_usd": total_cost_usd,
-                }
-            )
-            await self.db.commit()
-        except Exception as ae:
-            logger.warning(f"Failed to log analytics for stream: {ae}")
-            try:
-                await self.db.rollback()
-            except Exception as rollback_err:
-                logger.error(
-                    f"Failed to rollback analytics transaction: {rollback_err}"
-                )
 
     async def generate_answer(
         self,
@@ -779,9 +761,8 @@ FINAL RESPONSE FORMAT
         if excel_kbs:
             from app.core.parquet_ingester import ParquetIngester
             from app.modules.rag.pandas_engine import PandasQueryEngine
-            import os
+
             active_paths = []
-            path_mapping = {}
             for ek in excel_kbs:
                 dataset_name = getattr(ek, "parsed_path", None) or getattr(
                     ek, "s3_path", None
@@ -790,17 +771,12 @@ FINAL RESPONSE FORMAT
                     p = ParquetIngester.get_active_dataset(dataset_name)
                     if p:
                         active_paths.append(p)
-                        # Clean original filename from "Spreadsheet: " prefix
-                        orig_name = getattr(ek, "name", "dataset")
-                        if orig_name.startswith("Spreadsheet: "):
-                            orig_name = orig_name[len("Spreadsheet: "):]
-                        elif orig_name.startswith("PDF: "):
-                            orig_name = orig_name[len("PDF: "):]
-                        path_mapping[os.path.basename(p)] = orig_name
             if active_paths:
-                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths, path_mapping=path_mapping)
+                engine = PandasQueryEngine(
+                    active_paths[0], all_dataset_paths=active_paths
+                )
                 try:
-                    result = await engine.execute_query(query, synthesize=(not doc_kbs))
+                    result = await engine.execute_query(query)
                     result_str = str(result)
                     unmatched_signals = [
                         "not present in dataset",
@@ -834,25 +810,14 @@ FINAL RESPONSE FORMAT
                             f"[generate_answer] Excel dataset lacked answer ({result_str}). Falling back to PDF/URL knowledge bases..."
                         )
                     elif doc_kbs and not is_pure_math:
-                        logger.info("[generate_answer] Mixed sources: Injecting tabular result and searching PDFs/URLs...")
-                        excel_filenames = ", ".join(getattr(ek, "name", "dataset") for ek in excel_kbs if getattr(ek, "name", None))
-                        hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS ({excel_filenames})]\n{result_str}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                        logger.info(
+                            "[generate_answer] Mixed sources: Injecting tabular result and searching PDFs/URLs..."
+                        )
+                        hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{result_str}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
                     else:
-                        excel_filenames = ", ".join(getattr(ek, "name", "dataset") for ek in excel_kbs if getattr(ek, "name", None))
                         return {
                             "answer": result_str,
-                            "sources": [
-                                {
-                                    "chunk_id": f"tabular_{ek.id}",
-                                    "source": getattr(ek, "name", "").replace("Spreadsheet: ", "").replace("PDF: ", "") if getattr(ek, "name", None) else "Excel Parquet",
-                                    "score": 1.0,
-                                    "position": 0,
-                                    "reason": "Tabular query match",
-                                    "kb_id": str(ek.id),
-                                    "content_type": "tabular"
-                                }
-                                for ek in excel_kbs
-                            ],
+                            "sources": [],
                             "context": {"type": "duckdb_parquet"},
                             "stats": {},
                         }
@@ -915,7 +880,35 @@ FINAL RESPONSE FORMAT
             logger.warning(f"Failed fetching active ontology for RAG prompt: {e}")
             ontology_rules_str = ""
 
-        # episodic_guidance was fetched at the start of the stream to support parallel tasks.
+        # ============= MEMORY-API: BACKGROUND TURN PROCESSING =============
+        memory_enabled = (
+            str(getattr(get_settings(), "memory_enabled", "True")).strip().lower()
+            in ("true", "1", "yes")
+        )
+        if memory_enabled and user_id:
+            import httpx
+            import uuid
+            MEMORY_API_BASE_URL = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
+            MEMORY_API_URL = f"{MEMORY_API_BASE_URL}/api/v1/memory"
+            
+            async def _process_memory_bg():
+                try:
+                    async with httpx.AsyncClient() as client:
+                        await client.post(
+                            f"{MEMORY_API_URL}/process-turn",
+                            json={
+                                "query": query,
+                                "session_id": str(uuid.uuid4()),
+                                "agent_id": agent_id,
+                                "user_id": user_id,
+                                "tenant_id": self.tenant_id
+                            },
+                            timeout=8.0
+                        )
+                except Exception as e:
+                    logger.warning(f"memory-api process-turn background task failed: {e}")
+            
+            memory_task = asyncio.create_task(_process_memory_bg())
 
         injected_system_prompt = f"""
 [PERSONALITY MODE: STRICT]
@@ -1211,7 +1204,11 @@ RESPONSE FORMAT
             }
 
         # Step 4: Format Context & LLM Generation
-        formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
+        formatted_context = (
+            self._format_context(context, hybrid_merge_context=hybrid_merge_context)
+            if context
+            else (hybrid_merge_context or "")
+        )
         
         if episodic_guidance:
             formatted_context = (
@@ -1247,18 +1244,6 @@ RESPONSE FORMAT
             }
             for chunk in context.chunks
         ]
-        if excel_kbs:
-            for ek in excel_kbs:
-                sources.append({
-                    "chunk_id": f"tabular_{ek.id}",
-                    "score": 1.0,
-                    "position": 0,
-                    "reason": "Tabular query match",
-                    "source": getattr(ek, "name", "").replace("Spreadsheet: ", "").replace("PDF: ", "") if getattr(ek, "name", None) else "Excel Parquet",
-                    "s3_path": getattr(ek, "s3_path", None),
-                    "kb_id": str(ek.id),
-                    "content_type": "tabular"
-                })
 
         nodes_used = len(context.chunks) + len(context.entity_mentions)
         confidence = (
@@ -1358,39 +1343,9 @@ RESPONSE FORMAT
         self._cache_response(cache_key, response)
         return response
 
-    async def _fetch_episodic_guidance(self, query: str, agent_id: str, user_id: Optional[str], memory_enabled: bool) -> str:
-        if not memory_enabled or not user_id:
-            return ""
-        import httpx
-        import uuid
-        import os
-        MEMORY_API_BASE_URL = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
-        MEMORY_API_URL = f"{MEMORY_API_BASE_URL}/api/v1/memory"
-        async with httpx.AsyncClient() as client:
-            try:
-                mem_resp = await client.post(
-                    f"{MEMORY_API_URL}/process-turn",
-                    json={
-                        "query": query,
-                        "session_id": str(uuid.uuid4()),
-                        "agent_id": agent_id,
-                        "user_id": user_id,
-                        "tenant_id": self.tenant_id
-                    },
-                    timeout=8.0
-                )
-                if mem_resp.status_code == 200:
-                    mem_data = mem_resp.json()
-                    guidance = mem_data.get("guidance_context") or ""
-                    logger.info(f"Memory API returned guidance_context: {guidance!r}")
-                    return guidance
-                else:
-                    logger.warning(f"memory-api process-turn status={mem_resp.status_code}: {mem_resp.text}")
-            except Exception as e:
-                logger.warning(f"memory-api process-turn unreachable, continuing without memory: {e}")
-        return ""
-
-    def _make_cache_key(self, query: str, agent_id: str, kb_id: str, kb_version: int = 0) -> str:
+    def _make_cache_key(
+        self, query: str, agent_id: str, kb_id: str, kb_version: int = 0
+    ) -> str:
         key_str = f"{query}|{agent_id}|{kb_id}|v{kb_version}"
         return hashlib.sha256(key_str.encode()).hexdigest()
 
@@ -1431,8 +1386,7 @@ RESPONSE FORMAT
 
         for i, chunk in enumerate(context.chunks, 1):
             s3_path = getattr(chunk, "s3_path", None)
-            raw_src = s3_path or chunk.source
-            source_info = clean_source_name(raw_src) if raw_src else "Unknown Source"
+            source_info = s3_path if s3_path else (clean_source_name(chunk.source) if chunk.source else "Unknown Source")
             context_text += f"\n[Chunk {i}/{len(context.chunks)} - Source: {source_info} - Position {chunk.position}]"
             context_text += f"\nScore: {chunk.hybrid_score:.3f} (Semantic: {chunk.embedding_similarity:.3f}, Graph: {chunk.graph_score:.3f})"
             context_text += f"\n{'-' * 40}\n{chunk.text}\n"

@@ -241,7 +241,6 @@ class DeepInfraLLMClient:
         # Backwards compatibility attributes
         self.deepinfra_model = self.model_answer
         self.gateway_model = self.model_extraction
-        self.timeout = 90.0  # Enterprise timeout cap against stalled sockets
         self.deepinfra_base_url = f"{self.base_url}/chat/completions"
         self.gateway_base_url = f"{self.base_url}/chat/completions"
         self.deepinfra_api_key = self.api_key
@@ -431,6 +430,7 @@ class DeepInfraLLMClient:
         enable_thinking: Optional[bool] = False,
         model: Optional[str] = None,
         timeout: Optional[float] = None,
+        task: Optional[Any] = None,
     ) -> str:
         """
         Equivalent to generate() but explicitly routes to the cloud DeepInfra model 
@@ -443,9 +443,9 @@ class DeepInfraLLMClient:
         if self.deepinfra_api_key:
             headers["Authorization"] = f"Bearer {self.deepinfra_api_key}"
         
-        target_model = model or self.deepinfra_model
+        effective_model = model or self.model_answer
         payload = {
-            "model": target_model,
+            "model": effective_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
@@ -461,7 +461,7 @@ class DeepInfraLLMClient:
             try:
                 client = await self.get_client()
                 async with _llm_semaphore:
-                    response = await client.post(self.deepinfra_base_url, headers=headers, json=payload, timeout=timeout or self.timeout)
+                    response = await client.post(self.deepinfra_base_url, headers=headers, json=payload, timeout=self.timeout)
                 response.raise_for_status()
                 data = response.json()
                 content = data["choices"][0]["message"]["content"].strip()

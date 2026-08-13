@@ -1,12 +1,12 @@
 "use client";
-import React, { useEffect, useRef, useState } from "react";
-import { Button, Space, Tag, Typography } from "antd";
+import { useEffect, useRef, useState } from "react";
+import { Button, Space,  Typography } from "antd";
 import { heroRotationItems } from "../lib/content";
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Paragraph } = Typography;
 
 const TYPE_SPEED_MS = 38;
-const ANSWER_DELAY_MS = 350;
+// const ANSWER_DELAY_MS = 350;
 const CYCLE_PAUSE_MS = 3600;
 const INITIAL_DELAY_MS = 2200;
 
@@ -59,7 +59,7 @@ export default function Hero() {
           return;
         }
 
-        // HTML-safe tag insertion: append the full tag instantly to prevent rendering broken tags
+        
         if (text[index] === "<") {
           const closingIndex = text.indexOf(">", index);
           if (closingIndex !== -1) {
@@ -75,7 +75,7 @@ export default function Hero() {
         }
 
         setAnswerHtml(currentText);
-      }, 15); // Slightly faster typing rate for answer text
+      }, 15); 
       timeoutsRef.current.push(iv);
     };
 
@@ -91,7 +91,6 @@ export default function Hero() {
           setIsSearching(false);
           
           typeInAnswer(item.a, () => {
-            // Display source citations and tags only after the answer typing has finished
             setSource(item.s);
             setTags(item.tags);
             
@@ -99,7 +98,7 @@ export default function Hero() {
             const next = setTimeout(cycle, CYCLE_PAUSE_MS);
             timeoutsRef.current.push(next);
           });
-        }, 800); // Wait in searching state before writing the answer
+        }, 800);
         timeoutsRef.current.push(t);
       });
     };
@@ -113,8 +112,7 @@ export default function Hero() {
   return (
     <header className="gs-hero">
       <div className="wrap">
-        <Title
-          level={1}
+        <h1
           style={{
             fontSize: "clamp(34px,5vw,56px)",
             fontWeight: 800,
@@ -125,9 +123,9 @@ export default function Hero() {
             color:"var(--ink)"
           }}
         >
-          Meet your company's{" "}
-          <span style={{ color: "var(--teal-deep)" }}>second brain.</span>
-        </Title>
+          Gsearch is your{" "}
+          <span style={{ color: "var(--teal-deep)" }}>second brain</span> at work
+        </h1>
 
         <Paragraph
           style={{
@@ -138,8 +136,34 @@ export default function Hero() {
             textAlign: "center",
           }}
         >
-          Gsearch connects every tool your team uses, remembers how everything relates, and answers any question instantly — so your team stops searching and starts knowing.
+          Gsearch is an AI search platform that connects every tool you use, understands how your information relates, and answers any question instantly with a citation on every answer. Start on your own in minutes, or roll it out to your whole company.
         </Paragraph>
+
+        {/* AEO Top Summary Answer & Key Takeaways */}
+        {/* <div 
+          style={{
+            maxWidth: "680px",
+            margin: "0 auto 36px",
+            padding: "22px 26px",
+            background: "var(--teal-soft, #e3f7f3)",
+            border: "1px solid rgba(15, 181, 161, 0.2)",
+            borderRadius: "16px",
+            textAlign: "left"
+          }}
+        >
+          <h2 style={{ fontSize: "16px", fontWeight: 800, color: "var(--teal-deep)", margin: "0 0 10px 0", display: "flex", alignItems: "center", gap: "8px" }}>
+            <span>💡</span> Key Takeaway: What is Gsearch?
+          </h2>
+          <p style={{ fontSize: "14.5px", color: "var(--body, #1e293b)", margin: "0 0 14px 0", lineHeight: "1.6" }}>
+            <strong>Gsearch</strong> is an AI-powered enterprise search platform that connects all your company's tools, databases, and chats into a single searchable brain, allowing teams to ask natural-language questions and get instant, cited answers.
+          </p>
+          <ul style={{ margin: 0, paddingLeft: "20px", fontSize: "13.5px", color: "var(--muted, #475569)", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "8px" }}>
+            <li style={{ listStyleType: "disc" }}><strong>Instant Answers:</strong> Natural-language replies with source citations.</li>
+            <li style={{ listStyleType: "disc" }}><strong>100+ Integrations:</strong> Works with Slack, Notion, Jira, Drive, and more.</li>
+            <li style={{ listStyleType: "disc" }}><strong>No Data Migration:</strong> Crawls data where it lives in real time.</li>
+            <li style={{ listStyleType: "disc" }}><strong>Security First:</strong> Respects existing enterprise permission rules.</li>
+          </ul>
+        </div> */}
 
         <Space size={14} wrap style={{ justifyContent: "center", display: "flex" }}>
           <Button
@@ -172,18 +196,9 @@ export default function Hero() {
             Start for free
           </Button>
         </Space>
-
-        <div className="gs-ratings">
-          <span className="r">
-            <Text strong style={{ color: "var(--ink)" }}>G2</Text>{" "}
-            <span className="stars" style={{ color: "var(--gold)" }}>★★★★★</span>{" "}
-            <Text style={{ color: "var(--muted)", fontSize: 14, fontWeight: 600 }}>4.7</Text>
-          </span>
-          <span className="r">
-            <Text strong style={{ color: "var(--ink)" }}>Capterra</Text>{" "}
-            <span className="stars" style={{ color: "var(--gold)" }}>★★★★★</span>{" "}
-            <Text style={{ color: "var(--muted)", fontSize: 14, fontWeight: 600 }}>5.0</Text>
-          </span>
+         <div className="ratings">
+          <span className="r"><strong>Cited answers</strong> on every response</span>
+          <span className="r"><strong>100+</strong> connected tools</span>
         </div>
 
         <div className="gs-gradient-stage" aria-hidden="true">
@@ -224,6 +239,11 @@ export default function Hero() {
             </div>
           </div>
         </div>
+        <p className="meta-dates">
+            Published <time dateTime="2026-07-30">30 July 2026</time> ·
+            Last updated <time dateTime="2026-07-30">30 July 2026</time> ·
+            By the <a href="/about">Gsearch team at Gramosoft</a>
+        </p>
       </div>
     </header>
   );

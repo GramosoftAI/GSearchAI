@@ -52,7 +52,8 @@ export default function CapabilityTabs() {
     <div className="wrap">
       <div className="gs-sec-center">
         <div className="gs-eyebrow">One platform, every job</div>
-        <Title level={2} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>From a question to a finished task.</Title>
+        <Title level={2} className="gs-sec-h" style={{color:"var(--ink)",fontWeight:800}}>What can your team do with Gsearch?</Title>
+        <Paragraph className="gs-sec-lede" style={{fontSize:"16px"}}>Teams use Gsearch for five jobs: getting answers, finding resources, creating content, analysing data, and automating routine tasks. Each one runs on the same connected knowledge, so the output reflects how your company actually works.</Paragraph>
       </div>
       <Tabs
         // defaultActiveKey="answers"

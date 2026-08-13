@@ -108,3 +108,21 @@ class RAGFeedbackRequest(BaseModel):
     chunk_ids: List[str] = Field(..., description="IDs of chunks used for this answer")
     rating: int = Field(..., ge=-1, le=1, description="1 for thumbs up, -1 for thumbs down")
 
+
+class UnifiedChatRequest(BaseModel):
+    query: str
+    top_k: int = 10
+    max_depth: int = 2
+    session_id: Optional[str] = None
+
+    @classmethod
+    def from_raw(cls, payload: dict) -> "UnifiedChatRequest":
+        query = payload.get("query") or payload.get("message")
+        if not query:
+            raise ValueError("Missing 'query' or 'message' field")
+        return cls(
+            query=query,
+            top_k=payload.get("top_k", 10),
+            max_depth=payload.get("max_depth", 2),
+            session_id=payload.get("session_id"),
+        )

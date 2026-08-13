@@ -488,9 +488,29 @@ class RAGPipeline:
 
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
 
-        # --- EXCLUSIVE PANDAS BYPASS REMOVED ---
-        # Table analytics is handled purely via router intent and _execute_table_analytics.
-        # -------------------------------
+        # --- SUPPLEMENTARY PANDAS CSV EXTRACTION ---
+        # Uses description='excel_parquet' as the authoritative detection flag.
+        # parsed_path is a bare dataset name; actual data is in local parquet via ParquetIngester.
+        supplementary_csv_context = ""
+        try:
+            from sqlalchemy import text
+            if getattr(self, "db", None):
+                kb_query = "SELECT parsed_path, description FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[]));"
+                result = await self.db.execute(text(kb_query), {"kb_ids": kb_ids})
+                kb_path_rows = result.all()
+
+                has_excel_kb = any(getattr(r, 'description', '') == 'excel_parquet' for r in kb_path_rows)
+
+                if has_excel_kb:
+                    logger.info(" excel_parquet KB detected! Gathering supplementary tabular context.")
+                    pandas_result = await self._execute_table_analytics(query, kb_ids)
+                    if pandas_result and "validation error" not in pandas_result.lower() and "No valid spreadsheet" not in pandas_result:
+                        supplementary_csv_context = f"\n\n### Supplementary Tabular Data\n{pandas_result}\n"
+                    else:
+                        logger.warning(f" Supplementary CSV extraction returned no usable results: {pandas_result}")
+        except Exception as e:
+            logger.error(f"Failed supplementary CSV extraction: {e}", exc_info=True)
+        # ---------------------------------------------
 
         # Populate KB metadata (names, total chunks)
         if self.db:
@@ -511,31 +531,11 @@ class RAGPipeline:
                 logger.error(f"Error prefetching KB metadata: {e}")
 
 
-        # STAGE 0.1: EARLY INTERCEPT FOR TABLE ANALYTICS (Deterministic SQL Execution)
-        table_analytics_attempted = False
-        extractive_context_text = ""
-        try:
-            route_result = await self.router.route_query(query, tenant_id=str(self.tenant_id))
-            # If the user uploads CSV/Excel, we want to try executing table analytics if the intent matches
-            if route_result.intent == SearchType.TABLE_ANALYTICS:
-                table_analytics_attempted = True
-                logger.info("   -> Intercepting query for SQL Table Analytics engine BEFORE Adaptive Planner!")
-                table_results = await self._execute_table_analytics(query, kb_ids)
-                if table_results and "validation error" not in table_results.lower():
-                    extractive_context_text = f"### Table Analytics Results\n\n{table_results}\n\n"
-                    logger.info("   -> Table analytics successful. Appended to extractive context. Continuing to Adaptive Planner for cross-source retrieval.")
-                else:
-                    logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to Adaptive Planner.")
-        except Exception as e:
-            logger.error(f"   -> SQL Table Analytics preprocessing failed: {e}. Falling back to Adaptive Planner.", exc_info=True)
-            if self.db:
-                await self.db.rollback()
-
         # STEP 0: ROUTE QUERY TO OPTIMAL SEARCH STRATEGY (USING NEW ADAPTIVE PLANNER)
         import time
         start_time = time.time()
         
-        from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer
+        from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer, QueryIntent
         from app.modules.rag.orchestrator.planner import AdaptivePlanner
         from app.modules.rag.orchestrator.aggregator import EvidenceAggregator
         from app.modules.rag.orchestrator.conflict_detector import ConflictDetector
@@ -551,10 +551,51 @@ class RAGPipeline:
         
         analyzer = QueryAnalyzer()
         analysis = await analyzer.analyze_query(query)
-        
-        if getattr(analysis.metadata, "corrected_query", None):
-            logger.info(f"Query spell checked: '{query}' -> '{analysis.metadata.corrected_query}'")
-            query = analysis.metadata.corrected_query
+
+        # Preserve the original query as an immutable reference throughout this pipeline run
+        original_query = query
+        corrected = getattr(analysis.metadata, "corrected_query", None)
+        logger.info(
+            "QUERY_FIDELITY | original=%r | analyzer_corrected=%r",
+            original_query,
+            corrected,
+        )
+
+        if corrected and corrected.lower().strip() != original_query.lower().strip():
+            logger.info(
+                "Query spell checked: %r -> %r", original_query, corrected
+            )
+            query = corrected
+
+        logger.info(
+            "RAG_QUERY_FINAL | original=%r | effective=%r",
+            original_query,
+            query,
+        )
+
+        # STAGE 0.1: EARLY INTERCEPT FOR TABLE ANALYTICS (Deterministic SQL Execution)
+        table_analytics_attempted = False
+        extractive_context_text = ""
+        is_table_query = analysis.is_tabular or analysis.intent in (QueryIntent.CALCULATION, QueryIntent.TABLE)
+        if is_table_query:
+            try:
+                table_analytics_attempted = True
+                logger.info("   -> Intercepting query for SQL Table Analytics engine BEFORE Adaptive Planner!")
+                table_results = await self._execute_table_analytics(query, kb_ids)
+                if table_results and "validation error" not in table_results.lower():
+                    extractive_context_text = f"### Table Analytics Results\n\n{table_results}\n\n"
+                    logger.info("   -> Table analytics successful. Appended to extractive context. Continuing to Adaptive Planner for cross-source retrieval.")
+                else:
+                    logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to Adaptive Planner.")
+            except Exception as e:
+                logger.error(f"   -> SQL Table Analytics preprocessing failed: {e}. Falling back to Adaptive Planner.", exc_info=True)
+                if self.db:
+                    await self.db.rollback()
+
+        # Ensure embedding is generated ONCE for the entire pipeline
+        from app.core.embeddings import EmbeddingGenerator
+        query_embedding_val, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(query)
+        analysis.metadata.query_embedding = query_embedding_val
         
         planner = AdaptivePlanner(self.neo4j_repo, self.tenant_id)
         plan = await planner.create_plan(analysis, query)
@@ -647,7 +688,7 @@ class RAGPipeline:
                     chunks=final_chunks,
                     entity_mentions={},
                     total_tokens=sum(len(c.text.split()) for c in final_chunks),
-                    triplet_context=triplet_context_str + extractive_context_text,
+                    triplet_context=triplet_context_str + supplementary_csv_context,
                     triplets=relevant_triplets_list,
                     search_type=analysis.intent.name
                 )
@@ -1128,7 +1169,12 @@ class RAGPipeline:
 
 
 
-        query_embedding, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(query)
+        if 'analysis' in locals() and analysis and analysis.metadata and analysis.metadata.query_embedding:
+            query_embedding = analysis.metadata.query_embedding
+            emb_tokens = getattr(locals().get('emb_tokens'), 'emb_tokens', 10)
+        else:
+            from app.core.embeddings import EmbeddingGenerator
+            query_embedding, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(query)
 
 
 
@@ -1739,6 +1785,7 @@ class RAGPipeline:
         if 'extractive_context_text' in locals() and extractive_context_text:
             final_triplet_context = extractive_context_text + final_triplet_context
             
+
             
         return RAGContext(
 
@@ -1996,11 +2043,6 @@ class RAGPipeline:
                 reverse=True
             )
             
-            # DOCUMENT VECTOR SUMMARY FALLBACK: If no chunks met similarity threshold, return initial 5 document chunks for overview/summarization
-            if not sorted_chunks and chunks_with_similarity:
-                logger.info("   -> Broad Summary Fallback: No chunks met similarity threshold. Returning top 5 initial document chunks by position.")
-                sorted_chunks = sorted(chunks_with_similarity, key=lambda x: x.get("position", 0))
-            
             if chunks_with_similarity:
                 max_score = max(c["similarity"] for c in chunks_with_similarity)
                 logger.info(f" Max similarity score found in Neo4j: {max_score:.4f} (Threshold: {self.settings.similarity_min_threshold})")
@@ -2080,7 +2122,6 @@ class RAGPipeline:
             logger.info(f" {len(excel_kb_rows)} excel_parquet KB(s) detected! Resolving local parquet via ParquetIngester.")
             from .pandas_engine import PandasQueryEngine
             active_paths = []
-            file_names = []
             for ekb in excel_kb_rows:
                 dataset_name = getattr(ekb, 'parsed_path', None) or getattr(ekb, 'name', None)
                 if dataset_name:
@@ -2088,24 +2129,18 @@ class RAGPipeline:
                     if p:
                         logger.info(f" Resolved parquet: {p}")
                         active_paths.append(p)
-                        raw_fn = getattr(ekb, 'source', None) or getattr(ekb, 's3_path', None) or getattr(ekb, 'name', None) or dataset_name
-                        file_names.append(raw_fn)
                     else:
                         logger.warning(f" No active parquet found for dataset_name={dataset_name!r}")
 
             if active_paths:
-                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths, file_names=file_names)
+                engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
                 query_str = "PANDAS PandasQueryEngine.execute_query"
                 all_csv_results = []
-                from .service import clean_source_name
                 for ekb, path in zip(excel_kb_rows, active_paths):
                     try:
                         res = await engine.execute_query(query, path)
                         if res and "No valid spreadsheet" not in res:
-                            raw_src = getattr(ekb, 'source', None) or getattr(ekb, 's3_path', None) or getattr(ekb, 'parsed_path', None) or ekb.name or path
-                            kb_label = clean_source_name(raw_src)
-                            if "ENTERPRISE SPREADSHEET ANALYSIS" in str(kb_label).upper() and getattr(ekb, 'source', None):
-                                kb_label = clean_source_name(ekb.source)
+                            kb_label = ekb.name or path
                             all_csv_results.append(f"[Source: {kb_label}]\n{res}")
                         else:
                             logger.warning(f" PandasQueryEngine returned empty/error for {path}: {res}")
@@ -2120,10 +2155,13 @@ class RAGPipeline:
             return None
 
         # Fall through to SQL path for non-spreadsheet knowledge bases
-        dataset_schema = non_excel_rows[0].dataset_schema if non_excel_rows else kb_rows[0].dataset_schema
+        dataset_schema = {}
+        for r in non_excel_rows or kb_rows:
+            if r.dataset_schema:
+                dataset_schema.update(r.dataset_schema)
+                
         parsed_path = non_excel_rows[0].parsed_path if non_excel_rows else kb_rows[0].parsed_path
         source = non_excel_rows[0].source if non_excel_rows else kb_rows[0].source
-
         # Fallback to standard SQL generation over document_table_rows
         if not dataset_schema:
             sample_query = "SELECT row_data FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id LIMIT 300;"

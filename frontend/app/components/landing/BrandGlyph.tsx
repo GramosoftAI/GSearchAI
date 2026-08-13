@@ -1,17 +1,23 @@
-import React from "react";
+"use client";
 
-export default function BrandGlyph() {
+import { useTheme } from "../provider/ThemeProvider";
+
+export default function BrandGlyph({ height = 34, isWhite }: { height?: number; isWhite?: boolean }) {
+  let isDarkTheme = false;
+  try {
+    const theme = useTheme();
+    isDarkTheme = theme.isDark;
+  } catch {
+    isDarkTheme = typeof document !== "undefined" && (document.documentElement.classList.contains("dark") || document.documentElement.getAttribute("data-theme") === "dark");
+  }
+
+  const useWhiteLogo = isWhite ?? isDarkTheme;
+
   return (
-  <svg className="glyph" viewBox="0 0 32 32" fill="none" width={28} height={28}>
-    <circle cx="9" cy="10" r="3.6" fill="#E3F7F3" stroke="#0FB5A1" strokeWidth="1.8" />
-    <circle cx="23" cy="8" r="3" fill="#fff" stroke="#7C6CF0" strokeWidth="1.8" />
-    <circle cx="22" cy="23" r="4.2" fill="#F4C24B" stroke="#E0A92E" strokeWidth="1.6" />
-    <circle cx="10" cy="23" r="2.8" fill="#fff" stroke="#0FB5A1" strokeWidth="1.8" />
-    <path
-      d="M12 11 L20 9 M23 11 L22 19 M12 22 L18 23 M11 21 L20 11"
-      stroke="#C9D2DC"
-      strokeWidth="1.4"
+    <img
+      src={useWhiteLogo ? "/GSearchAI Logos White.svg" : "/Group 1597883327.svg"}
+      alt="GsearchAI Logo"
+      style={{ height, width: "auto", objectFit: "contain" }}
     />
-  </svg>
   );
 }

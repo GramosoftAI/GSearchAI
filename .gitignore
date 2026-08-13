@@ -245,11 +245,6 @@ rename_key.py
 !app/memory/app/schema/
 !app/memory/app/main.py
 server.py
-frontend/
-data/parquet/*.parquet
-data/parquet/active_datasets.json
-repair.py
-
 # ==========================================================
 # Strict Security, Credentials, Datasets & Tests Exclusion
 # ==========================================================
@@ -284,3 +279,10 @@ testing/
 test_*.py
 *_test.py
 *cleanup*
+
+frontend/
+data/parquet/*.parquet
+repair.py
+
+RAG_Test_Analytics_Report_of_gramosoft_site.md
+RAG_Test_Analytics_Report_of_gramosoft_site_old.md

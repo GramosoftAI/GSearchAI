@@ -1,6 +1,6 @@
 import logging
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from .query_analyzer import AnalysisResult, QueryIntent, QueryMetadata
 from app.modules.rag.engines.registry import CapabilityRegistry
 
@@ -12,6 +12,7 @@ class RetrievalTask(BaseModel):
     metadata_filters: QueryMetadata
     task_id: str
     target_section: Optional[str] = None
+    target_section_ids: Optional[List[str]] = Field(default_factory=list)
     priority: float = 1.0
     required: bool = False
     reason: str = ""
@@ -39,7 +40,7 @@ class AdaptivePlanner:
             
         cypher = """
         MATCH (d:OntologyDomain {name: $topic})
-        WHERE d.tenant_id = $tenant_id OR $tenant_id = $tenant_id
+        WHERE d.tenant_id = $tenant_id 
         MATCH (d)-[:HAS_CHILD]->(c)
         RETURN c.name as child_name
         """

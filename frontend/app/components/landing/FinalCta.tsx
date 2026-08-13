@@ -1,5 +1,5 @@
 "use client";
-import React from "react";
+
 import { Button, Space, Typography } from "antd";
 
 const { Title, Paragraph } = Typography;
@@ -8,11 +8,11 @@ export default function FinalCta() {
   return (
   <section className="gs-final" id="cta">
     <div className="wrap">
-      <Title level={1} style={{ fontSize: "clamp(30px,4vw,46px)", fontWeight: 800, letterSpacing: "-0.03em", maxWidth: 680, margin: "0 auto", textAlign: "center",color:"var(--ink)" }}>
-        Give your company a second brain.
+      <Title level={2} style={{ fontSize: "clamp(30px,4vw,46px)", fontWeight: 800, letterSpacing: "-0.03em", maxWidth: 680, margin: "0 auto", textAlign: "center",color:"var(--ink)" }}>
+        Get a second brain for your work
       </Title>
       <Paragraph style={{ fontSize: 18, color: "var(--muted)", margin: "18px auto 30px", maxWidth: 500, textAlign: "center" }}>
-        See Gsearch connect your own tools in a demo tailored to your team. Stop searching. Start knowing.
+       Start free on your own in minutes, or book a demo to see Gsearch across your whole company. Stop searching. Start knowing.
       </Paragraph>
       <Space size={14} wrap style={{ justifyContent: "center", display: "flex" }}>
         <Button

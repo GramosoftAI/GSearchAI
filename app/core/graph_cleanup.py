@@ -23,6 +23,19 @@ from app.core.neo4j_repository import Neo4jRepository
 logger = logging.getLogger(__name__)
 
 
+def _safe_dict_prop(val: Any) -> Dict[str, Any]:
+    if isinstance(val, dict):
+        return dict(val)
+    if isinstance(val, str) and val.strip():
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    return {}
+
+
 class GraphCleanupService:
     """
     Service to execute Graph Database Cleanup (Entity Resolution & Deduplication).
@@ -177,12 +190,21 @@ class GraphCleanupService:
         """
         logger.info(f"Normalizing entity names for tenant {self.tenant_id}...")
 
-        query = """
-        MATCH (n)
-        WHERE (n:Entity OR n:TripletEntity) AND n.tenant_id = $tenant_id
-        RETURN elementId(n) AS internal_id, coalesce(n.name, n.text, n.display_name, '') AS raw_name
-        """
-        results = await self.neo4j_repo.execute_read(query)
+        if self.kb_id:
+            query = """
+            MATCH (c:Chunk {kb_id: $kb_id, tenant_id: $tenant_id})
+            MATCH (c)-[:MENTIONS|EXTRACTED_FROM*1..2]-(n)
+            WHERE (n:Entity OR n:TripletEntity) AND n.tenant_id = $tenant_id
+            RETURN DISTINCT elementId(n) AS internal_id, coalesce(n.name, n.text, n.display_name, '') AS raw_name
+            """
+            results = await self.neo4j_repo.execute_read(query, {"tenant_id": self.tenant_id, "kb_id": self.kb_id})
+        else:
+            query = """
+            MATCH (n)
+            WHERE (n:Entity OR n:TripletEntity) AND n.tenant_id = $tenant_id
+            RETURN elementId(n) AS internal_id, coalesce(n.name, n.text, n.display_name, '') AS raw_name
+            """
+            results = await self.neo4j_repo.execute_read(query, {"tenant_id": self.tenant_id})
 
         updated_count = 0
         driver = await get_neo4j_driver()
@@ -789,7 +811,7 @@ Return ONLY a pure JSON response in the following format (do not include any com
                     for rec in inc_records:
                         src_id = rec["src_id"]
                         rel_type = rec["rel_type"]
-                        rel_props = dict(rec["rel_props"])
+                        rel_props = _safe_dict_prop(rec.get("rel_props"))
 
                         # Check existing relationship to canonical node
                         dup_check_query = """
@@ -808,7 +830,7 @@ Return ONLY a pure JSON response in the following format (do not include any com
 
                         if existing_rels:
                             # Merge properties of duplicate incoming relations
-                            existing_r_props = existing_rels[0]["r_props"]
+                            existing_r_props = _safe_dict_prop(existing_rels[0].get("r_props"))
                             merged_rel_props = dict(existing_r_props)
                             for k, v in rel_props.items():
                                 if merged_rel_props.get(k) is None:
@@ -852,7 +874,7 @@ Return ONLY a pure JSON response in the following format (do not include any com
                     for rec in out_records:
                         tgt_id = rec["tgt_id"]
                         rel_type = rec["rel_type"]
-                        rel_props = dict(rec["rel_props"])
+                        rel_props = _safe_dict_prop(rec.get("rel_props"))
 
                         # Check existing relationship to canonical node
                         dup_check_query = """
@@ -870,7 +892,7 @@ Return ONLY a pure JSON response in the following format (do not include any com
                         existing_rels = await check_res.data()
 
                         if existing_rels:
-                            existing_r_props = existing_rels[0]["r_props"]
+                            existing_r_props = _safe_dict_prop(existing_rels[0].get("r_props"))
                             merged_rel_props = dict(existing_r_props)
                             for k, v in rel_props.items():
                                 if merged_rel_props.get(k) is None:
@@ -965,9 +987,9 @@ Return ONLY a pure JSON response in the following format (do not include any com
                 duplicates = rels[1:]
 
                 # Merge properties
-                merged_props = dict(survivor["properties"])
+                merged_props = _safe_dict_prop(survivor.get("properties"))
                 for dup in duplicates:
-                    for k, v in dict(dup["properties"]).items():
+                    for k, v in _safe_dict_prop(dup.get("properties")).items():
                         if merged_props.get(k) is None and v is not None:
                             merged_props[k] = v
 

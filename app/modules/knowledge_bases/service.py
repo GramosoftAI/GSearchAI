@@ -617,12 +617,12 @@ class KnowledgeBaseService:
             import time as _time
             t_chunk_start = _time.time()
             if structured_records:
-                from app.core.structured_chunker import StructuredChunker
+                from ...core.structured_chunker import StructuredChunker
                 structured_chunks = StructuredChunker.chunk(structured_records)
                 chunks = [sc.text for sc in structured_chunks]
                 chunk_metadata_list = [sc.metadata for sc in structured_chunks]
             else:
-                from app.core.adaptive_chunker import AdaptiveChunker
+                from ...core.adaptive_chunker import AdaptiveChunker
                 adaptive_chunks = await AdaptiveChunker.chunk(content=document_text, source_type=source_type)
                 chunks = [c["chunk_text"] for c in adaptive_chunks]
                 chunk_metadata_list = [c["metadata"] for c in adaptive_chunks]

@@ -22,26 +22,29 @@ const geistMono = Geist_Mono({
 //   description: "Gsearch connects every tool your team uses, remembers how everything relates, and answers any question instantly — so your team stops searching and starts knowing.",
 // };
 export const metadata: Metadata = {
+  icons: {
+    icon: "/512_512.png",
+  },
   title:
-    "Gsearch — AI Enterprise Search & Chat for Your Company Data | Ask Anything, Get Instant Answers",
+    "Gsearch — AI Enterprise Search & Chat Platform",
 
   description:
-    "Gsearch is an AI-powered enterprise search and chat platform that connects your tools, documents, and databases. Ask questions in natural language and get instant, accurate answers from your company knowledge — like chatting with your organization's brain.",
+    "Gsearch connects your tools, docs, and databases with AI search. Ask questions in plain language and get instant answers from your company data.",
 
   keywords: [
-  "AI enterprise search",
-  "company AI search tool",
-  "internal knowledge search",
-  "AI chatbot for company data",
-  "RAG search system",
-  "enterprise AI assistant",
-  "ask your data AI",
-  "document search AI",
-  "Slack AI search",
-  "Notion AI alternative",
-  "Gsearch",
-  "AI knowledge base search"
-],
+    "AI enterprise search",
+    "company AI search tool",
+    "internal knowledge search",
+    "AI chatbot for company data",
+    "RAG search system",
+    "enterprise AI assistant",
+    "ask your data AI",
+    "document search AI",
+    "Slack AI search",
+    "Notion AI alternative",
+    "Gsearch",
+    "AI knowledge base search"
+  ],
 
   authors: [
     {
@@ -55,30 +58,32 @@ export const metadata: Metadata = {
   },
 
   alternates: {
-    canonical: "https://gramosoft.tech/gsearch",
+    canonical: "https://gsearchai.com/",
   },
 
   openGraph: {
-    title: "Gsearch — Your Company's AI Brain for Instant Answers",
+    title: "Gsearch — AI Enterprise Search & Chat Platform",
     description:
       "Search across all your company tools, documents, chats, and apps using natural language AI. Get instant, accurate answers instead of searching manually.",
-    url: "https://gramosoft.tech/gsearch",
-    siteName: "Gsearch by Gramosoft",
+    url: "https://gsearchai.com/",
+    siteName: "Gsearch",
     images: [
       {
-        url: "https://gramosoft.tech/images/gsearch-og.png",
+        url: "https://gsearchai.com/512_512.png",
       },
     ],
     locale: "en_IN",
     type: "website",
+
   },
 
   twitter: {
     card: "summary_large_image",
-    title: "Gsearch — AI Search for Your Company Knowledge",
+    title: "Gsearch — AI Enterprise Search & Chat Platform",
     description:
       "Ask questions across your company data and get instant AI-powered answers.",
-    images: ["https://gramosoft.tech/images/gsearch-og.png"],
+    images: ["https://gsearchai.com/512_512.png"],
+
   },
 };
 
@@ -94,27 +99,23 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full ">
-         <Script
+        <Script
           id="schema"
-            type="application/ld+json"
-            dangerouslySetInnerHTML={{
-              __html: JSON.stringify(schema),
-            }}
-          />
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(schema),
+          }}
+        />
         <script
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
                 try {
-                  const stored = localStorage.getItem('app-theme-mode');
+                  const stored = localStorage.getItem('app_theme_preference');
                   const isDashboard = window.location.pathname.startsWith('/dashboard') || window.location.pathname.startsWith('/widget');
                   let theme = 'light';
-                  if (isDashboard) {
-                    if (stored === 'light' || stored === 'dark') {
-                      theme = stored;
-                    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-                      theme = 'dark';
-                    }
+                  if (isDashboard && stored === 'dark') {
+                    theme = 'dark';
                   }
                   document.documentElement.setAttribute('data-theme', theme);
                   document.documentElement.style.colorScheme = theme;
@@ -131,9 +132,9 @@ export default function RootLayout({
         <AntdRegistry>
           <GlobalProvider>
             {children}
-            <Toaster position="top-right"  toastOptions={{
-            duration: 5000, // 3 seconds
-          }}/>
+            <Toaster position="top-right" toastOptions={{
+              duration: 5000, // 3 seconds
+            }} />
           </GlobalProvider>
         </AntdRegistry>
       </body>

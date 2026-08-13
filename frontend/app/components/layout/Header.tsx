@@ -60,14 +60,14 @@ export default function Header({ onMenuClick }: HeaderProps) {
           </span> */}
         </div>
       ),
-      disabled: true, // Making it a clean display card, non-clickable
+      disabled: true, 
     },
     {
       key: 'logout',
       danger: true,
       label: (
         <div className="flex items-center gap-3 px-2 py-2 font-bold text-xs tracking-tight">
-          {/* Modern minimal exit icon */}
+          
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
           </svg>
@@ -92,9 +92,9 @@ export default function Header({ onMenuClick }: HeaderProps) {
     <header className="sticky top-0 z-[50] w-full h-24 flex flex-col justify-center bg-[var(--app-surface)]/80 backdrop-blur-xl border-b border-[var(--app-border)] px-6 md:px-10 transition-all">
       <div className="flex items-center justify-between w-full max-w-[1600px] mx-auto gap-4">
 
-        {/* LEFT SIDE: Workspace Info & Mobile Hamburger */}
+       
         <div className="flex items-center gap-4 shrink-0">
-          {/* Hamburger icon for mobile view only (width < 640) */}
+         
           {width > 0 && width < 640 && (
             <Button 
               type="text"
@@ -114,7 +114,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
           </div>
         </div>
 
-        {/* RIGHT SIDE: Profile Card with Integrated Logout Button & Exit Admin */}
+        
         <div className="flex items-center gap-4 shrink-0 select-none">
           {isAdminMode && (
             <Button
@@ -136,7 +136,6 @@ export default function Header({ onMenuClick }: HeaderProps) {
               }}
               className="hover:scale-[1.02] active:scale-[0.98] transition-all select-none"
             >
-              {/* Exit Icon matching third image */}
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
               </svg>
