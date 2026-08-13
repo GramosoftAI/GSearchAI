@@ -187,6 +187,14 @@ async def lifespan(app: FastAPI):
 
 
 
+        # Asynchronously synchronize LiteLLM remote pricing registry
+        try:
+            from app.core.llm.pricing import reload_litellm_pricing_registry
+            asyncio.create_task(reload_litellm_pricing_registry())
+            logger.info("[STARTUP] LiteLLM dynamic pricing sync worker scheduled.")
+        except Exception as e:
+            logger.warning(f"[STARTUP] Could not schedule pricing sync: {e}")
+
         logger.info("=" * 80)
 
         logger.info("[STARTUP] Application startup COMPLETE")
@@ -224,7 +232,6 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down application...")
 
     try:
-
         await close_db()
 
         logger.info(" Database connections closed")

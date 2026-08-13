@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 from urllib.parse import urlparse
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .pipeline import RAGPipeline, RAGContext
@@ -24,6 +25,7 @@ from ..personalities.models import Personality
 from ...core.database import AsyncSessionLocal
 from ...core.embeddings import EmbeddingGenerator
 from ...core.llm.deepinfra_llm import DeepInfraLLMClient, LLMResponse
+from ...core.llm.pricing import get_model_pricing, calculate_token_cost
 from ...core.billing.utils import is_billing_enabled
 
 # Analytics Integration
@@ -103,8 +105,24 @@ class RAGService:
         chat_history: Optional[str] = None,
         skip_search: bool = False,
         memory_enabled: bool = True,
+        model_override: Optional[str] = None,
     ):
         logger.info(f" RAG Service: Streaming answer for agent={agent_id}, kb={kb_id}")
+
+        # Resolve active LLM model preference: explicit override > user's preference in DB > system default
+        active_model = model_override
+        if not active_model and user_id:
+            try:
+                from app.modules.auth.models import User
+                user_res = await self.db.execute(select(User.preferred_llm_model).where(User.id == UUID(str(user_id))))
+                user_pref = user_res.scalar_one_or_none()
+                if user_pref and user_pref.strip():
+                    active_model = user_pref.strip()
+            except Exception as e:
+                logger.debug(f"Could not fetch user model preference: {e}")
+
+        if not active_model:
+            active_model = self.llm_client.model_answer
 
         # 1. Validate KB ownership
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
@@ -635,6 +653,7 @@ FINAL RESPONSE FORMAT
             agent_persona=agent_persona,
             enable_thinking=False,
             on_usage_callback=handle_usage,
+            model=active_model,
         ):
             yield chunk
 
@@ -651,31 +670,38 @@ FINAL RESPONSE FORMAT
             else (ResponseStatus.SUCCESS if chat_history else ResponseStatus.UNANSWERED)
         )
 
+        model_used = token_usage.get("model_name") or active_model
         llm_input_tokens = token_usage.get("prompt_tokens", 0)
         llm_output_tokens = token_usage.get("completion_tokens", 0)
+        total_tokens = token_usage.get("total_tokens", llm_input_tokens + llm_output_tokens)
+        request_id_val = token_usage.get("request_id")
         embedding_tokens = getattr(context, "query_embedding_tokens", 0) or max(
             1, len(query) // 4
         )
 
-        llm_cost_usd = (llm_input_tokens / 1000000.0) * 0.10 + (
-            llm_output_tokens / 1000000.0
-        ) * 0.15
-        embedding_cost_usd = (embedding_tokens / 1000000.0) * 0.01
-        total_cost_usd = llm_cost_usd + embedding_cost_usd
+        inp_price, out_price = get_model_pricing(model_used)
+        llm_cost_usd = ((llm_input_tokens / 1_000_000.0) * inp_price) + (
+            (llm_output_tokens / 1_000_000.0) * out_price
+        )
+        embedding_cost_usd = (embedding_tokens / 1_000_000.0) * 0.010
+        total_cost_usd = round(llm_cost_usd + embedding_cost_usd, 6)
 
         try:
-            analytics_repo = AnalyticsRepository(self.db, UUID(self.tenant_id))
+            analytics_repo = AnalyticsRepository(self.db, UUID(str(self.tenant_id)))
             await analytics_repo.create_query_log(
                 {
                     "query": query,
                     "response_status": status,
                     "confidence_score": confidence,
                     "latency_ms": latency_ms,
-                    "session_id": UUID(session_id) if session_id else None,
-                    "user_id": UUID(user_id) if user_id else None,
+                    "session_id": UUID(str(session_id)) if session_id else None,
+                    "user_id": UUID(str(user_id)) if user_id else None,
+                    "request_id": request_id_val,
+                    "model_name": model_used,
                     "llm_input_tokens": llm_input_tokens,
                     "llm_output_tokens": llm_output_tokens,
                     "embedding_tokens": embedding_tokens,
+                    "total_tokens": total_tokens,
                     "llm_cost_usd": llm_cost_usd,
                     "embedding_cost_usd": embedding_cost_usd,
                     "total_cost_usd": total_cost_usd,
@@ -701,9 +727,25 @@ FINAL RESPONSE FORMAT
         max_depth: int = 2,
         reasoning_enabled: bool = True,
         memory_enabled: bool = True,
+        model_override: Optional[str] = None,
     ) -> dict:
         logger.info(f" RAG Service: Generating answer for agent={agent_id}, kb={kb_id}")
         start_time_total = datetime.now()
+
+        # Resolve active LLM model preference: explicit override > user's preference in DB > system default
+        active_model = model_override
+        if not active_model and user_id:
+            try:
+                from app.modules.auth.models import User
+                user_res = await self.db.execute(select(User.preferred_llm_model).where(User.id == UUID(str(user_id))))
+                user_pref = user_res.scalar_one_or_none()
+                if user_pref and user_pref.strip():
+                    active_model = user_pref.strip()
+            except Exception as e:
+                logger.debug(f"Could not fetch user model preference: {e}")
+
+        if not active_model:
+            active_model = self.llm_client.model_answer
 
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
         hybrid_merge_context = ""
@@ -1182,6 +1224,7 @@ RESPONSE FORMAT
             tenant_id=self.tenant_id,
             agent_id=agent_id,
             agent_persona=agent_persona,
+            model=active_model,
         )
         answer = llm_response.answer
 
@@ -1251,6 +1294,7 @@ RESPONSE FORMAT
                 "llm_tokens": llm_response.total_tokens,
                 "llm_input_tokens": llm_response.prompt_tokens,
                 "llm_output_tokens": llm_response.completion_tokens,
+                "llm_model": getattr(llm_response, "model_name", None) or active_model,
                 "llm_source": llm_response.source,
                 "llm_prompt_version": llm_response.prompt_version,
                 "search_strategy": context.search_type,
@@ -1264,13 +1308,26 @@ RESPONSE FORMAT
             ),
         }
 
+        model_used = getattr(llm_response, "model_name", None) or active_model
+        llm_input_tokens = llm_response.prompt_tokens
+        llm_output_tokens = llm_response.completion_tokens
+        total_tokens = llm_response.total_tokens or (llm_input_tokens + llm_output_tokens)
+        embedding_tokens = getattr(context, "query_embedding_tokens", 0) or max(1, len(query) // 4)
+
+        inp_price, out_price = get_model_pricing(model_used)
+        llm_cost_usd = ((llm_input_tokens / 1_000_000.0) * inp_price) + (
+            (llm_output_tokens / 1_000_000.0) * out_price
+        )
+        embedding_cost_usd = (embedding_tokens / 1_000_000.0) * 0.010
+        total_cost_usd = round(llm_cost_usd + embedding_cost_usd, 6)
+
         if is_billing_enabled():
             response["stats"]["llm_cost_estimate"] = round(
-                llm_response.cost_estimate, 6
+                llm_response.cost_estimate or total_cost_usd, 6
             )
 
         try:
-            analytics_repo = AnalyticsRepository(self.db, UUID(self.tenant_id))
+            analytics_repo = AnalyticsRepository(self.db, UUID(str(self.tenant_id)))
             await analytics_repo.create_query_log(
                 {
                     "query": query,
@@ -1282,8 +1339,19 @@ RESPONSE FORMAT
                     "confidence_score": confidence,
                     "latency_ms": (datetime.now() - start_time_total).total_seconds()
                     * 1000,
+                    "user_id": UUID(str(user_id)) if user_id else None,
+                    "request_id": getattr(llm_response, "request_id", None),
+                    "model_name": model_used,
+                    "llm_input_tokens": llm_input_tokens,
+                    "llm_output_tokens": llm_output_tokens,
+                    "embedding_tokens": embedding_tokens,
+                    "total_tokens": total_tokens,
+                    "llm_cost_usd": llm_cost_usd,
+                    "embedding_cost_usd": embedding_cost_usd,
+                    "total_cost_usd": total_cost_usd,
                 }
             )
+            await self.db.commit()
         except Exception as ae:
             logger.warning(f"Failed to log query to analytics: {ae}")
 
@@ -1433,6 +1501,7 @@ RESPONSE FORMAT
         tenant_id: str,
         agent_id: str,
         agent_persona: Optional[dict] = None,
+        model: Optional[str] = None,
     ) -> LLMResponse:
         try:
             llm_response = await self.llm_client.generate_answer(
@@ -1442,6 +1511,7 @@ RESPONSE FORMAT
                 agent_id=agent_id,
                 agent_persona=agent_persona,
                 enable_thinking=False,
+                model=model,
             )
             return llm_response
         except Exception as e:

@@ -200,3 +200,22 @@ QUERY:
                 confidence=0.0,
                 reasoning=f"Failed to parse: {e}"
             )
+            is_tabular = bool(data.get("is_tabular", False))
+
+            return AnalysisResult(
+                intent=intent,
+                metadata=metadata,
+                is_tabular=is_tabular,
+                confidence=float(data.get("confidence", 0.5)),
+                reasoning=data.get("reasoning", "LLM determined")
+            )
+            
+        except Exception as e:
+            logger.error(f"QueryAnalyzer failed: {e}")
+            return AnalysisResult(
+                intent=QueryIntent.UNKNOWN,
+                metadata=QueryMetadata(keywords=[]),
+                is_tabular=False,
+                confidence=0.0,
+                reasoning=f"Failed to parse: {e}"
+            )

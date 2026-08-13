@@ -92,6 +92,9 @@ class AnalyticsQueryLog(Base):
         nullable=True,
     )
 
+    request_id = Column(String(255), nullable=True, index=True)
+    model_name = Column(String(255), nullable=True, index=True)
+
     query = Column(Text, nullable=False)
     response_status = Column(Enum(ResponseStatus), default=ResponseStatus.SUCCESS, nullable=False)
     confidence_score = Column(Float, default=0.0, nullable=False)
@@ -100,6 +103,7 @@ class AnalyticsQueryLog(Base):
     llm_input_tokens = Column(Integer, default=0, nullable=False)
     llm_output_tokens = Column(Integer, default=0, nullable=False)
     embedding_tokens = Column(Integer, default=0, nullable=False)
+    total_tokens = Column(Integer, default=0, nullable=False)
     llm_cost_usd = Column(Float, default=0.0, nullable=False)
     embedding_cost_usd = Column(Float, default=0.0, nullable=False)
     total_cost_usd = Column(Float, default=0.0, nullable=False)
@@ -111,6 +115,12 @@ class AnalyticsQueryLog(Base):
     __table_args__ = (
         Index("ix_query_logs_tenant_id", "tenant_id"),
         Index("ix_query_logs_session_id", "session_id"),
+        Index("ix_query_logs_user_id", "user_id"),
+        Index("ix_query_logs_model_name", "model_name"),
+        Index("ix_query_logs_created_at", "created_at"),
+        Index("ix_query_logs_tenant_user", "tenant_id", "user_id"),
+        Index("ix_query_logs_tenant_model", "tenant_id", "model_name"),
+        Index("ix_query_logs_tenant_created", "tenant_id", "created_at"),
     )
 
 

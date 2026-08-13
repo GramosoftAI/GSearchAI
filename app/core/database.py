@@ -339,10 +339,13 @@ async def init_rls_policies():
         "processing_jobs",
         "document_table_rows",
         "analytics_query_log",
+        "analytics_query_logs",
+        "analytics_summaries",
         "document_entities",
         "document_sections",
         "document_ingestion_runs",
         "widget_customizations",
+        "password_reset_tokens",
     ]
 
 
@@ -594,11 +597,14 @@ async def verify_rls_enabled():
         "processing_jobs",
         "document_table_rows",
         "analytics_query_log",
+        "analytics_query_logs",
+        "analytics_summaries",
         "document_entities",
         "document_sections",
         "document_ingestion_runs",
         "widget_customizations",
-     ]
+        "password_reset_tokens",
+    ]
 
 
 
@@ -720,7 +726,7 @@ async def init_db():
 
         from ..models.base import Base
 
-        from ..modules.auth.models import User, Tenant, APIKey, TokenBlacklist
+        from ..modules.auth.models import User, Tenant, APIKey, TokenBlacklist, PasswordResetToken, RegistrationOTP
 
         from ..modules.agents.models import Agent
 
@@ -733,6 +739,7 @@ async def init_db():
         from ..modules.connectors.google.models import GmailMessage, GmailSyncState
         from ..modules.jobs.models import ProcessingJob
         from ..modules.Embed.models import WidgetCustomization
+        from ..modules.analytics.models import AnalyticsSummary, AnalyticsQueryLog as ChatAnalyticsQueryLog, AppErrorLog
         try:
             from ..memory.app.schema.database import EpisodicMemory, UserPreference, init_db as init_memory_db
             await init_memory_db()
@@ -856,6 +863,13 @@ async def init_db():
             await conn.execute(text("ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_kbs_file_hash ON knowledge_bases(file_hash)"))
 
+            # Auto-migrate users columns
+            user_cols = [
+                ("preferred_llm_model", "VARCHAR(255)"),
+            ]
+            for col_n, col_t in user_cols:
+                await conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col_n} {col_t}"))
+
             # Auto-migrate schema columns for document_ingestion_runs and analytics_query_logs
             dir_cols = [
                 ("chunk_count", "INTEGER DEFAULT 0 NOT NULL"),
@@ -898,7 +912,11 @@ async def init_db():
             ]
             for col_n, col_t in dir_cols:
                 await conn.execute(text(f"ALTER TABLE document_ingestion_runs ADD COLUMN IF NOT EXISTS {col_n} {col_t}"))
+
             aql_cols = [
+                ("request_id", "VARCHAR(255)"),
+                ("model_name", "VARCHAR(255)"),
+                ("total_tokens", "INTEGER DEFAULT 0 NOT NULL"),
                 ("llm_input_tokens", "INTEGER DEFAULT 0 NOT NULL"),
                 ("llm_output_tokens", "INTEGER DEFAULT 0 NOT NULL"),
                 ("embedding_tokens", "INTEGER DEFAULT 0 NOT NULL"),

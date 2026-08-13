@@ -513,12 +513,16 @@ class KnowledgeBaseService:
         import time
         import json
         
+        from app.core.config import get_settings
+        _settings = get_settings()
+
         audit_run = DocumentIngestionRun(
             tenant_id=self.tenant_id,
             document_id=uuid.UUID(kb_id),
             document_category=document_category,
             started_at=datetime.utcnow(),
             status="IN_PROGRESS",
+            model_name=_settings.model_extraction,
             chunk_count=0,
             entity_count=0,
             triplet_count=0,
@@ -853,7 +857,11 @@ class KnowledgeBaseService:
             audit_run.kg_extraction_calls = routing_stats["kg_calls"]
             
             audit_run.llm_calls = len(chunks) + retry_count - routing_stats["fluff"] - routing_stats["cache_hits"]
-            audit_run.model_name = first_meta.get("model_name", "unknown")
+            ext_model = first_meta.get("model_name")
+            if not ext_model or ext_model in ("unknown", "deepseek-v3"):
+                from app.core.config import get_settings
+                ext_model = get_settings().model_extraction
+            audit_run.model_name = ext_model
             audit_run.schema_version = first_meta.get("schema_version", "unknown")
             audit_run.extractor_version = "legacy_ensemble" if first_meta.get("fallback_used") else "unified_extractor_v1"
             audit_run.llm_input_tokens = prompt_tokens

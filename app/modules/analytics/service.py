@@ -14,10 +14,11 @@ from .schemas import (
     OperationalTrendResponse,
     CostGovernanceResponse,
     CapacityGovernanceResponse,
-    CapacityProjection
+    CapacityProjection,
+    TokenConsumptionResponse,
 )
 from .models import AnalyticsSummary, AnalyticsQueryLog
-from app.core.llm.deepinfra_llm import PRICE_PER_1M_INPUT_TOKENS, PRICE_PER_1M_OUTPUT_TOKENS
+from app.core.llm.pricing import calculate_token_cost, DEFAULT_MODEL, get_model_pricing
 
 class AnalyticsService:
     def __init__(self, repository: AnalyticsRepository):
@@ -120,9 +121,7 @@ class AnalyticsService:
 
         data = await self.repo.get_cost_governance_data(user_id, parsed_start, parsed_end)
         
-        # DeepInfra LLM pricing constants
-        inp_price_per_m = PRICE_PER_1M_INPUT_TOKENS
-        out_price_per_m = PRICE_PER_1M_OUTPUT_TOKENS
+        inp_price_per_m, out_price_per_m = get_model_pricing(None)
         
         total_inp = sum(d["input_tokens"] for d in data["daily_tokens"])
         total_out = sum(d["output_tokens"] for d in data["daily_tokens"])
@@ -220,3 +219,45 @@ class AnalyticsService:
                 documents_per_day=round(avg_docs_per_day, 2)
             )
         )
+
+    # ================= TOKEN CONSUMPTION API =================
+
+    async def get_token_consumption(
+        self,
+        user_id: Optional[UUID] = None,
+        model_name: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        session_id: Optional[UUID] = None,
+        request_id: Optional[str] = None,
+        include_records: bool = False,
+        page: int = 1,
+        limit: int = 50,
+    ) -> TokenConsumptionResponse:
+        from datetime import datetime as dt_parser
+        parsed_start = None
+        parsed_end = None
+        if start_date:
+            try:
+                parsed_start = dt_parser.fromisoformat(start_date.replace("Z", "+00:00"))
+            except ValueError:
+                parsed_start = dt_parser.strptime(start_date, "%Y-%m-%d")
+        if end_date:
+            try:
+                parsed_end = dt_parser.fromisoformat(end_date.replace("Z", "+00:00"))
+            except ValueError:
+                parsed_end = dt_parser.strptime(end_date, "%Y-%m-%d")
+
+        data = await self.repo.get_token_consumption(
+            user_id=user_id,
+            model_name=model_name,
+            start_date=parsed_start,
+            end_date=parsed_end,
+            session_id=session_id,
+            request_id=request_id,
+            include_records=include_records,
+            page=page,
+            limit=limit,
+        )
+
+        return TokenConsumptionResponse(**data)

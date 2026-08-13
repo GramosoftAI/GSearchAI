@@ -72,9 +72,11 @@ def strip_think_tags(text: str) -> str:
 # Prompt versioning (for A/B testing and rollout tracking)
 PROMPT_VERSION = "v1"
 
-# DeepInfra pricing (as of 2026)
-PRICE_PER_1M_INPUT_TOKENS = 0.10
-PRICE_PER_1M_OUTPUT_TOKENS = 0.15
+# Unified LiteLLM pricing defaults
+from app.core.llm.pricing import get_model_pricing
+_default_inp_p, _default_out_p = get_model_pricing(None)
+PRICE_PER_1M_INPUT_TOKENS = _default_inp_p
+PRICE_PER_1M_OUTPUT_TOKENS = _default_out_p
 
 
 
@@ -163,6 +165,10 @@ class LLMResponse:
     tenant_id: Optional[str] = None
 
     agent_id: Optional[str] = None
+
+    model_name: Optional[str] = None
+
+    request_id: Optional[str] = None
 
 
 
@@ -439,7 +445,7 @@ class DeepInfraLLMClient:
         
         target_model = model or self.deepinfra_model
         payload = {
-            "model": self.model_answer,
+            "model": target_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
@@ -477,6 +483,7 @@ class DeepInfraLLMClient:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         enable_thinking: bool = False,
+        model: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Similar to generate() but returns token usage alongside content.
@@ -486,8 +493,9 @@ class DeepInfraLLMClient:
             "Content-Type": "application/json",
         }
         
+        target_model = model or self.model_extraction
         payload = {
-            "model": self.model_extraction,
+            "model": target_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
@@ -513,7 +521,8 @@ class DeepInfraLLMClient:
                 return {
                     "content": content,
                     "prompt_tokens": usage.get("prompt_tokens", 0),
-                    "completion_tokens": usage.get("completion_tokens", 0)
+                    "completion_tokens": usage.get("completion_tokens", 0),
+                    "model_name": target_model,
                 }
             except Exception as e:
                 last_error = e
@@ -535,6 +544,7 @@ class DeepInfraLLMClient:
         agent_persona: Optional[dict] = None,
         enable_thinking: Optional[bool] = None,
         on_usage_callback: Optional[Callable[[dict], None]] = None,
+        model: Optional[str] = None,
     ):
         """
         Stream structured answer from query + context.
@@ -584,8 +594,12 @@ class DeepInfraLLMClient:
                 "Please try a related query or provide additional context.\""
             )
 
-        models_to_try = [self.model_answer]
-        if self.model_answer_fallback and self.model_answer_fallback != self.model_answer:
+        models_to_try = []
+        if model and model.strip():
+            models_to_try.append(model.strip())
+        if self.model_answer not in models_to_try:
+            models_to_try.append(self.model_answer)
+        if self.model_answer_fallback and self.model_answer_fallback not in models_to_try:
             models_to_try.append(self.model_answer_fallback)
 
         client = await self.get_client()
@@ -646,8 +660,10 @@ class DeepInfraLLMClient:
                                     data = json.loads(data_str)
 
                                     if "usage" in data and data["usage"] is not None:
+                                        usage_data = dict(data["usage"])
+                                        usage_data["model_name"] = target_model
                                         if on_usage_callback:
-                                            on_usage_callback(data["usage"])
+                                            on_usage_callback(usage_data)
                                         continue
 
                                     if not data.get("choices"):
@@ -742,425 +758,174 @@ class DeepInfraLLMClient:
 
         yield "Error: All answer generation models (primary & fallback) failed to respond."
 
-
-
     async def generate_answer(
-
         self,
-
         query: str,
-
         context: str,
-
         tenant_id: Optional[str] = None,
-
         agent_id: Optional[str] = None,
-
         agent_persona: Optional[dict] = None,
-
         enable_thinking: Optional[bool] = None,
-
+        model: Optional[str] = None,
     ) -> LLMResponse:
-
         """
-
         Generate structured answer from query + context.
 
-
-
         FLOW:
-
         1. Validate inputs (not empty)
-
         2. Build structured prompt
-
         3. Acquire rate limit semaphore (prevent throttling)
-
         4. Call API with retries
-
         5. Validate response & token usage
-
         6. Track cost per tenant/agent (for multi-tenant billing)
-
         7. Return LLMResponse with metrics (tokens, cost, version)
-
-
-
-        RETRY LOGIC:
-
-        - Attempt 1: Initial request
-
-        - Attempt 2: Retry on failure (exponential backoff)
-
-        - Attempt 3: Final retry
-
-        - If all fail: Raise exception (caller handles fallback)
-
-
-
-        TIMEOUT:
-
-        - 15 seconds max per request
-
-        - Prevents hanging on slow API
-
-
-
-        FALLBACK:
-
-        - If generation fails, caller uses template-based answer
-
-        - Graceful degradation (never fail without answer)
-
-
-
-        Args:
-
-            query: User query string
-
-            context: Formatted context from RAG retrieval
-
-            tenant_id: Tenant UUID (for per-tenant cost tracking)
-
-            agent_id: Agent UUID (for per-agent usage analytics)
-
-
-
-        Returns:
-
-            LLMResponse: Response with:
-
-            - answer (str): Generated answer
-
-            - prompt_tokens (int): Input tokens
-
-            - completion_tokens (int): Output tokens
-
-            - cost_estimate (float): USD cost
-
-            - prompt_version (str): Prompt version (for A/B testing)
-
-            - source (str): "DeepInfra" (API) or "Template" (fallback)
-
-
-
-        Raises:
-
-            ValueError: If inputs are invalid
-
-            httpx.HTTPError: If API request fails after retries
-
-            Exception: Any unexpected error
-
-
-
-        Examples:
-
-            >>> client = DeepInfraLLMClient()
-
-            >>> response = await client.generate_answer(
-
-            ...     query="What is machine learning?",
-
-            ...     context="Machine learning is a field of..."
-
-            ... )
-
-            >>> print(f"{response.answer} (Cost: ${response.cost_estimate:.4f})")
-
         """
-
         global _llm_calls, _total_prompt_tokens, _total_completion_tokens, _total_cost_estimate
 
-
-
         # Validate inputs
-
         if not query or not query.strip():
-
             raise ValueError("Query cannot be empty")
-
         if not context or not context.strip():
-
             raise ValueError("Context cannot be empty")
 
-
-
         _llm_calls += 1
-
+        target_model = model.strip() if (model and model.strip()) else self.model_answer
         logger.debug(
-
-            f"Generating answer for query: {query[:60]}... (prompt_version={PROMPT_VERSION})"
-
+            f"Generating answer using '{target_model}' for query: {query[:60]}... (prompt_version={PROMPT_VERSION})"
         )
 
-
-
         # Build structured prompt (improves consistency + quality)
-
         prompt = self._build_prompt(query, context)
-
         logger.debug(f"Prompt built ({len(prompt)} chars)")
 
-
-
         # Estimate prompt tokens (rough: ~4 chars per token)
-
         estimated_prompt_tokens = max(len(prompt) // 4, 1)
 
-
-
         # Prepare headers
-
         headers = {
             "Authorization": f"Bearer {self.deepinfra_api_key}",
             "Content-Type": "application/json",
         }
 
-        
-
         # Build System Persona
-
         system_content = "You are a helpful knowledge base assistant."
-
         if agent_persona:
-
             name = agent_persona.get("name", "Assistant")
-
             personality = agent_persona.get("personality", "Friendly")
-
             prompt_custom = agent_persona.get("system_prompt", "")
-
             
-
             system_content = f"You are {name}. Your tone and personality is {personality}. "
-
             if prompt_custom:
-
                 system_content += f"\n\nInstructions: {prompt_custom}"
-
             
-
             system_content += (
-
                 "\n\nCRITICAL INSTRUCTION: You must strictly respond ONLY using the provided knowledge base content. "
-
                 "Do not rely on your own pre-trained knowledge. Always include precise numeric values, years, percentages, "
-
                 "and symbols (like GPA scores, dates, or currency) explicitly mentioned in the context. "
-
                 "If the answer is not contained within the provided context, you MUST respond exactly with: "
-
                 "\"Im sorry, but the requested information is not available within my current knowledge base. "
-
                 "Please try a related query or provide additional context.\""
-
             )
-
         else:
-
             system_content = (
-
                 "You are a helpful knowledge base assistant. You must strictly respond ONLY using the provided context. "
-
                 "Preserve all numeric values, years, and specific details like GPA or percentages. "
-
                 "If the information is not available in the context, respond exactly with: "
-
                 "\"Im sorry, but the requested information is not available within my current knowledge base. "
-
                 "Please try a related query or provide additional context.\""
-
             )
-
-
 
         payload = {
-
-            "model": self.model_answer,
-
+            "model": target_model,
             "messages": [
-
                 {"role": "system", "content": system_content},
-
                 {"role": "user", "content": prompt},
-
             ],
-
             "temperature": self.temperature,
-
             "max_tokens": self.max_tokens_answer,
-
+            "enable_thinking": False,
+            "reasoning_effort": "none",
         }
-
-        # Force thinking to false to save tokens for DeepInfra answer generation
-        payload["enable_thinking"] = False
-        payload["reasoning_effort"] = "none"
 
         # Rate limit guard (prevent API throttling)
         async with _llm_semaphore:
             last_error = None
 
             for attempt in range(self.max_retries):
-
                 try:
-
                     logger.debug(
-
-                        f"API request attempt {attempt + 1}/{self.max_retries}"
-
+                        f"API request attempt {attempt + 1}/{self.max_retries} for model {target_model}"
                     )
-
-
 
                     async with httpx.AsyncClient(timeout=self.timeout) as client:
                         response = await client.post(
                             self.deepinfra_base_url, headers=headers, json=payload
                         )
-
-
-
-                        # Check for HTTP errors
-
                         response.raise_for_status()
-
-
-
-                        # Parse response
-
                         data = response.json()
 
-
-
-                        # Extract answer from response
-
-                        # DeepInfra returns: {"choices": [{"message": {"content": "..."}}]}
-
                         if "choices" not in data or len(data["choices"]) == 0:
-
                             raise ValueError("Invalid API response: missing choices")
 
-
-
                         answer = data["choices"][0].get("message", {}).get("content")
-
                         if not answer:
-
                             raise ValueError("Invalid API response: missing content")
 
-
-
-                        # GUARD: Max answer length (prevent very long responses  latency + cost increase)
-
                         if len(answer) > self.max_answer_length:
-
                             logger.warning(
-
                                 f"  Answer truncated ({len(answer)} > {self.max_answer_length} chars)"
-
                             )
-
                             answer = answer[: self.max_answer_length] + "..."
 
-
-
                         answer = answer.strip()
-                        # Strip <think>...</think> blocks (Qwen thinking mode leak guard)
                         import re as _re
                         answer = _re.sub(r'<think>.*?</think>', '', answer, flags=_re.DOTALL).strip()
                         if '<think>' in answer:
                             answer = answer[:answer.index('<think>')].strip()
 
-
-
-                        # Extract token usage from response (if available)
-
+                        # Extract token usage from response
                         usage = data.get("usage", {})
-
                         prompt_tokens = usage.get(
-
                             "prompt_tokens", estimated_prompt_tokens
-
                         )
-
                         completion_tokens = usage.get(
-
                             "completion_tokens", len(answer) // 4
-
                         )
-
                         total_tokens = prompt_tokens + completion_tokens
 
-
-
-                        # Calculate cost estimate
-
-                        cost_estimate = (
-
-                            prompt_tokens / 1_000_000
-
-                        ) * PRICE_PER_1M_INPUT_TOKENS + (
-
-                            completion_tokens / 1_000_000
-
-                        ) * PRICE_PER_1M_OUTPUT_TOKENS
-
-
-
-                        # Track global metrics
-
-                        _total_prompt_tokens += prompt_tokens
-
-                        _total_completion_tokens += completion_tokens
-
-                        _total_cost_estimate += cost_estimate
-
-
-
-                        # Track per-tenant costs and per-agent usage (if billing enabled)
-
-                        self._track_billing(
-
-                            tenant_id, agent_id, cost_estimate, total_tokens
-
+                        # Calculate cost estimate with model pricing
+                        from app.core.llm.pricing import calculate_token_cost
+                        cost_estimate = calculate_token_cost(
+                            model_name=target_model,
+                            input_tokens=prompt_tokens,
+                            output_tokens=completion_tokens,
                         )
 
+                        # Track global metrics
+                        _total_prompt_tokens += prompt_tokens
+                        _total_completion_tokens += completion_tokens
+                        _total_cost_estimate += cost_estimate
 
-
-                        logger.debug(
-
-                            f" Answer generated ({len(answer)} chars, {total_tokens} tokens, ${cost_estimate:.6f})"
-
+                        # Track per-tenant costs and per-agent usage
+                        self._track_billing(
+                            tenant_id, agent_id, cost_estimate, total_tokens
                         )
 
                         logger.info(
-
-                            f"Answer source: DeepInfra (call #{_llm_calls}, tokens={total_tokens}, cost=${cost_estimate:.6f})"
-
+                            f"Answer source: DeepInfra (model={target_model}, tokens={total_tokens}, cost=${cost_estimate:.6f})"
                         )
 
-
-
                         return LLMResponse(
-
                             answer=answer,
-
                             prompt_tokens=prompt_tokens,
-
                             completion_tokens=completion_tokens,
-
                             total_tokens=total_tokens,
-
                             cost_estimate=cost_estimate,
-
                             prompt_version=PROMPT_VERSION,
-
                             source="DeepInfra",
-
                             tenant_id=tenant_id,
-
                             agent_id=agent_id,
-
+                            model_name=target_model,
                         )
 
 
