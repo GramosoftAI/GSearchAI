@@ -788,7 +788,13 @@ async def send_widget_message(
                         user_message=message_text,
                         assistant_message=result["answer"]
                     )
-                    
+
+            from ..rag.escalation import detect_escalation_intent
+            result["escalation_detected"] = detect_escalation_intent(
+                query=message_text,
+                sources=result.get("sources"),
+                response_text=result.get("answer")
+            )
             return format_success(result)
             
         except HTTPException:

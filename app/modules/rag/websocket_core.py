@@ -6,6 +6,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .schemas import UnifiedChatRequest
 from .events import LoopEvent
 from .adapters import ChannelAdapter
+from .escalation import detect_escalation_intent
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ def resolve_memory_api_base_url() -> str:
         return env_host.rstrip("/")
     return "http://127.0.0.1:8001"
 
-async def _persist_partial(db, chat_service, session_id, user_id, query, response_buffer, reason: str) -> None:
+async def _persist_partial(db, chat_service, session_id, user_id, query, response_buffer, reason: str, channel: str = "dashboard") -> None:
     try:
         await chat_service.chat_repo.add_message(
             session_id=session_id,
@@ -28,6 +29,7 @@ async def _persist_partial(db, chat_service, session_id, user_id, query, respons
                 "sources": [],
                 "status": "partial_failure",
                 "failure_reason": reason,
+                "channel": channel,
             },
         )
         await db.commit()
@@ -81,6 +83,11 @@ async def run_unified_rag_websocket_loop(
             await adapter.send_error(websocket, str(e))
             continue
 
+        channel = "embed" if adapter.__class__.__name__ == "EmbedAdapter" else "dashboard"
+        logger.info(
+            f"📥 [{channel.upper()}_CHAT] agent_id={agent_id} tenant_id={tenant_id} session_id={active_session_id or request.session_id} | query: {request.query!r}"
+        )
+
         if not active_session_id and request.session_id:
             active_session_id = request.session_id
         session = None
@@ -98,7 +105,7 @@ async def run_unified_rag_websocket_loop(
         # but widget js might need it. We will handle session initialization outside this loop if required.
 
         user_msg = await chat_service.chat_repo.add_message(
-            session_id=active_session_id, role="user", content=request.query
+            session_id=active_session_id, role="user", content=request.query, metadata={"channel": channel}
         )
         await db.commit()
 
@@ -123,12 +130,13 @@ async def run_unified_rag_websocket_loop(
                 "Hi! I'm here to help. What's on your mind?"
             ]
             ack = random.choice(greetings)
-            await chat_service.chat_repo.add_message(
-                session_id=active_session_id, role="assistant", content=ack, metadata={"is_greeting": True}
+            assistant_msg = await chat_service.chat_repo.add_message(
+                session_id=active_session_id, role="assistant", content=ack, metadata={"is_greeting": True, "escalation_detected": False, "channel": channel}
             )
             await db.commit()
-            await adapter.send(websocket, LoopEvent(type="token", text=ack))
-            await adapter.send(websocket, LoopEvent(type="done"))
+            msg_id = str(assistant_msg.id) if assistant_msg else None
+            await adapter.send(websocket, LoopEvent(type="token", text=ack, message_id=msg_id))
+            await adapter.send(websocket, LoopEvent(type="done", escalation_detected=False, message_id=msg_id))
             continue
 
         try:
@@ -170,18 +178,19 @@ async def run_unified_rag_websocket_loop(
                                 "user_id": user_id,
                                 "tenant_id": tenant_id,
                                 "is_feedback_only": True,
-                                "metadata": {"router_category": router_category},
+                                "metadata": {"router_category": router_category, "channel": channel},
                             },
                             timeout=3.0,
                         )
                     except Exception:
                         pass
-                await chat_service.chat_repo.add_message(
-                    session_id=active_session_id, role="assistant", content=ack, metadata={"feedback_turn": True}
+                assistant_msg = await chat_service.chat_repo.add_message(
+                    session_id=active_session_id, role="assistant", content=ack, metadata={"feedback_turn": True, "escalation_detected": False, "channel": channel}
                 )
                 await db.commit()
-                await adapter.send(websocket, LoopEvent(type="token", text=ack))
-                await adapter.send(websocket, LoopEvent(type="done"))
+                msg_id = str(assistant_msg.id) if assistant_msg else None
+                await adapter.send(websocket, LoopEvent(type="token", text=ack, message_id=msg_id))
+                await adapter.send(websocket, LoopEvent(type="done", escalation_detected=False, message_id=msg_id))
                 continue
                 
             if is_history_query:
@@ -195,13 +204,19 @@ async def run_unified_rag_websocket_loop(
                 )
                 try:
                     full_response_text = await rag_service.llm_client.generate_cloud(prompt=history_prompt)
-                    await adapter.send(websocket, LoopEvent(type="token", text=full_response_text))
-                    await adapter.send(websocket, LoopEvent(type="done"))
-                    await chat_service.chat_repo.add_message(
+                    is_escalated = detect_escalation_intent(
+                        query=request.query,
+                        sources=[],
+                        response_text=full_response_text
+                    )
+                    assistant_msg = await chat_service.chat_repo.add_message(
                         session_id=active_session_id, role="assistant", content=full_response_text,
-                        metadata={"memory_used": True, "direct_history_recall": True}
+                        metadata={"memory_used": True, "direct_history_recall": True, "escalation_detected": is_escalated, "channel": channel}
                     )
                     await db.commit()
+                    msg_id = str(assistant_msg.id) if assistant_msg else None
+                    await adapter.send(websocket, LoopEvent(type="token", text=full_response_text, message_id=msg_id))
+                    await adapter.send(websocket, LoopEvent(type="done", escalation_detected=is_escalated, message_id=msg_id))
                     continue
                 except Exception as e:
                     raise e
@@ -256,19 +271,31 @@ async def run_unified_rag_websocket_loop(
             full_response = "".join(response_buffer)
 
             if has_error:
-                await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, "rag_error")
+                await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, "rag_error", channel=channel)
                 break
 
-            # 5. DB Persistence
-            await chat_service.chat_repo.add_message(
+            # 5. Evaluate Human Support Escalation
+            is_escalated = detect_escalation_intent(
+                query=request.query,
+                sources=collected_sources,
+                response_text=full_response
+            )
+
+            # 6. DB Persistence
+            assistant_msg = await chat_service.chat_repo.add_message(
                 session_id=active_session_id,
                 role="assistant",
                 content=full_response,
-                metadata={"sources": collected_sources, "status": "complete"},
+                metadata={
+                    "sources": collected_sources,
+                    "status": "complete",
+                    "escalation_detected": is_escalated,
+                    "channel": channel,
+                },
             )
             await db.commit()
 
-            # 6. Memory API Persistence
+            # 7. Memory API Persistence
             if enable_memory:
                 async with httpx.AsyncClient() as client:
                     try:
@@ -281,14 +308,14 @@ async def run_unified_rag_websocket_loop(
                                 "agent_id": agent_id,
                                 "user_id": user_id,
                                 "tenant_id": tenant_id,
-                                "metadata": {"router_category": router_category},
+                                "metadata": {"router_category": router_category, "channel": channel},
                             },
                             timeout=3.0,
                         )
                     except Exception as e:
                         logger.warning(f"memory-api save-turn failed: {e}")
 
-            # 7. Knowledge Flywheel Background Sync
+            # 8. Knowledge Flywheel Background Sync
             if enable_memory and collected_sources:
                 top_chunk_id = collected_sources[0].get("chunk_id") if isinstance(collected_sources[0], dict) else getattr(collected_sources[0], "chunk_id", None)
                 kb_id = kb_ids[0] if kb_ids else None
@@ -305,13 +332,18 @@ async def run_unified_rag_websocket_loop(
                         assistant_message=full_response
                     ))
 
-            await adapter.send(websocket, LoopEvent(type="done"))
+            msg_id = str(assistant_msg.id) if assistant_msg else None
+            await adapter.send(websocket, LoopEvent(
+                type="done",
+                escalation_detected=is_escalated,
+                message_id=msg_id
+            ))
 
         except WebSocketDisconnect:
-            await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, "disconnect")
+            await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, "disconnect", channel=channel)
             return
 
         except Exception as e:
-            await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, str(e))
+            await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, str(e), channel=channel)
             await adapter.send_error(websocket, "internal_error")
             logger.exception("unified_rag_loop_failure", extra={"tenant_id": tenant_id, "agent_id": agent_id})

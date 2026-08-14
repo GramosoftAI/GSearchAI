@@ -70,7 +70,7 @@ async def rag_websocket(
     """
     WebSocket endpoint for real-time RAG chat with standalone memory API integration.
     """
-
+    print("----------------------------------rag websocket called",token,"----------------------------------------------------------------------")
     # 1. ACCEPT HANDSHAKE IMMEDIATELY
     await websocket.accept()
 

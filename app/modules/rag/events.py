@@ -7,3 +7,6 @@ class LoopEvent(BaseModel):
     sources: Optional[List] = None
     triplets: Optional[List] = None
     error_detail: Optional[str] = None
+    escalation_detected: Optional[bool] = None
+    message_id: Optional[str] = None
+

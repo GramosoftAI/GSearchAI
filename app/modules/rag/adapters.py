@@ -11,23 +11,27 @@ class ChannelAdapter(Protocol):
 
 class DashboardAdapter:
     async def receive(self, websocket: WebSocket) -> dict:
-        # Dashboard sends plain JSON queries over the socket
-        # Note: Previous dashboard sent JSON string like {"query": "..."} 
-        # The user's snippet said "receive_text()" -> {"query": text}, but if we check the original dashboard code, it receives JSON text and parses it.
-        # I will parse the JSON.
         text = await websocket.receive_text()
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            return {"query": text} # Fallback if they literally send text
+            return {"query": text}
 
     async def send(self, websocket: WebSocket, event: LoopEvent) -> None:
         if event.type == "token":
             await websocket.send_text(event.text)
         elif event.type == "sources":
-            await websocket.send_text(json.dumps({"type": "metadata", "sources": event.sources}))
+            payload = {"type": "metadata", "sources": event.sources}
+            if event.escalation_detected is not None:
+                payload["escalation_detected"] = event.escalation_detected
+            await websocket.send_text(json.dumps(payload))
         elif event.type == "done":
-            await websocket.send_text(json.dumps({"type": "done"}))
+            payload = {"type": "done"}
+            if event.escalation_detected is not None:
+                payload["escalation_detected"] = event.escalation_detected
+            if event.message_id:
+                payload["message_id"] = event.message_id
+            await websocket.send_text(json.dumps(payload))
 
     async def send_error(self, websocket: WebSocket, message: str) -> None:
         await websocket.send_text(json.dumps({"type": "error", "message": message}))
@@ -39,11 +43,24 @@ class EmbedAdapter:
 
     async def send(self, websocket: WebSocket, event: LoopEvent) -> None:
         if event.type == "token":
-            await websocket.send_json({"type": "content", "delta": event.text})
+            payload = {"type": "content", "delta": event.text}
+            if event.escalation_detected is not None:
+                payload["escalation_detected"] = event.escalation_detected
+            if event.message_id:
+                payload["message_id"] = event.message_id
+            await websocket.send_json(payload)
         elif event.type == "sources":
-            await websocket.send_json({"type": "sources", "sources": event.sources})
+            payload = {"type": "sources", "sources": event.sources}
+            if event.escalation_detected is not None:
+                payload["escalation_detected"] = event.escalation_detected
+            await websocket.send_json(payload)
         elif event.type == "done":
-            await websocket.send_json({"type": "done"})
+            payload = {"type": "done"}
+            if event.escalation_detected is not None:
+                payload["escalation_detected"] = event.escalation_detected
+            if event.message_id:
+                payload["message_id"] = event.message_id
+            await websocket.send_json(payload)
 
     async def send_error(self, websocket: WebSocket, message: str) -> None:
         await websocket.send_json({"type": "error", "delta": message})
