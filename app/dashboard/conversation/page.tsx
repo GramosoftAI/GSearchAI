@@ -2472,7 +2472,7 @@ export default function ChatPlaygroundPage() {
     });
 
     return (
-      <div className="w-full h-full flex flex-col bg-[var(--app-surface-muted)]/80 backdrop-blur-md overflow-hidden">
+      <div className="w-full h-full flex flex-col bg-[var(--app-surface-muted)] overflow-hidden">
         {/* Syncing Status Switch on the top-left of the sidebar */}
         <div id="tour-sidebar-connection-status" className="p-4 border-b border-[var(--app-border)]/40 flex items-center justify-between shrink-0 select-none bg-[var(--app-surface-muted)]">
           <Flex align="center" gap={6} className="min-w-0">
@@ -2617,10 +2617,11 @@ export default function ChatPlaygroundPage() {
       {/* Mobile Left Sidebar Drawer */}
       {!screen.md && (
         <Drawer
+          zIndex={10000}
           placement="left"
           onClose={() => setMobileSidebarOpen(false)}
           open={mobileSidebarOpen}
-          style={{ width: 260 }}
+          width={260}
           closeIcon={null}
           styles={{
             body: { padding: 0, background: 'var(--app-surface-muted)', height: '100%' }
@@ -3150,7 +3151,8 @@ export default function ChatPlaygroundPage() {
           setSourcesDrawerPreviewUrl("");
         }}
         open={isSourcesDrawerOpen}
-        style={{ width: 750, height: "100vh" }}
+        width={750}
+        height="100vh"
         styles={{
           body: { padding: 0, background: "var(--app-surface)", display: "flex", height: "100%" },
         }}
