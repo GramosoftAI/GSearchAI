@@ -284,7 +284,7 @@ class PDFExtractor:
         """
         Extract PDF content using Gdocz OCR server via gdocz_sdk.
         """
-        def _sync_gdocz_convert(pdf_data: bytes, fname: str, api_key: str) -> str:
+        def _sync_gdocz_convert(pdf_data: bytes, fname: str, api_key: str, base_url: str = None) -> str:
             import os
             import time
             import tempfile
@@ -297,7 +297,13 @@ class PDFExtractor:
                 f.write(pdf_data)
                 
             try:
-                client = GdoczaiClient(api_key=api_key)
+                base_url = base_url or getattr(settings, "gdocz_base_url", "https://app.gdoczai.com/ocr")
+                client = GdoczaiClient(
+                    api_key=api_key,
+                    convert_base_url=base_url,
+                    extract_base_url=base_url,
+                    segment_base_url=base_url,
+                )
                 options = ConvertOptions(mode="accurate")
                 
                 max_retries = 2
@@ -307,7 +313,7 @@ class PDFExtractor:
                 for attempt in range(max_retries):
                     start_t = time.time()
                     try:
-                        logger.info(f"Calling Gdocz SDK convert (attempt {attempt + 1}/{max_retries})")
+                        logger.info(f"Calling Gdocz SDK convert at {base_url} (attempt {attempt + 1}/{max_retries})")
                         result = client.convert(temp_path, options=options)
                         break
                     except Exception as e:
@@ -357,7 +363,7 @@ class PDFExtractor:
         try:
             raw_markdown = await asyncio.wait_for(
                 loop.run_in_executor(
-                    None, _sync_gdocz_convert, pdf_bytes, filename, settings.gdocz_api_key
+                    None, _sync_gdocz_convert, pdf_bytes, filename, settings.gdocz_api_key, settings.gdocz_base_url
                 ),
                 timeout=60.0  # Strict 60s timeout to prevent 13+ min hangs!
             )
