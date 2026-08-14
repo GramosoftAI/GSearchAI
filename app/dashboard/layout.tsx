@@ -83,6 +83,7 @@ export default function DashboardLayout({
 
       {/* Mobile Drawer Sidebar - Shown on menu click, takes full screen width */}
       <Drawer
+        zIndex={10000}
         placement="left"
         onClose={() => setMobileMenuOpen(false)}
         open={mobileMenuOpen}
@@ -177,6 +178,9 @@ export default function DashboardLayout({
         }
 
         /* Ant Design Overrides to match Theme */
+        .ant-drawer-portal {
+          z-index: 99999 !important;
+        }
         .ant-typography {
           color: var(--app-text) !important;
         }

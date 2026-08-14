@@ -789,6 +789,7 @@ function WidgetContent() {
   const [input, setInput] = useState("");
   const [wsStatus, setWsStatus] = useState<"connecting" | "open" | "closed" | "error">("closed");
   const [isTyping, setIsTyping] = useState(false);
+  const [answeredEscalations, setAnsweredEscalations] = useState<number[]>([]);
   const progressLabel = useProgressLabel(isTyping);
   const isTypingRef = useRef(false);
 
@@ -2143,33 +2144,66 @@ function WidgetContent() {
                         <>
                           {renderFormattedContent(msg.content, isUser, themeColor, linkSafety ? (url) => setSafetyModalUrl(url) : undefined)}
 
-                          {!isUser && escalationEnabled && msg.escalation_detected && (
-                            <div style={{ marginTop: "12px" }}>
+                          {!isUser && escalationEnabled && msg.escalation_detected && !answeredEscalations.includes(index) && (
+                            <div style={{ marginTop: "12px", display: "flex", gap: "8px" }}>
                               <button
                                 onClick={() => {
                                   if (escalationLink) {
                                     window.open(escalationLink, "_blank", "noopener,noreferrer");
                                   }
+                                  setAnsweredEscalations((prev) => [...prev, index]);
                                 }}
                                 style={{
-                                  background: themeColor,
-                                  color: "#ffffff",
-                                  border: "none",
-                                  borderRadius: "10px",
-                                  padding: "8px 16px",
+                                  background: "#ffffff",
+                                  color: "var(--app-text)",
+                                  border: "1px solid var(--app-border)",
+                                  borderRadius: "8px",
+                                  padding: "6px 14px",
                                   fontSize: "12px",
-                                  fontWeight: "700",
+                                  fontWeight: "600",
                                   cursor: "pointer",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "6px",
-                                  transition: "opacity 0.2s",
-                                  fontFamily: CHAT_FONT_FAMILY
+                                  transition: "all 0.2s",
+                                  fontFamily: CHAT_FONT_FAMILY,
+                                  boxShadow: "0 1px 2px rgba(0,0,0,0.05)"
                                 }}
-                                onMouseEnter={(e) => e.currentTarget.style.opacity = "0.9"}
-                                onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.borderColor = themeColor;
+                                  e.currentTarget.style.color = themeColor;
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.borderColor = "var(--app-border)";
+                                  e.currentTarget.style.color = "var(--app-text)";
+                                }}
                               >
-                                <span>🧑💼</span> Talk to Human Agent
+                                Yes, please
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setAnsweredEscalations((prev) => [...prev, index]);
+                                }}
+                                style={{
+                                  background: "#ffffff",
+                                  color: "var(--app-text)",
+                                  border: "1px solid var(--app-border)",
+                                  borderRadius: "8px",
+                                  padding: "6px 14px",
+                                  fontSize: "12px",
+                                  fontWeight: "600",
+                                  cursor: "pointer",
+                                  transition: "all 0.2s",
+                                  fontFamily: CHAT_FONT_FAMILY,
+                                  boxShadow: "0 1px 2px rgba(0,0,0,0.05)"
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.borderColor = themeColor;
+                                  e.currentTarget.style.color = themeColor;
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.borderColor = "var(--app-border)";
+                                  e.currentTarget.style.color = "var(--app-text)";
+                                }}
+                              >
+                                No, thanks
                               </button>
                             </div>
                           )}

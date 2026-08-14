@@ -188,9 +188,9 @@
     const isMobile = window.innerWidth <= 640;
     if (isMobile) {
       iframe.style.width = "calc(100% - 32px)";
-      iframe.style.height = "calc(100% - 40px)";
-      iframe.style.top = "20px";
-      iframe.style.bottom = "20px";
+      iframe.style.height = "calc(100% - 180px)";
+      iframe.style.top = "auto";
+      iframe.style.bottom = "95px";
       iframe.style.right = "16px";
       iframe.style.left = "16px";
       iframe.style.borderRadius = "24px";
@@ -265,6 +265,8 @@
 
   document.body.appendChild(iframe);
 
+  let isClosingFromPopstate = false;
+
   const openIframe = (initialQuery = "") => {
     // Hide search bar wrapper to prevent double input boxes
     if (chatType === "search" && searchWrapper) {
@@ -272,6 +274,13 @@
     }
 
     iframe.classList.add("show");
+
+    // Push state to browser history so back button closes it on mobile
+    if (window.innerWidth <= 640) {
+      if (window.history.state?.gragWidgetOpen !== true) {
+        window.history.pushState({ gragWidgetOpen: true }, "");
+      }
+    }
 
     // Focus the input inside the iframe
     setTimeout(() => {
@@ -289,12 +298,26 @@
   const closeIframe = () => {
     iframe.classList.remove("show");
 
+    // Clean up browser history state if we pushed it and are NOT closing from popstate
+    if (window.innerWidth <= 640 && !isClosingFromPopstate && window.history.state?.gragWidgetOpen === true) {
+      window.history.back();
+    }
+
     // Show search bar wrapper back
     if (chatType === "search" && searchWrapper) {
       searchWrapper.style.display = "block";
       updateSearchWrapperDimensions();
     }
   };
+
+  // Listen to browser back button popstate
+  window.addEventListener("popstate", (event) => {
+    if (iframe.classList.contains("show")) {
+      isClosingFromPopstate = true;
+      closeIframe();
+      isClosingFromPopstate = false;
+    }
+  });
 
   // Listen to postMessage from the iframe widget to close/collapse the chat window
   window.addEventListener("message", (event) => {

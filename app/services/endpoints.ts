@@ -110,7 +110,7 @@ export const endpoints = {
     method: methods.delete,
   },
   USER_COSTS: {
-    url: "/analytics/governance/costs/users",
+    url: "/analytics/token-usage",
     method: methods.get,
   },
   URL_DISCOVER: {
