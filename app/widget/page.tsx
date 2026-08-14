@@ -1372,73 +1372,52 @@ function WidgetContent() {
   const initialQuerySentRef = useRef(false);
   const pendingQueryRef = useRef("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-
-  const typewriterQueueRef = useRef("");
-  const typewriterIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
   const wsDoneRef = useRef(false);
   const currentMsgIdRef = useRef<string | null>(null);
   const currentSourcesRef = useRef<any[]>([]);
   const currentEscalationRef = useRef(false);
 
-  const resetTypewriter = useCallback(() => {
-    typewriterQueueRef.current = "";
+  const resetStreaming = useCallback(() => {
     wsDoneRef.current = false;
     currentMsgIdRef.current = null;
     currentSourcesRef.current = [];
     currentEscalationRef.current = false;
-    if (typewriterIntervalRef.current) {
-      clearInterval(typewriterIntervalRef.current);
-      typewriterIntervalRef.current = null;
-    }
   }, []);
 
-  const startTypewriter = useCallback(() => {
-    if (typewriterIntervalRef.current) return;
-
-    typewriterIntervalRef.current = setInterval(() => {
-      if (typewriterQueueRef.current.length === 0) {
-        if (wsDoneRef.current) {
-          if (typewriterIntervalRef.current) {
-            clearInterval(typewriterIntervalRef.current);
-            typewriterIntervalRef.current = null;
-          }
-          setIsTyping(false);
-          resetTypingTimeout();
-        }
-        return;
-      }
-
-      const queueLen = typewriterQueueRef.current.length;
-      let takeCount = 1;
-      if (queueLen > 120) takeCount = 8;
-      else if (queueLen > 60) takeCount = 4;
-      else if (queueLen > 20) takeCount = 2;
-
-      const chunk = typewriterQueueRef.current.slice(0, takeCount);
-      typewriterQueueRef.current = typewriterQueueRef.current.slice(takeCount);
-
+  const processIncomingChunk = useCallback((chunk: string, isDone: boolean = false) => {
+    if (chunk) {
       bufferRef.current += chunk;
-      const rawStream = bufferRef.current;
+    }
+    
+    if (isDone) {
+      setIsTyping(false);
+      resetTypingTimeout();
+    }
+    
+    const rawStream = bufferRef.current;
 
-      const citationRegex = /(?:\[Source:\s*|\(Source:\s*)([^\]\)]+)[\]\)]/gi;
-      const extractedCitations: SourceItem[] = [];
-      let citationMatch;
-      while ((citationMatch = citationRegex.exec(rawStream)) !== null) {
-        let srcName = citationMatch[1].trim();
-        if (srcName.includes(" - Position")) srcName = srcName.split(" - Position")[0].trim();
-        extractedCitations.push({
-          name: srcName,
-          source: srcName,
-          text: `Citation reference: ${srcName}`
-        });
-      }
+    const citationRegex = /(?:\[Source:\s*|\(Source:\s*)([^\]\)]+)[\]\)]/gi;
+    const extractedCitations: SourceItem[] = [];
+    let citationMatch;
+    while ((citationMatch = citationRegex.exec(rawStream)) !== null) {
+      let srcName = citationMatch[1].trim();
+      if (srcName.includes(" - Position")) srcName = srcName.split(" - Position")[0].trim();
+      extractedCitations.push({
+        name: srcName,
+        source: srcName,
+        text: `Citation reference: ${srcName}`
+      });
+    }
 
-      const cleanedText = rawStream
-        .replace(/<think>[\s\S]*?<\/think>/g, "")
-        .replace(/(?:\[Source:[^\]]*\]?)/gi, "")
-        .replace(/(?:\(Source:[^)]*\)?)/gi, "")
-        .trim();
+    const cleanedText = rawStream
+      .replace(/<think>[\s\S]*?<\/think>/g, "")
+      .replace(/(?:\[Source:[^\]]*\]?)/gi, "")
+      .replace(/(?:\(Source:[^)]*\)?)/gi, "")
+      .trim();
 
+    // Use requestAnimationFrame for batching React updates to prevent thousands of renders per second
+    requestAnimationFrame(() => {
       setMessages((prev) => {
         const lastMsg = prev[prev.length - 1];
         
@@ -1470,7 +1449,7 @@ function WidgetContent() {
           return [...prev, { role: "assistant", content: cleanedText, id: currentMsgIdRef.current || undefined, sources: finalSources, escalation_detected: currentEscalationRef.current === true }];
         }
       });
-    }, 15);
+    });
   }, [resetTypingTimeout]);
 
   const handleClose = () => {
@@ -1558,7 +1537,7 @@ function WidgetContent() {
   const connectWs = useCallback(() => {
     if (!agentId || !tenantId || tenantId === "null" || tenantId === "undefined") return;
 
-    resetTypewriter();
+    resetStreaming();
 
     if (ws.current) {
       try {
@@ -1637,7 +1616,7 @@ function WidgetContent() {
 
         if (data.type === "content" && data.delta) {
           if (data.delta.includes("LLM streaming failed") || data.delta.startsWith("Error:")) {
-            resetTypewriter();
+            resetStreaming();
             setIsTyping(false);
             resetTypingTimeout();
             const friendlyError = "Sorry, I am having trouble connecting to the AI model right now. Please try again in a moment.";
@@ -1651,7 +1630,7 @@ function WidgetContent() {
             return;
           }
 
-          typewriterQueueRef.current += data.delta;
+
           if (data.message_id) currentMsgIdRef.current = data.message_id;
           if (data.escalation_detected === true) currentEscalationRef.current = true;
 
@@ -1665,14 +1644,14 @@ function WidgetContent() {
           }
 
           setIsTyping(true);
-          startTypewriter();
+          processIncomingChunk(data.delta);
         }
 
         if (data.type === "done" || data.type === "end") {
           wsDoneRef.current = true;
           if (data.message_id) currentMsgIdRef.current = data.message_id;
           if (data.escalation_detected === true) currentEscalationRef.current = true;
-          startTypewriter();
+          processIncomingChunk("", true);
         }
       } catch (err) {
         setIsTyping(false);
@@ -1729,7 +1708,7 @@ function WidgetContent() {
   const handleSend = () => {
     const message = input.trim();
     if (!message) return;
-    resetTypewriter();
+    resetStreaming();
     bufferRef.current = ""; // reset old response
     setMessages((prev) => [...prev, { role: "user", content: message }]);
     setIsTyping(true);
@@ -2290,7 +2269,7 @@ function WidgetContent() {
                             }
                             if (userMessageIndex !== -1) {
                               const prevUserMsg = messages[userMessageIndex];
-                              resetTypewriter();
+                              resetStreaming();
                               bufferRef.current = "";
                               setIsTyping(true);
                               startTypingTimeout();
