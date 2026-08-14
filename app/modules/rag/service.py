@@ -156,8 +156,13 @@ class RAGService:
         # 1. Validate KB ownership and separate Excel vs Document KBs
         excel_kbs = []
         doc_kbs = []
-        for kid in kb_ids:
-            kb = await self.kb_repo.get_by_id(kid)
+        
+        async def _fetch_kb(kid):
+            return kid, await self.kb_repo.get_by_id(kid)
+            
+        import asyncio
+        kb_results = await asyncio.gather(*[_fetch_kb(kid) for kid in kb_ids])
+        for kid, kb in kb_results:
             if not kb:
                 yield json.dumps({"error": f"Knowledge Base {kid} not found"})
                 return
@@ -170,6 +175,12 @@ class RAGService:
                 excel_kbs.append(kb)
             else:
                 doc_kbs.append(kb)
+
+        # Pre-load Agent and Ontology concurrently
+        agent_task = asyncio.create_task(self.agent_repo.get_by_id(agent_id))
+        from ..ontology.service import OntologyService
+        ont_svc = OntologyService(self.tenant_id)
+        ontology_task = asyncio.create_task(ont_svc.get_ontology())
 
         # ============= MEMORY-API: RECALL USER PREFERENCES & EPISODIC GUIDANCE =============
         episodic_guidance = await self._fetch_episodic_guidance(query, agent_id, user_id, memory_enabled)
@@ -249,11 +260,8 @@ class RAGService:
             if excel_kbs and sql_task and vector_task:
                 logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
                 
-                # Wait for vector_task first to yield metadata early
-                try:
-                    context_res = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
-                except Exception as e:
-                    context_res = e
+                res = await asyncio.gather(vector_task, sql_task, return_exceptions=True)
+                context_res, sql_res = res[0], res[1]
                 
                 if not isinstance(context_res, Exception):
                     context = context_res
@@ -287,13 +295,7 @@ class RAGService:
                     logger.error(f"Parallel RAG Retrieval failed: {context_res}")
                     yield json.dumps({"error": f"Retrieval failed: {str(context_res)}"})
                     return
-
-                # Now wait for SQL task which is running in parallel
-                try:
-                    sql_res = await asyncio.wait_for(sql_task, timeout=60.0)
-                except Exception as e:
-                    sql_res = e
-                    
+    
                 if not isinstance(sql_res, Exception) and sql_res:
                     unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
                     if not any(sig in str(sql_res).lower() for sig in unmatched_signals):
@@ -342,8 +344,8 @@ class RAGService:
                 logger.info(
                     f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
                 )
-
-            agent = await self.agent_repo.get_by_id(agent_id)
+    
+            agent = await agent_task
             if not agent:
                 yield json.dumps(
                     {
@@ -372,11 +374,8 @@ class RAGService:
                 personality_description += accuracy_directives
 
             # Ontology Grounding
-            from ..ontology.service import OntologyService
-
             try:
-                ont_svc = OntologyService(self.tenant_id)
-                ontology = await ont_svc.get_ontology()
+                ontology = await ontology_task
                 ontology_rules_str = ""
                 if ontology and ontology.get("rules"):
                     rules_list = [
