@@ -222,64 +222,58 @@ class PDFExtractor:
                     )
                     return ExtractedText(cleaned, raw_markdown_clean, is_markdown=True, extraction_method="gdocz")
                 else:
-                    # logger.warning(
-                    #     f" Gdocz returned empty result for {filename}. "
-                    #     f"Falling back to pdfplumber."
-                    # )
-                    raise ValueError(f"Gdocz returned empty result for {filename}.")
+                    logger.warning(
+                        f" Gdocz returned empty result for {filename}. "
+                        f"Falling back to pdfplumber."
+                    )
             except Exception as e:
-                logger.error(f" Gdocz extraction failed for {filename}: {e}")
-                # logger.warning(
-                #     f" Gdocz extraction failed for {filename}: {e}. "
-                #     f"Falling back to pdfplumber."
-                # )
-                raise ValueError(f"Could not extract text from PDF: {filename} using Gdocz SDK: {e}")
+                logger.warning(
+                    f" Gdocz extraction failed for {filename}: {e}. "
+                    f"Falling back to pdfplumber."
+                )
         else:
-            # logger.info(
-            #     " GDOCZ_API_KEY not configured. Using pdfplumber directly."
-            # )
-            raise ValueError(
-                f"Could not extract text from PDF: {filename}. "
-                f"GDOCZ_API_KEY is not configured and fallback extractors are disabled."
+            logger.info(
+                " GDOCZ_API_KEY not configured. Using pdfplumber directly."
             )
 
         # ============= FALLBACK: PDFPLUMBER + AI-OCR =============
-        # fallback_error = None
-        # if settings.enable_pdf_fallback:
-        #     try:
-        #         extracted_text = await PDFExtractor._extract_pdfplumber(
-        #             pdf_bytes, filename, tenant_id, agent_id
-        #         )
-        #         if extracted_text and extracted_text.strip():
-        #             logger.info(
-        #                 f" pdfplumber extraction success: {filename} "
-        #                 f"({len(extracted_text)} chars)"
-        #             )
-        #             # LLM-based reconstruction of raw text to clean semantic Markdown
-        #             try:
-        #                 reconstructed_markdown = await PDFExtractor._reconstruct_text_to_markdown_with_llm(extracted_text)
-        #                 cleaned = PDFExtractor._clean_markdown_for_rag(reconstructed_markdown)
-        #                 logger.info("Successfully reconstructed pdfplumber plain text to Markdown via LLM")
-        #                 return ExtractedText(cleaned, reconstructed_markdown, is_markdown=True, extraction_method="pdfplumber")
-        #             except Exception as llm_err:
-        #                 logger.warning(f"LLM text reconstruction to Markdown failed: {llm_err}. Returning raw plain text.")
-        #             
-        #             return ExtractedText(extracted_text, extracted_text, is_markdown=False, extraction_method="pdfplumber")
-        #         else:
-        #             fallback_error = "PDF contains no extractable text (likely a scanned image). OCR is required but Gdocz failed."
-        #             logger.warning(f" pdfplumber extracted empty text for {filename}.")
-        #     except Exception as e:
-        #         fallback_error = f"pdfplumber exception: {str(e)}"
-        #         logger.error(f" pdfplumber also failed for {filename}: {e}")
-        # else:
-        #     fallback_error = "PDF fallback is disabled by configuration settings."
-        #     logger.info(fallback_error)
-        # 
-        # # ============= BOTH FAILED =============
-        # raise ValueError(
-        #     f"Could not extract text from PDF: {filename}. "
-        #     f"Gdocz SDK failed. Fallback error: {fallback_error}"
-        # )
+        fallback_error = None
+        if settings.enable_pdf_fallback:
+            try:
+                extracted_text = await PDFExtractor._extract_pdfplumber(
+                    pdf_bytes, filename, tenant_id, agent_id
+                )
+                if extracted_text and str(extracted_text).strip():
+                    logger.info(
+                        f" pdfplumber extraction success: {filename} "
+                        f"({len(extracted_text)} chars)"
+                    )
+                    # LLM-based reconstruction of raw text to clean semantic Markdown
+                    try:
+                        reconstructed_markdown = await PDFExtractor._reconstruct_text_to_markdown_with_llm(str(extracted_text))
+                        cleaned = PDFExtractor._clean_markdown_for_rag(reconstructed_markdown)
+                        logger.info("Successfully reconstructed pdfplumber plain text to Markdown via LLM")
+                        return ExtractedText(cleaned, reconstructed_markdown, is_markdown=True, extraction_method="pdfplumber")
+                    except Exception as llm_err:
+                        logger.warning(f"LLM text reconstruction to Markdown failed: {llm_err}. Returning raw plain text.")
+                    
+                    cleaned = PDFExtractor._clean_markdown_for_rag(str(extracted_text))
+                    return ExtractedText(cleaned, str(extracted_text), is_markdown=False, extraction_method="pdfplumber")
+                else:
+                    fallback_error = "PDF contains no extractable text (likely a scanned image). OCR is required but Gdocz failed."
+                    logger.warning(f" pdfplumber extracted empty text for {filename}.")
+            except Exception as e:
+                fallback_error = f"pdfplumber exception: {str(e)}"
+                logger.error(f" pdfplumber also failed for {filename}: {e}")
+        else:
+            fallback_error = "PDF fallback is disabled by configuration settings."
+            logger.info(fallback_error)
+
+        # ============= BOTH FAILED =============
+        raise ValueError(
+            f"Could not extract text from PDF: {filename}. "
+            f"Gdocz SDK failed. Fallback error: {fallback_error}"
+        )
 
     # ========================================================================
     # PRIMARY: GDOCZ SDK
