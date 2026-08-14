@@ -269,7 +269,6 @@ class Settings(BaseSettings):
 
     llm_gateway_api_key: Optional[str] = None
     gdocz_api_key: Optional[str] = None  # For PDF  Markdown extraction (primary)
-    gdocz_base_url: str = "https://app.gdoczai.com/ocr"  # Active Gdocz OCR cloud endpoint
 
     # ============= AWS S3 =============
     aws_region: Optional[str] = None
