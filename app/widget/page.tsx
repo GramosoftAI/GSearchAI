@@ -2610,25 +2610,44 @@ function WidgetContent() {
       )}
 
       {/* Powered by Gramosoft */}
-      <a
-        href="https://gsearchai.com/"
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{
-          display: "block",
-          textAlign: "center",
-          marginTop: "6px",
-          fontSize: "12px",
-          color: "#001c49",
-          fontWeight: 700,
-          letterSpacing: "0.2px",
-          userSelect: "none",
-          textDecoration: "none",
-          cursor: "pointer",
-        }}
-      >
-        Powered by <span style={{ fontWeight: 700, color: "#001c49" }}>Gsearch</span>
-      </a>
+      <div style={{ display: "flex", justifyContent: "center", marginTop: "6px" }}>
+        <a
+          href="https://gsearchai.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "4px",
+            padding: "4px 12px",
+            fontSize: "11px",
+            color: "#52525b",
+            fontWeight: 500,
+            userSelect: "none",
+            textDecoration: "none",
+            cursor: "pointer",
+            borderRadius: "100px",
+            background: "rgba(255, 255, 255, 0.8)",
+            backdropFilter: "blur(8px)",
+            border: "1px solid rgba(0, 0, 0, 0.08)",
+            boxShadow: "0 1px 2px rgba(0, 0, 0, 0.04)",
+            transition: "all 0.2s ease-in-out",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "rgba(255, 255, 255, 0.95)";
+            e.currentTarget.style.transform = "translateY(-0.5px)";
+            e.currentTarget.style.boxShadow = "0 2px 4px rgba(0, 0, 0, 0.06)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "rgba(255, 255, 255, 0.8)";
+            e.currentTarget.style.transform = "none";
+            e.currentTarget.style.boxShadow = "0 1px 2px rgba(0, 0, 0, 0.04)";
+          }}
+        >
+          Powered by <span style={{ fontWeight: 700, color: themeColor }}>Gsearch</span>
+        </a>
+      </div>
       {/* Link Safety Modal */}
       {safetyModalUrl && (
         <div style={{

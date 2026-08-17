@@ -461,20 +461,47 @@
       openIframe("");
     };
 
-    // Powered by Gramosoft label
+    // Powered by Gramosoft label wrapper
+    const poweredByContainer = document.createElement("div");
+    poweredByContainer.style.display = "flex";
+    poweredByContainer.style.justifyContent = "center";
+    poweredByContainer.style.marginTop = "6px";
+
     const poweredBy = document.createElement("a");
     poweredBy.href = "https://gsearchai.com/";
     poweredBy.target = "_blank";
     poweredBy.rel = "noopener noreferrer";
-    poweredBy.style.display = "block";
-    poweredBy.style.textAlign = "center";
-    poweredBy.style.marginTop = "6px";
+    poweredBy.style.display = "inline-flex";
+    poweredBy.style.alignItems = "center";
+    poweredBy.style.justifyContent = "center";
+    poweredBy.style.gap = "4px";
+    poweredBy.style.padding = "4px 12px";
     poweredBy.style.fontSize = "11px";
-    poweredBy.style.color = "#a1a1aa";
+    poweredBy.style.color = "#52525b";
+    poweredBy.style.fontWeight = "500";
     poweredBy.style.userSelect = "none";
     poweredBy.style.textDecoration = "none";
     poweredBy.style.cursor = "pointer";
-    poweredBy.innerHTML = `Powered by <span style="font-weight: 600; color: #71717a;">Gsearch</span>`;
+    poweredBy.style.borderRadius = "100px";
+    poweredBy.style.background = "rgba(255, 255, 255, 0.8)";
+    poweredBy.style.backdropFilter = "blur(8px)";
+    poweredBy.style.border = "1px solid rgba(0, 0, 0, 0.08)";
+    poweredBy.style.boxShadow = "0 1px 2px rgba(0, 0, 0, 0.04)";
+    poweredBy.style.transition = "all 0.2s ease-in-out";
+    poweredBy.innerHTML = `Powered by <span style="font-weight: 700; color: ${themeColor};">Gsearch</span>`;
+
+    poweredBy.addEventListener("mouseenter", () => {
+      poweredBy.style.background = "rgba(255, 255, 255, 0.95)";
+      poweredBy.style.transform = "translateY(-0.5px)";
+      poweredBy.style.boxShadow = "0 2px 4px rgba(0, 0, 0, 0.06)";
+    });
+    poweredBy.addEventListener("mouseleave", () => {
+      poweredBy.style.background = "rgba(255, 255, 255, 0.8)";
+      poweredBy.style.transform = "none";
+      poweredBy.style.boxShadow = "0 1px 2px rgba(0, 0, 0, 0.04)";
+    });
+
+    poweredByContainer.appendChild(poweredBy);
 
     // Assemble and render elements
     inputBar.appendChild(leftIcon);
@@ -482,7 +509,7 @@
     inputBar.appendChild(sendBtn);
     glowContainer.appendChild(inputBar);
     searchWrapper.appendChild(glowContainer);
-    searchWrapper.appendChild(poweredBy);
+    searchWrapper.appendChild(poweredByContainer);
     document.body.appendChild(searchWrapper);
   } else {
     // --- Style 1: Classic Icon Style Chat ---
