@@ -570,43 +570,43 @@ export default function AdminBillingPage() {
                   </Card>
                 ),
               },
-              // {
-              //   key: "models",
-              //   label: (
-              //     <span className="font-bold text-sm px-2 flex items-center gap-2">
-              //       <ThunderboltOutlined />
-              //       Models
-              //     </span>
-              //   ),
-              //   children: (
-              //     <Card
-              //       className="bg-[var(--app-surface)] border-[var(--app-border)] shadow-sm rounded-2xl overflow-hidden"
-              //       styles={{ body: { padding: 0 } }}
-              //     >
-              //       <Spin spinning={loading}>
-              //         <div className="w-full overflow-x-auto custom-scrollbar">
-              //           <Table
-              //             dataSource={filteredModels}
-              //             columns={modelColumns}
-              //             rowKey={(record, index) => record.model_name || String(index)}
-              //             scroll={{ x: 550 }}
-              //             pagination={{
-              //               pageSize: 10,
-              //               showSizeChanger: true,
-              //               pageSizeOptions: ["10", "20", "50", "100"],
-              //               showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} models`,
-              //               responsive: true,
-              //             }}
-              //             locale={{
-              //               emptyText: <Empty description="No Model Token Usage Records Found" />,
-              //             }}
-              //             className="custom-table"
-              //           />
-              //         </div>
-              //       </Spin>
-              //     </Card>
-              //   ),
-              // },
+              {
+                key: "models",
+                label: (
+                  <span className="font-bold text-sm px-2 flex items-center gap-2">
+                    <ThunderboltOutlined />
+                    Models
+                  </span>
+                ),
+                children: (
+                  <Card
+                    className="bg-[var(--app-surface)] border-[var(--app-border)] shadow-sm rounded-2xl overflow-hidden"
+                    styles={{ body: { padding: 0 } }}
+                  >
+                    <Spin spinning={loading}>
+                      <div className="w-full overflow-x-auto custom-scrollbar">
+                        <Table
+                          dataSource={filteredModels}
+                          columns={modelColumns}
+                          rowKey={(record, index) => record.model_name || String(index)}
+                          scroll={{ x: 550 }}
+                          pagination={{
+                            pageSize: 10,
+                            showSizeChanger: true,
+                            pageSizeOptions: ["10", "20", "50", "100"],
+                            showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} models`,
+                            responsive: true,
+                          }}
+                          locale={{
+                            emptyText: <Empty description="No Model Token Usage Records Found" />,
+                          }}
+                          className="custom-table"
+                        />
+                      </div>
+                    </Spin>
+                  </Card>
+                ),
+              },
             ]}
           />
         </div>

@@ -13,6 +13,8 @@
   const headerAlign = script.getAttribute("data-header-align") || "center";
   const headerNameAttr = script.getAttribute("data-header-name");
   const headerName = headerNameAttr !== null ? headerNameAttr : "Gsearch AI";
+  const headerSubtextAttr = script.getAttribute("data-header-subtext");
+  const headerSubtext = headerSubtextAttr !== null ? headerSubtextAttr : "The team can also help";
   const agentLabelAttr = script.getAttribute("data-agent-label");
   const agentLabel = agentLabelAttr !== null ? agentLabelAttr : "Agent";
   const themeTextColor = script.getAttribute("data-theme-text-color") || "#ffffff";
@@ -165,19 +167,8 @@
   `;
   document.head.appendChild(styleEl);
 
-  // Create Iframe element
-  const iframe = document.createElement("iframe");
-  iframe.className = "grag-iframe-container";
-  if (chatType === "search" && position === "center") {
-    iframe.classList.add("center-search");
-  }
-  iframe.style.border = "none";
-  iframe.style.background = "transparent";
-  iframe.style.borderRadius = "24px";
-  iframe.style.zIndex = "2147483647";
-  iframe.setAttribute("allowtransparency", "true");
-  iframe.setAttribute("allow", "clipboard-write");
-  iframe.src = `${baseUrl}/widget?agentId=${agentId}&tenantId=${tenantId}&chatType=${chatType}&themeColor=${encodeURIComponent(themeColor)}&headerLogo=${encodeURIComponent(resolvedHeaderLogo)}&headerAlign=${encodeURIComponent(headerAlign)}&headerName=${encodeURIComponent(headerName)}&agentLabel=${encodeURIComponent(agentLabel)}&themeTextColor=${encodeURIComponent(themeTextColor)}&botAvatar=${encodeURIComponent(resolvedBotAvatar)}&buttonIcon=${encodeURIComponent(resolvedButtonIcon)}&buttonAlign=${encodeURIComponent(buttonAlign)}&showButtonText=${showButtonText}&buttonText=${encodeURIComponent(buttonText)}&initialMessage=${encodeURIComponent(initialMessage)}&displaySources=${displaySources}&allowDownloads=${allowDownloads}&displayCopy=${displayCopy}&displayFeedback=${displayFeedback}&linkSafety=${linkSafety}&leadCollection=${leadCollection}&leadFields=${encodeURIComponent(leadFields)}&leadTiming=${leadTiming}&escalationEnabled=${escalationEnabled}&escalationLink=${encodeURIComponent(escalationLink)}`;
+  // Declare iframe reference (to be lazily loaded)
+  let iframe = null;
 
 
   // Declared search wrapper reference
@@ -185,6 +176,7 @@
 
   // Global window resize and responsive dimensions
   const updateIframeDimensions = () => {
+    if (!iframe) return;
     const isMobile = window.innerWidth <= 640;
     if (isMobile) {
       iframe.style.width = "calc(100% - 32px)";
@@ -260,10 +252,29 @@
     updateSearchWrapperDimensions();
   });
 
-  // Set initial layouts
-  updateIframeDimensions();
+  // Lazy initialization of the iframe
+  const initIframe = () => {
+    if (iframe) return iframe;
 
-  document.body.appendChild(iframe);
+    // Create Iframe element
+    iframe = document.createElement("iframe");
+    iframe.className = "grag-iframe-container";
+    if (chatType === "search" && position === "center") {
+      iframe.classList.add("center-search");
+    }
+    iframe.style.border = "none";
+    iframe.style.background = "transparent";
+    iframe.style.borderRadius = "24px";
+    iframe.style.zIndex = "2147483647";
+    iframe.setAttribute("allowtransparency", "true");
+    iframe.setAttribute("allow", "clipboard-write");
+    iframe.src = `${baseUrl}/widget?agentId=${agentId}&tenantId=${tenantId}&chatType=${chatType}&themeColor=${encodeURIComponent(themeColor)}&headerLogo=${encodeURIComponent(resolvedHeaderLogo)}&headerAlign=${encodeURIComponent(headerAlign)}&headerName=${encodeURIComponent(headerName)}&headerSubtext=${encodeURIComponent(headerSubtext)}&agentLabel=${encodeURIComponent(agentLabel)}&themeTextColor=${encodeURIComponent(themeTextColor)}&botAvatar=${encodeURIComponent(resolvedBotAvatar)}&buttonIcon=${encodeURIComponent(resolvedButtonIcon)}&buttonAlign=${encodeURIComponent(buttonAlign)}&showButtonText=${showButtonText}&buttonText=${encodeURIComponent(buttonText)}&initialMessage=${encodeURIComponent(initialMessage)}&displaySources=${displaySources}&allowDownloads=${allowDownloads}&displayCopy=${displayCopy}&displayFeedback=${displayFeedback}&linkSafety=${linkSafety}&leadCollection=${leadCollection}&leadFields=${encodeURIComponent(leadFields)}&leadTiming=${leadTiming}&escalationEnabled=${escalationEnabled}&escalationLink=${encodeURIComponent(escalationLink)}`;
+
+    // Set dimensions and append to body
+    updateIframeDimensions();
+    document.body.appendChild(iframe);
+    return iframe;
+  };
 
   let isClosingFromPopstate = false;
 
@@ -273,7 +284,8 @@
       searchWrapper.style.display = "none";
     }
 
-    iframe.classList.add("show");
+    const currentIframe = initIframe();
+    currentIframe.classList.add("show");
 
     // Push state to browser history so back button closes it on mobile
     if (window.innerWidth <= 640) {
@@ -284,19 +296,21 @@
 
     // Focus the input inside the iframe
     setTimeout(() => {
-      iframe.contentWindow.postMessage({ type: "focus-input" }, "*");
+      currentIframe.contentWindow.postMessage({ type: "focus-input" }, "*");
     }, 200);
 
     // Send initial query via postMessage to avoid slow reloads
     if (initialQuery) {
       setTimeout(() => {
-        iframe.contentWindow.postMessage({ type: "send-query", query: initialQuery }, "*");
+        currentIframe.contentWindow.postMessage({ type: "send-query", query: initialQuery }, "*");
       }, 50);
     }
   };
 
   const closeIframe = () => {
-    iframe.classList.remove("show");
+    if (iframe) {
+      iframe.classList.remove("show");
+    }
 
     // Clean up browser history state if we pushed it and are NOT closing from popstate
     if (window.innerWidth <= 640 && !isClosingFromPopstate && window.history.state?.gragWidgetOpen === true) {
@@ -312,7 +326,7 @@
 
   // Listen to browser back button popstate
   window.addEventListener("popstate", (event) => {
-    if (iframe.classList.contains("show")) {
+    if (iframe && iframe.classList.contains("show")) {
       isClosingFromPopstate = true;
       closeIframe();
       isClosingFromPopstate = false;
@@ -401,6 +415,9 @@
       glowContainer.classList.add("active");
       openIframe("");
       input.blur();
+    };
+    input.onmouseenter = () => {
+      initIframe();
     };
     input.onblur = () => {
       if (input.value.trim() === "") {
@@ -524,11 +541,14 @@
 
     // Toggle click trigger
     button.onclick = () => {
-      if (iframe.classList.contains("show")) {
+      if (iframe && iframe.classList.contains("show")) {
         closeIframe();
       } else {
         openIframe();
       }
+    };
+    button.onmouseenter = () => {
+      initIframe();
     };
   }
 })();

@@ -682,6 +682,8 @@ function WidgetContent() {
   const headerAlign = searchParams.get("headerAlign") || "center";
   const headerNameParam = searchParams.get("headerName");
   const headerName = headerNameParam !== null ? headerNameParam : "Gsearch AI";
+  const headerSubtextParam = searchParams.get("headerSubtext");
+  const headerSubtext = headerSubtextParam !== null ? headerSubtextParam : "The team can also help";
   const agentLabelParam = searchParams.get("agentLabel");
   const agentLabel = agentLabelParam !== null ? agentLabelParam : "Agent";
   const botAvatar = searchParams.get("botAvatar") || "";
@@ -1884,7 +1886,7 @@ function WidgetContent() {
                 <span style={{ fontSize: "10px", color: wsStatus === "open" ? "#22c55e" : "#ef4444" }}>●</span>
               </div>
               <div style={{ fontSize: "12px", color: "#737373" }}>
-                The team can also help
+                {headerSubtext}
               </div>
             </div>
           </div>

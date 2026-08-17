@@ -124,6 +124,7 @@ export default function EmbedScriptSection() {
   const [headerLogo, setHeaderLogo] = useState<string>(LOGO_PRESET_DARK);
   const [headerAlignment, setHeaderAlignment] = useState<"left" | "center">("center");
   const [headerName, setHeaderName] = useState<string>("Gsearch AI");
+  const [headerSubtext, setHeaderSubtext] = useState<string>("The team can also help");
 
   // 3. Bot Identity States
   const [botAvatar, setBotAvatar] = useState<string>("chat");
@@ -169,6 +170,7 @@ export default function EmbedScriptSection() {
   const [draftHeaderLogo, setDraftHeaderLogo] = useState<string>(headerLogo);
   const [draftHeaderAlignment, setDraftHeaderAlignment] = useState<"left" | "center">(headerAlignment);
   const [draftHeaderName, setDraftHeaderName] = useState<string>("Gsearch AI");
+  const [draftHeaderSubtext, setDraftHeaderSubtext] = useState<string>("The team can also help");
   const [draftBotAvatar, setDraftBotAvatar] = useState<string>("chat");
   const [draftAgentLabel, setDraftAgentLabel] = useState<string>("Agent");
 
@@ -339,6 +341,7 @@ export default function EmbedScriptSection() {
     setDraftHeaderLogo(headerLogo);
     setDraftHeaderAlignment(headerAlignment);
     setDraftHeaderName(headerName);
+    setDraftHeaderSubtext(headerSubtext);
     setDraftBotAvatar(botAvatar);
     setDraftAgentLabel(agentLabel);
     setDraftButtonIcon(buttonIcon);
@@ -379,6 +382,7 @@ export default function EmbedScriptSection() {
     setHeaderLogo(draftHeaderLogo);
     setHeaderAlignment(draftHeaderAlignment);
     setHeaderName(draftHeaderName);
+    setHeaderSubtext(draftHeaderSubtext);
     setBotAvatar(draftBotAvatar);
     setAgentLabel(draftAgentLabel);
     setButtonIcon(draftButtonIcon);
@@ -480,6 +484,7 @@ export default function EmbedScriptSection() {
     setDraftHeaderLogo(headerLogo);
     setDraftHeaderAlignment(headerAlignment);
     setDraftHeaderName(headerName);
+    setDraftHeaderSubtext(headerSubtext);
     setDraftBotAvatar(botAvatar);
     setDraftAgentLabel(agentLabel);
     setDraftButtonIcon(buttonIcon);
@@ -616,6 +621,7 @@ export default function EmbedScriptSection() {
   data-header-logo="${headerLogo}"
   data-header-align="${headerAlignment}"
   data-header-name="${headerName}"
+  data-header-subtext="${headerSubtext}"
   data-agent-label="${agentLabel}"
   data-bot-avatar="${botAvatar}"
   data-button-icon="${buttonIcon}"
@@ -843,6 +849,9 @@ export default function EmbedScriptSection() {
                 <span className="text-[#3b82f6]">data-header-name=</span>
                 <span className="text-emerald-500">{`"${headerName}"`}</span>
                 {"\n  "}
+                <span className="text-[#3b82f6]">data-header-subtext=</span>
+                <span className="text-emerald-500">{`"${headerSubtext}"`}</span>
+                {"\n  "}
                 <span className="text-[#3b82f6]">data-agent-label=</span>
                 <span className="text-emerald-500">{`"${agentLabel}"`}</span>
                 {"\n  "}
@@ -1021,6 +1030,17 @@ export default function EmbedScriptSection() {
                           value={draftHeaderName}
                           onChange={(e) => setDraftHeaderName(e.target.value)}
                           placeholder="Gsearch AI"
+                          className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
+                        />
+                      </div>
+
+                      {/* Header Subtext */}
+                      <div>
+                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Header Subtext</label>
+                        <Input
+                          value={draftHeaderSubtext}
+                          onChange={(e) => setDraftHeaderSubtext(e.target.value)}
+                          placeholder="The team can also help"
                           className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
                         />
                       </div>
