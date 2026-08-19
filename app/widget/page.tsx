@@ -172,7 +172,7 @@ function convertToCleanHtml(markdown: string): string {
 
     // Handle bullet lists
     if (/^\s*[-*•]\s+(.*)$/.test(line)) {
-      let content = line.replace(/^\s*[-*•]\s+/, "");
+      const content = line.replace(/^\s*[-*•]\s+/, "");
       let prefix = "";
       if (!inList) {
         inList = true;
@@ -186,7 +186,7 @@ function convertToCleanHtml(markdown: string): string {
 
     // Handle numbered lists
     if (/^\s*\d+\.\s+(.*)$/.test(line)) {
-      let content = line.replace(/^\s*\d+\.\s+/, "");
+      const content = line.replace(/^\s*\d+\.\s+/, "");
       let prefix = "";
       if (!inNumList) {
         inNumList = true;
@@ -610,7 +610,7 @@ const renderFormattedContent = (content: string, isUser: boolean, themeColor: st
           );
         }
 
-        let bulletMatch = line.match(bulletRegex);
+        const bulletMatch = line.match(bulletRegex);
         if (bulletMatch) {
           return (
             <div key={`${bIdx}-${index}`} className="line-anim" style={{ display: "flex", alignItems: "flex-start", gap: "8px", paddingLeft: "8px", margin: "4px 0" }}>
@@ -622,7 +622,7 @@ const renderFormattedContent = (content: string, isUser: boolean, themeColor: st
           );
         }
 
-        let numberMatch = line.match(numberListRegex);
+        const numberMatch = line.match(numberListRegex);
         if (numberMatch) {
           const prefix = numberMatch[1].trim();
           return (
@@ -840,7 +840,7 @@ function WidgetContent() {
   }, [resetTypingTimeout]);
 
   const getApiBaseUrl = (): string => {
-    let raw = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASES_URL || "http://192.168.31.62:4915/api/v1";
+    const raw = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASES_URL || "http://192.168.31.62:4915/api/v1";
     let cleaned = raw.trim().replace(/\/+$/, "");
     if (!cleaned.endsWith("/api/v1")) {
       cleaned = `${cleaned}/api/v1`;
@@ -940,7 +940,7 @@ function WidgetContent() {
 
     const getCleanUrl = (str?: string): string | null => {
       if (!str) return null;
-      let cleaned = str.replace(/\s*\((Selected Links|Selected Link)\)\s*/i, "").trim();
+      const cleaned = str.replace(/\s*\((Selected Links|Selected Link)\)\s*/i, "").trim();
       if (cleaned.startsWith("http://") || cleaned.startsWith("https://")) {
         return cleaned;
       }
@@ -1029,7 +1029,7 @@ function WidgetContent() {
 
     const getCleanDisplayName = (raw?: string): string => {
       if (!raw) return "";
-      let str = getFileNameStr(raw);
+      const str = getFileNameStr(raw);
       return str.replace(/^(pdf|doc|docx|csv|xlsx|image|img|txt):\s*/i, "").trim();
     };
 
@@ -1299,7 +1299,7 @@ function WidgetContent() {
             feedback_reason: "Correct response",
           };
 
-          let res = await fetch(`${baseUrl}/embed/chats/messages/feedback`, {
+          const res = await fetch(`${baseUrl}/embed/chats/messages/feedback`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
@@ -1348,7 +1348,7 @@ function WidgetContent() {
         feedback_reason: finalReason,
       };
 
-      let res = await fetch(`${baseUrl}/embed/chats/messages/feedback`, {
+      const res = await fetch(`${baseUrl}/embed/chats/messages/feedback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

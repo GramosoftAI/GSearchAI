@@ -265,8 +265,8 @@ export default function GoogleDriveFolderModal({
 
   const toggleSelectAll = () => {
     if (isAllSelected) {
-      let descendantFolderIds = new Set<string>();
-      let descendantFileIds = new Set<string>();
+      const descendantFolderIds = new Set<string>();
+      const descendantFileIds = new Set<string>();
 
       filteredItems.forEach(item => {
         if (item.isFolder) {
@@ -284,8 +284,8 @@ export default function GoogleDriveFolderModal({
       setSelectedFolders(prev => prev.filter(id => !descendantFolderIds.has(id)));
       setSelectedFiles(prev => prev.filter(id => !descendantFileIds.has(id)));
     } else {
-      let newFolderIds = new Set<string>();
-      let newFileIds = new Set<string>();
+      const newFolderIds = new Set<string>();
+      const newFileIds = new Set<string>();
 
       filteredItems.forEach(item => {
         if (item.isFolder) {

@@ -29,6 +29,7 @@ import {
   EllipsisOutlined,
   EyeOutlined,
   MessageOutlined,
+  BarChartOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
 import useAxios from "@/app/hooks/useAxios";
@@ -49,6 +50,7 @@ interface ModelUsageRecord {
   model_name?: string;
   input_tokens?: number;
   output_tokens?: number;
+  embedding_tokens?: number;
   total_tokens?: number;
   input_cost_usd?: number;
   output_cost_usd?: number;
@@ -66,6 +68,10 @@ interface UserUsageRecord {
   total_tokens?: number;
   total_cost_usd?: number;
   request_count?: number;
+  models?: ModelUsageRecord[];
+  input_cost_usd?: number;
+  output_cost_usd?: number;
+  embedding_cost_usd?: number;
 }
 
 // Smooth Number CountUp Animation Component
@@ -113,6 +119,8 @@ export default function AdminBillingPage() {
   const [selectedUser, setSelectedUser] = useState<UserUsageRecord | null>(null);
   const [modelModalVisible, setModelModalVisible] = useState<boolean>(false);
   const [selectedModel, setSelectedModel] = useState<ModelUsageRecord | null>(null);
+  const [userModelBreakdownVisible, setUserModelBreakdownVisible] = useState<boolean>(false);
+  const [selectedUserForModels, setSelectedUserForModels] = useState<UserUsageRecord | null>(null);
 
   
   const [request, rawData, loading] = useAxios({
@@ -258,23 +266,39 @@ export default function AdminBillingPage() {
     {
       title: "Action",
       key: "action",
-      width: 80,
+      width: 100,
       render: (_: any, record: UserUsageRecord) => (
-        <Tooltip title="View full details">
-          <Button
-            type="text"
-            shape="circle"
-            icon={<EyeOutlined className="text-[#0fb5a1]" />}
-            onClick={() => {
-              setSelectedUser(record);
-              setUserModalVisible(true);
-            }}
-            className="hover:bg-[var(--app-surface-muted)] cursor-pointer"
-          />
-        </Tooltip>
+        <Flex gap={8} align="center">
+          <Tooltip title="View cost details summary">
+            <Button
+              type="text"
+              shape="circle"
+              icon={<EyeOutlined className="text-[#0fb5a1]" />}
+              onClick={() => {
+                setSelectedUser(record);
+                setUserModalVisible(true);
+              }}
+              className="hover:bg-[var(--app-surface-muted)] cursor-pointer"
+            />
+          </Tooltip>
+          <Tooltip title="View model breakdown details">
+            <Button
+              type="text"
+              shape="circle"
+              icon={<BarChartOutlined className="text-[#0fb5a1]" />}
+              onClick={() => {
+                setSelectedUserForModels(record);
+                setUserModelBreakdownVisible(true);
+              }}
+              className="hover:bg-[var(--app-surface-muted)] cursor-pointer"
+            />
+          </Tooltip>
+        </Flex>
       ),
     },
   ];
+
+
 
   const modelColumns = [
     {
@@ -316,51 +340,7 @@ export default function AdminBillingPage() {
         </Flex>
       ),
     },
-    {
-      title: "Input Cost (USD)",
-      dataIndex: "input_cost_usd",
-      key: "input_cost_usd",
-      width: 150,
-      sorter: (a: ModelUsageRecord, b: ModelUsageRecord) => (a.input_cost_usd || 0) - (b.input_cost_usd || 0),
-      render: (cost?: number) => (
-        <Tag
-          color="blue"
-          className="px-3 py-1 text-xs font-bold rounded-lg border-blue-500/20 bg-blue-500/10 text-blue-600 dark:text-blue-400 whitespace-nowrap"
-        >
-          ${(cost || 0).toFixed(6)}
-        </Tag>
-      ),
-    },
-    {
-      title: "Output Cost (USD)",
-      dataIndex: "output_cost_usd",
-      key: "output_cost_usd",
-      width: 150,
-      sorter: (a: ModelUsageRecord, b: ModelUsageRecord) => (a.output_cost_usd || 0) - (b.output_cost_usd || 0),
-      render: (cost?: number) => (
-        <Tag
-          color="purple"
-          className="px-3 py-1 text-xs font-bold rounded-lg border-purple-500/20 bg-purple-500/10 text-purple-600 dark:text-purple-400 whitespace-nowrap"
-        >
-          ${(cost || 0).toFixed(6)}
-        </Tag>
-      ),
-    },
-    {
-      title: "Embedding Cost (USD)",
-      dataIndex: "embedding_cost_usd",
-      key: "embedding_cost_usd",
-      width: 170,
-      sorter: (a: ModelUsageRecord, b: ModelUsageRecord) => (a.embedding_cost_usd || 0) - (b.embedding_cost_usd || 0),
-      render: (cost?: number) => (
-        <Tag
-          color="cyan"
-          className="px-3 py-1 text-xs font-bold rounded-lg border-cyan-500/20 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 whitespace-nowrap"
-        >
-          ${(cost || 0).toFixed(6)}
-        </Tag>
-      ),
-    },
+
     {
       title: "Total Cost (USD)",
       dataIndex: "total_cost_usd",
@@ -509,7 +489,7 @@ export default function AdminBillingPage() {
                 </Text>
                 <Input
                   size="large"
-                  placeholder={activeTab === "users" ? "Search by user email / ID..." : "Search by model name..."}
+                  placeholder={activeTab === "models" ? "Search by model name..." : "Search by user email / ID..."}
                   prefix={<SearchOutlined className="text-[var(--app-text-soft)] mr-1" />}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -612,6 +592,7 @@ export default function AdminBillingPage() {
                   </Card>
                 ),
               },
+
               {
                 key: "models",
                 label: (
@@ -692,33 +673,81 @@ export default function AdminBillingPage() {
                 <Text className="text-xs font-mono text-[var(--app-text-soft)] break-all">{selectedUser.user_id || "N/A"}</Text>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="p-4 rounded-xl border border-[var(--app-border)]/40 bg-[var(--app-surface)]">
-                  <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Input Tokens</Text>
-                  <Text className="text-base font-extrabold text-[var(--app-text)]">{(selectedUser.input_tokens || 0).toLocaleString()}</Text>
+              <div className="border border-[var(--app-border)]/60 rounded-2xl bg-[var(--app-surface)] shadow-xs overflow-hidden">
+                {/* Header */}
+                <div className="px-6 py-4 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/60">
+                  <Text className="text-xs font-bold text-[var(--app-text)] uppercase tracking-wider block">Token Consumption Summary</Text>
                 </div>
-                <div className="p-4 rounded-xl border border-[var(--app-border)]/40 bg-[var(--app-surface)]">
-                  <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Output Tokens</Text>
-                  <Text className="text-base font-extrabold text-[var(--app-text)]">{(selectedUser.output_tokens || 0).toLocaleString()}</Text>
-                </div>
-                <div className="p-4 rounded-xl border border-[var(--app-border)]/40 bg-[var(--app-surface)]">
-                  <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Embedding Tokens</Text>
-                  <Text className="text-base font-extrabold text-[var(--app-text)]">{(selectedUser.embedding_tokens || 0).toLocaleString()}</Text>
-                </div>
-                <div className="p-4 rounded-xl border border-[var(--app-border)]/40 bg-[var(--app-surface)]">
-                  <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Total Queries</Text>
-                  <Text className="text-base font-extrabold text-[var(--app-text)]">{(selectedUser.request_count || 0).toLocaleString()}</Text>
-                </div>
-              </div>
+                
+                {/* Metrics Rows */}
+                <div className="divide-y divide-[var(--app-border)]/40">
+                  {/* Input Row */}
+                  <div className="px-6 py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:bg-[var(--app-surface-muted)]/40 transition-colors">
+                    <div>
+                      <Text className="block text-[11px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Input Tokens</Text>
+                      <Text className="text-2xl font-black text-[var(--app-text)]">{(selectedUser.input_tokens || 0).toLocaleString()}</Text>
+                    </div>
+                    <div className="sm:text-right shrink-0">
+                      <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Cost (USD)</Text>
+                      <Tag color="emerald" className="px-3 py-1 text-xs font-mono font-bold rounded-lg border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                        ${(selectedUser.input_cost_usd || 0).toFixed(6)}
+                      </Tag>
+                    </div>
+                  </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="p-4 rounded-xl border border-[var(--app-border)] bg-amber-500/5 dark:bg-amber-500/10">
-                  <Text className="block text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-1">Total Tokens</Text>
-                  <Text className="text-lg font-black text-amber-600 dark:text-amber-400">{(selectedUser.total_tokens || 0).toLocaleString()}</Text>
+                  {/* Output Row */}
+                  <div className="px-6 py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:bg-[var(--app-surface-muted)]/40 transition-colors">
+                    <div>
+                      <Text className="block text-[11px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Output Tokens</Text>
+                      <Text className="text-2xl font-black text-[var(--app-text)]">{(selectedUser.output_tokens || 0).toLocaleString()}</Text>
+                    </div>
+                    <div className="sm:text-right shrink-0">
+                      <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Cost (USD)</Text>
+                      <Tag color="emerald" className="px-3 py-1 text-xs font-mono font-bold rounded-lg border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                        ${(selectedUser.output_cost_usd || 0).toFixed(6)}
+                      </Tag>
+                    </div>
+                  </div>
+
+                  {/* Embedding Row */}
+                  <div className="px-6 py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:bg-[var(--app-surface-muted)]/40 transition-colors">
+                    <div>
+                      <Text className="block text-[11px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Embedding Tokens</Text>
+                      <Text className="text-2xl font-black text-[var(--app-text)]">{(selectedUser.embedding_tokens || 0).toLocaleString()}</Text>
+                    </div>
+                    <div className="sm:text-right shrink-0">
+                      <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Cost (USD)</Text>
+                      <Tag color="emerald" className="px-3 py-1 text-xs font-mono font-bold rounded-lg border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                        ${(selectedUser.embedding_cost_usd || 0).toFixed(6)}
+                      </Tag>
+                    </div>
+                  </div>
+
+                  {/* Total Queries Row */}
+                  <div className="px-6 py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:bg-[var(--app-surface-muted)]/40 transition-colors">
+                    <div>
+                      <Text className="block text-[11px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Total Queries</Text>
+                      <Text className="text-2xl font-black text-[var(--app-text)]">{(selectedUser.request_count || 0).toLocaleString()}</Text>
+                    </div>
+                    <div className="sm:text-right shrink-0">
+                      <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Status</Text>
+                      <span className="px-3 py-1 text-[11px] font-bold uppercase tracking-wider bg-[var(--app-border)]/30 rounded-lg text-[var(--app-text-soft)]">
+                        Queries
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <div className="p-4 rounded-xl border border-[var(--app-border)] bg-emerald-500/5 dark:bg-emerald-500/10">
-                  <Text className="block text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-1">Total Cost (USD)</Text>
-                  <Text className="text-lg font-black text-emerald-600 dark:text-emerald-400">${(selectedUser.total_cost_usd || 0).toFixed(6)}</Text>
+
+                {/* Footer Totals Summary */}
+                <div className="px-6 py-5 bg-[var(--app-surface-muted)] border-t border-[var(--app-border)]/60 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Total Tokens Combined</Text>
+                    <Text className="text-2xl font-black text-amber-600 dark:text-amber-400">{(selectedUser.total_tokens || 0).toLocaleString()}</Text>
+                  </div>
+                  <div className="sm:text-right">
+                    <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Total Cumulative Cost</Text>
+                    <Text className="text-2xl font-black text-emerald-600 dark:text-emerald-400">${(selectedUser.total_cost_usd || 0).toFixed(6)}</Text>
+                  </div>
                 </div>
               </div>
             </Flex>
@@ -761,44 +790,74 @@ export default function AdminBillingPage() {
                 <Text className="text-sm font-semibold text-[var(--app-text)] break-all">{selectedModel.model_name || "default"}</Text>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="p-4 rounded-xl border border-[var(--app-border)]/40 bg-[var(--app-surface)]">
-                  <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Input Tokens</Text>
-                  <Text className="text-base font-extrabold text-[var(--app-text)]">{(selectedModel.input_tokens || 0).toLocaleString()}</Text>
+              <div className="border border-[var(--app-border)]/60 rounded-2xl bg-[var(--app-surface)] shadow-xs overflow-hidden">
+                <div className="px-6 py-4 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/60">
+                  <Text className="text-xs font-bold text-[var(--app-text)] uppercase tracking-wider block">Token Consumption Summary</Text>
                 </div>
-                <div className="p-4 rounded-xl border border-[var(--app-border)]/40 bg-[var(--app-surface)]">
-                  <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Output Tokens</Text>
-                  <Text className="text-base font-extrabold text-[var(--app-text)]">{(selectedModel.output_tokens || 0).toLocaleString()}</Text>
-                </div>
-                <div className="p-4 rounded-xl border border-[var(--app-border)]/40 bg-[var(--app-surface)]">
-                  <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Total Queries</Text>
-                  <Text className="text-base font-extrabold text-[var(--app-text)]">{(selectedModel.request_count || 0).toLocaleString()}</Text>
-                </div>
-              </div>
+                
+                <div className="divide-y divide-[var(--app-border)]/40">
+                  <div className="px-6 py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:bg-[var(--app-surface-muted)]/40 transition-colors">
+                    <div>
+                      <Text className="block text-[11px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Input Tokens</Text>
+                      <Text className="text-2xl font-black text-[var(--app-text)]">{(selectedModel.input_tokens || 0).toLocaleString()}</Text>
+                    </div>
+                    <div className="sm:text-right shrink-0">
+                      <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Cost (USD)</Text>
+                      <Tag color="emerald" className="px-3 py-1 text-xs font-mono font-bold rounded-lg border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                        ${(selectedModel.input_cost_usd || 0).toFixed(6)}
+                      </Tag>
+                    </div>
+                  </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="p-3 rounded-xl border border-[var(--app-border)]/40 bg-[var(--app-surface)] flex flex-col justify-between min-h-[66px]">
-                  <Text className="block text-[9.5px] font-bold text-[var(--app-text-soft)] uppercase tracking-normal mb-1 whitespace-nowrap">Input Cost</Text>
-                  <Text className="text-sm font-extrabold text-[var(--app-text)]">${(selectedModel.input_cost_usd || 0).toFixed(6)}</Text>
-                </div>
-                <div className="p-3 rounded-xl border border-[var(--app-border)]/40 bg-[var(--app-surface)] flex flex-col justify-between min-h-[66px]">
-                  <Text className="block text-[9.5px] font-bold text-[var(--app-text-soft)] uppercase tracking-normal mb-1 whitespace-nowrap">Output Cost</Text>
-                  <Text className="text-sm font-extrabold text-[var(--app-text)]">${(selectedModel.output_cost_usd || 0).toFixed(6)}</Text>
-                </div>
-                <div className="p-3 rounded-xl border border-[var(--app-border)]/40 bg-[var(--app-surface)] flex flex-col justify-between min-h-[66px]">
-                  <Text className="block text-[9.5px] font-bold text-[var(--app-text-soft)] uppercase tracking-normal mb-1 whitespace-nowrap">Embedding Cost</Text>
-                  <Text className="text-sm font-extrabold text-[var(--app-text)]">${(selectedModel.embedding_cost_usd || 0).toFixed(6)}</Text>
-                </div>
-              </div>
+                  <div className="px-6 py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:bg-[var(--app-surface-muted)]/40 transition-colors">
+                    <div>
+                      <Text className="block text-[11px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Output Tokens</Text>
+                      <Text className="text-2xl font-black text-[var(--app-text)]">{(selectedModel.output_tokens || 0).toLocaleString()}</Text>
+                    </div>
+                    <div className="sm:text-right shrink-0">
+                      <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Cost (USD)</Text>
+                      <Tag color="emerald" className="px-3 py-1 text-xs font-mono font-bold rounded-lg border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                        ${(selectedModel.output_cost_usd || 0).toFixed(6)}
+                      </Tag>
+                    </div>
+                  </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="p-4 rounded-xl border border-[var(--app-border)] bg-amber-500/5 dark:bg-amber-500/10">
-                  <Text className="block text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-1">Total Tokens</Text>
-                  <Text className="text-lg font-black text-amber-600 dark:text-amber-400">{(selectedModel.total_tokens || 0).toLocaleString()}</Text>
+                  <div className="px-6 py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:bg-[var(--app-surface-muted)]/40 transition-colors">
+                    <div>
+                      <Text className="block text-[11px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Embedding Tokens</Text>
+                      <Text className="text-2xl font-black text-[var(--app-text)]">{(selectedModel.embedding_tokens || 0).toLocaleString()}</Text>
+                    </div>
+                    <div className="sm:text-right shrink-0">
+                      <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Cost (USD)</Text>
+                      <Tag color="emerald" className="px-3 py-1 text-xs font-mono font-bold rounded-lg border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                        ${(selectedModel.embedding_cost_usd || 0).toFixed(6)}
+                      </Tag>
+                    </div>
+                  </div>
+
+                  <div className="px-6 py-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:bg-[var(--app-surface-muted)]/40 transition-colors">
+                    <div>
+                      <Text className="block text-[11px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Total Queries</Text>
+                      <Text className="text-2xl font-black text-[var(--app-text)]">{(selectedModel.request_count || 0).toLocaleString()}</Text>
+                    </div>
+                    <div className="sm:text-right shrink-0">
+                      <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Status</Text>
+                      <span className="px-3 py-1 text-[11px] font-bold uppercase tracking-wider bg-[var(--app-border)]/30 rounded-lg text-[var(--app-text-soft)]">
+                        Active
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <div className="p-4 rounded-xl border border-[var(--app-border)] bg-emerald-500/5 dark:bg-emerald-500/10">
-                  <Text className="block text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-1">Total Cost (USD)</Text>
-                  <Text className="text-lg font-black text-emerald-600 dark:text-emerald-400">${(selectedModel.total_cost_usd || 0).toFixed(6)}</Text>
+
+                <div className="px-6 py-5 bg-[var(--app-surface-muted)] border-t border-[var(--app-border)]/60 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Total Tokens Combined</Text>
+                    <Text className="text-2xl font-black text-amber-600 dark:text-amber-400">{(selectedModel.total_tokens || 0).toLocaleString()}</Text>
+                  </div>
+                  <div className="sm:text-right">
+                    <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Total Cumulative Cost</Text>
+                    <Text className="text-2xl font-black text-emerald-600 dark:text-emerald-400">${(selectedModel.total_cost_usd || 0).toFixed(6)}</Text>
+                  </div>
                 </div>
               </div>
             </Flex>
@@ -806,7 +865,187 @@ export default function AdminBillingPage() {
         )}
       </Modal>
 
+      <Modal
+        title={
+          <Title level={4} className="!m-0 !font-extrabold text-[var(--app-text)] border-b border-[var(--app-border)] pb-3">
+            User Model Breakdown
+          </Title>
+        }
+        open={userModelBreakdownVisible}
+        onCancel={() => {
+          setUserModelBreakdownVisible(false);
+          setSelectedUserForModels(null);
+        }}
+        footer={[
+          <Button
+            key="close"
+            type="primary"
+            onClick={() => {
+              setUserModelBreakdownVisible(false);
+              setSelectedUserForModels(null);
+            }}
+            className="!bg-[#0fb5a1] hover:!bg-[#0d9e8c] rounded-xl font-bold px-6 h-10 border-0 cursor-pointer"
+          >
+            Close
+          </Button>
+        ]}
+        centered
+        width={1000}
+      >
+        {selectedUserForModels && (
+          <div className="py-4">
+            <div className="p-4 rounded-2xl bg-[var(--app-surface-muted)] border border-[var(--app-border)]/60 mb-4">
+              <Text className="block text-[11px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">User Email</Text>
+              <Text className="text-sm font-semibold text-[var(--app-text)] break-all">{selectedUserForModels.user_email || "N/A"}</Text>
+              
+              <Text className="block text-[11px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mt-3 mb-1">User ID</Text>
+              <Text className="text-xs font-mono text-[var(--app-text-soft)] break-all">{selectedUserForModels.user_id || "N/A"}</Text>
+            </div>
+
+            <Text strong className="text-[var(--app-text)] font-semibold text-sm block mb-3">Model Consumption List</Text>
+            
+            <div className="w-full overflow-x-auto hide-scrollbar border border-[var(--app-border)]/60 rounded-xl">
+              <Table
+                dataSource={selectedUserForModels.models || []}
+                columns={[
+                  {
+                    title: "S.No",
+                    key: "sno",
+                    width: 60,
+                    render: (_: any, __: any, index: number) => (
+                      <span className="font-bold text-[var(--app-text-soft)] text-xs">{index + 1}</span>
+                    ),
+                  },
+                  {
+                    title: "Model Name",
+                    dataIndex: "model_name",
+                    key: "model_name",
+                    render: (name: string) => (
+                      <Text strong className="text-[var(--app-text)] font-semibold text-xs whitespace-nowrap block">
+                        {name || "default"}
+                      </Text>
+                    ),
+                  },
+                  {
+                    title: "Input Tokens",
+                    dataIndex: "input_tokens",
+                    key: "input_tokens",
+                    render: (tokens?: number) => (
+                      <Text className="text-xs text-[var(--app-text)]">
+                        {(tokens || 0).toLocaleString()}
+                      </Text>
+                    ),
+                  },
+                  {
+                    title: "Input Cost (USD)",
+                    dataIndex: "input_cost_usd",
+                    key: "input_cost_usd",
+                    render: (cost?: number) => (
+                      <Text className="text-xs text-[var(--app-text-soft)] font-medium whitespace-nowrap">
+                        ${(cost || 0).toFixed(6)}
+                      </Text>
+                    ),
+                  },
+                  {
+                    title: "Output Tokens",
+                    dataIndex: "output_tokens",
+                    key: "output_tokens",
+                    render: (tokens?: number) => (
+                      <Text className="text-xs text-[var(--app-text)]">
+                        {(tokens || 0).toLocaleString()}
+                      </Text>
+                    ),
+                  },
+                  {
+                    title: "Output Cost (USD)",
+                    dataIndex: "output_cost_usd",
+                    key: "output_cost_usd",
+                    render: (cost?: number) => (
+                      <Text className="text-xs text-[var(--app-text-soft)] font-medium whitespace-nowrap">
+                        ${(cost || 0).toFixed(6)}
+                      </Text>
+                    ),
+                  },
+                  {
+                    title: "Embedding Tokens",
+                    dataIndex: "embedding_tokens",
+                    key: "embedding_tokens",
+                    render: (tokens?: number) => (
+                      <Text className="text-xs text-[var(--app-text)]">
+                        {(tokens || 0).toLocaleString()}
+                      </Text>
+                    ),
+                  },
+                  {
+                    title: "Embedding Cost (USD)",
+                    dataIndex: "embedding_cost_usd",
+                    key: "embedding_cost_usd",
+                    render: (cost?: number) => (
+                      <Text className="text-xs text-[var(--app-text-soft)] font-medium whitespace-nowrap">
+                        ${(cost || 0).toFixed(6)}
+                      </Text>
+                    ),
+                  },
+                  {
+                    title: "Total Tokens",
+                    dataIndex: "total_tokens",
+                    key: "total_tokens",
+                    render: (tokens?: number) => (
+                      <Text className="text-xs font-bold text-[var(--app-text)]">
+                        {(tokens || 0).toLocaleString()}
+                      </Text>
+                    ),
+                  },
+                  {
+                    title: "Total Cost (USD)",
+                    dataIndex: "total_cost_usd",
+                    key: "total_cost_usd",
+                    render: (cost?: number) => (
+                      <Tag
+                        color="emerald"
+                        className="px-2 py-0.5 text-[11px] font-bold rounded border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 whitespace-nowrap"
+                      >
+                        ${(cost || 0).toFixed(6)}
+                      </Tag>
+                    ),
+                  },
+                  {
+                    title: "Requests",
+                    dataIndex: "request_count",
+                    key: "request_count",
+                    render: (count?: number) => (
+                      <Text className="text-xs font-semibold text-[var(--app-text)]">
+                        {(count || 0).toLocaleString()}
+                      </Text>
+                    ),
+                  },
+                ]}
+                rowKey={(record, index) => record.model_name || String(index)}
+                pagination={false}
+                locale={{
+                  emptyText: <Empty description="No Model Usage Found for this user" />,
+                }}
+                className="custom-table"
+              />
+            </div>
+          </div>
+        )}
+      </Modal>
+
       <style jsx global>{`
+        /* Hide scrollbars visually but keep scrolling active */
+        .hide-scrollbar::-webkit-scrollbar,
+        .hide-scrollbar .ant-table-content::-webkit-scrollbar,
+        .hide-scrollbar .ant-table-body::-webkit-scrollbar {
+          display: none !important;
+        }
+        .hide-scrollbar,
+        .hide-scrollbar .ant-table-content,
+        .hide-scrollbar .ant-table-body {
+          scrollbar-width: none !important;
+          -ms-overflow-style: none !important;
+        }
+
         /* Hide 2nd month panel in RangePicker dropdown to show single month calendar */
         .single-panel-range-picker .ant-picker-panels > *:nth-child(2) {
           display: none !important;

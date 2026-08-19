@@ -1,9 +1,11 @@
 [
   {
-    "relation": ["delegate_permission/common.handle_all_urls"],
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
     "target": {
       "namespace": "android_app",
-      "package_name": "com.gramo.gsearch",
+      "package_name": "com.example.riverpod",
       "sha256_cert_fingerprints": [
         "CC:4D:6E:EA:AC:9E:D4:0C:A7:71:62:A8:8B:41:CA:04:77:12:8C:C7:02:E3:DC:04:F3:6C:B8:C7:71:4E:56:ED"
       ]

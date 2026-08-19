@@ -515,7 +515,7 @@ export default function AdminFeedbackPage() {
     return null;
   }, [rawFeedbackData]);
 
-  const items = useMemo(() => feedbackPayload.data || [], [feedbackPayload]);
+  const items = useMemo(() => feedbackPayload?.data || [], [feedbackPayload]);
 
   const filteredItems = useMemo(() => {
     if (!searchQuery) return items;
@@ -571,7 +571,7 @@ export default function AdminFeedbackPage() {
   };
 
   const totalFeedbackCount = useMemo(() => {
-    return feedbackPayload.meta?.total_feedback_count ?? items.length;
+    return feedbackPayload?.meta?.total_feedback_count ?? items.length;
   }, [feedbackPayload, items]);
 
   const thumbsUpItems = useMemo(() => {

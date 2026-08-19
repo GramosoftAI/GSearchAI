@@ -855,7 +855,7 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
           );
         }
 
-        let bulletMatch = line.match(bulletRegex);
+        const bulletMatch = line.match(bulletRegex);
         if (bulletMatch) {
           return (
             <div key={`${bIdx}-${index}`} className="flex items-start gap-2 pl-2 my-1">
@@ -867,7 +867,7 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
           );
         }
 
-        let numberMatch = line.match(numberListRegex);
+        const numberMatch = line.match(numberListRegex);
         if (numberMatch) {
           const prefix = numberMatch[1].trim();
           return (
@@ -905,6 +905,7 @@ export default function ChatPlaygroundPage() {
   const [selectedModel, setSelectedModel] = useState<'Flash' | 'Pro' | 'Ultra'>('Flash');
   const [searchQuery, setSearchQuery] = useState<string>("");
   const searchRef = useRef<HTMLInputElement>(null);
+  const [agentSearch, setAgentSearch] = useState<string>("");
 
   
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
@@ -3033,17 +3034,37 @@ export default function ChatPlaygroundPage() {
                 {activeMode === 'agent' && (
                   <Dropdown
                     menu={{
-                      items: botsCache?.map((bot) => ({
-                        key: bot.id,
-                        label: <span className="font-semibold text-xs">{bot.name}</span>
-                      })),
+                      items: (botsCache || [])
+                        .filter((bot) =>
+                          bot.name.toLowerCase().includes(agentSearch.toLowerCase())
+                        )
+                        .map((bot) => ({
+                          key: bot.id,
+                          label: <span className="font-semibold text-xs">{bot.name}</span>
+                        })),
                       onClick: (e) => {
                         const selected = botsCache?.find(b => b.id === e.key);
                         if (selected) {
                           handleAgentChange(selected.id, selected.name);
                         }
-                      }
+                      },
+                      style: { maxHeight: "250px", overflowY: "auto" }
                     }}
+                    dropdownRender={(menu) => (
+                      <div className="bg-[var(--app-surface)] border border-[var(--app-border)] rounded-xl shadow-lg p-2 min-w-[200px]">
+                        {(botsCache || []).length > 5 && (
+                          <Input
+                            prefix={<LuSearch size={14} className="text-gray-400 mr-1" />}
+                            placeholder="Search agents..."
+                            value={agentSearch}
+                            onChange={(e) => setAgentSearch(e.target.value)}
+                            className="mb-2 text-xs"
+                            allowClear
+                          />
+                        )}
+                        {menu}
+                      </div>
+                    )}
                     trigger={["click"]}
                   >
                     <div className="inline-flex bg-transparent rounded-full overflow-hidden">

@@ -27,7 +27,7 @@ export const GithubStarsProvider = ({ children }: { children: React.ReactNode })
         .catch(() => {});
     };
     fetchStars();
-    const interval = setInterval(fetchStars, 120000);
+    const interval = setInterval(fetchStars, 600000);
 
     return () => clearInterval(interval);
   }, []);

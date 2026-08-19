@@ -3,7 +3,7 @@ export const schema = {
    "@graph": [
       {
       "@type": "SoftwareApplication",
-      "@id": "https://gsearchai.com/#software",
+      "@id": "https://gsearchai.com",
       "name": "Gsearch",
       "applicationCategory": "BusinessApplication",
       "applicationSubCategory": "AI Enterprise Search & Knowledge Assistant",
@@ -21,12 +21,12 @@ export const schema = {
           "priceCurrency": "INR", 
           "description": "Full enterprise AI search with integrations and security controls" }
       ],
-      "publisher": { "@id": "https://gramosoft.tech#org" },
+      "publisher": { "@id": "https://gramosoft.tech" },
       "featureList": "AI enterprise search, natural language Q&A, RAG-based knowledge retrieval, Slack integration, Google Drive search, Jira search, Notion search, document indexing, semantic search, AI chatbot for company data"
     },
     {
       "@type": "Organization",
-      "@id": "https://gramosoft.tech#org",
+      "@id": "https://gramosoft.tech",
       "name": "Gramosoft Private Limited",
       "url": "https://gramosoft.tech",
       "logo": "https://gramosoft.tech/images/gramosoft-logo.png",
@@ -43,10 +43,10 @@ export const schema = {
     },
     {
       "@type": "WebPage",
-      "@id": "https://gsearchai.com/#webpage",
+      "@id": "https://gsearchai.com/webpage",
       "url": "https://gsearchai.com/",
       "name": "Gsearch — AI Enterprise Search Platform",
-      "about": { "@id": "https://gsearchai.com/#software" },
+      "about": { "@id": "https://gsearchai.com/software" },
       "breadcrumb": {
         "@type": "BreadcrumbList",
         "itemListElement": [
@@ -57,7 +57,7 @@ export const schema = {
     },
     {
       "@type": "FAQPage",
-      "@id": "https://gsearchai.com/#faq",
+      "@id": "https://gsearchai.com/faq",
       "mainEntity": [
         { "@type": "Question", 
             "name": "Why do you call Gsearch a second brain?", 
