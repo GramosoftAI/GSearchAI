@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Modal, Button, Spin, Tag, App, Checkbox } from "antd";
+import { Modal, Button, Spin, Tag, App} from "antd";
 import { CheckOutlined, DisconnectOutlined, SyncOutlined, PlusOutlined, LinkOutlined } from "@ant-design/icons";
 import { getCookie } from "../../config/cookies";
 import useAxios from "../../hooks/useAxios";
@@ -38,9 +38,8 @@ export default function IntegrationConnectModal({
   const [connectionStates, setConnectionStates] = useState<Record<string, string[]>>({});
   const [kbIds, setKbIds] = useState<Record<string, string>>({});
 
-  // Endpoint to get agent list
   const [getAgents] = useAxios<any>({ endpoint: "GETAGENTLIST", hideErrorMsg: true });
-  // Disconnect endpoint
+
   const [disconnectKb] = useAxios<any>({ endpoint: "DISCONNECT", hideErrorMsg: true });
 
   const providerLabel = 
@@ -52,8 +51,7 @@ export default function IntegrationConnectModal({
     type === "sharepoint" ? "sharepoint" : 
     type === "email" ? "email" : "outlook";
 
-  // Helper to fetch details for a single agent to check connection
-  // Helper to fetch/create KB ID for a single agent
+  
   const fetchAgentKbId = async (agentId: string, agentName: string) => {
     try {
       const token = getCookie("AUTH_TOKEN");
@@ -96,7 +94,6 @@ export default function IntegrationConnectModal({
       return data?.data?.agent?.connected_integrations || [];
     } catch (err) {
       console.error(`Error checking connection for agent ${agentId}:`, err);
-      // Fallback to local storage simulated state
       const localConnections = localStorage.getItem(`mock_connections_${agentId}`);
       if (localConnections) {
         return JSON.parse(localConnections);
@@ -105,11 +102,9 @@ export default function IntegrationConnectModal({
     }
   };
 
-  // Load all agents and their connection states
   const loadAgentsAndConnections = async () => {
     setLoading(true);
     try {
-      // 1. Fetch agents
       let agentsList: Agent[] = [];
       await getAgents(undefined, (payload) => {
         agentsList = payload?.data?.agents ?? [];
@@ -121,17 +116,14 @@ export default function IntegrationConnectModal({
         return;
       }
 
-      // 2. Fetch connection states and KB IDs in parallel
       const statesMap: Record<string, string[]> = {};
       const kbMap: Record<string, string> = {};
 
       await Promise.all(
         agentsList.map(async (agent) => {
-          // Check integration status
           const integrations = await checkAgentConnection(agent.id);
           statesMap[agent.id] = integrations;
 
-          // Check/Fetch KB ID
           const kbId = await fetchAgentKbId(agent.id, agent.name);
           if (kbId) {
             kbMap[agent.id] = kbId;
@@ -159,7 +151,6 @@ export default function IntegrationConnectModal({
     }
   }, [open, type]);
 
-  // Handle Disconnect logic with confirmation dialog
   const handleDisconnectClick = (e: React.MouseEvent, agentId: string, agentName: string) => {
     e.stopPropagation();
 
@@ -173,17 +164,13 @@ export default function IntegrationConnectModal({
       },
       onOk: async () => {
         try {
-          // const kbId = kbIds[agentId];
           if (!agentId) {
             throw new Error("Agent is  not found .");
           }
-
-          // Call disconnect API
           await disconnectKb({
             path: `${agentId}/integration/${providerKey}`,
           });
 
-          // Update local simulated/cached state as a fallback
           const integrations = connectionStates[agentId] || [];
           const updated = integrations.filter((item) => item !== providerKey);
           localStorage.setItem(`mock_connections_${agentId}`, JSON.stringify(updated));
@@ -193,7 +180,6 @@ export default function IntegrationConnectModal({
             description: `${providerLabel} has been disconnected from "${agentName}".`,
           });
 
-          // Reload/refresh agent list in the modal instantly
           await loadAgentsAndConnections();
           if (selectedAgentId === agentId) {
             setSelectedAgentId(null);
@@ -244,7 +230,6 @@ export default function IntegrationConnectModal({
       className="custom-integration-modal"
     >
       <div className="p-6 md:p-8">
-        {/* Header */}
         <div className="mb-6 flex items-center gap-3">
           <div className="p-2.5 bg-purple-500/10 rounded-xl">
             <LinkOutlined className="text-purple-600 text-xl" />
@@ -259,7 +244,6 @@ export default function IntegrationConnectModal({
           </div>
         </div>
 
-        {/* List content */}
         {loading ? (
           <div className="flex flex-col items-center justify-center py-16 gap-3">
             <Spin size="large" />
@@ -286,7 +270,6 @@ export default function IntegrationConnectModal({
                     }`}
                 >
                   <div className="flex items-center gap-3.5 flex-1 min-w-0">
-                    {/* Custom Checkbox */}
                     <div
                       className={`w-5 h-5 rounded-md flex items-center justify-center border transition-all ${isSelected
                           ? "bg-purple-500 border-purple-500 text-white"
@@ -335,7 +318,6 @@ export default function IntegrationConnectModal({
           </div>
         )}
 
-        {/* Footer Actions */}
         <div className="flex justify-end gap-3 pt-4 border-t border-[var(--app-border)]">
           <Button
             size="large"

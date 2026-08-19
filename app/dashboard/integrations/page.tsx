@@ -8,13 +8,12 @@ function IntegrationsContent() {
   return (
     <div className="w-full max-w-7xl mx-auto p-3 md:p-10 animate-in fade-in duration-500">
       <Flex vertical gap={40}>
-        {/* Top/Embed Script Section */}
+        
         <EmbedScriptSection />
 
-        {/* Bottom/Available Channels Section */}
         <ChannelsSection />
 
-        {/* Ecosystem Banner */}
+       
         <div className="p-8 md:p-12 bg-gradient-to-br from-[#0fb5a1] via-[#0a8576] to-[#065047] rounded-3xl text-white shadow-lg overflow-hidden relative">
           <div className="absolute -top-24 -right-24 w-72 h-72 bg-blue-400/10 rounded-full blur-3xl pointer-events-none" />
           <div className="absolute -bottom-24 -left-24 w-72 h-72 bg-emerald-400/5 rounded-full blur-3xl pointer-events-none" />

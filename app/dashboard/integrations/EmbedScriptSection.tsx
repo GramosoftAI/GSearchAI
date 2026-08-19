@@ -1,5 +1,5 @@
 "use client";
-import { Flex, Typography, Card, Button, Tooltip, App, Radio, Input, Modal, Switch, Spin, Tabs, Select } from "antd";
+import { Flex, Typography, Card, Button, Tooltip, App, Radio, Input, Modal, Switch, Spin, Tabs} from "antd";
 import {
   CopyOutlined,
   CheckCircleOutlined,
@@ -19,8 +19,6 @@ import {
   LinkOutlined,
   LikeOutlined,
   DislikeOutlined,
-  TeamOutlined,
-  UserOutlined,
   CustomerServiceOutlined,
 } from "@ant-design/icons";
 import { useState, useEffect, useRef } from "react";
@@ -60,7 +58,6 @@ type ChatSession = {
   created_at: string;
 };
 
-// Preset colors for brand theme picker
 const COLOR_PRESETS = [
   { name: "Teal", hex: "#0fb5a1" },
   { name: "Blue", hex: "#0066cc" },
@@ -69,7 +66,6 @@ const COLOR_PRESETS = [
   { name: "Red", hex: "#ef4444" },
 ];
 
-// SVG Data URLs for Presets (Valid inline SVGs ensuring no broken images)
 const LOGO_PRESET_DARK = "";
 const LOGO_PRESET_LIGHT = "";
 const LOGO_PRESET_MINI = "";
@@ -111,7 +107,7 @@ export default function EmbedScriptSection() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [getAgents] = useAxios<AgentListResponse>({ endpoint: "GETAGENTLIST", hideErrorMsg: true });
 
-  // 1. Core Layout & Theme States
+  
   const [chatType, setChatType] = useState<"icon" | "search">("icon");
   const [position, setPosition] = useState<"center" | "right">("center");
   const [placeholderText, setPlaceholderText] = useState("Ask about web scraping, Zyte API, anything data extraction...");
@@ -120,23 +116,23 @@ export default function EmbedScriptSection() {
   const [btnBgColor, setBtnBgColor] = useState<string>("#0fb5a1");
   const [btnBorderColor, setBtnBorderColor] = useState<string>("#0fb5a1");
 
-  // 2. Header Styles States
+  
   const [headerLogo, setHeaderLogo] = useState<string>(LOGO_PRESET_DARK);
   const [headerAlignment, setHeaderAlignment] = useState<"left" | "center">("center");
   const [headerName, setHeaderName] = useState<string>("Gsearch AI");
   const [headerSubtext, setHeaderSubtext] = useState<string>("The team can also help");
 
-  // 3. Bot Identity States
+  
   const [botAvatar, setBotAvatar] = useState<string>("chat");
   const [agentLabel, setAgentLabel] = useState<string>("Agent");
 
-  // 4. Entry Button States
+  
   const [buttonIcon, setButtonIcon] = useState<string>("chat");
   const [buttonAlignment, setButtonAlignment] = useState<"left" | "right">("right");
   const [showButtonText, setShowButtonText] = useState<boolean>(true);
   const [buttonText, setButtonText] = useState<string>("Help");
 
-  // 5. Content States
+  
   const [initialMessage, setInitialMessage] = useState<string>("Hi! I'm your AI Support Agent. How can I help you today?");
   const [displaySources, setDisplaySources] = useState<boolean>(true);
   const [allowDownloads, setAllowDownloads] = useState<boolean>(false);
@@ -144,7 +140,7 @@ export default function EmbedScriptSection() {
   const [displayFeedback, setDisplayFeedback] = useState<boolean>(true);
   const [linkSafety, setLinkSafety] = useState<boolean>(true);
 
-  // 6. Lead Collection & Support Escalation States
+  
   const [leadCollection, setLeadCollection] = useState<boolean>(false);
   const [leadFields, setLeadFields] = useState<string>("name,email");
   const [leadTiming, setLeadTiming] = useState<string>("pre-chat");
@@ -157,7 +153,6 @@ export default function EmbedScriptSection() {
   const [draftEscalationEnabled, setDraftEscalationEnabled] = useState<boolean>(false);
   const [draftEscalationLink, setDraftEscalationLink] = useState<string>("");
 
-  // Modal Customizer Draft States
   const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
   const [draftChatType, setDraftChatType] = useState<"icon" | "search">("icon");
   const [draftPosition, setDraftPosition] = useState<"center" | "right">("center");
@@ -174,7 +169,6 @@ export default function EmbedScriptSection() {
   const [draftBotAvatar, setDraftBotAvatar] = useState<string>("chat");
   const [draftAgentLabel, setDraftAgentLabel] = useState<string>("Agent");
 
-  // Logo Placement Visibility States
   const [showInHeader, setShowInHeader] = useState<boolean>(true);
   const [showInChat, setShowInChat] = useState<boolean>(true);
   const [showInEmbed, setShowInEmbed] = useState<boolean>(false);
@@ -195,12 +189,10 @@ export default function EmbedScriptSection() {
   const [draftDisplayFeedback, setDraftDisplayFeedback] = useState<boolean>(displayFeedback);
   const [draftLinkSafety, setDraftLinkSafety] = useState<boolean>(linkSafety);
 
-  // Upload Loading States
   const [uploadingHeaderLogo, setUploadingHeaderLogo] = useState(false);
   const [uploadingBotAvatar, setUploadingBotAvatar] = useState(false);
   const [uploadingButtonIcon, setUploadingButtonIcon] = useState(false);
 
-  // Helper to reliably extract Authorization Token from cookies
   const getAuthToken = (): string => {
     if (typeof window === "undefined") return "";
     let token = getCookie("AUTH_TOKEN") || getCookie("auth_token") || getCookie("token") || getCookie("access_token") || "";
@@ -219,7 +211,6 @@ export default function EmbedScriptSection() {
     return token;
   };
 
-  // Fetch Stored Embed Customization (GET API)
   useEffect(() => {
     const fetchEmbedCustomization = async () => {
       try {
@@ -263,7 +254,6 @@ export default function EmbedScriptSection() {
     fetchEmbedCustomization();
   }, []);
 
-  // Sandbox Live Preview States (Inside Modal)
   const [previewMessages, setPreviewMessages] = useState<any[]>([]);
   const [previewInput, setPreviewInput] = useState("");
   const [previewIsTyping, setPreviewIsTyping] = useState(false);
@@ -271,7 +261,6 @@ export default function EmbedScriptSection() {
   const [previewLeadFormSubmitted, setPreviewLeadFormSubmitted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Auto-scroll chat body on new preview messages
   useEffect(() => {
     const chatContainer = document.getElementById("embed-sandbox-chat-messages");
     if (chatContainer) {
@@ -281,7 +270,6 @@ export default function EmbedScriptSection() {
 
   const isWideLayout = draftChatType === "search" && draftPosition === "center";
 
-  // Dynamic Theme state observer
   const [isDarkTheme, setIsDarkTheme] = useState(false);
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -321,7 +309,6 @@ export default function EmbedScriptSection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reset sandbox chat state when switching draft modes in live preview
   useEffect(() => {
     setPreviewMessages([]);
     setPreviewIsOpen(false);
@@ -329,7 +316,6 @@ export default function EmbedScriptSection() {
     setPreviewInput("");
   }, [draftChatType, draftPosition]);
 
-  // Open customizer and copy values to drafts
   const openCustomizer = () => {
     setDraftChatType(chatType);
     setDraftPosition(position);
@@ -370,7 +356,7 @@ export default function EmbedScriptSection() {
     setIsCustomizerOpen(true);
   };
 
-  // Apply customizations and update the code block
+ 
   const handleApply = async () => {
     setChatType(draftChatType);
     setPosition(draftPosition);
@@ -407,7 +393,6 @@ export default function EmbedScriptSection() {
     setEscalationEnabled(draftEscalationEnabled);
     setEscalationLink(draftEscalationLink);
 
-    // Call PUT /api/v1/embed/customization to persist backend configuration
     try {
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
       const token = getAuthToken();
@@ -429,7 +414,6 @@ export default function EmbedScriptSection() {
         })
       });
 
-      // Call GET /api/v1/embed/customization on OK/Apply to fetch and store stored settings
       const getRes = await fetch(`${baseUrl}/embed/customization?tenant_id=${tenantId}`, {
         method: "GET",
         headers: {
@@ -472,7 +456,6 @@ export default function EmbedScriptSection() {
     });
   };
 
-  // Revert draft changes and close
   const handleCancel = () => {
     setDraftChatType(chatType);
     setDraftPosition(position);
@@ -512,7 +495,6 @@ export default function EmbedScriptSection() {
     setIsCustomizerOpen(false);
   };
 
-  // Upload image file to backend API -> receive logo_url
   const uploadImageToBackend = async (file: File): Promise<string> => {
     const formData = new FormData();
     formData.append("logo", file);
@@ -552,7 +534,6 @@ export default function EmbedScriptSection() {
       if (target === "botAvatar") setDraftBotAvatar(logoUrl);
       if (target === "buttonIcon") setDraftButtonIcon(logoUrl);
 
-      // Target-specific boolean flags for PUT /api/v1/embed/customization:
       const targetShowHeader = target === "headerLogo";
       const targetShowChat = target === "botAvatar";
       const targetShowEmbed = target === "buttonIcon";
@@ -609,7 +590,6 @@ export default function EmbedScriptSection() {
     }
   };
 
-  // Generate dynamic embed script block based on APPLIED states
   const scriptCode = `<script src='${process.env.NEXT_PUBLIC_API_BASES_URL || "http://grag.gramopro.ai"}/chat.js'
   data-agent-id="${agent?.id || "YOUR_AGENT_ID"}"
   data-tenant-id="${agentresp?.[0]?.tenant_id || "YOUR_TENANT_ID"}"
@@ -709,7 +689,7 @@ export default function EmbedScriptSection() {
     }, 1200);
   };
 
-  // Preset arrays for Bot Avatar and Entry Button Icons
+  
   const botAvatarPresets = [
     { id: "chat", icon: <MessageOutlined className="text-lg text-slate-500" /> },
     { id: "robot", icon: <RobotOutlined className="text-lg text-slate-500" /> },
@@ -728,7 +708,7 @@ export default function EmbedScriptSection() {
 
   return (
     <Flex vertical gap={40}>
-      {/* Header Section */}
+      
       <div className="space-y-3 max-w-3xl">
         <Title level={1} className="!m-0 !text-[var(--app-text)] !font-extrabold !text-3xl md:!text-5xl tracking-tight">
           Omnichannel Integrations
@@ -738,7 +718,7 @@ export default function EmbedScriptSection() {
         </Text>
       </div>
 
-      {/* Embed Control card on page */}
+      
       <Card
         className="bg-[var(--app-surface)] border border-[var(--app-border)] rounded-3xl shadow-md overflow-hidden"
         styles={{ body: { padding: "24px md:36px" } }}
@@ -793,7 +773,7 @@ export default function EmbedScriptSection() {
             </div>
           </div>
 
-          {/* Code block window display */}
+          
           <div className="relative group rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--app-border)] bg-[var(--app-surface)]/50">
               <div className="flex gap-1.5">
@@ -914,7 +894,6 @@ export default function EmbedScriptSection() {
         </Flex>
       </Card>
 
-      {/* FULL CUSTOMIZATION POPUP MODAL */}
       <Modal
         title={
           <div className="text-lg font-extrabold text-slate-800 dark:text-slate-100 border-b border-slate-100 dark:border-slate-800 pb-3 flex items-center gap-2">
@@ -940,7 +919,7 @@ export default function EmbedScriptSection() {
         className="custom-widget-modal"
       >
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 py-4 items-start">
-          {/* Modal Left Column: Ant Design Tabs for Configurations (span 6) */}
+          
           <div className="lg:col-span-6 flex flex-col gap-4">
             <Tabs
               defaultActiveKey="header"
@@ -980,7 +959,6 @@ export default function EmbedScriptSection() {
                         </div>
                       </div> */}
 
-                      {/* Selected Logo & Upload to S3 */}
                       <div>
                         <label className="text-xs font-semibold text-slate-500 block mb-1.5">Selected Logo:</label>
                         <div className="flex items-center gap-3">
@@ -1002,7 +980,7 @@ export default function EmbedScriptSection() {
                             )}
                           </div>
 
-                          {/* Cloud Upload Button */}
+                         
                           <label className="w-14 h-14 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-[#0fb5a1] cursor-pointer flex items-center justify-center bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:text-[#0fb5a1] transition-all shadow-sm">
                             {uploadingHeaderLogo ? (
                               <Spin size="small" />
@@ -1023,7 +1001,7 @@ export default function EmbedScriptSection() {
                         <p className="text-[10px] text-slate-400 mt-1.5 mb-0">Recommended size: 120 × 40 px or 3:1 aspect ratio (PNG, SVG, JPG, max 2MB)</p>
                       </div>
 
-                      {/* Header Title */}
+                     
                       <div>
                         <label className="text-xs font-semibold text-slate-500 block mb-1.5">Header Title</label>
                         <Input
@@ -1034,7 +1012,7 @@ export default function EmbedScriptSection() {
                         />
                       </div>
 
-                      {/* Header Subtext */}
+                      
                       <div>
                         <label className="text-xs font-semibold text-slate-500 block mb-1.5">Header Subtext</label>
                         <Input
@@ -1045,7 +1023,7 @@ export default function EmbedScriptSection() {
                         />
                       </div>
 
-                      {/* Logo Alignment */}
+                      
                       <div>
                         <label className="text-xs font-semibold text-slate-500 block mb-1.5">Alignment</label>
                         <Radio.Group
@@ -1069,7 +1047,7 @@ export default function EmbedScriptSection() {
                   ),
                   children: (
                     <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-3.5 min-h-[350px] max-h-[450px] overflow-y-auto custom-scrollbar">
-                      {/* Agent Message Label */}
+                     
                       <div>
                         <label className="font-bold text-xs text-slate-800 dark:text-slate-200 block mb-0.5">
                           Agent Chat Label
@@ -1085,7 +1063,7 @@ export default function EmbedScriptSection() {
                         />
                       </div>
 
-                      {/* Initial Message Section */}
+                      
                       <div>
                         <label className="font-bold text-xs text-slate-800 dark:text-slate-200 block mb-0.5">
                           Initial Message
@@ -1102,9 +1080,9 @@ export default function EmbedScriptSection() {
                         />
                       </div>
 
-                      {/* Switch Toggles List */}
+                      
                       <div className="space-y-2 pt-1">
-                        {/* 1. Display Sources */}
+                        
                         <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
                           <div className="flex items-start gap-2.5">
                             <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
@@ -1122,7 +1100,7 @@ export default function EmbedScriptSection() {
                           />
                         </div>
 
-                        {/* 2. Allow Source Downloads */}
+                        
                         <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
                           <div className="flex items-start gap-2.5">
                             <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
@@ -1143,7 +1121,7 @@ export default function EmbedScriptSection() {
                           />
                         </div>
 
-                        {/* 3. Display Copy Button */}
+                        
                         <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
                           <div className="flex items-start gap-2.5">
                             <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
@@ -1161,7 +1139,7 @@ export default function EmbedScriptSection() {
                           />
                         </div>
 
-                        {/* 4. Display Feedback (Thumbs Up / Down) */}
+                        
                         <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
                           <div className="flex items-start gap-2.5">
                             <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
@@ -1179,7 +1157,7 @@ export default function EmbedScriptSection() {
                           />
                         </div>
 
-                        {/* 5. Link Safety */}
+                        
                         <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
                           <div className="flex items-start gap-2.5">
                             <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
@@ -1198,10 +1176,10 @@ export default function EmbedScriptSection() {
                         </div>
                       </div>
 
-                      {/* Divider */}
+                      
                       <div className="border-t border-slate-200 dark:border-slate-800 my-4" />
 
-                      {/* Lead & Support Escalation Section */}
+                     
                       <div className="space-y-3.5 pb-2">
                         {/* <div>
                           <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 m-0">Lead & Support Escalation</h4>
@@ -1260,7 +1238,7 @@ export default function EmbedScriptSection() {
                           </div>
                         )} */}
 
-                        {/* Escalation Toggle */}
+                        
                         <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
                           <div className="flex items-start gap-2.5">
                             <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
@@ -1390,7 +1368,7 @@ export default function EmbedScriptSection() {
                   ),
                   children: (
                     <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-4 min-h-[350px]">
-                      {/* Bot Identity Avatar Selection */}
+                     
                       <div>
                         <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-1.5">
                           Bot Identity Avatar
@@ -1674,7 +1652,7 @@ export default function EmbedScriptSection() {
           </div>
 
 
-          {/* Modal Right Column: Live Web Sandbox Preview (span 6) */}
+          
           <div className="lg:col-span-6 flex flex-col gap-3">
             <div className="flex justify-between items-center px-1">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
@@ -1685,7 +1663,7 @@ export default function EmbedScriptSection() {
               </span>
             </div>
 
-            {/* Sandbox Browser frame mockup */}
+            
             <div
               style={{
                 backgroundColor: isDarkTheme ? "#0f172a" : "#ffffff",
@@ -1693,7 +1671,7 @@ export default function EmbedScriptSection() {
               }}
               className="border rounded-2xl overflow-hidden shadow-xl w-full flex-1 flex flex-col relative min-h-[520px] h-[520px]"
             >
-              {/* Browser bar */}
+              
               <div
                 style={{
                   backgroundColor: isDarkTheme ? "#0b0f19" : "#f1f5f9",
@@ -1719,7 +1697,7 @@ export default function EmbedScriptSection() {
                 <div className="w-10" />
               </div>
 
-              {/* Website canvas */}
+             
               <div
                 style={{
                   background: isDarkTheme
@@ -1752,7 +1730,7 @@ export default function EmbedScriptSection() {
                   </p>
                 </div>
 
-                {/* FLOATING ENTRY BUTTON PREVIEW */}
+                
                 {draftChatType === "icon" && (
                   <div
                     onClick={() => setPreviewIsOpen(!previewIsOpen)}
@@ -1764,7 +1742,7 @@ export default function EmbedScriptSection() {
                     className={`absolute bottom-5 z-30 px-3.5 py-2.5 rounded-full shadow-xl flex items-center gap-2 cursor-pointer hover:scale-105 transition-all duration-200 animate-bounce [animation-duration:3s] ${draftButtonAlignment === "left" ? "left-5" : "right-5"
                       }`}
                   >
-                    {/* Render Selected Button Icon */}
+                   
                     {draftButtonIcon.startsWith("http") || draftButtonIcon.startsWith("blob:") || draftButtonIcon.startsWith("data:") ? (
                       <img src={draftButtonIcon} alt="Icon" className="w-5 h-5 rounded-full object-contain" />
                     ) : draftButtonIcon === "robot" ? (
@@ -1781,14 +1759,14 @@ export default function EmbedScriptSection() {
                       <MessageOutlined className="text-lg" style={{ color: draftThemeTextColor }} />
                     )}
 
-                    {/* Show Button Text if enabled */}
+                   
                     {draftShowButtonText && (
                       <span className="text-xs font-bold pr-0.5 select-none" style={{ color: draftThemeTextColor }}>{draftButtonText || "Help"}</span>
                     )}
                   </div>
                 )}
 
-                {/* SEARCH BAR PREVIEW */}
+                
                 {draftChatType === "search" && !previewIsOpen && (
                   <div
                     className={`absolute z-30 w-[90%] bottom-5 ${draftPosition === "center" ? "left-1/2 -translate-x-1/2" : "right-5"
@@ -1841,7 +1819,7 @@ export default function EmbedScriptSection() {
                   </div>
                 )}
 
-                {/* CHAT MODAL OVERLAY PREVIEW */}
+                
                 {previewIsOpen && (
                   <div
                     style={{
@@ -1856,7 +1834,7 @@ export default function EmbedScriptSection() {
                         : "right-5")
                       }`}
                   >
-                    {/* Header with Custom Header Logo & Alignment */}
+                    
                     <div
                       style={{
                         backgroundColor: isDarkTheme ? "#1e293b" : "#f8fafc",
@@ -1886,7 +1864,6 @@ export default function EmbedScriptSection() {
                         </div>
                       </div>
 
-                      {/* Escalation button in Header if enabled and lead form is NOT active */}
                       {draftEscalationEnabled && (!draftLeadCollection || previewLeadFormSubmitted) && (
                         <div className="mr-1 shrink-0 text-slate-400">
                           <EscalationHeaderLink
@@ -1917,7 +1894,7 @@ export default function EmbedScriptSection() {
                       />
                     ) : (
                       <>
-                        {/* Chat Feed with Bot Avatar */}
+                       
                         <div
                           id="embed-sandbox-chat-messages"
                           style={{ backgroundColor: isDarkTheme ? "#090d16" : "#f1f5f9" }}
@@ -1943,7 +1920,7 @@ export default function EmbedScriptSection() {
                                   const isUser = msg.role === "user";
                                   return (
                                     <div key={index} className={`flex items-start gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
-                                      {/* Bot Avatar preview */}
+                                     
                                       {!isUser && draftBotAvatar !== "none" && (
                                         <div
                                           className="w-6 h-6 rounded-full flex items-center justify-center overflow-hidden shrink-0 mt-1"
@@ -2042,7 +2019,7 @@ export default function EmbedScriptSection() {
                           <div ref={messagesEndRef} />
                         </div>
 
-                        {/* Chat Input Bar */}
+                       
                         <div
                           className="p-2.5 border-t rounded-b-2xl"
                           style={{

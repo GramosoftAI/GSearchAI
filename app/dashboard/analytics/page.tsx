@@ -32,7 +32,7 @@ function MetricCard({ change, icon: Icon, isPositive, value, label }: {
       className="relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-md bg-[var(--app-surface)] border-[var(--app-border)]"
       bodyStyle={{ padding: '24px' }}
     >
-      {/* Decorative Subtle Radial Glow */}
+      
       <div 
         className={`absolute -top-12 -right-12 w-32 h-32 rounded-full blur-3xl opacity-5 pointer-events-none transition-opacity duration-500 group-hover:opacity-10 ${
           isPositive ? 'bg-emerald-500' : 'bg-rose-500'
@@ -228,7 +228,7 @@ export default function AnalyticsPage() {
   return (
     <div className="w-full max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 pb-24 relative min-h-screen">
       <Flex vertical gap={40}>
-        {/* Header Block */}
+        
         <div>
           <Title level={1} className="!m-0 !font-extrabold !text-3xl sm:!text-4xl tracking-tight text-[var(--app-text)]">
             {userName ? `${userName}'s` : "Intelligence"} Analytics
@@ -238,7 +238,7 @@ export default function AnalyticsPage() {
           </Text>
         </div>
 
-        {/* Responsive Performance Metrics Grid */}
+        
         <Row gutter={[20, 20]}>
           {(stats.length > 0 ? stats : [1, 2, 3, 4]).map((stat: any, i) => (
             <Col key={i} xs={24} sm={12} lg={6}>
@@ -251,7 +251,7 @@ export default function AnalyticsPage() {
           ))}
         </Row>
 
-        {/* Content Layout Modules */}
+        
         {isClient && (
           <Row gutter={[24, 24]}>
             <Col xs={24} xl={24}>
@@ -272,7 +272,7 @@ export default function AnalyticsPage() {
         )}
       </Flex>
 
-      {/* Modern Blur Loading Overlay */}
+      
       {loading && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--app-surface)]/60 backdrop-blur-md transition-all duration-300">
           <Flex vertical align="center" gap={16} className="p-8 rounded-2xl bg-[var(--app-surface)] border border-[var(--app-border)] shadow-xl max-w-xs text-center">

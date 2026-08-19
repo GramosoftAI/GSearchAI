@@ -10,7 +10,7 @@ import { getCookie } from "@/app/config/cookies";
 
 const { Title, Text, Paragraph } = Typography;
 
-// Helper functions for citations extraction and display
+
 const getCleanCitationName = (citation: string): string => {
   if (!citation) return "Unknown Source";
 
@@ -52,23 +52,22 @@ const getCitationUrl = (citation: string, allCitations: string[]): string | null
 };
 
 interface CitationInfo {
-  name: string;      // e.g. "SU01B0825INC228144.pdf"
-  rawSource: string; // e.g. "https://..." or "PDF: SU01B0825INC228144.pdf"
-  kbId?: string;     // e.g. "fa05090b-c00c-4d63-ad07-e0296361ef89"
+  name: string;      
+  rawSource: string;
+  kbId?: string;     
 }
 
 const getRecordCitations = (record: any): CitationInfo[] => {
   const list: CitationInfo[] = [];
   const addedNames = new Set<string>();
 
-  // Helper to add unique citations
+  
   const addCitation = (rawSource: string, kbId?: string) => {
     if (!rawSource || typeof rawSource !== 'string') return;
     const cleanName = getCleanCitationName(rawSource);
 
-    // Find if already added
+   
     if (addedNames.has(cleanName.toLowerCase())) {
-      // If the existing one doesn't have kbId but this one does, update it
       const existing = list.find(c => c.name.toLowerCase() === cleanName.toLowerCase());
       if (existing && !existing.kbId && kbId) {
         existing.kbId = kbId;
@@ -84,8 +83,8 @@ const getRecordCitations = (record: any): CitationInfo[] => {
     });
   };
 
-  // Find kb_ids from retrieved chunks to associate with citations
-  const chunkMap = new Map<string, string>(); // lowercase cleanName -> kb_id
+  
+  const chunkMap = new Map<string, string>(); 
   if (Array.isArray(record.view?.retrieved_chunks)) {
     record.view.retrieved_chunks.forEach((chunk: any) => {
       if (chunk && chunk.kb_id && chunk.source) {
@@ -95,7 +94,6 @@ const getRecordCitations = (record: any): CitationInfo[] => {
     });
   }
 
-  // 1. Check if direct citations array exists
   if (Array.isArray(record.citations)) {
     record.citations.forEach((c: any) => {
       if (typeof c === 'string') {
@@ -105,7 +103,6 @@ const getRecordCitations = (record: any): CitationInfo[] => {
     });
   }
 
-  // 2. Check if citations array inside view exists
   if (Array.isArray(record.view?.citations)) {
     record.view.citations.forEach((c: any) => {
       if (typeof c === 'string') {
@@ -115,7 +112,6 @@ const getRecordCitations = (record: any): CitationInfo[] => {
     });
   }
 
-  // 3. Fallback/Include retrieved_chunks sources
   if (Array.isArray(record.view?.retrieved_chunks)) {
     record.view.retrieved_chunks.forEach((chunk: any) => {
       if (chunk && chunk.source) {
@@ -139,137 +135,7 @@ const getIconForFile = (filename: string) => {
   return <span className="text-blue-600 font-bold text-sm">📝</span>;
 };
 
-// Exact mock data representing the user's expected payload (12 total feedbacks)
-const MOCK_MESSAGES_DATA = {
-  success: true,
-  data: [
-    // 7 Correct responses (Thumbs Up)
-    ...Array(7).fill(null).map((_, i) => ({
-      time: `2026-07-16T06:${10 + i}:12.124512+00:00`,
-      user: { id: `u-${i}`, email: "user@gramosoft.in", first_name: "Admin", last_name: "User" },
-      tenant: { id: "t-1", name: "44444ddddd" },
-      agent: { id: "a-1", name: "GSearch Assistant" },
-      feedback_type: "thumbs_up",
-      feedback_reason: "Correct response",
-      question: `Summarize technical overview question ${i + 1}`,
-      ai_response: `This is a correct, validated response message ${i + 1} from your knowledge bases.`,
-      citations: [
-        "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/4ff69ed2-49d0-4b1d-9abf-0c769bd36965/SU01B0825INC228144.pdf",
-        "PDF: SU01B0825INC228144.pdf",
-        "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/4ff69ed2-49d0-4b1d-9abf-0c769bd36965/sample-100kb.pdf"
-      ],
-      view: { session_id: "s-1", message_id: `m-up-${i}`, agent_id: "a-1", retrieved_chunks: [] }
-    })),
-    // 2 Irrelevant Answer (Thumbs Down)
-    {
-      time: "2026-07-16T05:41:46.730612+00:00",
-      user: { id: "u-7", email: "user@gramosoft.in", first_name: "Admin", last_name: "User" },
-      tenant: { id: "t-1", name: "44444ddddd" },
-      agent: { id: "a-1", name: "GSearch Assistant" },
-      feedback_type: "thumbs_down",
-      feedback_reason: "Irrelevant Answer",
-      question: "summrize what u know ",
-      ai_response: "I am Gsearch AI, trained to answer queries from your uploaded knowledge bases. From your retrieved context, the system has documents regarding sales figures, invoice tables, and technical specifications...",
-      citations: [
-        "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/4ff69ed2-49d0-4b1d-9abf-0c769bd36965/SU01B0825INC228144.pdf",
-        "PDF: SU01B0825INC228144.pdf"
-      ],
-      view: {
-        session_id: "adc6e32b-415e-4056-adcf-5885c026e23e",
-        message_id: "b1b132d9-68ad-4c4f-828d-5d233a8da6fe",
-        agent_id: "dca0adcd-7e8a-4456-8bbd-c0eec6339f55",
-        retrieved_chunks: [
-          {
-            chunk_id: "table-fa05090b-c00c-4d63-ad07-e0296361ef89-1-0",
-            source: "PDF: SU01B0825INC228144.pdf",
-            score: 1.7,
-            position: 0,
-            reason: "TABLE_RECONSTRUCTED",
-            kb_id: "fa05090b-c00c-4d63-ad07-e0296361ef89",
-            content_type: "original"
-          },
-          {
-            chunk_id: "56448eb2-7bbc-41c0-af62-80e17d61f45f",
-            source: "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/4ff69ed2-49d0-4b1d-9abf-0c769bd36965/sample-100kb.pdf",
-            score: 0.72,
-            position: 4,
-            reason: "Seed chunk (semantic similarity)",
-            kb_id: "54090dcd-c4c0-40ba-b4e7-003a17b62f41",
-            content_type: "text/markdown"
-          }
-        ]
-      }
-    },
-    {
-      time: "2026-07-16T05:44:10.730612+00:00",
-      user: { id: "u-8", email: "user@gramosoft.in", first_name: "Admin", last_name: "User" },
-      tenant: { id: "t-1", name: "44444ddddd" },
-      agent: { id: "a-1", name: "GSearch Assistant" },
-      feedback_type: "thumbs_down",
-      feedback_reason: "Irrelevant Answer",
-      question: "What is your primary design logic?",
-      ai_response: "I do not have access to specific coding patterns in the context provided.",
-      citations: [
-        "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/4ff69ed2-49d0-4b1d-9abf-0c769bd36965/sales_report_2026.xlsx",
-        "Excel: sales_report_2026.xlsx"
-      ],
-      view: { session_id: "s-1", message_id: "m-down-2", agent_id: "a-1", retrieved_chunks: [] }
-    },
-    // 2 Missing Information (Thumbs Down)
-    {
-      time: "2026-07-16T05:50:12.730612+00:00",
-      user: { id: "u-9", email: "user@gramosoft.in", first_name: "Admin", last_name: "User" },
-      tenant: { id: "t-1", name: "44444ddddd" },
-      agent: { id: "a-1", name: "GSearch Assistant" },
-      feedback_type: "thumbs_down",
-      feedback_reason: "Missing Information",
-      question: "Where is the budget details?",
-      ai_response: "No budget data chunks were found in the current agent index.",
-      citations: [
-        "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/4ff69ed2-49d0-4b1d-9abf-0c769bd36965/SU01B0825INC228144.pdf",
-        "PDF: SU01B0825INC228144.pdf",
-        "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/4ff69ed2-49d0-4b1d-9abf-0c769bd36965/sample-100kb.pdf"
-      ],
-      view: { session_id: "s-1", message_id: "m-down-3", agent_id: "a-1", retrieved_chunks: [] }
-    },
-    {
-      time: "2026-07-16T05:52:12.730612+00:00",
-      user: { id: "u-10", email: "user@gramosoft.in", first_name: "Admin", last_name: "User" },
-      tenant: { id: "t-1", name: "44444ddddd" },
-      agent: { id: "a-1", name: "GSearch Assistant" },
-      feedback_type: "thumbs_down",
-      feedback_reason: "Missing Information",
-      question: "Which page contains invoice details?",
-      ai_response: "The invoice summary files appear to be missing from the workspace folders.",
-      citations: [
-        "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/4ff69ed2-49d0-4b1d-9abf-0c769bd36965/invoice_data.xlsx",
-        "Excel: invoice_data.xlsx"
-      ],
-      view: { session_id: "s-1", message_id: "m-down-4", agent_id: "a-1", retrieved_chunks: [] }
-    },
-    // 1 Hallucination (Thumbs Down)
-    {
-      time: "2026-07-16T06:01:10.730612+00:00",
-      user: { id: "u-11", email: "user@gramosoft.in", first_name: "Admin", last_name: "User" },
-      tenant: { id: "t-1", name: "44444ddddd" },
-      agent: { id: "a-1", name: "GSearch Assistant" },
-      feedback_type: "thumbs_down",
-      feedback_reason: "Hallucination",
-      question: "Who is the primary administrator?",
-      ai_response: "The document indicates the admin user is the main database administrator (this is hallucinated from email metadata).",
-      citations: [
-        "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/4ff69ed2-49d0-4b1d-9abf-0c769bd36965/SU01B0825INC228144.pdf",
-        "PDF: SU01B0825INC228144.pdf"
-      ],
-      view: { session_id: "s-1", message_id: "m-down-5", agent_id: "a-1", retrieved_chunks: [] }
-    }
-  ],
-  meta: {
-    total_feedback_count: 12
-  }
-};
 
-// Reusable Count-Up Animation Component triggered on scroll/view
 interface AnimatedCounterProps {
   value: number;
   duration?: number;
@@ -354,7 +220,6 @@ export default function AdminFeedbackPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Modal states
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [selectedRecordForDetail, setSelectedRecordForDetail] = useState<any>(null);
 
@@ -362,11 +227,10 @@ export default function AdminFeedbackPage() {
   const [selectedRecordForChunks, setSelectedRecordForChunks] = useState<any>(null);
 
   const handleCitationClick = async (citation: any, allCitations: any[]) => {
-    // Determine kbId
+   
     let kbId = citation.kbId;
     const cleanName = getCleanCitationName(citation.rawSource);
 
-    // If no direct kbId, try matching by name in retrieved_chunks
     if (!kbId && selectedRecordForDetail?.view?.retrieved_chunks) {
       const match = selectedRecordForDetail.view.retrieved_chunks.find((chunk: any) => {
         if (chunk.kb_id && chunk.source) {
@@ -377,11 +241,9 @@ export default function AdminFeedbackPage() {
       if (match) kbId = match.kb_id;
     }
 
-    // Try finding the URL matching this citation
     const targetUrl = getCitationUrl(citation.rawSource, allCitations.map(c => c.rawSource));
 
     if (kbId) {
-      // Open a loading tab immediately to prevent popup blocker
       const newWindow = window.open("", "_blank");
       if (!newWindow) {
         Modal.error({
@@ -433,7 +295,6 @@ export default function AdminFeedbackPage() {
           const viewBlobUrl = URL.createObjectURL(blob);
           newWindow.location.href = viewBlobUrl;
         } else if (isCSV || isExcel) {
-          // Parse spreadsheet array buffer using xlsx
           const arrayBuffer = await blob.arrayBuffer();
           const XLSX = await import("xlsx");
           const workbook = XLSX.read(arrayBuffer, { type: "array" });
@@ -643,21 +504,17 @@ export default function AdminFeedbackPage() {
     }
   };
 
-  // Load feedback messages on mount or refresh
   useEffect(() => {
     getFeedback();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
 
-  // Use API response or fallback to Mock Data if API fails/is empty
   const feedbackPayload = useMemo(() => {
     if (rawFeedbackData && rawFeedbackData.success && Array.isArray(rawFeedbackData.data) && rawFeedbackData.data.length > 0) {
       return rawFeedbackData;
     }
-    return MOCK_MESSAGES_DATA;
+    return null;
   }, [rawFeedbackData]);
 
-  // Derive list items and filter by search query
   const items = useMemo(() => feedbackPayload.data || [], [feedbackPayload]);
 
   const filteredItems = useMemo(() => {
@@ -713,7 +570,6 @@ export default function AdminFeedbackPage() {
     }
   };
 
-  // Derive counts and dynamic aggregates
   const totalFeedbackCount = useMemo(() => {
     return feedbackPayload.meta?.total_feedback_count ?? items.length;
   }, [feedbackPayload, items]);
@@ -742,7 +598,6 @@ export default function AdminFeedbackPage() {
     return totalFeedbackCount > 0 ? (totalThumbsDownCount / totalFeedbackCount) * 100 : 0;
   }, [totalThumbsDownCount, totalFeedbackCount]);
 
-  // Main table columns
   const columns = [
     {
       title: "S.No",
@@ -845,7 +700,6 @@ export default function AdminFeedbackPage() {
     },
   ];
 
-  // Nested chunk details columns
   const chunkColumns = [
     {
       title: "S.No",
@@ -950,7 +804,6 @@ export default function AdminFeedbackPage() {
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 pb-24 relative min-h-screen">
-      {/* 1. Header Block */}
       <div className="mb-10">
         <Row justify="space-between" align="middle" gutter={[16, 24]}>
           <Col xs={24} md={18}>
@@ -999,9 +852,7 @@ export default function AdminFeedbackPage() {
         </div>
       ) : (
         <div className="space-y-12">
-          {/* 2. Top Aggregated Summary Row */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Card 1: Total Feedbacks */}
             <div className="bg-[var(--app-surface)] border border-[var(--app-border)]/60 rounded-3xl p-6 relative overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 flex flex-col justify-between min-h-[140px] group">
               <div className="absolute top-[-20%] right-[-10%] w-[40%] h-[80%] bg-sky-500/5 rounded-full blur-[40px] transition-all group-hover:scale-110" />
               <div className="flex items-center justify-between">
@@ -1022,7 +873,6 @@ export default function AdminFeedbackPage() {
               </div>
             </div>
 
-            {/* Card 2: Thumbs Up Overall */}
             <div className="bg-[var(--app-surface)] border border-[var(--app-border)]/60 rounded-3xl p-6 relative overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 flex flex-col justify-between min-h-[140px] group">
               <div className="absolute top-[-20%] right-[-10%] w-[40%] h-[80%] bg-emerald-500/5 rounded-full blur-[40px] transition-all group-hover:scale-110" />
               <div className="flex items-center justify-between">
@@ -1046,7 +896,6 @@ export default function AdminFeedbackPage() {
               </div>
             </div>
 
-            {/* Card 3: Thumbs Down Overall */}
             <div className="bg-[var(--app-surface)] border border-[var(--app-border)]/60 rounded-3xl p-6 relative overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 flex flex-col justify-between min-h-[140px] group">
               <div className="absolute top-[-20%] right-[-10%] w-[40%] h-[80%] bg-violet-500/5 rounded-full blur-[40px] transition-all group-hover:scale-110" />
               <div className="flex items-center justify-between">
@@ -1071,10 +920,8 @@ export default function AdminFeedbackPage() {
             </div>
           </div>
 
-          {/* 4. Logs Table Card */}
           <Card className="bg-[var(--app-surface)] border border-[var(--app-border)]/60 shadow-xl rounded-3xl p-6 overflow-hidden">
             <Space direction="vertical" size={24} className="w-full">
-              {/* Search input bar */}
               <div style={{ maxWidth: 400 }}>
                 <Input
                   placeholder="Search feedback logs..."
@@ -1086,7 +933,6 @@ export default function AdminFeedbackPage() {
                 />
               </div>
 
-              {/* Table display */}
               <Table
                 dataSource={filteredItems}
                 columns={columns}
@@ -1106,7 +952,6 @@ export default function AdminFeedbackPage() {
         </div>
       )}
 
-      {/* Detail Modal (Eye Click) */}
       <Modal
         title={
           <div className="flex items-center gap-2 text-[var(--app-text)] font-extrabold text-lg pb-2 border-b border-[var(--app-border)]/40">
@@ -1138,7 +983,6 @@ export default function AdminFeedbackPage() {
       >
         {selectedRecordForDetail && (
           <div className="mt-5 space-y-6">
-            {/* User Meta Information */}
             <div className="flex justify-between items-center text-xs bg-[var(--app-surface-muted)] border border-[var(--app-border)]/40 p-3.5 rounded-2xl">
               <div>
                 <span className="font-extrabold text-[var(--app-text-soft)]">Flagged By: </span>
@@ -1153,7 +997,7 @@ export default function AdminFeedbackPage() {
               </div>
             </div>
 
-            {/* Question (User Bubble) */}
+           
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-xs font-black uppercase text-[var(--app-text-soft)] tracking-wider">
                 <User size={14} className="text-[#0fb5a1]" />
@@ -1164,7 +1008,7 @@ export default function AdminFeedbackPage() {
               </div>
             </div>
 
-            {/* AI Response (Bot Bubble) */}
+            
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-xs font-black uppercase text-[var(--app-text-soft)] tracking-wider">
                 <Bot size={14} className="text-violet-500" />
@@ -1177,7 +1021,7 @@ export default function AdminFeedbackPage() {
               </div>
             </div>
 
-            {/* Citations section */}
+           
             {selectedRecordForDetail && (() => {
               const detailCitations = getRecordCitations(selectedRecordForDetail);
               if (detailCitations.length === 0) return null;
@@ -1209,7 +1053,7 @@ export default function AdminFeedbackPage() {
               );
             })()}
 
-            {/* Reason details */}
+           
             <div className="flex items-center justify-between border-t border-[var(--app-border)]/40 pt-4 text-xs font-semibold text-[var(--app-text-soft)]">
               <div>
                 Feedback: {" "}
@@ -1225,7 +1069,7 @@ export default function AdminFeedbackPage() {
         )}
       </Modal>
 
-      {/* Chunk Details Modal (Database/Chunk Click) */}
+     
       <Modal
         title={
           <div className="flex items-center gap-2 text-[var(--app-text)] font-extrabold text-lg pb-2 border-b border-[var(--app-border)]/40">
@@ -1268,7 +1112,7 @@ export default function AdminFeedbackPage() {
               </div>
             </div>
 
-            {/* Inner table showing retrieved chunks list */}
+            
             <div className="border border-[var(--app-border)]/60 rounded-2xl overflow-hidden shadow-inner bg-[var(--app-surface-muted)] p-1">
               <Table
                 dataSource={selectedRecordForChunks.view?.retrieved_chunks || []}
@@ -1292,7 +1136,7 @@ export default function AdminFeedbackPage() {
         )}
       </Modal>
 
-      {/* Styled JSX for Table Customization */}
+      
       <style jsx global>{`
         .custom-feedback-table .ant-table {
           background: transparent !important;

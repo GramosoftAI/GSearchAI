@@ -50,6 +50,9 @@ interface ModelUsageRecord {
   input_tokens?: number;
   output_tokens?: number;
   total_tokens?: number;
+  input_cost_usd?: number;
+  output_cost_usd?: number;
+  embedding_cost_usd?: number;
   total_cost_usd?: number;
   request_count?: number;
 }
@@ -71,7 +74,7 @@ function AnimatedCount({ value, precision = 0, isCurrency = false }: { value: nu
 
   useEffect(() => {
     let startTimestamp: number | null = null;
-    const duration = 1000; // 1 second smooth animation
+    const duration = 1000;
     const startVal = 0;
     const endVal = value;
 
@@ -106,19 +109,18 @@ export default function AdminBillingPage() {
   const [pickerValue, setPickerValue] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null);
   const [activeTab, setActiveTab] = useState<string>("users");
 
-  // Detail Modal States
   const [userModalVisible, setUserModalVisible] = useState<boolean>(false);
   const [selectedUser, setSelectedUser] = useState<UserUsageRecord | null>(null);
   const [modelModalVisible, setModelModalVisible] = useState<boolean>(false);
   const [selectedModel, setSelectedModel] = useState<ModelUsageRecord | null>(null);
 
-  // useAxios hook targeting USER_COSTS endpoint
+  
   const [request, rawData, loading] = useAxios({
     endpoint: "USER_COSTS",
     hideErrorMsg: false,
   });
 
-  // Fetch token & cost data from API
+  
   const fetchCostsData = useCallback(async (start?: string, end?: string) => {
     let path = "";
     if (start && end) {
@@ -131,12 +133,12 @@ export default function AdminBillingPage() {
     }
   }, [request]);
 
-  // Initial fetch on page mount
+ 
   useEffect(() => {
     fetchCostsData();
   }, [fetchCostsData]);
 
-  // Safe destructuring of rawData
+  
   const summary = useMemo<TokenUsageSummary>(() => {
     if (!rawData) return {};
     return (rawData as any).summary || {};
@@ -153,7 +155,7 @@ export default function AdminBillingPage() {
     return allModels.filter((item: ModelUsageRecord) => (item.total_tokens || 0) > 0);
   }, [rawData]);
 
-  // Apply client-side search query filter for users
+
   const filteredUsers = useMemo(() => {
     if (!searchQuery.trim()) return userRecords;
     const query = searchQuery.toLowerCase().trim();
@@ -164,7 +166,7 @@ export default function AdminBillingPage() {
     });
   }, [userRecords, searchQuery]);
 
-  // Apply client-side search query filter for models
+  
   const filteredModels = useMemo(() => {
     if (!searchQuery.trim()) return modelRecords;
     const query = searchQuery.toLowerCase().trim();
@@ -174,7 +176,7 @@ export default function AdminBillingPage() {
     });
   }, [modelRecords, searchQuery]);
 
-  // Handlers
+ 
   const handleSearchClick = () => {
     if (dateRange && dateRange[0] && dateRange[1]) {
       fetchCostsData(dateRange[0], dateRange[1]);
@@ -190,7 +192,7 @@ export default function AdminBillingPage() {
     fetchCostsData();
   };
 
-  // Ant Design Table Columns for Users
+
   const userColumns = [
     {
       title: "S.No",
@@ -274,7 +276,6 @@ export default function AdminBillingPage() {
     },
   ];
 
-  // Ant Design Table Columns for Models
   const modelColumns = [
     {
       title: "S.No",
@@ -316,6 +317,51 @@ export default function AdminBillingPage() {
       ),
     },
     {
+      title: "Input Cost (USD)",
+      dataIndex: "input_cost_usd",
+      key: "input_cost_usd",
+      width: 150,
+      sorter: (a: ModelUsageRecord, b: ModelUsageRecord) => (a.input_cost_usd || 0) - (b.input_cost_usd || 0),
+      render: (cost?: number) => (
+        <Tag
+          color="blue"
+          className="px-3 py-1 text-xs font-bold rounded-lg border-blue-500/20 bg-blue-500/10 text-blue-600 dark:text-blue-400 whitespace-nowrap"
+        >
+          ${(cost || 0).toFixed(6)}
+        </Tag>
+      ),
+    },
+    {
+      title: "Output Cost (USD)",
+      dataIndex: "output_cost_usd",
+      key: "output_cost_usd",
+      width: 150,
+      sorter: (a: ModelUsageRecord, b: ModelUsageRecord) => (a.output_cost_usd || 0) - (b.output_cost_usd || 0),
+      render: (cost?: number) => (
+        <Tag
+          color="purple"
+          className="px-3 py-1 text-xs font-bold rounded-lg border-purple-500/20 bg-purple-500/10 text-purple-600 dark:text-purple-400 whitespace-nowrap"
+        >
+          ${(cost || 0).toFixed(6)}
+        </Tag>
+      ),
+    },
+    {
+      title: "Embedding Cost (USD)",
+      dataIndex: "embedding_cost_usd",
+      key: "embedding_cost_usd",
+      width: 170,
+      sorter: (a: ModelUsageRecord, b: ModelUsageRecord) => (a.embedding_cost_usd || 0) - (b.embedding_cost_usd || 0),
+      render: (cost?: number) => (
+        <Tag
+          color="cyan"
+          className="px-3 py-1 text-xs font-bold rounded-lg border-cyan-500/20 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 whitespace-nowrap"
+        >
+          ${(cost || 0).toFixed(6)}
+        </Tag>
+      ),
+    },
+    {
       title: "Total Cost (USD)",
       dataIndex: "total_cost_usd",
       key: "total_cost_usd",
@@ -354,7 +400,6 @@ export default function AdminBillingPage() {
   return (
     <div className="w-full max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8 pb-24 min-h-screen">
       <Flex vertical gap={24}>
-        {/* Header Section */}
         <Flex justify="space-between" align="center" wrap gap={16}>
           <div>
             <Title level={1} className="!m-0 !font-extrabold !text-2xl sm:!text-3xl tracking-tight text-[var(--app-text)]">
@@ -376,7 +421,6 @@ export default function AdminBillingPage() {
           </Button>
         </Flex>
 
-        {/* Summary Metric Cards with CountUp Animations */}
         <Row gutter={[16, 16]} style={{ display: "flex", flexWrap: "wrap", alignItems: "stretch" }}>
           <Col xs={24} sm={12} md={8} className="flex flex-col">
             <Card
@@ -456,7 +500,6 @@ export default function AdminBillingPage() {
           </Col>
         </Row>
 
-        {/* Filter Controls Bar */}
         <Card className="bg-[var(--app-surface)] border-[var(--app-border)] shadow-sm rounded-2xl">
           <Row gutter={[16, 16]} align="bottom">
             <Col xs={24} md={8} lg={9}>
@@ -524,13 +567,12 @@ export default function AdminBillingPage() {
           </Row>
         </Card>
 
-        {/* Tab Selection & Tables */}
         <div className="custom-tabs-container">
           <Tabs
             activeKey={activeTab}
             onChange={(key) => {
               setActiveTab(key);
-              setSearchQuery(""); // Clear search query when tab changes
+              setSearchQuery("");
             }}
             items={[
               {
@@ -589,7 +631,7 @@ export default function AdminBillingPage() {
                           dataSource={filteredModels}
                           columns={modelColumns}
                           rowKey={(record, index) => record.model_name || String(index)}
-                          scroll={{ x: 550 }}
+                          scroll={{ x: 950 }}
                           pagination={{
                             pageSize: 10,
                             showSizeChanger: true,
@@ -612,7 +654,6 @@ export default function AdminBillingPage() {
         </div>
       </Flex>
 
-      {/* User Details Modal */}
       <Modal
         title={
           <Title level={4} className="!m-0 !font-extrabold text-[var(--app-text)] border-b border-[var(--app-border)] pb-3">
@@ -685,7 +726,6 @@ export default function AdminBillingPage() {
         )}
       </Modal>
 
-      {/* Model Details Modal */}
       <Modal
         title={
           <Title level={4} className="!m-0 !font-extrabold text-[var(--app-text)] border-b border-[var(--app-border)] pb-3">
@@ -733,6 +773,21 @@ export default function AdminBillingPage() {
                 <div className="p-4 rounded-xl border border-[var(--app-border)]/40 bg-[var(--app-surface)]">
                   <Text className="block text-[10px] font-bold text-[var(--app-text-soft)] uppercase tracking-wider mb-1">Total Queries</Text>
                   <Text className="text-base font-extrabold text-[var(--app-text)]">{(selectedModel.request_count || 0).toLocaleString()}</Text>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="p-3 rounded-xl border border-[var(--app-border)]/40 bg-[var(--app-surface)] flex flex-col justify-between min-h-[66px]">
+                  <Text className="block text-[9.5px] font-bold text-[var(--app-text-soft)] uppercase tracking-normal mb-1 whitespace-nowrap">Input Cost</Text>
+                  <Text className="text-sm font-extrabold text-[var(--app-text)]">${(selectedModel.input_cost_usd || 0).toFixed(6)}</Text>
+                </div>
+                <div className="p-3 rounded-xl border border-[var(--app-border)]/40 bg-[var(--app-surface)] flex flex-col justify-between min-h-[66px]">
+                  <Text className="block text-[9.5px] font-bold text-[var(--app-text-soft)] uppercase tracking-normal mb-1 whitespace-nowrap">Output Cost</Text>
+                  <Text className="text-sm font-extrabold text-[var(--app-text)]">${(selectedModel.output_cost_usd || 0).toFixed(6)}</Text>
+                </div>
+                <div className="p-3 rounded-xl border border-[var(--app-border)]/40 bg-[var(--app-surface)] flex flex-col justify-between min-h-[66px]">
+                  <Text className="block text-[9.5px] font-bold text-[var(--app-text-soft)] uppercase tracking-normal mb-1 whitespace-nowrap">Embedding Cost</Text>
+                  <Text className="text-sm font-extrabold text-[var(--app-text)]">${(selectedModel.embedding_cost_usd || 0).toFixed(6)}</Text>
                 </div>
               </div>
 

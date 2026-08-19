@@ -2,7 +2,6 @@
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, Suspense, useMemo } from "react";
-import { FaBrain } from "react-icons/fa";
 import { SiCrowdsource } from "react-icons/si";
 
 const CHAT_FONT_FAMILY = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
@@ -29,6 +28,7 @@ type Message = {
   sources?: SourceItem[];
   feedback?: "thumbs_up" | "thumbs_down";
   escalation_detected?: boolean;
+  timestamp?: string;
 };
 
 function stripThinking(content: string): string {
@@ -282,7 +282,7 @@ const renderBoldText = (text: string, key: any, isUser: boolean) => {
           return (
             <strong
               key={subIndex}
-              style={{ fontWeight: "800", color: "#18181b" }}
+              style={{ fontWeight: "800", color: isUser ? "inherit" : "#18181b" }}
             >
               {content}
             </strong>
@@ -316,7 +316,7 @@ const renderTextWithLinks = (text: string, isUser: boolean, themeColor: string =
             textDecoration: "underline",
             wordBreak: "break-all",
             fontWeight: "bold",
-            color: themeColor,
+            color: isUser ? "#ffffff" : themeColor,
             cursor: "pointer"
           }}
         >
@@ -648,7 +648,7 @@ const renderFormattedContent = (content: string, isUser: boolean, themeColor: st
 };
 
 const STAGES = [
-  { at: 0,    label: "Searching knowledge base..." },
+  { at: 0, label: "Searching knowledge base..." },
   { at: 3000, label: "Reading relevant documents..." },
   { at: 8000, label: "Analyzing context..." },
   { at: 15000, label: "Generating answer..." },
@@ -677,7 +677,9 @@ function WidgetContent() {
   const searchParams = useSearchParams();
   const agentId = searchParams.get("agentId");
   const tenantId = searchParams.get("tenantId");
+  const chatType = searchParams.get("chatType") || "icon";
   const themeColor = searchParams.get("themeColor") || "#0fb5a1";
+  const placeholder = searchParams.get("placeholder") || "Ask a question...";
   const headerLogo = searchParams.get("headerLogo") || "";
   const headerAlign = searchParams.get("headerAlign") || "center";
   const headerNameParam = searchParams.get("headerName");
@@ -765,7 +767,7 @@ function WidgetContent() {
   const bufferRef = useRef("");
   const [messages, setMessages] = useState<Message[]>(() => {
     if (initialMessageParam) {
-      return [{ role: "assistant", content: initialMessageParam }];
+      return [{ role: "assistant", content: initialMessageParam, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }];
     }
     return [];
   });
@@ -791,6 +793,7 @@ function WidgetContent() {
   const [input, setInput] = useState("");
   const [wsStatus, setWsStatus] = useState<"connecting" | "open" | "closed" | "error">("closed");
   const [isTyping, setIsTyping] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
   const [answeredEscalations, setAnsweredEscalations] = useState<number[]>([]);
   const progressLabel = useProgressLabel(isTyping);
   const isTypingRef = useRef(false);
@@ -978,7 +981,7 @@ function WidgetContent() {
 
     if (isSelectedLink) {
       const coreKeyword = targetNameRaw.replace(/\s*\((Selected Links|Selected Link)\)\s*/i, "").trim().toLowerCase();
-      
+
       const foundSource = currentSources.find(as => {
         const asName = String(as.name || "").toLowerCase();
         const asUrl = String(as.url || "").toLowerCase();
@@ -1375,7 +1378,7 @@ function WidgetContent() {
   const initialQuerySentRef = useRef(false);
   const pendingQueryRef = useRef("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  
+
   const wsDoneRef = useRef(false);
   const currentMsgIdRef = useRef<string | null>(null);
   const currentSourcesRef = useRef<any[]>([]);
@@ -1392,12 +1395,12 @@ function WidgetContent() {
     if (chunk) {
       bufferRef.current += chunk;
     }
-    
+
     if (isDone) {
       setIsTyping(false);
       resetTypingTimeout();
     }
-    
+
     const rawStream = bufferRef.current;
 
     const citationRegex = /(?:\[Source:\s*|\(Source:\s*)([^\]\)]+)[\]\)]/gi;
@@ -1423,7 +1426,7 @@ function WidgetContent() {
     requestAnimationFrame(() => {
       setMessages((prev) => {
         const lastMsg = prev[prev.length - 1];
-        
+
         let finalSources = (currentSourcesRef.current && currentSourcesRef.current.length > 0)
           ? currentSourcesRef.current
           : (lastMsg?.sources && lastMsg.sources.length > 0)
@@ -1445,33 +1448,53 @@ function WidgetContent() {
               content: cleanedText,
               id: lastMsg.id || currentMsgIdRef.current || undefined,
               sources: finalSources,
-              escalation_detected: lastMsg.escalation_detected || currentEscalationRef.current === true
+              escalation_detected: lastMsg.escalation_detected || currentEscalationRef.current === true,
+              timestamp: lastMsg.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
             },
           ];
         } else {
-          return [...prev, { role: "assistant", content: cleanedText, id: currentMsgIdRef.current || undefined, sources: finalSources, escalation_detected: currentEscalationRef.current === true }];
+          return [...prev, { role: "assistant", content: cleanedText, id: currentMsgIdRef.current || undefined, sources: finalSources, escalation_detected: currentEscalationRef.current === true, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }];
         }
       });
     });
   }, [resetTypingTimeout]);
 
   const handleClose = () => {
-    window.parent.postMessage({ type: "close-chat" }, "*");
+    if (chatType === "search") {
+      setIsClosing(true);
+      setTimeout(() => {
+        window.parent.postMessage({ type: "close-chat" }, "*");
+      }, 220);
+    } else {
+      window.parent.postMessage({ type: "close-chat" }, "*");
+    }
   };
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data && event.data.type === "focus-input") {
+        setIsClosing(false);
         setTimeout(() => {
           inputRef.current?.focus();
         }, 150);
+        return;
+      }
+      if (event.data && event.data.type === "start-close-animation") {
+        if (chatType === "search") {
+          setIsClosing(true);
+          setTimeout(() => {
+            window.parent.postMessage({ type: "close-chat" }, "*");
+          }, 220);
+        } else {
+          window.parent.postMessage({ type: "close-chat" }, "*");
+        }
         return;
       }
       if (event.data && event.data.type === "send-query") {
         const query = event.data.query;
         if (query) {
           bufferRef.current = "";
-          setMessages((prev) => [...prev, { role: "user", content: query }]);
+          setMessages((prev) => [...prev, { role: "user", content: query, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }]);
           setIsTyping(true);
           startTypingTimeout();
           if (ws.current && ws.current.readyState === WebSocket.OPEN) {
@@ -1490,7 +1513,7 @@ function WidgetContent() {
   useEffect(() => {
     const textarea = inputRef.current;
     if (!textarea) return;
-    textarea.style.height = "22px";
+    textarea.style.height = "20px";
     const newHeight = Math.min(120, textarea.scrollHeight);
     textarea.style.height = `${newHeight}px`;
   }, [input]);
@@ -1547,7 +1570,7 @@ function WidgetContent() {
         ws.current.onclose = null;
         ws.current.onerror = null;
         ws.current.close();
-      } catch (e) {}
+      } catch (e) { }
     }
 
     const wsHost = (process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:4915").replace(/\/$/, "");
@@ -1570,7 +1593,7 @@ function WidgetContent() {
       const initialQuery = searchParams.get("q");
       if (initialQuery && !initialQuerySentRef.current) {
         initialQuerySentRef.current = true;
-        setMessages((prev) => [...prev, { role: "user", content: initialQuery }]);
+        setMessages((prev) => [...prev, { role: "user", content: initialQuery, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }]);
         setIsTyping(true);
         startTypingTimeout();
         socket.send(JSON.stringify({ message: initialQuery, query: initialQuery, embed: true, is_embed: true }));
@@ -1626,9 +1649,9 @@ function WidgetContent() {
             setMessages((prev) => {
               const lastMsg = prev[prev.length - 1];
               if (lastMsg && lastMsg.role === "assistant") {
-                return [...prev.slice(0, -1), { ...lastMsg, content: friendlyError }];
+                return [...prev.slice(0, -1), { ...lastMsg, content: friendlyError, timestamp: lastMsg.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }];
               }
-              return [...prev, { role: "assistant", content: friendlyError }];
+              return [...prev, { role: "assistant", content: friendlyError, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }];
             });
             return;
           }
@@ -1660,7 +1683,7 @@ function WidgetContent() {
         setIsTyping(false);
         resetTypingTimeout();
         const text = String(event.data);
-        setMessages((prev) => [...prev, { role: "assistant", content: text }]);
+        setMessages((prev) => [...prev, { role: "assistant", content: text, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }]);
       }
     };
 
@@ -1672,9 +1695,9 @@ function WidgetContent() {
         setMessages((prev) => {
           const lastMsg = prev[prev.length - 1];
           if (lastMsg && lastMsg.role === "assistant") {
-            return [...prev.slice(0, -1), { ...lastMsg, content: friendlyError }];
+            return [...prev.slice(0, -1), { ...lastMsg, content: friendlyError, timestamp: lastMsg.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }];
           }
-          return [...prev, { role: "assistant", content: friendlyError }];
+          return [...prev, { role: "assistant", content: friendlyError, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }];
         });
       }
       setIsTyping(false);
@@ -1688,9 +1711,9 @@ function WidgetContent() {
         setMessages((prev) => {
           const lastMsg = prev[prev.length - 1];
           if (lastMsg && lastMsg.role === "assistant") {
-            return [...prev.slice(0, -1), { ...lastMsg, content: friendlyError }];
+            return [...prev.slice(0, -1), { ...lastMsg, content: friendlyError, timestamp: lastMsg.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }];
           }
-          return [...prev, { role: "assistant", content: friendlyError }];
+          return [...prev, { role: "assistant", content: friendlyError, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }];
         });
       }
       setIsTyping(false);
@@ -1713,7 +1736,7 @@ function WidgetContent() {
     if (!message) return;
     resetStreaming();
     bufferRef.current = ""; // reset old response
-    setMessages((prev) => [...prev, { role: "user", content: message }]);
+    setMessages((prev) => [...prev, { role: "user", content: message, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }]);
     setIsTyping(true);
     startTypingTimeout();
     if (ws.current && ws.current.readyState === WebSocket.OPEN) {
@@ -1729,9 +1752,9 @@ function WidgetContent() {
 
   return (
     <div
+      className="widget-container"
       style={{
         margin: 0,
-        padding: "8px",
         height: "100vh",
         width: "100%",
         display: "flex",
@@ -1769,8 +1792,8 @@ function WidgetContent() {
           100% { background-position: 100% 50%; }
         }
         .widget-send-btn {
-          width: 36px;
-          height: 36px;
+          width: 34px;
+          height: 34px;
         }
         @media (max-width: 640px) {
           .widget-send-btn {
@@ -1812,10 +1835,63 @@ function WidgetContent() {
         }
         .close-btn::before { transform: rotate(45deg); }
         .close-btn::after { transform: rotate(-45deg); }
+
+        .widget-container {
+          padding: 8px 8px 44px 8px;
+        }
+        .widget-brand-container {
+          position: absolute;
+          bottom: 8px;
+          left: 50%;
+          transform: translateX(-50%);
+          display: flex;
+          justify-content: center;
+          width: 100%;
+          pointer-events: none;
+          z-index: 10;
+        }
+        @media (max-width: 640px) {
+          .widget-container {
+            padding: 8px 8px 38px 8px;
+          }
+          .widget-brand-container {
+            bottom: 4px;
+          }
+        }
+ 
+        .search-animate {
+          animation: grag-slide-up-pop 0.38s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+          transform-origin: center bottom;
+        }
+        @keyframes grag-slide-up-pop {
+          0% {
+            opacity: 0;
+            transform: scale(0.9) translateY(20px);
+          }
+          100% {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+          }
+        }
+ 
+        .search-closing {
+          animation: grag-slide-down-close 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+          transform-origin: center bottom;
+        }
+        @keyframes grag-slide-down-close {
+          0% {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+          }
+          100% {
+            opacity: 0;
+            transform: scale(0.96) translateY(12px);
+          }
+        }
       `}</style>
 
-      {/* Main Chat Feed Box (White Card) */}
       <div
+        className={`${chatType === "search" ? "search-animate" : ""} ${isClosing && chatType === "search" ? "search-closing" : ""}`}
         style={{
           flex: 1,
           display: "flex",
@@ -2103,10 +2179,10 @@ function WidgetContent() {
                     <div
                       style={{
                         padding: "12px 16px",
-                        borderRadius: "18px",
-                        background: isUser ? "#f4f4f5" : "#ffffff",
-                        border: "1px solid #e4e4e7",
-                        color: "#18181b",
+                        borderRadius: isUser ? "18px 18px 2px 18px" : "18px 18px 18px 2px",
+                        background: isUser ? themeColor : "#ffffff",
+                        border: isUser ? "none" : "1px solid #e4e4e7",
+                        color: isUser ? "#ffffff" : "#18181b",
                         fontSize: "14px",
                         lineHeight: "1.45",
                         maxWidth: "85%",
@@ -2192,6 +2268,22 @@ function WidgetContent() {
                       )}
                     </div>
 
+                    {msg.timestamp && (
+                      <div
+                        style={{
+                          fontSize: "10px",
+                          color: "#a3a3a3",
+                          marginTop: "4px",
+                          marginBottom: "2px",
+                          alignSelf: isUser ? "flex-end" : "flex-start",
+                          padding: isUser ? "0 4px 0 0" : "0 0 0 4px",
+                          userSelect: "none"
+                        }}
+                      >
+                        {msg.timestamp}
+                      </div>
+                    )}
+
                     {/* Action Toolbar: Copy, Thumbs Up, Thumbs Down, Regenerate, Source (Far Right) */}
                     {!isUser && (!isTyping || index < messages.length - 1) && index !== 0 && (
                       <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "6px", width: "100%", maxWidth: "85%", flexWrap: "wrap" }}>
@@ -2206,7 +2298,7 @@ function WidgetContent() {
                                 if (navigator.clipboard && window.ClipboardItem) {
                                   const blobPlain = new Blob([plainText], { type: "text/plain" });
                                   const blobHtml = htmlText ? new Blob([htmlText], { type: "text/html" }) : null;
-                                  
+
                                   const clipboardData: Record<string, Blob> = { "text/plain": blobPlain };
                                   if (blobHtml) {
                                     clipboardData["text/html"] = blobHtml;
@@ -2310,7 +2402,7 @@ function WidgetContent() {
                               setIsTyping(true);
                               startTypingTimeout();
                               setMessages(messages.slice(0, userMessageIndex + 1));
-                              
+
                               if (ws.current && ws.current.readyState === WebSocket.OPEN) {
                                 ws.current.send(JSON.stringify({ message: prevUserMsg.content, query: prevUserMsg.content, embed: true, is_embed: true }));
                               } else if (ws.current && ws.current.readyState === WebSocket.CONNECTING) {
@@ -2514,11 +2606,11 @@ function WidgetContent() {
         <div
           style={{
             padding: "2px",
-            borderRadius: "24px",
+            borderRadius: "26px",
             background: `linear-gradient(90deg, ${themeColor}, ${themeColor}ee, #ffffff, ${themeColor}ee, ${themeColor})`,
             backgroundSize: "300% 100%",
             animation: "borderShift 3s ease infinite",
-            boxShadow: isTyping ? `0 4px 18px ${themeColor}40` : `0 2px 12px ${themeColor}30`,
+            boxShadow: isTyping ? `0 4px 18px ${themeColor}40` : `0 4px 16px ${themeColor}30`,
             flexShrink: 0,
           }}
         >
@@ -2526,15 +2618,17 @@ function WidgetContent() {
           <div
             style={{
               display: "flex",
-              alignItems: "flex-end",
+              alignItems: "center",
               background: "#ffffff",
-              borderRadius: "22px",
-              padding: "6px 8px 6px 16px",
-              gap: "10px",
+              borderRadius: "24px",
+              padding: "6px 8px 6px 18px",
+              gap: "12px",
+              height: "46px",
+              boxSizing: "border-box",
             }}
           >
             {/* Left Clock/History Icon */}
-            <span style={{ display: "flex", alignItems: "center", color: "#71717a", cursor: "default", paddingBottom: "8px" }}>
+            <span style={{ display: "flex", alignItems: "center", color: "#71717a", cursor: "default" }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10" />
                 <polyline points="12 6 12 12 16 14" />
@@ -2551,22 +2645,22 @@ function WidgetContent() {
                   if (!isTyping && input.trim()) handleSend();
                 }
               }}
-              placeholder="Ask a question..."
+              placeholder={placeholder}
               disabled={isTyping}
               rows={1}
               style={{
                 flex: 1,
-                padding: "8px 0",
+                padding: "0",
                 background: "transparent",
                 border: "none",
                 color: isTyping ? "#71717a" : "#18181b",
-                fontSize: "14px",
+                fontSize: "15px",
                 outline: "none",
                 cursor: isTyping ? "not-allowed" : "text",
                 resize: "none",
-                height: "22px",
-                fontFamily: "inherit",
-                lineHeight: "1.5",
+                height: "20px",
+                fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+                lineHeight: "20px",
               }}
             />
 
@@ -2575,8 +2669,8 @@ function WidgetContent() {
               disabled={!input.trim() || isTyping}
               className="widget-send-btn"
               style={{
-                background: (input.trim() && !isTyping) ? themeColor : "#e4e4e7",
-                color: (input.trim() && !isTyping) ? "#ffffff" : "#a3a3a3",
+                background: (input.trim() && !isTyping) ? themeColor : "#f4f4f5",
+                color: (input.trim() && !isTyping) ? "#ffffff" : "#a1a1aa",
                 border: "none",
                 borderRadius: "50%",
                 display: "flex",
@@ -2585,7 +2679,6 @@ function WidgetContent() {
                 cursor: (input.trim() && !isTyping) ? "pointer" : "default",
                 transition: "background 0.2s, transform 0.1s active",
                 padding: 0,
-                marginBottom: "2px",
               }}
             >
               {isTyping ? (
@@ -2610,42 +2703,40 @@ function WidgetContent() {
       )}
 
       {/* Powered by Gramosoft */}
-      <div style={{ display: "flex", justifyContent: "center", marginTop: "6px" }}>
+      <div className="widget-brand-container">
         <a
           href="https://gsearchai.com/"
           target="_blank"
           rel="noopener noreferrer"
           style={{
+            pointerEvents: "auto",
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
             gap: "4px",
             padding: "4px 12px",
             fontSize: "11px",
-            color: "#52525b",
-            fontWeight: 500,
+            color: "#18181b",
+            fontWeight: 600,
             userSelect: "none",
             textDecoration: "none",
             cursor: "pointer",
             borderRadius: "100px",
-            background: "rgba(255, 255, 255, 0.8)",
-            backdropFilter: "blur(8px)",
-            border: "1px solid rgba(0, 0, 0, 0.08)",
-            boxShadow: "0 1px 2px rgba(0, 0, 0, 0.04)",
+            background: "#ffffff",
+            border: "1px solid #d4d4d8",
+            boxShadow: "0 2px 6px rgba(0, 0, 0, 0.08)",
             transition: "all 0.2s ease-in-out",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(255, 255, 255, 0.95)";
-            e.currentTarget.style.transform = "translateY(-0.5px)";
-            e.currentTarget.style.boxShadow = "0 2px 4px rgba(0, 0, 0, 0.06)";
+            e.currentTarget.style.transform = "translateY(-1px)";
+            e.currentTarget.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.12)";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.background = "rgba(255, 255, 255, 0.8)";
             e.currentTarget.style.transform = "none";
-            e.currentTarget.style.boxShadow = "0 1px 2px rgba(0, 0, 0, 0.04)";
+            e.currentTarget.style.boxShadow = "0 2px 6px rgba(0, 0, 0, 0.08)";
           }}
         >
-          Powered by <span style={{ fontWeight: 700, color: themeColor }}>Gsearch</span>
+          Powered by <span style={{ fontWeight: 750, color: themeColor }}>Gsearch</span>
         </a>
       </div>
       {/* Link Safety Modal */}
@@ -2729,14 +2820,14 @@ function WidgetContent() {
           }}>
             <div style={{ fontWeight: "700", fontSize: "14px", color: "#18181b", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <span>Provide Feedback</span>
-              <button 
+              <button
                 onClick={() => { setFeedbackModalOpen(false); setFeedbackMessageId(null); }}
                 style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", fontSize: "16px", color: "#a1a1aa", fontWeight: "bold", padding: 0 }}
               >
                 ✕
               </button>
             </div>
-            
+
             <div style={{ fontSize: "11px", color: "#71717a", fontWeight: "600", marginBottom: "4px" }}>
               Why did you find this answer not helpful?
             </div>
@@ -2751,8 +2842,8 @@ function WidgetContent() {
               ].map((reason) => {
                 const isSelected = selectedReason === reason;
                 return (
-                  <div 
-                    key={reason} 
+                  <div
+                    key={reason}
                     onClick={() => setSelectedReason(reason)}
                     style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "12px", color: isSelected ? "#18181b" : "#4b5563", cursor: "pointer", fontWeight: isSelected ? "600" : "500", userSelect: "none" }}
                   >

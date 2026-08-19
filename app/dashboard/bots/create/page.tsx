@@ -4,7 +4,7 @@ import { Flex, Form, Input, Switch, Button, Typography } from 'antd'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { ArrowLeftOutlined, PlusOutlined } from '@ant-design/icons'
-import AddPersonalityModal from '../AddPersonalityModal' // adjust path as needed
+import AddPersonalityModal from '../AddPersonalityModal'
 
 const { Title, Text } = Typography
 const { TextArea } = Input
@@ -31,13 +31,13 @@ export default function CreateBotPage() {
         'You are a helpful assistant that answers questions based on the provided knowledge base.'
     )
 
-    // Modal visibility
+    
     const [modalOpen, setModalOpen] = useState(false)
 
-    // Called by modal when user clicks "Add"
+    
     function handlePersonalityAdd(newPersonality: string) {
         setPersonalities((prev) => [...prev, newPersonality])
-        setActivePersonality(newPersonality) // auto-select the new one
+        setActivePersonality(newPersonality) 
         setModalOpen(false)
     }
 
@@ -58,7 +58,7 @@ export default function CreateBotPage() {
     return (
         <Flex vertical gap={24} style={{ maxWidth: '75%', marginBottom: 40 }}>
 
-            {/* Header */}
+           
             <Flex gap={8} align="center">
                 <Button
                     type="text"
@@ -74,7 +74,7 @@ export default function CreateBotPage() {
 
             {divider}
 
-            {/* Bot Name */}
+            
             <Form.Item label={<Text strong style={{ color: '#fff' }}>Bot Name</Text>} style={{ marginBottom: 0 }}>
                 <Input
                     value={name}
@@ -89,7 +89,7 @@ export default function CreateBotPage() {
                 />
             </Form.Item>
 
-            {/* Personality */}
+           
             <div>
                 <Text strong style={{ color: '#fff', display: 'block', marginBottom: 8 }}>Personality</Text>
                 <Flex gap={12} wrap="wrap">
@@ -113,7 +113,7 @@ export default function CreateBotPage() {
                         </button>
                     ))}
 
-                    {/* Opens AddPersonalityModal */}
+                    
                     <button
                         onClick={() => setModalOpen(true)}
                         style={{
@@ -136,7 +136,7 @@ export default function CreateBotPage() {
                 </Flex>
             </div>
 
-            {/* AddPersonalityModal — receives state and callbacks from this page */}
+            
             <AddPersonalityModal
                 open={modalOpen}
                 existingPersonalities={personalities}
@@ -144,7 +144,7 @@ export default function CreateBotPage() {
                 onCancel={() => setModalOpen(false)}
             />
 
-            {/* System Prompt */}
+           
             <div>
                 <Text strong style={{ color: '#fff', display: 'block', marginBottom: 8 }}>System Prompt</Text>
                 <TextArea
@@ -164,7 +164,7 @@ export default function CreateBotPage() {
 
             {divider}
 
-            {/* Capabilities */}
+            
             <div>
                 <Title level={4} style={{ color: '#fff', marginBottom: 16, fontWeight: 700 }}>Capabilities</Title>
                 <Flex vertical gap={16}>
@@ -198,7 +198,7 @@ export default function CreateBotPage() {
 
             {divider}
 
-            {/* Actions */}
+           
             <Flex justify="flex-end" gap={12}>
                 <Button
                     onClick={() => router.back()}

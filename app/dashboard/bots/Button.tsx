@@ -5,7 +5,7 @@ export default function IframePopup() {
 
   return (
     <div>
-      {/* Round Button */}
+     
       <button
         onClick={() => setOpen(true)}
         style={{
@@ -25,7 +25,7 @@ export default function IframePopup() {
         +
       </button>
 
-      {/* Modal */}
+      
       {open && (
         <div
           onClick={() => setOpen(false)}
@@ -41,7 +41,7 @@ export default function IframePopup() {
             alignItems: "center",
           }}
         >
-          {/* Prevent close when clicking inside iframe box */}
+          
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
@@ -53,7 +53,7 @@ export default function IframePopup() {
               zIndex:1
             }}
           >
-            {/* Close button */}
+           
             <button
               onClick={() => setOpen(false)}
               style={{
@@ -70,7 +70,7 @@ export default function IframePopup() {
               ✕
             </button>
 
-            {/* Iframe */}
+           
             <iframe
               src="https://dashboard/conversation"
               style={{ width: "100%", height: "100%", border: "none" }}

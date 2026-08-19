@@ -16,7 +16,7 @@ import { marked } from "marked";
 import { getCookie } from "../../config/cookies";
 import { toast } from "react-hot-toast";
 
-// Allowed file types for knowledge base uploads
+
 const ALLOWED_EXTENSIONS = ['.pdf', '.csv', '.xls', '.xlsx', '.png', '.jpg', '.jpeg', '.gif', '.webp'];
 
 function getFileExtension(fileName: string): string {
@@ -54,10 +54,10 @@ function parsePythonDict(str: string): any {
 
     const char = str[i];
 
-    // Parse String
+    
     if (char === "'" || char === '"') {
       const quoteChar = char;
-      i++; // skip quote
+      i++; 
       let val = "";
       while (i < len) {
         if (str[i] === "\\") {
@@ -73,7 +73,7 @@ function parsePythonDict(str: string): any {
             i++;
           }
         } else if (str[i] === quoteChar) {
-          i++; // skip close quote
+          i++; 
           return val;
         } else {
           val += str[i];
@@ -83,9 +83,9 @@ function parsePythonDict(str: string): any {
       return val;
     }
 
-    // Parse Object / Dict
+    
     if (char === "{") {
-      i++; // skip '{'
+      i++; 
       const obj: any = {};
       while (i < len) {
         skipWhitespace();
@@ -98,20 +98,20 @@ function parsePythonDict(str: string): any {
         if (str[i] !== ":") {
           return obj;
         }
-        i++; // skip ':'
+        i++; 
         const val = parseValue();
         obj[key] = val;
         skipWhitespace();
         if (str[i] === ",") {
-          i++; // skip ','
+          i++; 
         }
       }
       return obj;
     }
 
-    // Parse List
+    
     if (char === "[") {
-      i++; // skip '['
+      i++;
       const arr: any[] = [];
       while (i < len) {
         skipWhitespace();
@@ -123,13 +123,12 @@ function parsePythonDict(str: string): any {
         arr.push(val);
         skipWhitespace();
         if (str[i] === ",") {
-          i++; // skip ','
+          i++;
         }
       }
       return arr;
     }
 
-    // Parse True, False, None, or numbers
     let word = "";
     while (i < len && /[a-zA-Z0-9_\.\+-]/.test(str[i])) {
       word += str[i];
@@ -321,7 +320,6 @@ export default function KnowledgeBasePage() {
   const [excelPage, setExcelPage] = useState<number>(1);
   const excelArrayBufferRef = useRef<ArrayBuffer | null>(null);
 
-  // gcrawlai link crawler states
   const [crawlerModalVisible, setCrawlerModalVisible] = useState(false);
   const [crawlerLoading, setCrawlerLoading] = useState(false);
   const [crawledUrls, setCrawledUrls] = useState<string[]>([]);
@@ -383,7 +381,6 @@ export default function KnowledgeBasePage() {
 
     const kbId = item.id || item.kb_id;
 
-    // Set initial tab based on name and paths
     const isText = nameStr.includes("text");
     const isPdf = nameStr.endsWith(".pdf");
     if (isPdf && (isText || (item.parsed_path && !item.s3_path))) {
@@ -397,7 +394,7 @@ export default function KnowledgeBasePage() {
     try {
       const token = getCookie("AUTH_TOKEN");
 
-      // 1. Fetch Original Document as blob via backend proxy if s3_path exists
+      
       if (item.s3_path && kbId) {
         const fetchUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL}/files/${kbId}/preview`;
         const res = await fetch(fetchUrl, {
@@ -428,7 +425,6 @@ export default function KnowledgeBasePage() {
             excelArrayBufferRef.current = arrayBuffer;
 
             const XLSX = await import("xlsx");
-            // 1. Read sheet names first (extremely fast!)
             const workbook = XLSX.read(arrayBuffer, { type: "array", bookSheets: true });
             setExcelSheetNames(workbook.SheetNames);
 
@@ -436,7 +432,7 @@ export default function KnowledgeBasePage() {
               const firstSheet = workbook.SheetNames[0];
               setActiveExcelSheet(firstSheet);
 
-              // 2. Parse only the active sheet on load (skips all other sheets)
+             
               const partialWorkbook = XLSX.read(arrayBuffer, {
                 type: "array",
                 sheets: [firstSheet],
@@ -461,7 +457,7 @@ export default function KnowledgeBasePage() {
         }
       }
 
-      // 2. Fetch Parsed Content from backend if parsed_path exists and is a PDF
+      
       if (isPdf && item.parsed_path && kbId) {
         const fetchUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL}/files/${kbId}/content`;
         const res = await fetch(fetchUrl, {
@@ -644,7 +640,7 @@ export default function KnowledgeBasePage() {
     }));
   }
 
-  // ─── Persistence Logic ──────────────────────────────────────────────────────
+  
   useEffect(() => {
     getAgents(undefined, (payload) => {
       const agents = payload?.data?.agents ?? [];
@@ -664,7 +660,6 @@ export default function KnowledgeBasePage() {
     setCrawlerLoading(true);
 
     try {
-      // Call urlSelect API to import selected URLs
       await urlSelect({
         path: `/${agent?.id}/sources/url/select`,
         data: {
@@ -674,9 +669,8 @@ export default function KnowledgeBasePage() {
       
       // message.success("Successfully imported selected URLs to knowledge base");
       setCrawlerModalVisible(false);
-      setUrl(''); // clear URL input
-      
-      // Refresh source list
+      setUrl(''); 
+     
       if (agent?.id) {
         await agentlist({
           path: `/agents/${agent.id}?limit=50&offset=0`,
@@ -707,7 +701,6 @@ export default function KnowledgeBasePage() {
       setSelectedUrls([]);
 
       try {
-        // Call urlDiscover API to get sub-links
         const response = await urlDiscover({
           path: `/${agent.id}/sources/url/discover`,
           data: {
@@ -715,12 +708,12 @@ export default function KnowledgeBasePage() {
           }
         });
 
-        // Backend response directly contains data: { urls: [urls] } or data: [urls]
+        
         const linksList = response?.data?.urls || response?.data || response?.links || [];
 
         if (Array.isArray(linksList)) {
           setCrawledUrls(linksList);
-          setSelectedUrls([]); // Empty by default
+          setSelectedUrls([]); 
         } else {
           throw new Error("No URL list returned from discovery API");
         }
@@ -740,7 +733,7 @@ export default function KnowledgeBasePage() {
       const fileToUpload = selectedFile;
       setSelectedFile(null);
 
-      // Instantly show progress card at bottom
+     
       setActiveJobs(prev => [...prev, {
         id: tempId,
         name: fileName,
@@ -825,7 +818,7 @@ export default function KnowledgeBasePage() {
       <div className="w-full min-h-screen p-4 sm:p-6 md:p-10" style={{ background: 'transparent' }}>
         <Flex vertical gap={24}>
 
-          {/* Header Section */}
+          
           <Row justify="space-between" align="middle" gutter={[16, 16]}>
             <Col xs={24} md={16}>
               <Title level={1} style={{ color: 'var(--app-text)', margin: 0, fontSize: 'calc(1.8rem + 1vw)', fontWeight: 700 }}>
@@ -836,7 +829,7 @@ export default function KnowledgeBasePage() {
               </Text>
             </Col>
             <Col xs={24} md={8}>
-              {/* Handled dynamic alignment cleanly using Tailwind layout utilities instead of strict props */}
+              
               <div className="flex flex-wrap items-center gap-3 justify-start md:justify-end">
 
                 <Button
@@ -855,7 +848,6 @@ export default function KnowledgeBasePage() {
             </Col>
           </Row>
 
-          {/* Dynamic Context Banner */}
           <div
             style={{
               background: 'var(--app-surface)',
@@ -901,7 +893,6 @@ export default function KnowledgeBasePage() {
             </Flex>
           </div>
 
-          {/* Input Sandbox Container */}
           <Card
             bordered
             style={{
@@ -912,7 +903,7 @@ export default function KnowledgeBasePage() {
             styles={{ body: { padding: '24px' } }}
           >
             <Flex vertical gap={20}>
-              {/* Native Tab Alternative via AntD Segmented */}
+              
               <div className="w-full overflow-x-auto no-scrollbar pb-1">
                 <Segmented
                   options={tabs}
@@ -923,16 +914,15 @@ export default function KnowledgeBasePage() {
                     border: '1px solid var(--app-border)',
                     padding: 4,
                     borderRadius: 8,
-                    whiteSpace: 'nowrap', // 👈 Prevents text from breaking into lines
+                    whiteSpace: 'nowrap',
                   }}
                 />
               </div>
 
-              {/* Dynamic Content Views */}
               <div className="w-full mt-2">
-                {/* URL Capture Area */}
+               
                 {activeTab === 'url' && (
-                  /* Swapped "width" property out for Tailwind "w-full" assignment */
+                 
                   <Row gutter={[12, 12]} className="w-full">
                     <Col xs={24} sm={18} md={20}>
                       <input
@@ -978,7 +968,7 @@ export default function KnowledgeBasePage() {
                   </Row>
                 )}
 
-                {/* PDF Document Processor */}
+                
                 {activeTab === 'pdf' && (
                   <Flex vertical gap={16}>
                     {selectedFile ? (
@@ -1091,7 +1081,6 @@ export default function KnowledgeBasePage() {
                   </Flex>
                 )}
 
-                {/* Raw Text Input Processor */}
                 {activeTab === 'text' && (
                   <Flex vertical gap={16}>
                     <TextArea
@@ -1135,7 +1124,6 @@ export default function KnowledgeBasePage() {
             </Flex>
           </Card>
 
-          {/* Ingestion Progress Panel */}
           {activeJobs.length > 0 && (
             <Card
               bordered
@@ -1235,7 +1223,6 @@ export default function KnowledgeBasePage() {
               </Flex>
             </Card>
           )}
-          {/* Data Sources Overview Table Section */}
           <Card
             bordered
             style={{
@@ -1433,7 +1420,7 @@ export default function KnowledgeBasePage() {
                   </div>
                 ) : (previewType === "excel" || previewType === "csv") && excelSheetNames.length > 0 ? (
                   <div className="w-full h-full flex flex-col overflow-hidden bg-[var(--app-surface)]">
-                    {/* Excel Multi-sheet Switcher */}
+                    
                     {previewType === "excel" && excelSheetNames.length > 1 && (
                       <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
                         {excelSheetNames.map(sheetName => {
@@ -1483,7 +1470,6 @@ export default function KnowledgeBasePage() {
                       </div>
                     )}
 
-                    {/* Spreadsheet Grid */}
                     <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
                       {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
                         (() => {
@@ -1523,7 +1509,6 @@ export default function KnowledgeBasePage() {
                                 </table>
                               </div>
                               
-                              {/* Pagination footer */}
                               {totalPages > 1 && (
                                 <div className="flex items-center justify-between p-3 border border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 select-none rounded-xl">
                                   <span className="text-xs text-[var(--app-text-soft)] font-bold">
@@ -1617,7 +1602,6 @@ export default function KnowledgeBasePage() {
               We crawled the domain and found the following links. Select the pages you want to add to your knowledge base.
             </Text>
             
-            {/* Select All Checkbox */}
             <div className="flex justify-between items-center bg-slate-100 dark:bg-slate-900/50 p-2.5 rounded-lg border border-slate-200/50 dark:border-slate-800/50">
               <Checkbox
                 checked={selectedUrls.length === crawledUrls.length}
@@ -1637,7 +1621,6 @@ export default function KnowledgeBasePage() {
               </span>
             </div>
 
-            {/* List scrollbox */}
             <div className="max-h-72 overflow-y-auto space-y-2.5 border border-slate-200 dark:border-slate-800 rounded-xl p-3 bg-slate-50 dark:bg-slate-955/50 custom-scrollbar">
               {crawledUrls.map((link) => {
                 const isSelected = selectedUrls.includes(link);
