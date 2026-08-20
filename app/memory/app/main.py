@@ -729,20 +729,21 @@ async def shutdown_event():
 # ============================================================================
 @app.post("/api/v1/memory/process-turn")
 async def process_turn(payload: MemoryProcessRequest):
-    if _is_deterministic_preference_statement(payload.query):
-        is_feedback_only = True
-    elif _QUESTION_INDICATOR.search(payload.query):
-        is_feedback_only = False
-    elif _is_delete_statement(payload.query):
+    if _is_delete_statement(payload.query):
         is_feedback_only = True
     else:
         triage_prompt = (
-            "You are an agent memory router. Analyze the user's message. "
-            "Reply with EXACTLY 'FEEDBACK_ONLY' if the user is:\n"
-            "- Giving corrective feedback/instructions/adjustments or deleting facts\n"
-            "- Setting, updating, or stating a PREFERENCE or FACT for you to remember\n"
-            "- Giving a simple acknowledgement ('got it', 'thanks')\n"
-            "Otherwise, reply with EXACTLY 'NORMAL_QUERY'."
+            "You are a precise agent memory router. Analyze the user's message and categorize it.\n\n"
+            "Reply with EXACTLY 'FEEDBACK_ONLY' if the user's message is doing one of the following:\n"
+            "1. Stating a personal fact, instruction, preference, or rule for you to remember (e.g., 'remember that I am a developer', 'from now on, use python', 'always reply in markdown').\n"
+            "2. Providing corrective feedback or adjustments to your behavior.\n"
+            "3. Giving a simple conversational acknowledgement or greeting/closing that does not ask for information (e.g., 'got it', 'thanks', 'ok', 'good job').\n"
+            "4. Requesting to delete, forget, or clear memories (e.g., 'forget my name').\n\n"
+            "Reply with EXACTLY 'NORMAL_QUERY' if the user's message is:\n"
+            "1. Asking a question, requesting information, or looking up facts about the organization, database, documents, or team members (e.g., 'who is CCO', 'tell me about Arun', 'who is CEO', 'what is the capital of France').\n"
+            "2. Directing you to analyze data, search documents, or extract records.\n\n"
+            "CRITICAL: If the message is a question or search query (even if it contains 'now', 'tell me', or similar introductory phrases), you MUST output 'NORMAL_QUERY'.\n"
+            "Output ONLY the category name ('FEEDBACK_ONLY' or 'NORMAL_QUERY') with no other text, explanation, or quotes."
         )
         triage_decision = await run_llm_completion(triage_prompt, payload.query, priority="live")
         is_feedback_only = "FEEDBACK_ONLY" in triage_decision

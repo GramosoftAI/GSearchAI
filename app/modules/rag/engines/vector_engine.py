@@ -78,7 +78,7 @@ class VectorEngine(BaseEngine):
           This ensures SectionRanker's decision is always respected.
         * If ``task.target_section_ids`` is **empty** (SectionRanker found zero valid
           candidate sections) we return an empty list immediately.  The pipeline's
-          coverage-validation loop handles this correctly — we must not perform a
+          coverage-validation loop handles this correctly - we must not perform a
           full-KB scan and return unrelated chunks as authoritative evidence.
         * ``ontology_node`` is set to ``None`` for pgvector results because the
           pgvector branch retrieves by embedding proximity, not by explicit ontology
@@ -86,7 +86,7 @@ class VectorEngine(BaseEngine):
           coverage-validation evidence and mask missing evidence.
         * The one exception is the coverage-validation fallback task (task_id starts
           with ``"fallback_"``), which is deliberately created without section
-          restriction — it is the pipeline's intentional broad-search safety net.
+          restriction - it is the pipeline's intentional broad-search safety net.
         """
         logger.info(f"VectorEngine executing task: {task.task_id}")
 
@@ -264,7 +264,7 @@ class VectorEngine(BaseEngine):
             if results:
                 for idx, res in enumerate(results):
                     # Set ontology_node only when the chunk's own section metadata
-                    # genuinely matches the requested scope — not as a blanket
+                    # genuinely matches the requested scope - not as a blanket
                     # assignment of task.target_section.
                     chunk_section = res.get("section")
                     target_sec = getattr(task, "target_section", None)

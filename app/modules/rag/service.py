@@ -131,6 +131,13 @@ class RAGService:
                 else:
                     doc_kbs.append(kb)
     
+            kb_context_lines = []
+            for kb in (doc_kbs + excel_kbs):
+                name = getattr(kb, 'name', 'Unknown')
+                desc = getattr(kb, 'description', '')
+                kb_context_lines.append(f"- {name}: {desc}")
+            kb_context = "\n".join(kb_context_lines) if kb_context_lines else "None provided."
+
             # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
             hybrid_merge_context = ""
             if excel_kbs:
@@ -169,6 +176,7 @@ class RAGService:
                         user_id=user_id,
                         top_k=top_k,
                         max_depth=max_depth,
+                        kb_context=kb_context,
                     )
                 )
     
@@ -340,7 +348,7 @@ class RAGService:
     You are an enterprise AI assistant.
     
     ==================================================
-    MEMORY AUTHORITY (HIGHEST PRIORITY — READ FIRST)
+    MEMORY AUTHORITY (HIGHEST PRIORITY - READ FIRST)
     ==================================================
     If the user's message contains a section beginning with:
       "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES"
@@ -852,7 +860,7 @@ Base Instruction:
 You are an enterprise AI assistant.
 
 ==================================================
-MEMORY AUTHORITY (HIGHEST PRIORITY — READ FIRST)
+MEMORY AUTHORITY (HIGHEST PRIORITY - READ FIRST)
 ==================================================
 If the user's message contains a section beginning with:
   "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES"

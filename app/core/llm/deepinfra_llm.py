@@ -240,7 +240,7 @@ class DeepInfraLLMClient:
         self.deepinfra_api_key = self.api_key
         self.gateway_api_key = self.api_key
 
-        self.timeout = 60.0  # Enterprise timeout cap against stalled sockets (60s for high-concurrency extraction)
+        self.timeout = 180.0  # Enterprise timeout cap against stalled sockets
         self.max_retries = self.model_answer_try  # Configurable retry attempts from settings
         self.max_tokens = self.max_tokens_answer  # Max output tokens
         self.max_answer_length = 2000  # Max chars in answer

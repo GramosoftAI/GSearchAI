@@ -33,6 +33,7 @@ class QueryMetadata(BaseModel):
     tabular_subquery: Optional[str] = Field(None, description="Extracted sub-query meant for structured tabular/spreadsheet data with pronouns resolved.")
     vector_subquery: Optional[str] = Field(None, description="Extracted sub-query meant for unstructured document/text data with pronouns resolved.")
     query_embedding: Optional[List[float]] = Field(None, description="Cached embedding of the query")
+    structured_queries: List[str] = Field(default_factory=list, description="A list of structured/rephrased queries to try in order.")
 
 
 class AnalysisResult(BaseModel):
@@ -51,7 +52,7 @@ class QueryAnalyzer:
     def __init__(self):
         self.llm_client = DeepInfraLLMClient()
         
-    async def analyze_query(self, query: str) -> AnalysisResult:
+    async def analyze_query(self, query: str, kb_context: str = "") -> AnalysisResult:
         """
         Uses LLM to extract intent and metadata in a single pass.
         """
@@ -66,14 +67,26 @@ class QueryAnalyzer:
                 reasoning="Fast-path greeting regex match"
             )
 
+        kb_context_section = f"\n[ACTIVE KNOWLEDGE BASES CONTEXT]\nThe user is searching across these knowledge bases. Use this context to deduce the meaning of ambiguous terms:\n{kb_context}\n" if kb_context else ""
+
         prompt = f"""
-You are an Expert Knowledge Retrieval Query Analyzer.
+You are an Expert Knowledge Retrieval Query Analyzer.{kb_context_section}
 Your task is to classify the user's query into one of the exact intents below and extract structured metadata.
 
 CRITICAL TASK: SPELL CHECK & QUERY EXPANSION
 You must output a `corrected_query` field. 
 - Fix any obvious typos in named entities or concepts (e.g. "Jon Sno" -> "Jon Snow", "justce" -> "justice").
 - If the query is already perfect, `corrected_query` should just be the original query.
+
+CRITICAL TASK: STRUCTURED QUERY REPHRASING
+You must generate an array of 3 optimized retrieval queries based on the user's input in the `structured_queries` field inside the `metadata` object. 
+You must dynamically analyze the underlying intent of the user's query rather than just rephrasing it statically. Follow these optimization strategies:
+1. Intent Elaboration: If the user query is vague (e.g., "explain [Entity]"), dynamically deduce what information is actually needed (e.g., features, history, use-cases, services). Do NOT literally ask for the "meaning" of products, companies, or services.
+2. Semantic Diversity: Approach the search from 3 distinct angles to maximize retrieval chances:
+   - Variation 1 (Comprehensive Overview): A formal, detailed request for an overview and capabilities (e.g., "Provide a comprehensive overview of [Entity] and its core features.").
+   - Variation 2 (Functional/Operational): An action-oriented query focusing on how it works or what it offers (e.g., "What specific services and solutions does [Entity] provide?").
+   - Variation 3 (Contextual Deep Dive): A specific, attribute-focused query (e.g., "What are the primary use cases and benefits associated with [Entity]?").
+3. Explicit Resolution: Always resolve pronouns and vague terms into explicit proper nouns so the search engine has strong keywords.
 
 CRITICAL TASK: TABULAR VS VECTOR CLASSIFICATION
 You must output an `is_tabular` boolean field in the JSON root.
@@ -110,7 +123,12 @@ Return ONLY valid JSON:
     "keywords": ["Jon Snow"],
     "corrected_query": "Who is Jon Snow?",
     "tabular_subquery": null,
-    "vector_subquery": null
+    "vector_subquery": null,
+    "structured_queries": [
+      "Who is Jon Snow?",
+      "Can you explain who the character Jon Snow is?",
+      "Give me details and information about Jon Snow."
+    ]
   }},
   "confidence": 0.95,
   "reasoning": "Query asks for a specific character fact. The typo 'Jon Sno' was corrected."
@@ -131,7 +149,12 @@ JSON:
     "keywords": ["Arun", "salary"],
     "corrected_query": "tell me about arun and what is his salary from the 1st CSV file",
     "tabular_subquery": "What is Arun's salary from the 1st CSV file?",
-    "vector_subquery": "Tell me about Arun."
+    "vector_subquery": "Tell me about Arun.",
+    "structured_queries": [
+      "Tell me about Arun and find his salary in the first CSV file.",
+      "What details are available about Arun, and what is his salary in the CSV?",
+      "Provide an overview of Arun along with his salary from the first CSV."
+    ]
   }},
   "confidence": 0.98,
   "reasoning": "Query is composite. Split into tabular salary query with resolved pronoun, and vector document query."
@@ -183,7 +206,8 @@ QUERY:
                 keywords=metadata_dict.get("keywords", []),
                 corrected_query=metadata_dict.get("corrected_query"),
                 tabular_subquery=metadata_dict.get("tabular_subquery"),
-                vector_subquery=metadata_dict.get("vector_subquery")
+                vector_subquery=metadata_dict.get("vector_subquery"),
+                structured_queries=metadata_dict.get("structured_queries", [])
             )
 
             is_tabular = bool(data.get("is_tabular", False))

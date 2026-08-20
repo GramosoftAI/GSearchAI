@@ -372,12 +372,10 @@ class RAGPipeline:
 
 
         user_id: Optional[str] = None,
-
-
-
         top_k: int = 3,
         max_depth: int = 2,
         max_tokens: int = 24000,
+        kb_context: str = "",
     ) -> RAGContext:
 
 
@@ -550,7 +548,7 @@ class RAGPipeline:
         from app.modules.rag.orchestrator.section_ranker import SectionRanker
         
         analyzer = QueryAnalyzer()
-        analysis = await analyzer.analyze_query(query)
+        analysis = await analyzer.analyze_query(query, kb_context=kb_context)
 
         # Preserve the original query as an immutable reference throughout this pipeline run
         original_query = query
@@ -567,159 +565,176 @@ class RAGPipeline:
             )
             query = corrected
 
-        logger.info(
-            "RAG_QUERY_FINAL | original=%r | effective=%r",
-            original_query,
-            query,
-        )
+        # Gather structured queries. If none, default to corrected/original query.
+        structured_queries = getattr(analysis.metadata, "structured_queries", [])
+        if not structured_queries:
+            structured_queries = [query]
 
-        # STAGE 0.1: EARLY INTERCEPT FOR TABLE ANALYTICS (Deterministic SQL Execution)
-        table_analytics_attempted = False
-        extractive_context_text = ""
-        is_table_query = analysis.is_tabular or analysis.intent in (QueryIntent.CALCULATION, QueryIntent.TABLE)
-        if is_table_query:
-            try:
-                table_analytics_attempted = True
-                logger.info("   -> Intercepting query for SQL Table Analytics engine BEFORE Adaptive Planner!")
-                table_results = await self._execute_table_analytics(query, kb_ids)
-                if table_results and "validation error" not in table_results.lower():
-                    extractive_context_text = f"### Table Analytics Results\n\n{table_results}\n\n"
-                    logger.info("   -> Table analytics successful. Appended to extractive context. Continuing to Adaptive Planner for cross-source retrieval.")
-                else:
-                    logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to Adaptive Planner.")
-            except Exception as e:
-                logger.error(f"   -> SQL Table Analytics preprocessing failed: {e}. Falling back to Adaptive Planner.", exc_info=True)
-                if self.db:
-                    await self.db.rollback()
+        for sq_idx, sq in enumerate(structured_queries):
+            logger.info(
+                "Running retrieval for structured query variation %d/%d: %r",
+                sq_idx + 1,
+                len(structured_queries),
+                sq
+            )
+            current_query = sq
 
-        # Ensure embedding is generated ONCE for the entire pipeline
-        from app.core.embeddings import EmbeddingGenerator
-        query_embedding_val, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(query)
-        analysis.metadata.query_embedding = query_embedding_val
-        
-        planner = AdaptivePlanner(self.neo4j_repo, self.tenant_id)
-        plan = await planner.create_plan(analysis, query)
-        
-        planner_time = time.time() - start_time
-        engine_start = time.time()
-        
-        # --- PHASE 1: CANDIDATE SECTION GATHERING (PARALLEL) ---
-        async def _fetch_sections(t):
-            setattr(t, "top_k", top_k)
-            engine_cls = CapabilityRegistry.get_engine_class(t.engine_name)
-            if engine_cls:
-                engine = engine_cls(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
-                return await engine.get_candidate_sections(t, kb_ids)
-            return []
+            # STAGE 0.1: EARLY INTERCEPT FOR TABLE ANALYTICS (Deterministic SQL Execution)
+            table_analytics_attempted = False
+            extractive_context_text = ""
+            is_table_query = analysis.is_tabular or analysis.intent in (QueryIntent.CALCULATION, QueryIntent.TABLE)
+            if is_table_query:
+                try:
+                    table_analytics_attempted = True
+                    logger.info("   -> Intercepting query for SQL Table Analytics engine BEFORE Adaptive Planner!")
+                    table_results = await self._execute_table_analytics(current_query, kb_ids)
+                    if table_results and "validation error" not in table_results.lower():
+                        extractive_context_text = f"### Table Analytics Results\n\n{table_results}\n\n"
+                        logger.info("   -> Table analytics successful. Appended to extractive context. Continuing to Adaptive Planner for cross-source retrieval.")
+                    else:
+                        logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to Adaptive Planner.")
+                except Exception as e:
+                    logger.error(f"   -> SQL Table Analytics preprocessing failed: {e}. Falling back to Adaptive Planner.", exc_info=True)
+                    if self.db:
+                        await self.db.rollback()
 
-        section_results = await asyncio.gather(*[_fetch_sections(t) for t in plan.tasks])
-        candidate_sections = [sec for secs in section_results for sec in secs]
-                
-        # --- PHASE 2: SECTION RANKING ---
-        ranker = SectionRanker()
-        ranked_sections = ranker.rank_sections(query, candidate_sections, top_k=5)
-        logger.info(f"SectionRanker selected {len(ranked_sections)} candidate sections out of {len(candidate_sections)}")
-        
-        # Group top sections by task
-        for task in plan.tasks:
-            task_sections = [s["section_id"] for s in ranked_sections if s.get("task_id") == getattr(task, "task_id", "")]
-            if task_sections:
-                setattr(task, "target_section_ids", task_sections)
-                
-        # --- PHASE 3: CHUNK RETRIEVAL (PARALLEL) ---
-        async def _retrieve_chunks(t):
-            engine_cls = CapabilityRegistry.get_engine_class(t.engine_name)
-            if engine_cls:
-                engine = engine_cls(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
-                return await engine.retrieve(t, kb_ids)
-            return []
+            # Ensure embedding is generated ONCE for this structured query
+            from app.core.embeddings import EmbeddingGenerator
+            query_embedding_val, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(current_query)
+            analysis.metadata.query_embedding = query_embedding_val
+            
+            planner = AdaptivePlanner(self.neo4j_repo, self.tenant_id)
+            plan = await planner.create_plan(analysis, current_query)
+            
+            planner_time = time.time() - start_time
+            engine_start = time.time()
+            
+            # --- PHASE 1: CANDIDATE SECTION GATHERING (PARALLEL) ---
+            async def _fetch_sections(t):
+                setattr(t, "top_k", top_k)
+                engine_cls = CapabilityRegistry.get_engine_class(t.engine_name)
+                if engine_cls:
+                    engine = engine_cls(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
+                    return await engine.get_candidate_sections(t, kb_ids)
+                return []
 
-        chunk_results = await asyncio.gather(*[_retrieve_chunks(t) for t in plan.tasks])
-        all_chunks = [c for chunks in chunk_results for c in chunks]
-                
-        # COVERAGE VALIDATION LOOP
-        retrieved_nodes = {c.ontology_node for c in all_chunks if getattr(c, "ontology_node", None)}
-        missing_goals = set(plan.coverage_goals) - retrieved_nodes
-        
-        if missing_goals:
-            logger.warning(f"Coverage Validation failed. Missing goals: {missing_goals}. Triggering fallback.")
-            from app.modules.rag.engines.vector_engine import VectorEngine
-            vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
-            from app.modules.rag.orchestrator.planner import RetrievalTask
-            for missing in missing_goals:
-                fallback_task = RetrievalTask(
-                    engine_name="vector",
-                    query=query,
-                    metadata_filters=analysis.metadata,
-                    task_id=f"fallback_{missing}",
-                    target_section=missing
-                )
-                setattr(fallback_task, "top_k", top_k)
-                fb_chunks = await vector_fallback.retrieve(fallback_task, kb_ids)
-                all_chunks.extend(fb_chunks)
-                
-        engine_time = time.time() - engine_start
-                
-        if all_chunks:
-            aggregator = EvidenceAggregator()
-            final_chunks = aggregator.aggregate(all_chunks, plan.aggregator_strategy, query, max_tokens=max_tokens)
-            if final_chunks:
-                logger.info("Adaptive Orchestrator successfully retrieved and aggregated chunks. Returning early.")
-                
-                triplet_context_str = ""
-                relevant_triplets_list = None
-                if self.settings.use_triplet_extraction:
-                    try:
-                        from app.core.triplet_extractor import TripletRetriever
-                        retriever = TripletRetriever(self.tenant_id)
-                        query_embedding_local = await EmbeddingGenerator.generate_embedding(query)
-                        relevant_triplets_list = await retriever.search_triplets(
-                            query_embedding=query_embedding_local,
-                            kb_ids=kb_ids,
-                            top_k=self.settings.triplet_retrieval_top_k,
-                        )
-                        if relevant_triplets_list:
-                            triplet_context_str = retriever.format_triplets_as_context(relevant_triplets_list)
-                    except Exception as e:
-                        logger.warning(f"Triplet retrieval failed (non-blocking): {e}")
-
-                rag_context = RAGContext(
-                    query=query,
-                    chunks=final_chunks,
-                    entity_mentions={},
-                    total_tokens=sum(len(c.text.split()) for c in final_chunks),
-                    triplet_context=triplet_context_str + supplementary_csv_context,
-                    triplets=relevant_triplets_list,
-                    search_type=analysis.intent.name
-                )
-                
-                # Pre-generation conflict detection
-                detector = ConflictDetector()
-                conflict_res = await detector.detect_conflicts(rag_context)
-                if conflict_res.get("conflict_found"):
-                    logger.warning(f"Conflict detected in evidence: {conflict_res.get('explanation')}")
-                    rag_context.triplet_context = f"### SYSTEM WARNING: CONFLICTING EVIDENCE DETECTED\n{conflict_res.get('explanation')}\nExplicitly address and resolve this conflict in your response based on the provided snippets."
+            section_results = await asyncio.gather(*[_fetch_sections(t) for t in plan.tasks])
+            candidate_sections = [sec for secs in section_results for sec in secs]
                     
-                # Calculate coverage score
-                final_retrieved_nodes = {c.ontology_node for c in final_chunks if getattr(c, "ontology_node", None)}
-                coverage_score = len(final_retrieved_nodes.intersection(set(plan.coverage_goals))) / max(len(plan.coverage_goals), 1)
-                
-                # Telemetry logging
-                TelemetryLogger.log_query(
-                    query=query,
-                    intent=analysis.intent.name,
-                    planner_latency=planner_time,
-                    engine_latency=engine_time,
-                    coverage_score=coverage_score,
-                    conflict_found=conflict_res.get("conflict_found", False),
-                    token_usage=rag_context.total_tokens,
-                    evidence_count=len(final_chunks)
-                )
+            # --- PHASE 2: SECTION RANKING ---
+            ranker = SectionRanker()
+            ranked_sections = ranker.rank_sections(current_query, candidate_sections, top_k=5)
+            logger.info(f"SectionRanker selected {len(ranked_sections)} candidate sections out of {len(candidate_sections)}")
+            
+            # Group top sections by task
+            for task in plan.tasks:
+                task_sections = [s["section_id"] for s in ranked_sections if s.get("task_id") == getattr(task, "task_id", "")]
+                if task_sections:
+                    setattr(task, "target_section_ids", task_sections)
                     
-                return rag_context
-        
-        # Fallback to standard router
-        route_result = await self.router.route_query(query, tenant_id=str(self.tenant_id))
+            # --- PHASE 3: CHUNK RETRIEVAL (PARALLEL) ---
+            async def _retrieve_chunks(t):
+                engine_cls = CapabilityRegistry.get_engine_class(t.engine_name)
+                if engine_cls:
+                    engine = engine_cls(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
+                    return await engine.retrieve(t, kb_ids)
+                return []
+
+            chunk_results = await asyncio.gather(*[_retrieve_chunks(t) for t in plan.tasks])
+            all_chunks = [c for chunks in chunk_results for c in chunks]
+                    
+            # COVERAGE VALIDATION LOOP
+            retrieved_nodes = {c.ontology_node for c in all_chunks if getattr(c, "ontology_node", None)}
+            missing_goals = set(plan.coverage_goals) - retrieved_nodes
+            
+            if missing_goals:
+                logger.warning(f"Coverage Validation failed. Missing goals: {missing_goals}. Triggering fallback.")
+                from app.modules.rag.engines.vector_engine import VectorEngine
+                vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
+                from app.modules.rag.orchestrator.planner import RetrievalTask
+                for missing in missing_goals:
+                    fallback_task = RetrievalTask(
+                        engine_name="vector",
+                        query=current_query,
+                        metadata_filters=analysis.metadata,
+                        task_id=f"fallback_{missing}",
+                        target_section=missing
+                    )
+                    setattr(fallback_task, "top_k", top_k)
+                    fb_chunks = await vector_fallback.retrieve(fallback_task, kb_ids)
+                    all_chunks.extend(fb_chunks)
+                    
+            engine_time = time.time() - engine_start
+                    
+            if all_chunks:
+                aggregator = EvidenceAggregator()
+                final_chunks = aggregator.aggregate(all_chunks, plan.aggregator_strategy, current_query, max_tokens=max_tokens)
+                if final_chunks:
+                    logger.info("Adaptive Orchestrator successfully retrieved and aggregated chunks. Returning early.")
+                    
+                    triplet_context_str = ""
+                    relevant_triplets_list = None
+                    if self.settings.use_triplet_extraction:
+                        try:
+                            from app.core.triplet_extractor import TripletRetriever
+                            retriever = TripletRetriever(self.tenant_id)
+                            query_embedding_local = await EmbeddingGenerator.generate_embedding(current_query)
+                            relevant_triplets_list = await retriever.search_triplets(
+                                query_embedding=query_embedding_local,
+                                kb_ids=kb_ids,
+                                top_k=self.settings.triplet_retrieval_top_k,
+                            )
+                            if relevant_triplets_list:
+                                triplet_context_str = retriever.format_triplets_as_context(relevant_triplets_list)
+                        except Exception as e:
+                            logger.warning(f"Triplet retrieval failed (non-blocking): {e}")
+
+                    rag_context = RAGContext(
+                        query=original_query,
+                        chunks=final_chunks,
+                        entity_mentions={},
+                        total_tokens=sum(len(c.text.split()) for c in final_chunks),
+                        triplet_context=triplet_context_str + supplementary_csv_context,
+                        triplets=relevant_triplets_list,
+                        search_type=analysis.intent.name
+                    )
+                    
+                    # Pre-generation conflict detection
+                    detector = ConflictDetector()
+                    conflict_res = await detector.detect_conflicts(rag_context)
+                    if conflict_res.get("conflict_found"):
+                        logger.warning(f"Conflict detected in evidence: {conflict_res.get('explanation')}")
+                        rag_context.triplet_context = f"### SYSTEM WARNING: CONFLICTING EVIDENCE DETECTED\n{conflict_res.get('explanation')}\nExplicitly address and resolve this conflict in your response based on the provided snippets."
+                        
+                    # Calculate coverage score
+                    final_retrieved_nodes = {c.ontology_node for c in final_chunks if getattr(c, "ontology_node", None)}
+                    coverage_score = len(final_retrieved_nodes.intersection(set(plan.coverage_goals))) / max(len(plan.coverage_goals), 1)
+                    
+                    # Telemetry logging
+                    TelemetryLogger.log_query(
+                        query=original_query,
+                        intent=analysis.intent.name,
+                        planner_latency=planner_time,
+                        engine_latency=engine_time,
+                        coverage_score=coverage_score,
+                        conflict_found=conflict_res.get("conflict_found", False),
+                        token_usage=rag_context.total_tokens,
+                        evidence_count=len(final_chunks)
+                    )
+                        
+                    return rag_context
+            
+            logger.warning(
+                "Structured query variation %d/%d (%r) did not yield results. Proceeding to next query.",
+                sq_idx + 1,
+                len(structured_queries),
+                sq
+            )
+
+        # Fallback to standard router using the first structured query or original query if all fail
+        fallback_query = structured_queries[0] if structured_queries else original_query
+        logger.warning("All structured queries failed. Falling back to standard router with query: %r", fallback_query)
+        route_result = await self.router.route_query(fallback_query, tenant_id=str(self.tenant_id))
         search_type = route_result.intent
         
         rewritten_data = route_result.rewritten or {}
@@ -2107,10 +2122,10 @@ class RAGPipeline:
             
         kb_names = {str(r.id): r.name for r in kb_rows}
         # --- DEFINITIVE FIX: Use ParquetIngester registry to resolve local parquet path ---
-        # The CSV ingestion pipeline converts CSV→Parquet and registers the path in
+        # The CSV ingestion pipeline converts CSV->Parquet and registers the path in
         # data/parquet/active_datasets.json under the key kb.parsed_path (e.g. 'dummy_employees_details').
         # kb.description == 'excel_parquet' is the authoritative flag for spreadsheet KBs.
-        # We must NOT check s3_path for .csv — the S3 bucket is private (403 Forbidden).
+        # We must NOT check s3_path for .csv - the S3 bucket is private (403 Forbidden).
         # This is the same pattern used in service.py lines 130-145.
         from app.core.parquet_ingester import ParquetIngester
 
@@ -2205,9 +2220,9 @@ class RAGPipeline:
                             is_neg = True
                             val_str = val_str[1:-1].strip()
                             
-                        if any(c in val_str for c in ["$", "€", "£", "₹"]):
+                        if any(c in val_str for c in ["$", "\u20ac", "\u00a3", "\u20b9"]):
                             has_currency_symbols = True
-                            val_str = re.sub(r'[\$\€\£\₹]', '', val_str).strip()
+                            val_str = re.sub(r'[\$\u20ac\u00a3\u20b9]', '', val_str).strip()
                             
                         if "%" in val_str:
                             has_percentage_symbols = True
@@ -2382,7 +2397,7 @@ CRITICAL RULES:
                             non_empty_count += 1
                             if val_str.startswith("(") and val_str.endswith(")"):
                                 val_str = "-" + val_str[1:-1].strip()
-                            val_str = re.sub(r'[\$\€\£\₹]', '', val_str).strip()
+                            val_str = re.sub(r'[\$\u20ac\u00a3\u20b9]', '', val_str).strip()
                             val_str = val_str.replace("%", "").strip()
                             val_str = val_str.replace(",", "")
                             try:

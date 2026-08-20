@@ -490,3 +490,102 @@ async def test_thambi_query_regression():
     muruganandam_present = any("muruganandam" in (getattr(c, "text", "") or "").lower() for c in result)
     assert not muruganandam_present
 
+
+@pytest.mark.asyncio
+async def test_structured_query_fallback():
+    from app.modules.rag.pipeline import RAGPipeline
+    from app.modules.rag.orchestrator.query_analyzer import AnalysisResult, QueryIntent, QueryMetadata
+    from app.modules.rag.pipeline import RAGContext, RetrievedChunk
+    from unittest.mock import AsyncMock, patch, MagicMock
+
+@pytest.mark.asyncio
+async def test_structured_query_fallback():
+    from app.modules.rag.pipeline import RAGPipeline
+    from app.modules.rag.orchestrator.query_analyzer import AnalysisResult, QueryIntent, QueryMetadata
+    from app.modules.rag.pipeline import RAGContext, RetrievedChunk
+    from unittest.mock import AsyncMock, patch, MagicMock
+
+    db_mock = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.all.return_value = []
+    db_mock.execute.return_value = mock_res
+    pipeline = RAGPipeline("12345678-1234-5678-1234-567812345678", db=db_mock)
+
+    # Mock analyze_query to return two structured queries
+    analysis_res = AnalysisResult(
+        intent=QueryIntent.SUMMARY,
+        metadata=QueryMetadata(
+            keywords=["gramosoft"],
+            structured_queries=["Explain the services provided by Gramosoft.", "What services does Gramosoft offer?"]
+        ),
+        is_tabular=False,
+        confidence=0.9,
+        reasoning="Test rephrasing fallback"
+    )
+
+    # Let's count how many times retrieve is called to ensure fallback works.
+    retrievals_called = []
+
+    async def mock_retrieve_func(task, kb_ids):
+        retrievals_called.append(task.query)
+        if task.query == "Explain the services provided by Gramosoft.":
+            # First structured query returns empty list (fails to retrieve)
+            return []
+        else:
+            # Second structured query succeeds
+            return [
+                RetrievedChunk(
+                    chunk_id="c1",
+                    text="Gramosoft provides custom software development services.",
+                    kb_id="kb1",
+                    position=0,
+                    embedding_similarity=0.95,
+                    graph_score=0.0,
+                    hybrid_score=0.0,
+                    ontology_node="Services"
+                )
+            ]
+
+    with patch("app.modules.rag.orchestrator.query_analyzer.QueryAnalyzer.analyze_query", new_callable=AsyncMock) as mock_analyze, \
+         patch("app.core.embeddings.EmbeddingGenerator.generate_embedding_with_usage", new_callable=AsyncMock) as mock_emb, \
+         patch("app.modules.rag.engines.vector_engine.VectorEngine.get_candidate_sections", new_callable=AsyncMock) as mock_cand, \
+         patch("app.modules.rag.engines.vector_engine.VectorEngine.retrieve", side_effect=mock_retrieve_func) as mock_ret:
+
+        mock_analyze.return_value = analysis_res
+        mock_emb.return_value = ([0.1] * 1536, 5)
+        # Match candidate section search
+        mock_cand.return_value = [{"section_id": "s1", "task_id": "test_task"}]
+
+        # Create a mock planner that plans a VectorEngine task
+        from app.modules.rag.orchestrator.planner import RetrievalPlan, RetrievalTask
+        mock_plan = RetrievalPlan(
+            tasks=[
+                RetrievalTask(
+                    engine_name="vector",
+                    query="Explain the services provided by Gramosoft.",
+                    metadata_filters=analysis_res.metadata,
+                    task_id="t1"
+                )
+            ],
+            aggregator_strategy="rank",
+            coverage_goals=["Services"]
+        )
+        
+        with patch("app.modules.rag.orchestrator.planner.AdaptivePlanner.create_plan", new_callable=AsyncMock) as mock_create_plan:
+            mock_create_plan.return_value = mock_plan
+
+            res = await pipeline.query(
+                query="explain the gramosoft services",
+                agent_id="agent1",
+                kb_id="kb1"
+            )
+
+            # Assertions
+            assert isinstance(res, RAGContext)
+            # The query attribute in RAGContext should be the original user query!
+            assert res.query == "explain the gramosoft services"
+            assert len(res.chunks) == 1
+            assert res.chunks[0].text == "Gramosoft provides custom software development services."
+            # Verify retrieval was called for both structured queries sequentially
+            assert "Explain the services provided by Gramosoft." in retrievals_called
+            assert "What services does Gramosoft offer?" in retrievals_called

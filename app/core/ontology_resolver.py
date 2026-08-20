@@ -49,7 +49,7 @@ class OntologyResolver:
                     "type": ent["type"],
                     "embedding": emb
                 })
-        entities_for_neo4j = entities_for_neo4j[:60]
+        entities_for_neo4j = entities_for_neo4j[:20]
         if not entities_for_neo4j:
             return mapping
 
@@ -75,7 +75,7 @@ class OntologyResolver:
                     query,
                     {"entities": entities_for_neo4j, "tenant_id": self.tenant_id}
                 ),
-                timeout=15.0
+                timeout=5.0
             )
             
             resolved_count = 0

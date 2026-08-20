@@ -3,7 +3,7 @@ from typing import Optional, Dict, Literal
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from app.core.config import get_settings
+from app.core.config import get_settings, settings
 import tempfile
 import os
 import re
@@ -199,7 +199,7 @@ class PandasQueryEngine:
                 return tmp.name
             except Exception as e:
                 logger.error(f"Failed to download remote CSV from {path}: {e}")
-                return path  # Return original — caller will catch os.path.exists failure
+                return path  # Return original - caller will catch os.path.exists failure
         return path
 
     async def execute_query(self, query: str, data_path: Optional[str] = None) -> Optional[str]:

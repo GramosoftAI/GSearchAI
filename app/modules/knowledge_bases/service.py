@@ -756,7 +756,7 @@ class KnowledgeBaseService:
                 routing_stats["kg_calls"] += 1
                 try:
                     async with sem:
-                        result = await asyncio.wait_for(unified_extractor.extract_all(chunk_id, text), timeout=45.0)
+                        result = await asyncio.wait_for(unified_extractor.extract_all(chunk_id, text), timeout=120.0)
                     _chunk_extract_cache[text_hash] = result
                     return result
                 except Exception as e:
@@ -778,7 +778,7 @@ class KnowledgeBaseService:
             
             if use_triplets:
                 from ...core.triplet_extractor import TripletExtractionResult
-                triplet_results = [TripletExtractionResult(chunk_id=f"idx_{i}", triplets=res.get("triplets", [])) for i, res in enumerate(unified_results)]
+                triplet_results = [TripletExtractionResult(chunk_id=f"idx_{i}", triplets=res.get("triplets", []), events=res.get("events", [])) for i, res in enumerate(unified_results)]
             else:
                 triplet_results = []
                 

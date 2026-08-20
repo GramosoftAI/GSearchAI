@@ -43,5 +43,17 @@ ALLOWED_SCHEMA_MATRIX = {
     ("PERSON", "HAS_WEBSITE", "URL"),
     ("CONCEPT", "HAS_URL", "URL"),
     
-    # Add more allowed relationships as the schema expands
+    # Generic and Abstract relations for LLM flexibility
+    ("CONCEPT", "IN", "CONCEPT"),
+    ("PERSON", "HAS_EXPERIENCE", "CONCEPT"),
+    ("ORGANIZATION", "HAS_EXPERIENCE", "CONCEPT"),
+    
+    # Quality Assurance & Academic Ontology Additions
+    ("CONCEPT", "DEFINED_AS", "CONCEPT"),
+    ("CONCEPT", "REFERRED_TO", "CONCEPT"),
+    ("CONCEPT", "AIMS_FOR", "CONCEPT"),
+    ("CONCEPT", "DETERMINES", "CONCEPT"),
+    ("PERSON", "DEVELOPED", "CONCEPT"),
+    ("PERSON", "DEFINED", "CONCEPT"),
+    ("NAME", "ORIGINATOR_OF", "CONCEPT"),
 }

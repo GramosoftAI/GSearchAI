@@ -177,12 +177,22 @@ class GraphCleanupService:
         """
         logger.info(f"Normalizing entity names for tenant {self.tenant_id}...")
 
-        query = """
-        MATCH (n)
-        WHERE (n:Entity OR n:TripletEntity) AND n.tenant_id = $tenant_id
-        RETURN elementId(n) AS internal_id, coalesce(n.name, n.text, n.display_name, '') AS raw_name
-        """
-        results = await self.neo4j_repo.execute_read(query)
+        if self.kb_id:
+            query = """
+            MATCH (kb:KnowledgeBase {id: $kb_id})-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(n)
+            WHERE (n:Entity OR n:TripletEntity) AND n.tenant_id = $tenant_id
+            RETURN DISTINCT elementId(n) AS internal_id, coalesce(n.name, n.text, n.display_name, '') AS raw_name
+            """
+            params = {"tenant_id": self.tenant_id, "kb_id": self.kb_id}
+        else:
+            query = """
+            MATCH (n)
+            WHERE (n:Entity OR n:TripletEntity) AND n.tenant_id = $tenant_id
+            RETURN elementId(n) AS internal_id, coalesce(n.name, n.text, n.display_name, '') AS raw_name
+            """
+            params = {"tenant_id": self.tenant_id}
+        
+        results = await self.neo4j_repo.execute_read(query, params)
 
         updated_count = 0
         driver = await get_neo4j_driver()
@@ -210,7 +220,11 @@ class GraphCleanupService:
                     })
                     updated_count += 1
                 except Exception as e:
-                    logger.error(f"Failed to update normalized properties: {e}")
+                    if "ConstraintValidationFailed" in str(e):
+                        # Node has same normalized_name as an existing node; will be merged later.
+                        pass
+                    else:
+                        logger.error(f"Failed to update normalized properties: {e}")
 
         logger.info(f"Normalized {updated_count} entity names in graph.")
         return {"normalized_count": updated_count}
