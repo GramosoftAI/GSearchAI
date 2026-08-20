@@ -239,6 +239,12 @@
         height: 30px !important;
       }
     }
+    .grag-search-wrapper input::placeholder {
+      color: #71717a !important;
+      font-size: 14px !important;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+      opacity: 1 !important;
+    }
   `;
   document.head.appendChild(styleEl);
 
@@ -248,6 +254,10 @@
 
   // Declared search wrapper reference
   let searchWrapper = null;
+  let searchInput = null;
+  let searchGlowContainer = null;
+  let searchSendBtn = null;
+  let searchPoweredByContainer = null;
 
   // Global window resize and responsive dimensions
   const updateIframeDimensions = () => {
@@ -262,8 +272,8 @@
       iframe.style.transformOrigin = "center bottom";
 
       if (chatType === "search") {
-        iframe.style.bottom = "-6px"; // Aligned bottom (gives mobile widget 32px input bar baseline match with 38px bottom padding)
-        iframe.style.height = "calc(100% - 60px)";
+        iframe.style.bottom = "88px"; // Aligned above mobile search bar (gives a nice compact visual gap)
+        iframe.style.height = "380px"; // Compact, neat floating height on mobile
       } else {
         iframe.style.bottom = "95px";
         iframe.style.height = "calc(100% - 180px)";
@@ -285,18 +295,18 @@
 
       if (chatType === "search") {
         if (position === "center") {
-          const safeHeight = Math.min(520, window.innerHeight - 60);
+          const safeHeight = Math.min(410, window.innerHeight - 124); // Reduced height for more compact look
           iframe.style.width = "680px";
           iframe.style.height = safeHeight + "px";
-          iframe.style.bottom = "-4px"; // Aligned bottom (gives desktop widget 40px input bar baseline match with 44px bottom padding)
+          iframe.style.bottom = "96px"; // Aligned above desktop search bar (gives a nice compact visual gap)
           iframe.style.left = "50%";
           iframe.style.right = "auto";
         } else {
           // right search
-          const safeHeight = Math.min(520, window.innerHeight - 60);
+          const safeHeight = Math.min(410, window.innerHeight - 124);
           iframe.style.width = "420px";
           iframe.style.height = safeHeight + "px";
-          iframe.style.bottom = "-4px"; // Aligned bottom (gives desktop widget 40px input bar baseline match with 44px bottom padding)
+          iframe.style.bottom = "96px"; // Aligned above desktop search bar
           iframe.style.right = "40px";
           iframe.style.left = "auto";
         }
@@ -316,10 +326,38 @@
   const updateSearchWrapperDimensions = () => {
     if (!searchWrapper) return;
     searchWrapper.classList.remove("layout-center", "layout-right");
-    if (position === "center") {
+
+    if (searchPoweredByContainer) {
+      searchPoweredByContainer.style.position = "fixed";
+      searchPoweredByContainer.style.zIndex = "999998";
+      searchPoweredByContainer.style.left = "auto";
+      searchPoweredByContainer.style.right = "auto";
+      searchPoweredByContainer.style.transform = "none";
+    }
+
+    const isMobile = window.innerWidth <= 640;
+    if (isMobile) {
       searchWrapper.classList.add("layout-center");
+      if (searchPoweredByContainer) {
+        searchPoweredByContainer.style.bottom = "6px";
+        searchPoweredByContainer.style.left = "50%";
+        searchPoweredByContainer.style.transform = "translateX(-50%)";
+      }
     } else {
-      searchWrapper.classList.add("layout-right");
+      if (position === "center") {
+        searchWrapper.classList.add("layout-center");
+        if (searchPoweredByContainer) {
+          searchPoweredByContainer.style.bottom = "8px";
+          searchPoweredByContainer.style.left = "50%";
+          searchPoweredByContainer.style.transform = "translateX(-50%)";
+        }
+      } else {
+        searchWrapper.classList.add("layout-right");
+        if (searchPoweredByContainer) {
+          searchPoweredByContainer.style.bottom = "8px";
+          searchPoweredByContainer.style.right = "190px"; // Centered under right search bar
+        }
+      }
     }
   };
 
@@ -350,6 +388,10 @@
     iframe.loading = "lazy";
     iframe.src = `${baseUrl}/widget?agentId=${agentId}&tenantId=${tenantId}&chatType=${chatType}&themeColor=${encodeURIComponent(themeColor)}&headerLogo=${encodeURIComponent(resolvedHeaderLogo)}&headerAlign=${encodeURIComponent(headerAlign)}&headerName=${encodeURIComponent(headerName)}&headerSubtext=${encodeURIComponent(headerSubtext)}&agentLabel=${encodeURIComponent(agentLabel)}&themeTextColor=${encodeURIComponent(themeTextColor)}&botAvatar=${encodeURIComponent(resolvedBotAvatar)}&buttonIcon=${encodeURIComponent(resolvedButtonIcon)}&buttonAlign=${encodeURIComponent(buttonAlign)}&showButtonText=${showButtonText}&buttonText=${encodeURIComponent(buttonText)}&initialMessage=${encodeURIComponent(initialMessage)}&displaySources=${displaySources}&allowDownloads=${allowDownloads}&displayCopy=${displayCopy}&displayFeedback=${displayFeedback}&linkSafety=${linkSafety}&leadCollection=${leadCollection}&leadFields=${encodeURIComponent(leadFields)}&leadTiming=${leadTiming}&escalationEnabled=${escalationEnabled}&escalationLink=${encodeURIComponent(escalationLink)}&placeholder=${encodeURIComponent(placeholder)}`;
 
+    iframe.addEventListener("load", () => {
+      iframe.setAttribute("data-loaded", "true");
+    });
+
     // Set dimensions and append to body
     updateIframeDimensions();
     document.body.appendChild(iframe);
@@ -359,13 +401,26 @@
   let isClosingFromPopstate = false;
 
   const openIframe = (initialQuery = "") => {
-    // Hide search bar wrapper smoothly using class transition
-    if (chatType === "search" && searchWrapper) {
-      searchWrapper.classList.add("hidden");
-    }
+    // Commented out to keep search wrapper visible as the single input bar
+    // if (chatType === "search" && searchWrapper) {
+    //   searchWrapper.classList.add("hidden");
+    // }
 
     const currentIframe = initIframe();
-    currentIframe.classList.add("show");
+    
+    if (chatType === "search" && searchPoweredByContainer) {
+      searchPoweredByContainer.style.display = "flex";
+    }
+
+    if (currentIframe.getAttribute("data-loaded") === "true") {
+      currentIframe.classList.add("show");
+      currentIframe.contentWindow.postMessage({ type: "focus-input" }, "*");
+    } else {
+      currentIframe.addEventListener("load", () => {
+        currentIframe.classList.add("show");
+        currentIframe.contentWindow.postMessage({ type: "focus-input" }, "*");
+      }, { once: true });
+    }
 
     // Push state to browser history so back button closes it on mobile
     if (window.innerWidth <= 640) {
@@ -373,11 +428,6 @@
         window.history.pushState({ gragWidgetOpen: true }, "");
       }
     }
-
-    // Focus the input inside the iframe
-    setTimeout(() => {
-      currentIframe.contentWindow.postMessage({ type: "focus-input" }, "*");
-    }, 200);
 
     // Send initial query via postMessage to avoid slow reloads
     if (initialQuery) {
@@ -420,9 +470,47 @@
       if (window.innerWidth <= 640 && !isClosingFromPopstate && window.history.state?.gragWidgetOpen === true) {
         window.history.back();
       }
-      if (chatType === "search" && searchWrapper) {
-        searchWrapper.classList.remove("hidden");
-        updateSearchWrapperDimensions();
+      // Reset the parent search bar input state when closed
+      if (chatType === "search" && searchInput) {
+        searchInput.value = "";
+        searchInput.blur();
+        if (searchGlowContainer) {
+          searchGlowContainer.classList.remove("active");
+        }
+        if (searchSendBtn) {
+          searchSendBtn.style.background = "#f4f4f5";
+          searchSendBtn.style.color = "#a1a1aa";
+          searchSendBtn.disabled = true;
+        }
+        if (searchPoweredByContainer) {
+          searchPoweredByContainer.style.display = "none";
+        }
+      }
+    }
+    // Typing state sync from iframe to parent search bar
+    if (event.data && event.data.type === "set-typing") {
+      const isBotTyping = event.data.isTyping;
+      if (searchInput) {
+        searchInput.disabled = isBotTyping;
+        searchInput.style.cursor = isBotTyping ? "not-allowed" : "text";
+        if (isBotTyping) {
+          searchInput.placeholder = "Agent is typing...";
+        } else {
+          searchInput.placeholder = placeholder;
+        }
+      }
+      if (searchSendBtn) {
+        searchSendBtn.disabled = isBotTyping;
+        if (isBotTyping) {
+          searchSendBtn.style.background = "#f4f4f5";
+          searchSendBtn.style.color = "#a1a1aa";
+        } else {
+          if (searchInput && searchInput.value.trim().length > 0) {
+            searchSendBtn.style.background = themeColor;
+            searchSendBtn.style.color = "#ffffff";
+            searchSendBtn.disabled = false;
+          }
+        }
       }
     }
   });
@@ -435,8 +523,8 @@
     updateSearchWrapperDimensions();
 
     // Outer glow container (which handles brand gradient outline on focus/hover)
-    const glowContainer = document.createElement("div");
-    glowContainer.className = "grag-search-glow";
+    searchGlowContainer = document.createElement("div");
+    searchGlowContainer.className = "grag-search-glow";
 
     // Inner input bar container
     const inputBar = document.createElement("div");
@@ -463,97 +551,98 @@
     `;
 
     // Input Element
-    const input = document.createElement("input");
-    input.type = "text";
-    input.placeholder = placeholder;
-    input.style.flex = "1";
-    input.style.border = "none";
-    input.style.outline = "none";
-    input.style.background = "transparent";
-    input.style.color = "#18181b";
-    input.style.fontSize = "15px";
-    input.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
-    input.style.padding = "0";
-    input.style.height = "20px";
-    input.style.lineHeight = "20px";
+    searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.placeholder = placeholder;
+    searchInput.style.flex = "1";
+    searchInput.style.border = "none";
+    searchInput.style.outline = "none";
+    searchInput.style.background = "transparent";
+    searchInput.style.color = "#18181b";
+    searchInput.style.fontSize = "14px";
+    searchInput.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+    searchInput.style.padding = "0";
+    searchInput.style.height = "20px";
+    searchInput.style.lineHeight = "20px";
 
     // Right Send Button
-    const sendBtn = document.createElement("button");
-    sendBtn.style.width = "34px";
-    sendBtn.style.height = "34px";
-    sendBtn.style.borderRadius = "50%";
-    sendBtn.style.background = "#f4f4f5"; // grey default
-    sendBtn.style.border = "none";
-    sendBtn.style.cursor = "pointer";
-    sendBtn.style.display = "flex";
-    sendBtn.style.alignItems = "center";
-    sendBtn.style.justifyContent = "center";
-    sendBtn.style.transition = "background-color 0.2s ease, transform 0.2s ease";
-    sendBtn.style.color = "#a1a1aa";
-    sendBtn.disabled = true;
-    sendBtn.innerHTML = `
+    searchSendBtn = document.createElement("button");
+    searchSendBtn.style.width = "34px";
+    searchSendBtn.style.height = "34px";
+    searchSendBtn.style.borderRadius = "50%";
+    searchSendBtn.style.background = "#f4f4f5"; // grey default
+    searchSendBtn.style.border = "none";
+    searchSendBtn.style.cursor = "pointer";
+    searchSendBtn.style.display = "flex";
+    searchSendBtn.style.alignItems = "center";
+    searchSendBtn.style.justifyContent = "center";
+    searchSendBtn.style.transition = "background-color 0.2s ease, transform 0.2s ease";
+    searchSendBtn.style.color = "#a1a1aa";
+    searchSendBtn.disabled = true;
+    searchSendBtn.innerHTML = `
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <line x1="12" y1="19" x2="12" y2="5"/>
         <polyline points="5 12 12 5 19 12"/>
       </svg>
     `;
 
-    input.onfocus = () => {
-      glowContainer.classList.add("active");
+    searchInput.onfocus = () => {
+      searchGlowContainer.classList.add("active");
       openIframe("");
-      input.blur();
     };
-    input.onmouseenter = () => {
+    searchInput.onmouseenter = () => {
       initIframe();
     };
-    input.onblur = () => {
-      if (input.value.trim() === "") {
-        glowContainer.classList.remove("active");
+    searchInput.onblur = () => {
+      if (searchInput.value.trim() === "") {
+        searchGlowContainer.classList.remove("active");
       }
     };
-    input.oninput = (e) => {
+    searchInput.oninput = (e) => {
       const val = e.target.value.trim();
       if (val.length > 0) {
-        glowContainer.classList.add("active");
-        sendBtn.style.background = themeColor;
-        sendBtn.style.color = "#ffffff";
-        sendBtn.disabled = false;
+        searchGlowContainer.classList.add("active");
+        searchSendBtn.style.background = themeColor;
+        searchSendBtn.style.color = "#ffffff";
+        searchSendBtn.disabled = false;
       } else {
-        glowContainer.classList.remove("active");
-        sendBtn.style.background = "#f4f4f5";
-        sendBtn.style.color = "#a1a1aa";
-        sendBtn.disabled = true;
+        searchGlowContainer.classList.remove("active");
+        searchSendBtn.style.background = "#f4f4f5";
+        searchSendBtn.style.color = "#a1a1aa";
+        searchSendBtn.disabled = true;
       }
     };
 
     const handleSearchSubmit = () => {
-      const query = input.value.trim();
+      const query = searchInput.value.trim();
       if (!query) return;
       openIframe(query);
-      input.value = "";
-      sendBtn.style.background = "#f4f4f5";
-      sendBtn.style.color = "#a1a1aa";
-      sendBtn.disabled = true;
-      glowContainer.classList.remove("active");
+      searchInput.value = "";
+      searchSendBtn.style.background = "#f4f4f5";
+      searchSendBtn.style.color = "#a1a1aa";
+      searchSendBtn.disabled = true;
+      searchGlowContainer.classList.remove("active");
     };
 
-    input.onkeydown = (e) => {
+    searchInput.onkeydown = (e) => {
       if (e.key === "Enter") {
         handleSearchSubmit();
       }
     };
 
-    sendBtn.onclick = handleSearchSubmit;
+    searchSendBtn.onclick = () => {
+      handleSearchSubmit();
+    };
     leftIcon.onclick = () => {
       openIframe("");
     };
 
     // Powered by Gramosoft label wrapper
-    const poweredByContainer = document.createElement("div");
-    poweredByContainer.style.display = "none";
-    poweredByContainer.style.justifyContent = "center";
-    poweredByContainer.style.marginTop = "6px";
-
+    searchPoweredByContainer = document.createElement("div");
+    searchPoweredByContainer.style.display = "none"; // Hidden by default when search bar is closed
+    searchPoweredByContainer.style.justifyContent = "center";
+    searchPoweredByContainer.style.marginTop = "6px";
+ 
     const poweredBy = document.createElement("a");
     poweredBy.href = "https://gsearchai.com/";
     poweredBy.target = "_blank";
@@ -575,7 +664,7 @@
     poweredBy.style.boxShadow = "0 2px 6px rgba(0, 0, 0, 0.08)";
     poweredBy.style.transition = "all 0.2s ease-in-out";
     poweredBy.innerHTML = `Powered by <span style="font-weight: 750; color: ${themeColor};">Gsearch</span>`;
-
+ 
     poweredBy.addEventListener("mouseenter", () => {
       poweredBy.style.transform = "translateY(-1px)";
       poweredBy.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.12)";
@@ -584,17 +673,20 @@
       poweredBy.style.transform = "none";
       poweredBy.style.boxShadow = "0 2px 6px rgba(0, 0, 0, 0.08)";
     });
-
-    poweredByContainer.appendChild(poweredBy);
-
+ 
+    searchPoweredByContainer.appendChild(poweredBy);
+ 
     // Assemble and render elements
     inputBar.appendChild(leftIcon);
-    inputBar.appendChild(input);
-    inputBar.appendChild(sendBtn);
-    glowContainer.appendChild(inputBar);
-    searchWrapper.appendChild(glowContainer);
-    searchWrapper.appendChild(poweredByContainer);
+    inputBar.appendChild(searchInput);
+    inputBar.appendChild(searchSendBtn);
+    searchGlowContainer.appendChild(inputBar);
+    searchWrapper.appendChild(searchGlowContainer);
     document.body.appendChild(searchWrapper);
+    document.body.appendChild(searchPoweredByContainer);
+    
+    // Position searchWrapper and searchPoweredByContainer correctly on load
+    updateSearchWrapperDimensions();
   } else {
     // --- Style 1: Classic Icon Style Chat ---
     const button = document.createElement("button");

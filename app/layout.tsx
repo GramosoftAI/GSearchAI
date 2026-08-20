@@ -115,8 +115,13 @@ export default function RootLayout({
             __html: `
               (function() {
                 try {
+                  const pathname = window.location.pathname;
+                  const isWidget = pathname.startsWith('/widget');
+                  if (isWidget) {
+                    document.documentElement.classList.add('widget-page');
+                  }
                   const stored = localStorage.getItem('app_theme_preference');
-                  const isDashboard = window.location.pathname.startsWith('/dashboard') || window.location.pathname.startsWith('/widget');
+                  const isDashboard = pathname.startsWith('/dashboard') || isWidget;
                   let theme = 'light';
                   if (isDashboard && stored === 'dark') {
                     theme = 'dark';

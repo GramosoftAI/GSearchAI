@@ -1509,6 +1509,13 @@ function WidgetContent() {
     return () => window.removeEventListener("message", handleMessage);
   }, []);
 
+  // Synchronize typing state with parent window in search mode
+  useEffect(() => {
+    if (chatType === "search") {
+      window.parent.postMessage({ type: "set-typing", isTyping }, "*");
+    }
+  }, [isTyping, chatType]);
+
   // Auto-grow textarea height on value change
   useEffect(() => {
     const textarea = inputRef.current;
@@ -1779,6 +1786,12 @@ function WidgetContent() {
           background: transparent !important;
           background-color: transparent !important;
         }
+        textarea::placeholder {
+          color: #71717a !important;
+          font-size: 14px !important;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+          opacity: 1 !important;
+        }
         @keyframes pulse {
           0%, 100% { opacity: 0.3; transform: scale(0.8); }
           50% { opacity: 1; transform: scale(1.2); }
@@ -1837,14 +1850,14 @@ function WidgetContent() {
         .close-btn::after { transform: rotate(-45deg); }
 
         .widget-container {
-          padding: 8px 8px 44px 8px;
+          padding: ${chatType === "search" ? "8px 8px 8px 8px" : "8px 8px 44px 8px"};
         }
         .widget-brand-container {
           position: absolute;
           bottom: 8px;
           left: 50%;
           transform: translateX(-50%);
-          display: flex;
+          display: ${chatType === "search" ? "none !important" : "flex"};
           justify-content: center;
           width: 100%;
           pointer-events: none;
@@ -1852,7 +1865,7 @@ function WidgetContent() {
         }
         @media (max-width: 640px) {
           .widget-container {
-            padding: 8px 8px 38px 8px;
+            padding: ${chatType === "search" ? "8px 8px 8px 8px" : "8px 8px 38px 8px"};
           }
           .widget-brand-container {
             bottom: 4px;
@@ -1860,32 +1873,26 @@ function WidgetContent() {
         }
  
         .search-animate {
-          animation: grag-slide-up-pop 0.38s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-          transform-origin: center bottom;
+          animation: grag-fade-in 0.15s ease-out forwards;
         }
-        @keyframes grag-slide-up-pop {
+        @keyframes grag-fade-in {
           0% {
             opacity: 0;
-            transform: scale(0.9) translateY(20px);
           }
           100% {
             opacity: 1;
-            transform: scale(1) translateY(0);
           }
         }
  
         .search-closing {
-          animation: grag-slide-down-close 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
-          transform-origin: center bottom;
+          animation: grag-fade-out 0.15s ease-out forwards !important;
         }
-        @keyframes grag-slide-down-close {
+        @keyframes grag-fade-out {
           0% {
             opacity: 1;
-            transform: scale(1) translateY(0);
           }
           100% {
             opacity: 0;
-            transform: scale(0.96) translateY(12px);
           }
         }
       `}</style>
@@ -1901,7 +1908,7 @@ function WidgetContent() {
           // boxShadow: "0 2px 8px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.08), 0 20px 48px rgba(0,0,0,0.06)",
           overflow: "hidden",
           border: "1px solid rgba(0,0,0,0.07)",
-          marginBottom: "12px",
+          marginBottom: chatType === "search" ? "4px" : "12px",
         }}
       >
         {/* Header */}
@@ -2602,7 +2609,7 @@ function WidgetContent() {
       </div>
 
       {/* Input Bar */}
-      {(!leadCollection || leadTiming !== "pre-chat" || leadSubmitted) && (
+      {chatType !== "search" && (!leadCollection || leadTiming !== "pre-chat" || leadSubmitted) && (
         <div
           style={{
             padding: "2px",
@@ -2654,12 +2661,12 @@ function WidgetContent() {
                 background: "transparent",
                 border: "none",
                 color: isTyping ? "#71717a" : "#18181b",
-                fontSize: "15px",
+                fontSize: "14px",
                 outline: "none",
                 cursor: isTyping ? "not-allowed" : "text",
                 resize: "none",
                 height: "20px",
-                fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+                // fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
                 lineHeight: "20px",
               }}
             />
@@ -2703,42 +2710,44 @@ function WidgetContent() {
       )}
 
       {/* Powered by Gramosoft */}
-      <div className="widget-brand-container">
-        <a
-          href="https://gsearchai.com/"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
-            pointerEvents: "auto",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "4px",
-            padding: "4px 12px",
-            fontSize: "11px",
-            color: "#18181b",
-            fontWeight: 600,
-            userSelect: "none",
-            textDecoration: "none",
-            cursor: "pointer",
-            borderRadius: "100px",
-            background: "#ffffff",
-            border: "1px solid #d4d4d8",
-            boxShadow: "0 2px 6px rgba(0, 0, 0, 0.08)",
-            transition: "all 0.2s ease-in-out",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.transform = "translateY(-1px)";
-            e.currentTarget.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.12)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.transform = "none";
-            e.currentTarget.style.boxShadow = "0 2px 6px rgba(0, 0, 0, 0.08)";
-          }}
-        >
-          Powered by <span style={{ fontWeight: 750, color: themeColor }}>Gsearch</span>
-        </a>
-      </div>
+      {chatType !== "search" && (
+        <div className="widget-brand-container">
+          <a
+            href="https://gsearchai.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              pointerEvents: "auto",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "4px",
+              padding: "4px 12px",
+              fontSize: "11px",
+              color: "#18181b",
+              fontWeight: 600,
+              userSelect: "none",
+              textDecoration: "none",
+              cursor: "pointer",
+              borderRadius: "100px",
+              background: "#ffffff",
+              border: "1px solid #d4d4d8",
+              boxShadow: "0 2px 6px rgba(0, 0, 0, 0.08)",
+              transition: "all 0.2s ease-in-out",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = "translateY(-1px)";
+              e.currentTarget.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.12)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = "none";
+              e.currentTarget.style.boxShadow = "0 2px 6px rgba(0, 0, 0, 0.08)";
+            }}
+          >
+            Powered by <span style={{ fontWeight: 750, color: themeColor }}>Gsearch</span>
+          </a>
+        </div>
+      )}
       {/* Link Safety Modal */}
       {safetyModalUrl && (
         <div style={{
