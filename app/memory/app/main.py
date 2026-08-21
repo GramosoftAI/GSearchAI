@@ -741,8 +741,9 @@ async def process_turn(payload: MemoryProcessRequest):
             "4. Requesting to delete, forget, or clear memories (e.g., 'forget my name').\n\n"
             "Reply with EXACTLY 'NORMAL_QUERY' if the user's message is:\n"
             "1. Asking a question, requesting information, or looking up facts about the organization, database, documents, or team members (e.g., 'who is CCO', 'tell me about Arun', 'who is CEO', 'what is the capital of France').\n"
-            "2. Directing you to analyze data, search documents, or extract records.\n\n"
-            "CRITICAL: If the message is a question or search query (even if it contains 'now', 'tell me', or similar introductory phrases), you MUST output 'NORMAL_QUERY'.\n"
+            "2. Directing you to analyze data, search documents, or extract records.\n"
+            "3. Stating a short keyword, search term, ID, serial number, or code (e.g., 'SL.NO 5402', '5402', 'ID-203', 'invoice').\n\n"
+            "CRITICAL: If the message is a question, search query, serial number, ID, code, or generic keyword (even if it is extremely short or lacks grammar/question words), you MUST output 'NORMAL_QUERY'.\n"
             "Output ONLY the category name ('FEEDBACK_ONLY' or 'NORMAL_QUERY') with no other text, explanation, or quotes."
         )
         triage_decision = await run_llm_completion(triage_prompt, payload.query, priority="live")

@@ -995,8 +995,10 @@ class PDFChunker:
                 chunk_text = f"Section: {sec_name}\nProject: {sec_project}\n\n{sec_text}"
                 chunk_type_val = "project"
             elif sec_type == "table":
-                chunk_text = f"Section: {sec_name}\nTable:\n\n{sec_text}" if sec_name and sec_name != "Introduction" else sec_text
-                chunk_type_val = "table"
+                # Skip raw markdown table chunks — structured row-level embeddings
+                # from save_table_rows() provide superior coverage with clean key-value pairs.
+                # Including raw markdown tables creates noisy duplicate chunks.
+                continue
             else:
                 chunk_text = f"Section: {sec_name}\n\n{sec_text}" if sec_name and sec_name != "Introduction" else sec_text
                 chunk_type_val = "section"

@@ -694,7 +694,7 @@ class RAGPipeline:
                         chunks=final_chunks,
                         entity_mentions={},
                         total_tokens=sum(len(c.text.split()) for c in final_chunks),
-                        triplet_context=triplet_context_str + supplementary_csv_context,
+                        triplet_context=extractive_context_text + triplet_context_str + supplementary_csv_context,
                         triplets=relevant_triplets_list,
                         search_type=analysis.intent.name
                     )
@@ -2453,8 +2453,11 @@ CRITICAL RULES:
             trace_log.append(f"Validated AST:\n{json.dumps(ast, indent=2)}\n")
 
         # 3. Secure Backend Query Builder
+        def get_json_val(field_name):
+            return f"(SELECT v FROM jsonb_each_text(row_data) AS kv(k,v) WHERE lower(k) = lower('{field_name}') LIMIT 1)"
+
         def safe_numeric_cast(field_name):
-            return f"NULLIF(REGEXP_REPLACE(row_data->>'{field_name}', '[^0-9.-]', '', 'g'), '')::numeric"
+            return f"NULLIF(REGEXP_REPLACE({get_json_val(field_name)}, '[^0-9.-]', '', 'g'), '')::numeric"
 
         t_sql_start = time.perf_counter()
         
@@ -2491,12 +2494,12 @@ CRITICAL RULES:
                 where_clauses.append(f"{safe_numeric_cast(field)} {op} :val_{i}")
                 params[f"val_{i}"] = val_cast
             elif field_type == "boolean":
-                safe_bool = f"CASE WHEN LOWER(row_data->>'{field}') IN ('true', 'yes', 't', '1') THEN TRUE WHEN LOWER(row_data->>'{field}') IN ('false', 'no', 'f', '0') THEN FALSE ELSE NULL END"
+                safe_bool = f"CASE WHEN LOWER({get_json_val(field)}) IN ('true', 'yes', 't', '1') THEN TRUE WHEN LOWER({get_json_val(field)}) IN ('false', 'no', 'f', '0') THEN FALSE ELSE NULL END"
                 bool_val = str(val).lower().strip() in ["true", "yes", "t", "1"]
                 where_clauses.append(f"{safe_bool} = :val_{i}")
                 params[f"val_{i}"] = bool_val
             else:
-                where_clauses.append(f"row_data->>'{field}' {op} :val_{i}")
+                where_clauses.append(f"{get_json_val(field)} {op} :val_{i}")
                 params[f"val_{i}"] = val
                 
             explain_filters.append(f"{field} {op} {val}")
@@ -2511,11 +2514,11 @@ CRITICAL RULES:
                 sort_dir = "ASC" if str(ast.get("sort_dir", "DESC")).upper() == "ASC" else "DESC"
                 sort_field = ast["sort_by"]
                 if sort_field == "rank":
-                    inner_query += f" ORDER BY NULLIF(REGEXP_REPLACE(row_data->>'rank', '[^0-9]', '', 'g'), '')::numeric {sort_dir}"
+                    inner_query += f" ORDER BY NULLIF(REGEXP_REPLACE({get_json_val('rank')}, '[^0-9]', '', 'g'), '')::numeric {sort_dir}"
                 elif dataset_schema.get(sort_field) in numeric_types:
                     inner_query += f" ORDER BY {safe_numeric_cast(sort_field)} {sort_dir}"
                 else:
-                    inner_query += f" ORDER BY row_data->>'{sort_field}' {sort_dir}"
+                    inner_query += f" ORDER BY {get_json_val(sort_field)} {sort_dir}"
             elif ast.get("difference_fields"):
                 sort_dir = "ASC" if str(ast.get("sort_dir", "DESC")).upper() == "ASC" else "DESC"
                 diff_f = ast["difference_fields"]
@@ -2534,22 +2537,22 @@ CRITICAL RULES:
                 select_clause = f"{operation}({safe_numeric_cast(target_field)}) as val"
             elif operation == "GROUP" and ast.get("group_by"):
                 group_field = ast.get("group_by")
-                select_clause = f"row_data->>'{group_field}' as group_key, COUNT(*) as count"
+                select_clause = f"{get_json_val(group_field)} as group_key, COUNT(*) as count"
                 
             query_str = f"SELECT {select_clause} FROM document_table_rows WHERE {where_str}"
             
             if operation == "GROUP" and ast.get("group_by"):
-                query_str += f" GROUP BY row_data->>'{ast['group_by']}'"
+                query_str += f" GROUP BY {get_json_val(ast['group_by'])}"
                 
             if ast.get("sort_by"):
                 sort_dir = "ASC" if str(ast.get("sort_dir", "DESC")).upper() == "ASC" else "DESC"
                 sort_field = ast["sort_by"]
                 if sort_field == "rank":
-                    query_str += f" ORDER BY NULLIF(REGEXP_REPLACE(row_data->>'rank', '[^0-9]', '', 'g'), '')::numeric {sort_dir}"
+                    query_str += f" ORDER BY NULLIF(REGEXP_REPLACE({get_json_val('rank')}, '[^0-9]', '', 'g'), '')::numeric {sort_dir}"
                 elif dataset_schema.get(sort_field) in numeric_types:
                     query_str += f" ORDER BY {safe_numeric_cast(sort_field)} {sort_dir}"
                 else:
-                    query_str += f" ORDER BY row_data->>'{sort_field}' {sort_dir}"
+                    query_str += f" ORDER BY {get_json_val(sort_field)} {sort_dir}"
             elif ast.get("difference_fields"):
                 sort_dir = "ASC" if str(ast.get("sort_dir", "DESC")).upper() == "ASC" else "DESC"
                 diff_f = ast["difference_fields"]

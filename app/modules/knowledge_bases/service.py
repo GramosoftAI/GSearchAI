@@ -3755,17 +3755,30 @@ class KnowledgeBaseService:
                     "part_number": ["part number", "part no", "item code", "sku", "product id"],
                     "product_name": ["product", "description", "item name", "product name", "item description"],
                     "mrp": ["mrp", "price", "rate", "unit price", "retail price", "selling price", "cost"],
-                    "gst": ["gst", "tax", "gst %", "tax %", "igst", "cgst", "sgst"],
+                    "gst": ["gst", "tax", "gst %", "gst%", "tax %", "tax%", "igst", "cgst", "sgst"],
                     "hsn_code": ["hsn", "hsn code", "sac code"]
                 }
+                
+                import difflib
                 
                 # Case-insensitive key matching for common columns
                 row_keys_lower = {k.lower().strip(): k for k in row_data.keys()}
                 
                 def find_mapped_value(canonical_name):
+                    # 1. Exact match against our semantic alias list (handles "cost" = "mrp")
                     for alias in CANONICAL_COLUMNS[canonical_name]:
                         if alias in row_keys_lower:
                             return row_data[row_keys_lower[alias]]
+                            
+                    # 2. Fuzzy match fallback
+                    # Handles typos or minor variations (e.g., "prod num" matching "product name")
+                    aliases = CANONICAL_COLUMNS[canonical_name]
+                    for row_key in row_keys_lower:
+                        # Compare the row key against all known aliases for this canonical field
+                        matches = difflib.get_close_matches(row_key, aliases, n=1, cutoff=0.8)
+                        if matches:
+                            return row_data[row_keys_lower[row_key]]
+                            
                     return None
                 
                 # Extract typed columns
@@ -3793,14 +3806,16 @@ class KnowledgeBaseService:
                 )
 
                 # ============= ROW-LEVEL EMBEDDING CHUNK =============
-                # Create highly structured semantic chunks avoiding SL.NO and metadata
-                # This prevents flattened table math hallucination (e.g., 1 + 2996 = 12996)
+                # Dynamically build chunk text from ALL columns in row_data.
+                # Every column with a non-empty value is included to ensure
+                # nothing is lost (UOS, GST%, SL.NO, custom columns, etc.).
                 chunk_parts = []
-                if part_number: chunk_parts.append(f"Part Number: {part_number}")
-                if product_name: chunk_parts.append(f"Product Name: {product_name}")
-                if mrp is not None: chunk_parts.append(f"MRP: {mrp}")
-                if hsn_code: chunk_parts.append(f"HSN Code: {hsn_code}")
-                if gst is not None: chunk_parts.append(f"GST: {gst}%")
+                for col_name, col_value in row_data.items():
+                    val = str(col_value).strip() if col_value else ""
+                    if not val:
+                        continue
+                    # Use the original column name as the label (preserves context)
+                    chunk_parts.append(f"{col_name.strip()}: {val}")
                 
                 if chunk_parts:
                     chunk_texts.append("\n".join(chunk_parts))
