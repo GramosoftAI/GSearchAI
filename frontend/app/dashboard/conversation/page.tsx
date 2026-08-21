@@ -353,6 +353,9 @@ function getFileName(sourceUrlOrName: string | any): string {
   if (!sourceUrlOrName) return "";
   try {
     let name = String(sourceUrlOrName);
+    if (name.includes("(Selected Links)")) {
+      name = name.split("(Selected Links)")[0].trim();
+    }
     if (name.startsWith("http://") || name.startsWith("https://")) {
       const url = new URL(name);
       const pathname = url.pathname;
@@ -379,8 +382,11 @@ function getFileName(sourceUrlOrName: string | any): string {
 function getCleanSourceName(rawName: string): string {
   if (!rawName) return "";
   let cleaned = rawName;
+  if (cleaned.includes("(Selected Links)")) {
+    cleaned = cleaned.split("(Selected Links)")[0].trim();
+  }
   cleaned = cleaned.replace(/^text source:\s*/i, "").trim();
-  
+
   if (cleaned.startsWith("http://") || cleaned.startsWith("https://")) {
     if (cleaned.endsWith("...")) {
       return cleaned;
@@ -390,7 +396,7 @@ function getCleanSourceName(rawName: string): string {
     if (lastPart.length > 3) return lastPart;
     return cleaned;
   }
-  
+
   if (cleaned.includes("/") || cleaned.includes("\\")) {
     const parts = cleaned.split(/[/\\]/);
     cleaned = parts[parts.length - 1] || cleaned;
@@ -416,6 +422,59 @@ function deduplicateSources(sources: any[]): any[] {
   });
 }
 
+function deduplicateMessages(msgs: any[]): any[] {
+  if (!msgs || !Array.isArray(msgs)) return [];
+  const result: any[] = [];
+  for (let i = 0; i < msgs.length; i++) {
+    const current = msgs[i];
+    if (current && current.role === "user") {
+      let isDuplicate = false;
+      for (let j = i + 1; j < msgs.length; j++) {
+        if (msgs[j] && msgs[j].role === "user") {
+          if (msgs[j].content === current.content) {
+            isDuplicate = true;
+          }
+          break;
+        }
+      }
+      if (isDuplicate) {
+        if (i + 1 < msgs.length && msgs[i + 1] && msgs[i + 1].role === "assistant") {
+          i++;
+        }
+        continue;
+      }
+    }
+    result.push(current);
+  }
+  return result;
+}
+
+const STAGES = [
+  { at: 0,    label: "Searching knowledge base..." },
+  { at: 3000, label: "Reading relevant documents..." },
+  { at: 8000, label: "Analyzing context..." },
+  { at: 15000, label: "Generating answer..." },
+  { at: 30000, label: "Still working — complex query, almost there..." },
+];
+
+function useProgressLabel(isLoading: boolean) {
+  const [label, setLabel] = useState(STAGES[0].label);
+  useEffect(() => {
+    if (!isLoading) {
+      setLabel(STAGES[0].label);
+      return;
+    }
+    const start = Date.now();
+    const id = setInterval(() => {
+      const elapsed = Date.now() - start;
+      const stage = [...STAGES].reverse().find(s => elapsed >= s.at);
+      if (stage) setLabel(stage.label);
+    }, 500);
+    return () => clearInterval(id);
+  }, [isLoading]);
+  return label;
+}
+
 // Classify a source by its extension / URL pattern
 // If the source object has a kb_id it's always a downloadable file (clickable)
 function getSourceType(source: string, kb_id?: string): 'url' | 'pdf' | 'excel' | 'csv' | 'image' | 'text' {
@@ -432,11 +491,12 @@ function getSourceType(source: string, kb_id?: string): 'url' | 'pdf' | 'excel' 
 
 // Extract source references from answer text to filter backend sources
 function extractCitedFilenames(text: string): string[] {
-  const regex = /(?:\[Source:\s*|\(Source:\s*)([^\]\)]+)[\]\)]/gi;
+  const regex = /(?:\[Source:\s*([^\]]+)\]|\(Source:\s*([^)]+)\))/gi;
   const filenames = new Set<string>();
   let match;
   while ((match = regex.exec(text)) !== null) {
-    const rawCitation = match[1];
+    const rawCitation = match[1] || match[2];
+    if (!rawCitation) continue;
     const parts = rawCitation.split(",");
     parts.forEach(p => {
       let partClean = p.trim();
@@ -489,7 +549,7 @@ function cleanAndExtractSources(content: string, existingSources?: SourceMetadat
   const citedFilenames = extractCitedFilenames(stripped);
 
   const cleanedContent = stripped
-    .replace(/(?:\[Source:\s*.+?\]|\(Source:\s*.+?\))/g, "")
+    .replace(/(?:\[Source:\s*[^\]]+\]|\(Source:\s*[^)]+\))/gi, "")
     .trim();
 
   let finalSources: SourceMetadata[] = existingSources && existingSources.length > 0 ? [...existingSources] : [];
@@ -552,7 +612,7 @@ const renderBoldText = (text: string, key: any, isUser: boolean) => {
 
 const renderTextWithLinks = (text: string, isUser: boolean) => {
   if (!text) return null;
-  const urlRegex = /(https?:\/\/[^\s]+)/gi;
+  const urlRegex = /(https?:\/\/[^\s]+?(?=[.,;:)\]?!]*(?:\s|$)))/gi;
   const parts = text.split(urlRegex);
   return parts.map((part, index) => {
     if (part.match(urlRegex)) {
@@ -601,7 +661,10 @@ const parseRowCells = (rowLine: string): string[] => {
 };
 
 const parseBlocks = (content: string): Block[] => {
-  const stripped = stripThinking(content).trim();
+  const stripped = stripThinking(content)
+    .replace(/(?:\[Source:[^\]]*\]?)/gi, "")
+    .replace(/(?:\(Source:[^)]*\)?)/gi, "")
+    .trim();
   if (!stripped) return [];
 
   const lines = stripped.split('\n');
@@ -981,6 +1044,8 @@ export default function ChatPlaygroundPage() {
   const [sourcesDrawerCsvData, setSourcesDrawerCsvData] = useState<string[][]>([]);
   const [sourcesDrawerPreviewLoading, setSourcesDrawerPreviewLoading] = useState(false);
 
+  const progressLabel = useProgressLabel(isTyping && !stripThinking(streamingText).trim());
+
   // New states for parsed previews and Excel rendering
   const [sourcesDrawerPreviewTab, setSourcesDrawerPreviewTab] = useState<"parsed" | "original">("original");
   const [parsedTextContent, setParsedTextContent] = useState("");
@@ -1057,7 +1122,7 @@ export default function ChatPlaygroundPage() {
                       : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
                   };
                 });
-                setMessages(mappedMessages);
+                setMessages(deduplicateMessages(mappedMessages));
               }
             } else {
               // Start a new session (show "New chat" by default on agent load)
@@ -1329,7 +1394,7 @@ export default function ChatPlaygroundPage() {
                       : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
                   };
                 });
-                setMessages(mappedMessages);
+                setMessages(deduplicateMessages(mappedMessages));
               }
             })();
           }
@@ -1470,7 +1535,7 @@ export default function ChatPlaygroundPage() {
       };
     });
 
-    setMessages(mappedMessages);
+    setMessages(deduplicateMessages(mappedMessages));
     if (agentId) {
       const matched = botsCache?.find(b => b.id === agentId);
       if (matched) {
@@ -1536,8 +1601,12 @@ export default function ChatPlaygroundPage() {
   };
 
   const handleRegenerate = (index: number) => {
-    if (wsStatus !== "open") {
-      message.error("WebSocket link is not stable. Please wait.");
+    if (wsStatus !== "open" || isTyping) {
+      if (isTyping) {
+        message.warning("A response is already being generated. Please wait.");
+      } else {
+        message.error("WebSocket link is not stable. Please wait.");
+      }
       return;
     }
 
@@ -1605,7 +1674,7 @@ export default function ChatPlaygroundPage() {
 
   const handleSend = () => {
     const trimmed = input.trim();
-    if ((!trimmed && !attachedFile) || !agent?.id || wsStatus !== "open") return;
+    if ((!trimmed && !attachedFile) || !agent?.id || wsStatus !== "open" || isTyping) return;
 
     const titleText = trimmed || (attachedFile ? attachedFile.name : "New Chat");
     const displayTitle = titleText.length > 30 ? titleText.slice(0, 30) + "..." : titleText;
@@ -1704,18 +1773,35 @@ export default function ChatPlaygroundPage() {
     }
 
     let kbId = src.kb_id;
-    if (!kbId && currentSources.length > 0) {
+    let matchedKb: any = null;
+    if (currentSources.length > 0) {
       const fname = getCleanFileName(src).toLowerCase();
-      const matched = currentSources.find(as => {
+      matchedKb = currentSources.find(as => {
         const asName = (as.name || as.source || as.filename || '').toLowerCase();
-        return asName.includes(fname) || fname.includes(asName) || cleanCompare(asName, fname);
+        return (kbId && (as.id === kbId || as.kb_id === kbId)) || asName.includes(fname) || fname.includes(asName) || cleanCompare(asName, fname);
       });
-      if (matched) {
-        kbId = matched.id || matched.kb_id || matched.kbId || '';
+      if (matchedKb && !kbId) {
+        kbId = matchedKb.id || matchedKb.kb_id || matchedKb.kbId || '';
+      }
+    }
+
+    // 1. If name contains "(Selected Links)", open URL directly
+    const rawName = matchedKb?.name || src.name || src.source || "";
+    if (rawName.includes("(Selected Links)")) {
+      const urlPart = rawName.split("(Selected Links)")[0].trim();
+      if (urlPart.startsWith("http://") || urlPart.startsWith("https://")) {
+        window.open(urlPart, '_blank', 'noopener,noreferrer');
+        return;
       }
     }
 
     const stype = getSourceType(src.source, kbId);
+
+    // 2. If it is text source, do nothing
+    if (stype === 'text') {
+      return;
+    }
+
     if (stype === 'url') {
       const rawSrc = src.source || '';
       const urlMatch = rawSrc.match(/(https?:\/\/[^\s]+)/i);
@@ -2061,7 +2147,7 @@ export default function ChatPlaygroundPage() {
   };
 
   const handleSaveEdit = (index: number) => {
-    if (!tempEditText.trim() || !agent?.id || wsStatus !== "open") return;
+    if (!tempEditText.trim() || !agent?.id || wsStatus !== "open" || isTyping) return;
 
     // 1. Logic Fix: Edited message-oda cut panni, pazhaya bot responses-ai remove panniduvom
     const updatedMessages = messages.slice(0, index + 1);
@@ -2668,36 +2754,40 @@ export default function ChatPlaygroundPage() {
                         </Tooltip>
 
                         {isUser ? (
-                          <Tooltip title="Edit message" placement="bottom">
+                          <Tooltip title={isTyping ? "Generation in progress" : "Edit message"} placement="bottom">
                             <button
-                              onClick={() => handleEditMessage(i, msg.content)}
-                              className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80"
+                              onClick={() => !isTyping && handleEditMessage(i, msg.content)}
+                              disabled={isTyping}
+                              className={`p-2 font-bold transition-colors ${isTyping ? "text-gray-400 cursor-not-allowed opacity-40" : "text-[var(--app-text)] cursor-pointer hover:opacity-80"}`}
                             >
                               <FiEdit2 size={16} strokeWidth={2} />
                             </button>
                           </Tooltip>
                         ) : (
                           <>
-                            <Tooltip title="Helpful" placement="bottom">
+                            <Tooltip title={isTyping ? "Generation in progress" : "Helpful"} placement="bottom">
                               <button
-                                onClick={() => handleThumbsUp(msg.id)}
-                                className={`p-2 cursor-pointer transition-colors hover:opacity-80 ${msg.feedback === "thumbs_up" ? "text-emerald-500 font-bold" : "text-[var(--app-text)] font-bold"}`}
+                                onClick={() => !isTyping && handleThumbsUp(msg.id)}
+                                disabled={isTyping}
+                                className={`p-2 transition-colors ${isTyping ? "text-gray-400 cursor-not-allowed opacity-40" : `cursor-pointer hover:opacity-80 ${msg.feedback === "thumbs_up" ? "text-emerald-500 font-bold" : "text-[var(--app-text)] font-bold"}`}`}
                               >
                                 <FiThumbsUp size={16} strokeWidth={msg.feedback === "thumbs_up" ? 2.5 : 2} fill="none" />
                               </button>
                             </Tooltip>
-                            <Tooltip title="Not helpful" placement="bottom">
+                            <Tooltip title={isTyping ? "Generation in progress" : "Not helpful"} placement="bottom">
                               <button
-                                onClick={() => handleThumbsDown(msg.id)}
-                                className={`p-2 cursor-pointer transition-colors hover:opacity-80 ${msg.feedback === "thumbs_down" ? "text-rose-500 font-bold" : "text-[var(--app-text)] font-bold"}`}
+                                onClick={() => !isTyping && handleThumbsDown(msg.id)}
+                                disabled={isTyping}
+                                className={`p-2 transition-colors ${isTyping ? "text-gray-400 cursor-not-allowed opacity-40" : `cursor-pointer hover:opacity-80 ${msg.feedback === "thumbs_down" ? "text-rose-500 font-bold" : "text-[var(--app-text)] font-bold"}`}`}
                               >
                                 <FiThumbsDown size={16} strokeWidth={msg.feedback === "thumbs_down" ? 2.5 : 2} fill="none" />
                               </button>
                             </Tooltip>
-                            <Tooltip title="Regenerate" placement="bottom">
+                            <Tooltip title={isTyping ? "Generation in progress" : "Regenerate"} placement="bottom">
                               <button
-                                onClick={() => handleRegenerate(i)}
-                                className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80"
+                                onClick={() => !isTyping && handleRegenerate(i)}
+                                disabled={isTyping}
+                                className={`p-2 transition-colors ${isTyping ? "text-gray-400 cursor-not-allowed opacity-40" : "text-[var(--app-text)] font-bold cursor-pointer hover:opacity-80"}`}
                               >
                                 <FiRotateCw size={16} strokeWidth={2} />
                               </button>
@@ -2705,39 +2795,34 @@ export default function ChatPlaygroundPage() {
                             {(() => {
                               const uniqueSources = deduplicateSources(msg.sources || []);
                               if (!showSources || uniqueSources.length === 0 || msg.content?.includes("Something went wrong") || msg.content?.includes("trouble connecting")) return null;
-                              
-                              const getFileIcon = (src: string) => {
-                                const s = (src || "").toLowerCase();
-                                if (s.endsWith(".pdf")) return "📄";
-                                if (s.endsWith(".xlsx") || s.endsWith(".xls")) return "📊";
-                                if (s.endsWith(".csv")) return "🗂️";
-                                if (s.startsWith("http://") || s.startsWith("https://")) return "🌐";
-                                return "📋";
-                              };
                               return (
-                                <div className="flex flex-wrap gap-1.5 mt-2 w-full">
-                                  {uniqueSources.map((src: any, idx: number) => {
-                                    const sourceUrl = src.source || src;
-                                    const name = getFileName(sourceUrl) || getCleanFileName(sourceUrl) || "Source";
-                                    const shortName = name.length > 22 ? name.slice(0, 20) + "…" : name;
-                                    const icon = getFileIcon(sourceUrl);
-                                    return (
-                                      <button
-                                        key={idx}
-                                        onClick={() => handleOpenSource(src)}
-                                        title={name}
-                                        style={{
-                                          clipPath: "polygon(8% 0%, 92% 0%, 100% 50%, 92% 100%, 8% 100%, 0% 50%)",
-                                          background: "linear-gradient(135deg, rgba(15,181,161,0.12) 0%, rgba(15,181,161,0.06) 100%)",
-                                          border: "1px solid rgba(15,181,161,0.35)",
-                                        }}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold text-[#0fb5a1] hover:bg-[#0fb5a1]/20 transition-all duration-150 cursor-pointer whitespace-nowrap"
-                                      >
-                                        <span className="text-[11px]">{icon}</span>
-                                        <span className="tracking-wide">{shortName}</span>
+                                <div className="ml-auto flex items-center">
+                                  {uniqueSources.length === 1 ? (
+                                    <button
+                                      onClick={() => handleOpenSource(uniqueSources[0])}
+                                      className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0"
+                                    >
+                                      <SiCrowdsource />
+                                      <span>Source</span>
+                                    </button>
+                                  ) : (
+                                    <Dropdown
+                                      menu={{
+                                        items: uniqueSources.map((src: any, idx: number) => ({
+                                          key: idx.toString(),
+                                          label: getCleanFileName(src),
+                                          onClick: () => handleOpenSource(src),
+                                        })),
+                                      }}
+                                      placement="bottomLeft"
+                                      trigger={['click']}
+                                    >
+                                      <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0">
+                                        <SiCrowdsource />
+                                        <span>Sources</span>
                                       </button>
-                                    );
-                                  })}
+                                    </Dropdown>
+                                  )}
                                 </div>
                               );
                             })()}
@@ -2850,11 +2935,15 @@ export default function ChatPlaygroundPage() {
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-3">
                         <span className="text-xs text-[var(--app-text-soft)] font-medium">
-                          Thinking...
+                          {progressLabel}
                         </span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#0fb5a1] animate-ping" />
+                        <span className="flex items-center gap-1 shrink-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#0fb5a1] animate-bounce" style={{ animationDelay: "0s" }} />
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#0fb5a1] animate-bounce" style={{ animationDelay: "0.2s" }} />
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#0fb5a1] animate-bounce" style={{ animationDelay: "0.4s" }} />
+                        </span>
                       </div>
                     )}
                   </div>
@@ -2956,7 +3045,7 @@ export default function ChatPlaygroundPage() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="Ask anything"
-                disabled={!agent || wsStatus !== "open"}
+                disabled={!agent || wsStatus !== "open" || isTyping}
                 variant="borderless"
                 autoSize={{ minRows: 2, maxRows: 6 }}
                 className="w-full !p-1 !bg-transparent !font-semibold !text-xs md:!text-sm !text-[var(--app-text)] !placeholder:text-[var(--app-text-soft)]/50 focus:outline-none resize-none align-middle"
@@ -2971,12 +3060,12 @@ export default function ChatPlaygroundPage() {
                   beforeUpload={handleBeforeUpload}
                   showUploadList={false}
                   accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
-                  disabled={!agent || wsStatus !== "open"}
+                  disabled={!agent || wsStatus !== "open" || isTyping}
                 >
                   <Tooltip title="Share files" placement="topLeft">
                     <Button
                       type="text"
-                      disabled={!agent || wsStatus !== "open"}
+                      disabled={!agent || wsStatus !== "open" || isTyping}
                       icon={<LuPaperclip className="text-base text-[var(--app-text-soft)]" />}
                       className="hover:bg-[var(--app-hover)] !rounded-xl w-8 h-8 flex items-center justify-center transition-colors border-none bg-transparent cursor-pointer"
                     />
@@ -3018,11 +3107,11 @@ export default function ChatPlaygroundPage() {
               {/* Right actions */}
               <Flex align="center" gap={12} className="shrink-0">
                 {/* Circular Send Arrow button */}
-                <Tooltip title="Press Enter to send" placement="topRight">
+                <Tooltip title={isTyping ? "Generation in progress" : "Press Enter to send"} placement="topRight">
                   <button
                     onClick={handleSend}
-                    disabled={!agent || (!input.trim() && !attachedFile) || wsStatus !== "open"}
-                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer border-none outline-none ${(!agent || (!input.trim() && !attachedFile) || wsStatus !== "open")
+                    disabled={!agent || (!input.trim() && !attachedFile) || wsStatus !== "open" || isTyping}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 cursor-pointer border-none outline-none ${(!agent || (!input.trim() && !attachedFile) || wsStatus !== "open" || isTyping)
                       ? "bg-gray-200 dark:bg-gray-800 text-[var(--app-text-soft)] opacity-40 cursor-not-allowed"
                       : "bg-[#0fb5a1] text-white hover:bg-[#0da18f] hover:opacity-90 active:scale-95"
                       }`}
@@ -3202,126 +3291,126 @@ export default function ChatPlaygroundPage() {
 
                     {(sourcesDrawerPreviewType === "excel" || sourcesDrawerPreviewType === "csv") && excelSheetNames.length > 0 && (
                       <div className="w-full h-full flex flex-col overflow-hidden bg-[var(--app-surface)]">
-                    {/* Excel Multi-sheet Switcher */}
-                    {sourcesDrawerPreviewType === "excel" && excelSheetNames.length > 1 && (
-                      <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
-                        {excelSheetNames.map(sheetName => {
-                          const isActive = activeExcelSheet === sheetName;
-                          return (
-                            <button
-                              key={sheetName}
-                              onClick={async () => {
-                                if (!excelSheets[sheetName] && excelArrayBufferRef.current) {
-                                  setSourcesDrawerPreviewLoading(true);
-                                  try {
-                                    const XLSX = await import("xlsx");
-                                    const partialWorkbook = XLSX.read(excelArrayBufferRef.current, {
-                                      type: "array",
-                                      sheets: [sheetName],
-                                      cellFormula: false,
-                                      cellHTML: false,
-                                      cellText: false,
-                                      cellDates: true
-                                    });
-                                    const worksheet = partialWorkbook.Sheets[sheetName];
-                                    const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
-                                    const formattedData = jsonData.map((row: any) =>
-                                      Array.isArray(row)
-                                        ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
-                                        : []
-                                    );
-                                    setExcelSheets(prev => ({ ...prev, [sheetName]: formattedData }));
-                                  } catch (err) {
-                                    console.error("Failed to parse sheet:", sheetName, err);
-                                  } finally {
-                                    setSourcesDrawerPreviewLoading(false);
-                                  }
-                                }
-                                setActiveExcelSheet(sheetName);
-                                setExcelPage(1);
-                              }}
-                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
-                                ? "bg-[#0fb5a1] text-white shadow-sm"
-                                : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
-                                }`}
-                            >
-                              {sheetName}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                        {/* Excel Multi-sheet Switcher */}
+                        {sourcesDrawerPreviewType === "excel" && excelSheetNames.length > 1 && (
+                          <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
+                            {excelSheetNames.map(sheetName => {
+                              const isActive = activeExcelSheet === sheetName;
+                              return (
+                                <button
+                                  key={sheetName}
+                                  onClick={async () => {
+                                    if (!excelSheets[sheetName] && excelArrayBufferRef.current) {
+                                      setSourcesDrawerPreviewLoading(true);
+                                      try {
+                                        const XLSX = await import("xlsx");
+                                        const partialWorkbook = XLSX.read(excelArrayBufferRef.current, {
+                                          type: "array",
+                                          sheets: [sheetName],
+                                          cellFormula: false,
+                                          cellHTML: false,
+                                          cellText: false,
+                                          cellDates: true
+                                        });
+                                        const worksheet = partialWorkbook.Sheets[sheetName];
+                                        const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+                                        const formattedData = jsonData.map((row: any) =>
+                                          Array.isArray(row)
+                                            ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+                                            : []
+                                        );
+                                        setExcelSheets(prev => ({ ...prev, [sheetName]: formattedData }));
+                                      } catch (err) {
+                                        console.error("Failed to parse sheet:", sheetName, err);
+                                      } finally {
+                                        setSourcesDrawerPreviewLoading(false);
+                                      }
+                                    }
+                                    setActiveExcelSheet(sheetName);
+                                    setExcelPage(1);
+                                  }}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
+                                    ? "bg-[#0fb5a1] text-white shadow-sm"
+                                    : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
+                                    }`}
+                                >
+                                  {sheetName}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
 
-                    {/* Spreadsheet Grid */}
-                    <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
-                      {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
-                        (() => {
-                          const activeSheetData = excelSheets[activeExcelSheet];
-                          const totalRows = activeSheetData.length > 0 ? activeSheetData.length - 1 : 0;
-                          const PAGE_SIZE = 100;
-                          const totalPages = Math.ceil(totalRows / PAGE_SIZE);
-                          const displayedRows = activeSheetData.slice(
-                            1 + (excelPage - 1) * PAGE_SIZE,
-                            1 + excelPage * PAGE_SIZE
-                          );
+                        {/* Spreadsheet Grid */}
+                        <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
+                          {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
+                            (() => {
+                              const activeSheetData = excelSheets[activeExcelSheet];
+                              const totalRows = activeSheetData.length > 0 ? activeSheetData.length - 1 : 0;
+                              const PAGE_SIZE = 100;
+                              const totalPages = Math.ceil(totalRows / PAGE_SIZE);
+                              const displayedRows = activeSheetData.slice(
+                                1 + (excelPage - 1) * PAGE_SIZE,
+                                1 + excelPage * PAGE_SIZE
+                              );
 
-                          return (
-                            <div className="flex flex-col gap-4">
-                              <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
-                                <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
-                                  <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
-                                    <tr>
-                                      {activeSheetData[0].map((cell, idx) => (
-                                        <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
-                                          {cell || `Column ${idx + 1}`}
-                                        </th>
-                                      ))}
-                                    </tr>
-                                  </thead>
-                                  <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
-                                    {displayedRows.map((row, rowIdx) => (
-                                      <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
-                                        {activeSheetData[0].map((_, colIdx) => (
-                                          <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
-                                            {row[colIdx] || ""}
-                                          </td>
+                              return (
+                                <div className="flex flex-col gap-4">
+                                  <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
+                                    <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
+                                      <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
+                                        <tr>
+                                          {activeSheetData[0].map((cell, idx) => (
+                                            <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
+                                              {cell || `Column ${idx + 1}`}
+                                            </th>
+                                          ))}
+                                        </tr>
+                                      </thead>
+                                      <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
+                                        {displayedRows.map((row, rowIdx) => (
+                                          <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
+                                            {activeSheetData[0].map((_, colIdx) => (
+                                              <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
+                                                {row[colIdx] || ""}
+                                              </td>
+                                            ))}
+                                          </tr>
                                         ))}
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                              
-                              {/* Pagination footer */}
-                              {totalPages > 1 && (
-                                <div className="flex items-center justify-between p-3 border border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 select-none rounded-xl">
-                                  <span className="text-xs text-[var(--app-text-soft)] font-bold">
-                                    Showing {1 + (excelPage - 1) * PAGE_SIZE} - {Math.min(excelPage * PAGE_SIZE, totalRows)} of {totalRows} rows
-                                  </span>
-                                  <div className="flex gap-2">
-                                    <button
-                                      disabled={excelPage === 1}
-                                      onClick={() => setExcelPage(prev => Math.max(prev - 1, 1))}
-                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
-                                    >
-                                      Previous
-                                    </button>
-                                    <span className="text-xs self-center px-1 font-bold text-[var(--app-text)]">
-                                      Page {excelPage} of {totalPages}
-                                    </span>
-                                    <button
-                                      disabled={excelPage === totalPages}
-                                      onClick={() => setExcelPage(prev => Math.min(prev + 1, totalPages))}
-                                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
-                                    >
-                                      Next
-                                    </button>
+                                      </tbody>
+                                    </table>
                                   </div>
+
+                                  {/* Pagination footer */}
+                                  {totalPages > 1 && (
+                                    <div className="flex items-center justify-between p-3 border border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 select-none rounded-xl">
+                                      <span className="text-xs text-[var(--app-text-soft)] font-bold">
+                                        Showing {1 + (excelPage - 1) * PAGE_SIZE} - {Math.min(excelPage * PAGE_SIZE, totalRows)} of {totalRows} rows
+                                      </span>
+                                      <div className="flex gap-2">
+                                        <button
+                                          disabled={excelPage === 1}
+                                          onClick={() => setExcelPage(prev => Math.max(prev - 1, 1))}
+                                          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                        >
+                                          Previous
+                                        </button>
+                                        <span className="text-xs self-center px-1 font-bold text-[var(--app-text)]">
+                                          Page {excelPage} of {totalPages}
+                                        </span>
+                                        <button
+                                          disabled={excelPage === totalPages}
+                                          onClick={() => setExcelPage(prev => Math.min(prev + 1, totalPages))}
+                                          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                        >
+                                          Next
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          );
-                        })()
+                              );
+                            })()
                           ) : (
                             <Flex vertical align="center" justify="center" className="py-20 text-[var(--app-text-soft)] h-full">
                               <LuFileText size={32} className="mb-2 opacity-55" />

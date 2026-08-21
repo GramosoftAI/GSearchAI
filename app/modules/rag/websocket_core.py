@@ -41,7 +41,7 @@ def _rag_chunk_to_loop_event(chunk: str) -> LoopEvent:
         if chunk.startswith("{") and ("type" in chunk or "error" in chunk):
             parsed = json.loads(chunk)
             if parsed.get("type") == "metadata":
-                return LoopEvent(type="sources", sources=parsed.get("sources", []))
+                return LoopEvent(type="sources", sources=parsed.get("sources", []), triplets=parsed.get("triplets", []))
             elif "error" in parsed:
                 return LoopEvent(type="error", error_detail=parsed["error"])
     except (json.JSONDecodeError, TypeError):
@@ -132,29 +132,45 @@ async def run_unified_rag_websocket_loop(
             continue
 
         try:
-            # 1. Memory API Triage
-            if enable_memory:
-                async with httpx.AsyncClient() as client:
-                    try:
-                        mem_resp = await client.post(
-                            f"{memory_api_url}/process-turn",
-                            json={
-                                "query": request.query,
-                                "session_id": active_session_id,
-                                "agent_id": agent_id,
-                                "user_id": user_id,
-                                "tenant_id": tenant_id,
-                            },
-                            timeout=8.0,
-                        )
-                        if mem_resp.status_code == 200:
-                            mem_data = mem_resp.json()
-                            episodic_guidance = mem_data.get("guidance_context") or ""
-                            is_feedback_only = mem_data.get("is_feedback_only", False)
-                            is_history_query = mem_data.get("is_history_query", False)
-                            router_category = mem_data.get("category")
-                    except Exception as e:
-                        logger.warning(f"memory-api process-turn unreachable: {e}")
+            # 1. Memory API Triage & Chat History Fetching (Parallel)
+            async def _fetch_memory_triage():
+                if enable_memory:
+                    async with httpx.AsyncClient() as client:
+                        try:
+                            resp = await client.post(
+                                f"{memory_api_url}/process-turn",
+                                json={
+                                    "query": request.query,
+                                    "session_id": active_session_id,
+                                    "agent_id": agent_id,
+                                    "user_id": user_id,
+                                    "tenant_id": tenant_id,
+                                },
+                                timeout=8.0,
+                            )
+                            if resp.status_code == 200:
+                                return resp.json()
+                        except Exception as e:
+                            logger.warning(f"memory-api process-turn unreachable: {e}")
+                return {}
+
+            async def _fetch_chat_history():
+                if session.message_count > 1:
+                    return await chat_service.chat_repo.get_recent_messages(
+                        session_id=active_session_id, count=10
+                    )
+                return []
+
+            import asyncio
+            mem_data, memory_messages = await asyncio.gather(
+                _fetch_memory_triage(),
+                _fetch_chat_history()
+            )
+
+            episodic_guidance = mem_data.get("guidance_context") or ""
+            is_feedback_only = mem_data.get("is_feedback_only", False)
+            is_history_query = mem_data.get("is_history_query", False)
+            router_category = mem_data.get("category")
 
             if is_feedback_only:
                 ack = "Understood! I've updated your preferences and saved them to my long-term memory."
@@ -207,12 +223,7 @@ async def run_unified_rag_websocket_loop(
                     raise e
                     
             # 2. Chat History for Memory Context (used only as context, never to rewrite the query)
-            history_messages = []
-            if session.message_count > 1:
-                memory_messages = await chat_service.chat_repo.get_recent_messages(
-                    session_id=active_session_id, count=10
-                )
-                history_messages = [m for m in memory_messages if str(m.id) != str(user_msg.id)]
+            history_messages = [m for m in memory_messages if str(m.id) != str(user_msg.id)]
 
             # Original query is immutable from this point forward
             original_query = request.query

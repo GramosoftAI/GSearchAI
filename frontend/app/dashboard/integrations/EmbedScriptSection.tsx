@@ -141,7 +141,7 @@ export default function EmbedScriptSection() {
   const [allowDownloads, setAllowDownloads] = useState<boolean>(false);
   const [displayCopyBtn, setDisplayCopyBtn] = useState<boolean>(true);
   const [displayFeedback, setDisplayFeedback] = useState<boolean>(true);
-  const [linkSafety, setLinkSafety] = useState<boolean>(false);
+  const [linkSafety, setLinkSafety] = useState<boolean>(true);
 
   // 6. Lead Collection & Support Escalation States
   const [leadCollection, setLeadCollection] = useState<boolean>(false);

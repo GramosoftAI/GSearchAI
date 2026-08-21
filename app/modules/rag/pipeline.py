@@ -510,45 +510,48 @@ class RAGPipeline:
             logger.error(f"Failed supplementary CSV extraction: {e}", exc_info=True)
         # ---------------------------------------------
 
-        # Populate KB metadata (names, total chunks)
-        if self.db:
-            try:
-                from app.modules.knowledge_bases.models import KnowledgeBase
-                from sqlalchemy import select
-                from uuid import UUID
-                stmt = select(KnowledgeBase.id, KnowledgeBase.name, KnowledgeBase.total_chunks).where(
-                    KnowledgeBase.id.in_([UUID(kbid) if isinstance(kbid, str) else kbid for kbid in kb_ids])
-                )
-                res = await self.db.execute(stmt)
-                for row in res.all():
-                    self._kb_metadata[str(row.id)] = {
-                        "name": row.name,
-                        "total_chunks": row.total_chunks
-                    }
-            except Exception as e:
-                logger.error(f"Error prefetching KB metadata: {e}")
-
-
-        # STEP 0: ROUTE QUERY TO OPTIMAL SEARCH STRATEGY (USING NEW ADAPTIVE PLANNER)
+        # STAGE 0: EARLY PARALLEL PRE-REQUISITES
+        import asyncio
+        from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer, QueryIntent
+        from app.core.embeddings import EmbeddingGenerator
         import time
         start_time = time.time()
         
-        from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer, QueryIntent
-        from app.modules.rag.orchestrator.planner import AdaptivePlanner
-        from app.modules.rag.orchestrator.aggregator import EvidenceAggregator
-        from app.modules.rag.orchestrator.conflict_detector import ConflictDetector
-        from app.modules.rag.engines.registry import CapabilityRegistry
-        from app.modules.rag.telemetry import TelemetryLogger
+        analyzer_task = asyncio.create_task(QueryAnalyzer().analyze_query(query, kb_context=kb_context))
+        embedding_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(query))
         
+        # We can also prefetch KB metadata here
+        kb_metadata_task = None
+        if self.db:
+            async def _fetch_metadata():
+                try:
+                    from app.modules.knowledge_bases.models import KnowledgeBase
+                    from sqlalchemy import select
+                    from uuid import UUID
+                    stmt = select(KnowledgeBase.id, KnowledgeBase.name, KnowledgeBase.total_chunks).where(
+                        KnowledgeBase.id.in_([UUID(kbid) if isinstance(kbid, str) else kbid for kbid in kb_ids])
+                    )
+                    res = await self.db.execute(stmt)
+                    for row in res.all():
+                        self._kb_metadata[str(row.id)] = {
+                            "name": row.name,
+                            "total_chunks": row.total_chunks
+                        }
+                except Exception as e:
+                    logger.error(f"Error prefetching KB metadata: {e}")
+            kb_metadata_task = asyncio.create_task(_fetch_metadata())
+
         # Ensure engines are loaded to register them
         import app.modules.rag.engines.financial_engine
         import app.modules.rag.engines.table_engine
         import app.modules.rag.engines.vector_engine
         
         from app.modules.rag.orchestrator.section_ranker import SectionRanker
-        
-        analyzer = QueryAnalyzer()
-        analysis = await analyzer.analyze_query(query, kb_context=kb_context)
+
+        # Now wait for analysis to finish (needed for routing)
+        analysis = await analyzer_task
+        if kb_metadata_task:
+            await kb_metadata_task
 
         # Preserve the original query as an immutable reference throughout this pipeline run
         original_query = query
@@ -599,15 +602,42 @@ class RAGPipeline:
                         await self.db.rollback()
 
             # Ensure embedding is generated ONCE for this structured query
-            from app.core.embeddings import EmbeddingGenerator
-            query_embedding_val, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(current_query)
+            if current_query == original_query:
+                query_embedding_val, emb_tokens = await embedding_task
+            else:
+                from app.core.embeddings import EmbeddingGenerator
+                query_embedding_val, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(current_query)
+            
             analysis.metadata.query_embedding = query_embedding_val
             
+            from app.modules.rag.orchestrator.planner import AdaptivePlanner
+            from app.modules.rag.orchestrator.aggregator import EvidenceAggregator
+            from app.modules.rag.orchestrator.conflict_detector import ConflictDetector
+            from app.modules.rag.engines.registry import CapabilityRegistry
+            from app.modules.rag.telemetry import TelemetryLogger
+
             planner = AdaptivePlanner(self.neo4j_repo, self.tenant_id)
             plan = await planner.create_plan(analysis, current_query)
             
             planner_time = time.time() - start_time
             engine_start = time.time()
+            
+            # --- PARALLELIZE TRIPLET RETRIEVAL ---
+            triplet_task = None
+            if self.settings.use_triplet_extraction:
+                async def _run_triplet_search():
+                    try:
+                        from app.core.triplet_extractor import TripletRetriever
+                        retriever = TripletRetriever(self.tenant_id)
+                        return await retriever.search_triplets(
+                            query_embedding=query_embedding_val,
+                            kb_ids=kb_ids,
+                            top_k=self.settings.triplet_retrieval_top_k,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Triplet retrieval failed (non-blocking): {e}")
+                        return None
+                triplet_task = asyncio.create_task(_run_triplet_search())
             
             # --- PHASE 1: CANDIDATE SECTION GATHERING (PARALLEL) ---
             async def _fetch_sections(t):
@@ -674,20 +704,12 @@ class RAGPipeline:
                     
                     triplet_context_str = ""
                     relevant_triplets_list = None
-                    if self.settings.use_triplet_extraction:
-                        try:
+                    if triplet_task:
+                        relevant_triplets_list = await triplet_task
+                        if relevant_triplets_list:
                             from app.core.triplet_extractor import TripletRetriever
                             retriever = TripletRetriever(self.tenant_id)
-                            query_embedding_local = await EmbeddingGenerator.generate_embedding(current_query)
-                            relevant_triplets_list = await retriever.search_triplets(
-                                query_embedding=query_embedding_local,
-                                kb_ids=kb_ids,
-                                top_k=self.settings.triplet_retrieval_top_k,
-                            )
-                            if relevant_triplets_list:
-                                triplet_context_str = retriever.format_triplets_as_context(relevant_triplets_list)
-                        except Exception as e:
-                            logger.warning(f"Triplet retrieval failed (non-blocking): {e}")
+                            triplet_context_str = retriever.format_triplets_as_context(relevant_triplets_list)
 
                     rag_context = RAGContext(
                         query=original_query,
