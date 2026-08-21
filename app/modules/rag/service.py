@@ -137,6 +137,22 @@ class RAGService:
 
             # Pre-load Agent and Ontology sequentially to avoid SQLAlchemy session conflicts
             agent = await self.agent_repo.get_by_id(agent_id)
+            if agent:
+                agent_name = agent.name
+                base_prompt = agent.system_prompt or ""
+                personality_description = agent.personality or "You are a warm, approachable, and supportive assistant."
+                
+                # Fetch personality details early too
+                if agent.personality_id:
+                    from app.modules.personalities.models import Personality
+                    personality = await self.db.get(Personality, agent.personality_id)
+                    if personality:
+                        personality_description = personality.description or personality.name
+            else:
+                agent_name = "Unknown"
+                base_prompt = ""
+                personality_description = "You are a warm, approachable, and supportive assistant."
+
             from ..ontology.service import OntologyService
             ont_svc = OntologyService(self.tenant_id)
             ontology = await ont_svc.get_ontology()
@@ -280,7 +296,6 @@ class RAGService:
                     f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
                 )
     
-            # agent already pre-loaded
             if not agent:
                 yield json.dumps(
                     {
@@ -288,17 +303,8 @@ class RAGService:
                     }
                 )
                 return
-    
-            base_prompt = agent.system_prompt or ""
-            personality_description = (
-                agent.personality
-                or "You are a warm, approachable, and supportive assistant."
-            )
-    
-            if agent.personality_id:
-                personality = await self.db.get(Personality, agent.personality_id)
-                if personality:
-                    personality_description = personality.description or personality.name
+            
+            # base_prompt and personality_description are pre-loaded at the top of stream_rag_answer
     
             accuracy_directives = (
                 "\n- Enforce 100% factual accuracy based strictly on the retrieved context."
