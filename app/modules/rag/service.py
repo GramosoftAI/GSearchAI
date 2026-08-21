@@ -117,11 +117,10 @@ class RAGService:
             excel_kbs = []
             doc_kbs = []
             
-            async def _fetch_kb(kid):
-                return kid, await self.kb_repo.get_by_id(kid)
-                
-            import asyncio
-            kb_results = await asyncio.gather(*[_fetch_kb(kid) for kid in kb_ids])
+            kb_results = []
+            for kid in kb_ids:
+                kb_results.append((kid, await self.kb_repo.get_by_id(kid)))
+            
             for kid, kb in kb_results:
                 if not kb:
                     yield json.dumps({"error": f"Knowledge Base {kid} not found"})
@@ -136,11 +135,11 @@ class RAGService:
                 else:
                     doc_kbs.append(kb)
 
-            # Pre-load Agent and Ontology concurrently
-            agent_task = asyncio.create_task(self.agent_repo.get_by_id(agent_id))
+            # Pre-load Agent and Ontology sequentially to avoid SQLAlchemy session conflicts
+            agent = await self.agent_repo.get_by_id(agent_id)
             from ..ontology.service import OntologyService
             ont_svc = OntologyService(self.tenant_id)
-            ontology_task = asyncio.create_task(ont_svc.get_ontology())
+            ontology = await ont_svc.get_ontology()
     
             kb_context_lines = []
             for kb in (doc_kbs + excel_kbs):
@@ -281,7 +280,7 @@ class RAGService:
                     f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
                 )
     
-            agent = await agent_task
+            # agent already pre-loaded
             if not agent:
                 yield json.dumps(
                     {
@@ -311,7 +310,7 @@ class RAGService:
     
             # Ontology Grounding
             try:
-                ontology = await ontology_task
+                # ontology already pre-loaded
                 ontology_rules_str = ""
                 if ontology and ontology.get("rules"):
                     rules_list = [
