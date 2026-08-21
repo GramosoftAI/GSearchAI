@@ -2217,6 +2217,11 @@ class RAGPipeline:
                         dataset_schema[k] = "string"
                         continue
                         
+                    # 0. Check identifier columns
+                    if re.search(r'\b(id|code|sku|number|no|ref|key)\b', k, re.IGNORECASE):
+                        dataset_schema[k] = "string"
+                        continue
+
                     # 1. Check boolean
                     unique_vals = set(str(v).lower().strip() for v in vals)
                     if unique_vals.issubset({"true", "false", "yes", "no", "t", "f"}):
@@ -2277,7 +2282,7 @@ class RAGPipeline:
                         except ValueError:
                             pass
                             
-                    is_numeric_candidate = (non_empty_count > 0 and (numeric_count / non_empty_count) >= 0.5)
+                    is_numeric_candidate = (non_empty_count > 0 and (numeric_count / non_empty_count) >= 0.9)
                     if is_numeric_candidate and cleaned_values:
                         if has_currency_symbols:
                             dataset_schema[k] = "currency"
@@ -2427,7 +2432,7 @@ CRITICAL RULES:
                                 numeric_count += 1
                             except ValueError:
                                 pass
-                        if non_empty_count > 0 and (numeric_count / non_empty_count) >= 0.5:
+                        if non_empty_count > 0 and (numeric_count / non_empty_count) >= 0.9:
                             dataset_schema[target_field] = "float"
                 except Exception as e:
                     logger.error(f"Dynamic numeric validation check failed: {e}")
@@ -2479,7 +2484,9 @@ CRITICAL RULES:
             return f"(SELECT v FROM jsonb_each_text(row_data) AS kv(k,v) WHERE lower(k) = lower('{field_name}') LIMIT 1)"
 
         def safe_numeric_cast(field_name):
-            return f"NULLIF(REGEXP_REPLACE({get_json_val(field_name)}, '[^0-9.-]', '', 'g'), '')::numeric"
+            val = get_json_val(field_name)
+            clean = f"TRIM(REGEXP_REPLACE({val}, '[\\$\\u20ac\\u00a3\\u20b9,%]', '', 'g'))"
+            return f"CASE WHEN {clean} ~ '^[-+]?[0-9]*\.?[0-9]+$' THEN {clean}::numeric ELSE NULL END"
 
         t_sql_start = time.perf_counter()
         
