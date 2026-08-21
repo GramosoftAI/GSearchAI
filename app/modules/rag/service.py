@@ -119,7 +119,10 @@ class RAGService:
             
             kb_results = []
             for kid in kb_ids:
-                kb_results.append((kid, await self.kb_repo.get_by_id(kid)))
+                kb = await self.kb_repo.get_by_id(kid)
+                if kb:
+                    self.db.expunge(kb)
+                kb_results.append((kid, kb))
             
             for kid, kb in kb_results:
                 if not kb:
@@ -135,9 +138,9 @@ class RAGService:
                 else:
                     doc_kbs.append(kb)
 
-            # Pre-load Agent and Ontology sequentially to avoid SQLAlchemy session conflicts
             agent = await self.agent_repo.get_by_id(agent_id)
             if agent:
+                self.db.expunge(agent)
                 agent_name = agent.name
                 base_prompt = agent.system_prompt or ""
                 personality_description = agent.personality or "You are a warm, approachable, and supportive assistant."
@@ -416,7 +419,7 @@ class RAGService:
     """.strip()
     
             agent_persona = {
-                "name": agent.name if agent else "Assistant",
+                "name": agent_name,
                 "personality": personality_description,
                 "system_prompt": injected_system_prompt,
             }
@@ -676,6 +679,7 @@ class RAGService:
             k_obj = await self.kb_repo.get_by_id(kid)
             if not k_obj:
                 continue
+            self.db.expunge(k_obj)
             if str(k_obj.agent_id) != str(agent_id):
                 logger.error(f"Agent {agent_id} does not own KB {kid}")
                 return {
@@ -775,6 +779,7 @@ class RAGService:
                 "answer": None,
                 "sources": [],
             }
+        self.db.expunge(agent)
 
         base_prompt = agent.system_prompt or ""
         personality_description = (
