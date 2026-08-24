@@ -74,7 +74,7 @@ HISTORY_QUERY_PATTERN = re.compile(
 
 _PREFERENCE_PATTERNS = re.compile(
     r"\b(remember|please remember|note (that|down)|"
-    r"always (respond|answer|reply|format|use)|"
+    r"always (respond|answer|reply|format|use|show)|"
     r"from now on|i prefer|my preferred|please (always|remember)|"
     r"don'?t (use|do)|stop (using|doing)|never (use|do)|"
     r"not\s+.+\s+it'?s|upgrade\s+my|update\s+my|change\s+my|my\s+.*is|upgrad|upgrade|change|update)\b",
@@ -94,14 +94,34 @@ _QUESTION_INDICATOR = re.compile(
 
 # Broadened dynamic regex parser pattern for fallback key-value extraction
 _DYNAMIC_FACT_PATTERN = re.compile(
-    r".*?\b(?:my\s+)?(?P<key>[a-zA-Z0-9_\-'\s]+?)\s+"
+    r".*?\b(?:my\s+)?"
+    r"(?P<key>(?:(?:(?!and\b|where\b|or\b|,)[a-zA-Z0-9_\-']+)\s*){1,4}?)\s+"
     r"(?:is|are|=|:|was|not\s+.*?\s+(?:it'?s|into|to)|to|into|changed?\s+to|upgraded?\s+to|upgrad\s+into)\s+"
-    r"(?P<value>[a-zA-Z0-9%\s_\-'\.]+)",
+    r"(?P<value>(?:(?:(?!is\b|are\b|was\b|and\b|where\b|or\b|,)[a-zA-Z0-9%\s_\-'\.])\s*)+)",
     re.IGNORECASE,
 )
 
 
+def _is_task_query_heuristic(query: str) -> bool:
+    query_lower = query.lower().strip()
+    task_verbs_pattern = r"^(list|show|find|calculate|filter|get|display|compare|count|sum|sort|export|generate|retrieve)\b"
+    comparison_pattern = r"(>|<|%|greater than|less than|above|below|at least|at most)"
+    
+    is_task_verb = bool(re.search(task_verbs_pattern, query_lower))
+    has_comparison = bool(re.search(comparison_pattern, query_lower))
+    
+    parts = re.split(r'\band\b|\bwhere\b|\bor\b|,', query_lower)
+    parts = [p.strip() for p in parts if p.strip()]
+    has_multi_clause = len(parts) > 1
+    
+    if is_task_verb or (has_comparison and has_multi_clause):
+        return True
+    return False
+
+
 def _is_deterministic_preference_statement(query: str) -> bool:
+    if _is_task_query_heuristic(query):
+        return False
     if _QUESTION_INDICATOR.search(query):
         return False
     if _PREFERENCE_PATTERNS.search(query):
@@ -909,6 +929,17 @@ async def async_ingest_turn(payload: MemorySaveRequest):
         logger.info(f"[INGEST BYPASS] Skipping memory storage because AI response indicates info is missing or not found: {payload.ai_response!r}")
         return
 
+    import re
+    query_lower = payload.query.lower().strip()
+    task_verbs_pattern = r"^(list|show|find|calculate|filter|get|summarize|count|group|sort|display)\b"
+    analytical_pattern = r"(where|when|>|<|=|above|below|between|transactions|sales|revenue|discount|price)"
+    
+    is_task_query = re.search(task_verbs_pattern, query_lower) and (re.search(analytical_pattern, query_lower) or any(op in query_lower for op in ['>', '<', '=']))
+    
+    if is_task_query:
+        logger.info(f"[INGEST BYPASS] Skipping memory storage because query is classified as a pure task/analytical query. Word count: {len(payload.query.split())}. Query: {payload.query!r}")
+        return
+
     combined_prompt = (
         "Analyze this conversation turn and produce BOTH of the following in ONE JSON response:\n\n"
         "1. SUMMARY: Compress the interaction into a single concise, factual declarative statement. "
@@ -920,7 +951,12 @@ async def async_ingest_turn(payload: MemorySaveRequest):
         "STRICT RULES for triplets:\n"
         "- Do NOT create triplets for negative, missing, or empty information (e.g. 'none', 'unknown', 'not present').\n"
         "- Replace personal pronouns ('I', 'me', 'my') with 'user' or the specific dynamic subject entity.\n"
-        "- Relation must be UPPER_SNAKE_CASE (e.g. HAS_VALUE, HAS_SCORE, IS_NAMED).\n\n"
+        "- Relation must be UPPER_SNAKE_CASE (e.g. HAS_VALUE, HAS_SCORE, IS_NAMED).\n"
+        "- If this turn is a one-off analytical/data query, task instruction, or command with no durable fact, personal detail, or entity relationship worth remembering, return {\"summary\": null, \"triplets\": []} instead of fabricating content.\n\n"
+        "EXAMPLES:\n"
+        "User: 'My company's fiscal year starts in April' -> {\"summary\": \"User stated their company's fiscal year starts in April.\", \"triplets\": [{\"subject\": \"user's company fiscal year\", \"relation\": \"STARTS_IN\", \"object\": \"April\"}]}\n"
+        "User: 'List all transactions where discount > 25% and sales above ₹5,000' -> {\"summary\": null, \"triplets\": []}\n"
+        "User: 'Filter the results for the last month' -> {\"summary\": null, \"triplets\": []}\n\n"
         "Return strict JSON only:\n"
         '{"summary": "User asked X; Answer was Y.", '
         '"triplets": [{"subject": "10th grade mark", "relation": "HAS_VALUE", "object": "90%"}]}\n\n'
@@ -934,6 +970,12 @@ async def async_ingest_turn(payload: MemorySaveRequest):
     combined_data = _extract_json_block(combined_raw) or {}
 
     summary_text = str(combined_data.get("summary", "")).strip()
+    triplets_list = combined_data.get("triplets", [])
+    
+    if (not summary_text or summary_text.lower() == 'null') and not triplets_list:
+        logger.info(f"[INGEST BYPASS] Skipping writes because LLM returned empty summary and triplets. Word count: {len(payload.query.split())}. Query: {payload.query!r}")
+        return
+
     if not summary_text:
         summary_text = f"User interacted regarding: {payload.query[:50]}"
 
@@ -956,7 +998,7 @@ async def async_ingest_turn(payload: MemorySaveRequest):
         db.add(new_memory)
         await db.commit()
 
-    triplets_json = json.dumps({"triplets": combined_data.get("triplets", [])})
+    triplets_json = json.dumps({"triplets": triplets_list})
     await push_triplets_to_isolated_graph(
         payload.tenant_id, payload.user_id, payload.agent_id, payload.session_id, triplets_json
     )

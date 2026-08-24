@@ -20,6 +20,16 @@ async def main():
             except Exception as e:
                 print(f"  Note on {col_name}: {e}")
         
+        print("Adding columns to document_chunks...")
+        dc_columns = [
+            ("section", "VARCHAR")
+        ]
+        for col_name, col_type in dc_columns:
+            try:
+                await conn.execute(text(f"ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+            except Exception as e:
+                print(f"  Note on {col_name}: {e}")
+        
         print("Adding columns to document_ingestion_runs...")
         dir_columns = [
             ("chunk_count", "INTEGER DEFAULT 0 NOT NULL"),

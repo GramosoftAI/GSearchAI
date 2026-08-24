@@ -1548,7 +1548,6 @@ class KnowledgeBaseService:
             kb_dict["time_metrics"] = None
             if job_dict and job_dict.get("started_at") and job_dict.get("completed_at") and run_info and run_info.started_at and run_info.completed_at:
                 try:
-                    from datetime import datetime
                     j_start = datetime.fromisoformat(job_dict["started_at"].replace("Z", "+00:00"))
                     j_end = datetime.fromisoformat(job_dict["completed_at"].replace("Z", "+00:00"))
                     

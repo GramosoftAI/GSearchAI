@@ -92,9 +92,10 @@ class PDFExtractor:
     """
 
     @staticmethod
-    async def extract_tables_to_json(pdf_bytes: bytes) -> list:
+    async def extract_tables_to_json(pdf_bytes: bytes, raw_markdown: str = None) -> list:
         """
-        Extract structured tables from PDF using pdfplumber into JSONB friendly format.
+        Extract structured tables from PDF. 
+        Prioritizes extracting from raw_markdown if provided, otherwise falls back to pdfplumber.
         Returns a list of dicts:
         [{
             "page_number": 1,
@@ -103,12 +104,116 @@ class PDFExtractor:
             "row_data": {"Part Number": "123", "Price": "5000"}
         }]
         """
+        extracted_tables = []
+        
+        # --- 1. Try Markdown Table Parsing ---
+        if raw_markdown:
+            import re
+            import io
+            import pandas as pd
+            
+            # Find Markdown tables: consecutive lines starting with | or tab-separated lines
+            # First, look for standard Markdown tables
+            md_table_pattern = re.compile(r'((?:^[ \t]*\|.*?\|[ \t]*(?:\n|$))+)', re.MULTILINE)
+            md_tables = md_table_pattern.findall(raw_markdown)
+            
+            if md_tables:
+                for t_idx, table_str in enumerate(md_tables):
+                    lines = [line.strip() for line in table_str.strip().split('\n')]
+                    if len(lines) < 2:
+                        continue
+                        
+                    # Parse header
+                    header_line = lines[0]
+                    headers = [h.strip() for h in header_line.strip('|').split('|')]
+                    
+                    # Ensure unique headers
+                    unique_headers = []
+                    for i, h in enumerate(headers):
+                        h = h if h else f"col_{i}"
+                        if h in unique_headers:
+                            unique_headers.append(f"{h}_{i}")
+                        else:
+                            unique_headers.append(h)
+                    headers = unique_headers
+                    
+                    # Parse rows (skip separator line like |---|---|)
+                    row_idx = 0
+                    for line in lines[1:]:
+                        if set(line.replace('|', '').replace('-', '').replace(' ', '')) == set():
+                            continue # Skip separator
+                        
+                        cols = [c.strip() for c in line.strip('|').split('|')]
+                        row_data = {}
+                        has_data = False
+                        for i, cell_val in enumerate(cols):
+                            if i < len(headers):
+                                col_name = headers[i]
+                                row_data[col_name] = cell_val
+                                if cell_val:
+                                    has_data = True
+                        
+                        if has_data:
+                            extracted_tables.append({
+                                "page_number": 1, # Markdown loses page numbers, default to 1
+                                "table_index": t_idx,
+                                "row_index": row_idx,
+                                "row_data": row_data
+                            })
+                            row_idx += 1
+                            
+                if extracted_tables:
+                    logger.info(f" Extracted {len(extracted_tables)} structured table rows from Markdown")
+                    return extracted_tables
+            
+            # Fallback for tab-separated tables in markdown
+            ts_table_pattern = re.compile(r'((?:^[^\n\t]*(?:\t[^\n\t]*)+(?:\n|$)){2,})', re.MULTILINE)
+            ts_tables = ts_table_pattern.findall(raw_markdown)
+            if ts_tables:
+                for t_idx, table_str in enumerate(ts_tables):
+                    lines = [line.strip() for line in table_str.strip().split('\n')]
+                    if len(lines) < 2:
+                        continue
+                        
+                    headers = [h.strip() for h in lines[0].split('\t')]
+                    unique_headers = []
+                    for i, h in enumerate(headers):
+                        h = h if h else f"col_{i}"
+                        if h in unique_headers:
+                            unique_headers.append(f"{h}_{i}")
+                        else:
+                            unique_headers.append(h)
+                    headers = unique_headers
+                    
+                    row_idx = 0
+                    for line in lines[1:]:
+                        cols = [c.strip() for c in line.split('\t')]
+                        row_data = {}
+                        has_data = False
+                        for i, cell_val in enumerate(cols):
+                            if i < len(headers):
+                                col_name = headers[i]
+                                row_data[col_name] = cell_val
+                                if cell_val:
+                                    has_data = True
+                        
+                        if has_data:
+                            extracted_tables.append({
+                                "page_number": 1,
+                                "table_index": t_idx,
+                                "row_index": row_idx,
+                                "row_data": row_data
+                            })
+                            row_idx += 1
+                if extracted_tables:
+                    logger.info(f" Extracted {len(extracted_tables)} structured table rows from Tab-Separated text")
+                    return extracted_tables
+
+        # --- 2. Fallback to pdfplumber ---
         import pdfplumber
         import io
         
-        extracted_tables = []
         try:
-            # Run blocking pdfplumber open and extraction in a thread pool
             def _extract() -> list:
                 results = []
                 with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -118,11 +223,9 @@ class PDFExtractor:
                             if not table or len(table) < 2:
                                 continue
                                 
-                            # Extract headers
                             headers = table[0]
                             headers = [str(h).strip().replace('\n', ' ') if h else f"col_{i}" for i, h in enumerate(headers)]
                             
-                            # Ensure unique headers if there are duplicates
                             unique_headers = []
                             for i, h in enumerate(headers):
                                 if h in unique_headers:
@@ -131,7 +234,6 @@ class PDFExtractor:
                                     unique_headers.append(h)
                             headers = unique_headers
 
-                            # Extract rows
                             for row_idx, row in enumerate(table[1:]):
                                 row_data = {}
                                 has_data = False
@@ -143,7 +245,6 @@ class PDFExtractor:
                                         if cell_val:
                                             has_data = True
                                 
-                                # Only append if the row has actual data
                                 if has_data:
                                     results.append({
                                         "page_number": page_idx + 1,
@@ -153,9 +254,10 @@ class PDFExtractor:
                                     })
                 return results
 
+            import asyncio
             loop = asyncio.get_event_loop()
             extracted_tables = await loop.run_in_executor(None, _extract)
-            logger.info(f" Extracted {len(extracted_tables)} structured table rows from PDF")
+            logger.info(f" Extracted {len(extracted_tables)} structured table rows from pdfplumber")
             
         except Exception as e:
             logger.error(f" Failed to extract tables: {e}", exc_info=True)
@@ -299,7 +401,7 @@ class PDFExtractor:
                 
             try:
                 client = GdoczaiClient(api_key=api_key)
-                options = ConvertOptions(mode="accurate")
+                options = ConvertOptions(mode="olmocr")
                 
                 max_retries = 2
                 last_err = None

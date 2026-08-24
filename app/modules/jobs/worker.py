@@ -181,7 +181,8 @@ async def run_pdf_ingestion_job(
             # Step 1.5: Table Extraction (PDF only)
             if not filename.lower().endswith(('.csv', '.xls', '.xlsx')):
                 logger.info(f"Job {job_id}: Extracting structured tables")
-                table_rows = await PDFExtractor.extract_tables_to_json(pdf_bytes=content)
+                raw_markdown = getattr(document_text, "raw_html", None)
+                table_rows = await PDFExtractor.extract_tables_to_json(pdf_bytes=content, raw_markdown=raw_markdown)
             
             await job_service.update_job_progress(job_id, status="processing", progress=40, current_step="Creating Knowledge Base Entry")
 

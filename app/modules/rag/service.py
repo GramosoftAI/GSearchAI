@@ -217,31 +217,37 @@ class RAGService:
                     overlap = False
                     reason = "not_tabular"
                     
-                    if analysis.is_tabular or getattr(analysis.metadata, "tabular_subquery", None):
-                        overlap = True
-                        reason = "is_tabular_intent"
-                    elif not doc_kbs:
+                    if not doc_kbs:
                         overlap = True
                         reason = "only_kb_available"
                     else:
-                        # Fast schema overlap check
+                        # Fast schema overlap check for disambiguation (Stage 1.6)
                         try:
                             schema = pq.read_schema(active_paths[0])
                             cols = [str(name).lower() for name in schema.names]
-                            keywords_lower = [k.lower() for k in analysis.metadata.keywords]
+                            import re
+                            query_terms = set(re.findall(r'[a-zA-Z0-9]+', query.lower()))
                             
-                            # Check if any keyword matches or is substring of column name (or vice versa)
-                            for k in keywords_lower:
-                                for c in cols:
-                                    if len(k) > 2 and (k in c or c in k):
-                                        overlap = True
-                                        reason = f"keyword_schema_overlap ({k} matches {c})"
-                                        break
-                                if overlap: break
+                            col_terms = set()
+                            for c in cols:
+                                col_terms.update(re.findall(r'[a-zA-Z0-9]+', c))
+                            name_terms = set(re.findall(r'[a-zA-Z0-9]+', str(active_paths[0]).lower()))
+                            
+                            term_overlap = len(query_terms & (col_terms | name_terms))
+                            
+                            if term_overlap > 0:
+                                overlap = True
+                                reason = f"schema_overlap (score: {term_overlap})"
+                            else:
+                                overlap = False
+                                reason = "zero_schema_overlap"
+                                if analysis.is_tabular or getattr(analysis.metadata, "tabular_subquery", None):
+                                    logger.warning(f"Query is tabular intent, but 0 overlap with Parquet schema. Disambiguation failed. Bypassing DuckDB.")
                         except Exception as e:
                             logger.error(f"Fast schema check failed: {e}")
-                            overlap = True # fallback
-                            reason = "schema_check_failed"
+                            if analysis.is_tabular or getattr(analysis.metadata, "tabular_subquery", None):
+                                overlap = True # fallback
+                                reason = "schema_check_failed_but_tabular"
                             
                     if overlap:
                         logger.info(f"TELEMETRY: tabular_invoked=True, reason={reason}")

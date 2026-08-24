@@ -2237,6 +2237,49 @@ class RAGPipeline:
             logger.error(f" Failed to retrieve seed chunks via Neo4j: {e}")
             return []
 
+    class AmbiguousTableError(Exception):
+        pass
+
+    def _disambiguate_tables(self, query: str, candidates: list) -> any:
+        import re
+        query_terms = set(re.findall(r'[a-zA-Z0-9]+', query.lower()))
+        scored = []
+        for kb in candidates:
+            # Extract terms from schema columns
+            col_terms = set()
+            schema = kb.dataset_schema or {}
+            if "columns" in schema:
+                # If schema has a "columns" list
+                for c in schema["columns"]:
+                    col_terms.update(re.findall(r'[a-zA-Z0-9]+', str(c).lower()))
+            else:
+                # If schema is a dict of col -> type
+                for c in schema.keys():
+                    col_terms.update(re.findall(r'[a-zA-Z0-9]+', str(c).lower()))
+                    
+            name_terms = set(re.findall(r'[a-zA-Z0-9]+', str(kb.name or "").lower()))
+            overlap = len(query_terms & (col_terms | name_terms))
+            scored.append((overlap, kb))
+            
+        scored.sort(reverse=True, key=lambda x: x[0])
+        
+        if not scored:
+            return None
+            
+        best_score = scored[0][0]
+        
+        if best_score == 0:
+            logger.warning(f"Disambiguation failed: No query terms overlap with any candidate KBs ({[k.name for k in candidates]})")
+            raise self.AmbiguousTableError(f"No table matches query terms.")
+            
+        # Check for ties at the top score
+        top_scorers = [item for item in scored if item[0] == best_score]
+        if len(top_scorers) > 1:
+            logger.warning(f"Disambiguation tied between: {[k[1].name for k in top_scorers]} with score {best_score}")
+            raise self.AmbiguousTableError(f"Ambiguous tables for query.")
+            
+        return scored[0][1]
+
     async def _execute_table_analytics(self, query: str, kb_ids: list[str]) -> Optional[str]:
         """
         Text-to-JSON Structured Query Planner.
@@ -2289,6 +2332,17 @@ class RAGPipeline:
         if not kb_rows:
             await log_attempt(0)
             return None
+
+        # --- STAGE 1.6: DISAMBIGUATION SCOPING GATE ---
+        if len(kb_rows) > 1:
+            try:
+                selected_kb = self._disambiguate_tables(query, kb_rows)
+                kb_rows = [selected_kb]
+                logger.info(f" Disambiguated {len(kb_rows)} candidate KBs down to {selected_kb.name}")
+            except self.AmbiguousTableError as e:
+                logger.warning(f" Ambiguous table routing for '{query}': {e}. Falling back to SEMANTIC.")
+                await log_attempt(0)
+                return None
             
         kb_names = {str(r.id): r.name for r in kb_rows}
         # --- DEFINITIVE FIX: Use ParquetIngester registry to resolve local parquet path ---
