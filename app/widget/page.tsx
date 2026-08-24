@@ -1499,8 +1499,11 @@ function WidgetContent() {
           startTypingTimeout();
           if (ws.current && ws.current.readyState === WebSocket.OPEN) {
             ws.current.send(JSON.stringify({ message: query, query: query, embed: true, is_embed: true }));
+          } else if (ws.current && ws.current.readyState === WebSocket.CONNECTING) {
+            pendingQueryRef.current = query;
           } else {
             pendingQueryRef.current = query;
+            connectWs();
           }
         }
       }
@@ -1566,6 +1569,12 @@ function WidgetContent() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
+
+  useEffect(() => {
+    if (!isTyping && chatType !== "search") {
+      inputRef.current?.focus();
+    }
+  }, [isTyping, chatType]);
 
   const connectWs = useCallback(() => {
     if (!agentId || !tenantId || tenantId === "null" || tenantId === "undefined") return;

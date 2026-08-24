@@ -34,6 +34,11 @@
   const displayFeedback = script.getAttribute("data-display-feedback") || "true";
   const linkSafety = script.getAttribute("data-link-safety") || "false";
 
+  let buttonBottom = script.getAttribute("data-button-bottom") || "20px";
+  if (buttonBottom && !isNaN(Number(buttonBottom))) {
+    buttonBottom = buttonBottom + "px";
+  }
+
   // Lead Collection & Support Escalation Attributes
   const leadCollection = script.getAttribute("data-lead-collection") || "false";
   const leadFields = script.getAttribute("data-lead-fields") || "";
@@ -199,7 +204,7 @@
     }
     .grag-icon-btn {
       position: fixed;
-      bottom: 20px;
+      bottom: ${buttonBottom};
       ${buttonAlign === "left" ? "left: 20px; right: auto;" : "right: 20px; left: auto;"}
       min-width: 60px;
       height: 60px;
@@ -491,12 +496,16 @@
     if (event.data && event.data.type === "set-typing") {
       const isBotTyping = event.data.isTyping;
       if (searchInput) {
+        const wasDisabled = searchInput.disabled;
         searchInput.disabled = isBotTyping;
         searchInput.style.cursor = isBotTyping ? "not-allowed" : "text";
         if (isBotTyping) {
           searchInput.placeholder = "Agent is typing...";
         } else {
           searchInput.placeholder = placeholder;
+          if (wasDisabled) {
+            searchInput.focus();
+          }
         }
       }
       if (searchSendBtn) {

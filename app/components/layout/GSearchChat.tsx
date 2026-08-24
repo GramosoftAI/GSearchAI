@@ -42,6 +42,7 @@ export default function GSearchChat() {
       data-lead-timing="pre-chat"
       data-escalation-enabled="false"
       data-escalation-link=""
+      data-button-bottom="55px"
     />
   );
 }

@@ -365,8 +365,8 @@ export default function RegisterForm() {
         .input { box-sizing: border-box; margin-bottom: 2px; width: 100%; border: 2px solid #f1f5f9; padding: 12px 16px; background-color: #f8fafc; border-radius: 12px; font-weight: 700; color: #0fb5a1; outline: none; font-size: 15px; transition: all 0.2s; }
         .input:hover, .input:focus { border-color: #0fb5a1; background-color: white; box-shadow: 0 2px 10px rgba(15, 181, 161, 0.06); }
         
-        .otp-container { display: flex; justify-content: space-between; gap: 8px; margin: 20px 0 10px 0; }
-        .otp-box { width: 52px; height: 55px; border: 2px solid #b8b8b8; background-color: #f8fafc; border-radius: 12px; font-size: 22px; font-weight: 800; color: #0fb5a1; text-align: center; outline: none; transition: all 0.2s; }
+        .otp-container { display: flex; justify-content: space-between; gap: 8px; margin: 20px 0 10px 0; width: 100%; }
+        .otp-box { flex: 1; min-width: 0; max-width: 52px; height: 55px; border: 2px solid #b8b8b8; background-color: #f8fafc; border-radius: 12px; font-size: 22px; font-weight: 800; color: #0fb5a1; text-align: center; outline: none; transition: all 0.2s; }
         .otp-box:hover, .otp-box:focus { border-color: #0fb5a1; background-color: white; box-shadow: 0 2px 10px rgba(15, 181, 161, 0.06); }
         .otp-box:disabled { background-color: #e2e8f0; border-color: #cbd5e1; color: #94a3b8; cursor: not-allowed; }
         
@@ -377,6 +377,13 @@ export default function RegisterForm() {
         .no-account { font-size: 14px; font-weight: 600; color: #64748b; text-align: center; }
         .link { font-weight: 900; color: #0fb5a1; text-decoration: underline; }
         .link:hover { color: #f37e10; }
+
+        @media (max-width: 480px) {
+          .log-card { padding: 30px 20px; }
+          .heading { font-size: 30px; }
+          .otp-box { height: 46px; font-size: 18px; border-radius: 10px; }
+          .otp-container { gap: 6px; }
+        }
       `}</style>
     </div>
   );
