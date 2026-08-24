@@ -766,7 +766,9 @@ class PDFExtractor:
         """
         from .llm.deepinfra_llm import DeepInfraLLMClient
         import json
-        from .entity_registry import ENTITY_TYPES, resolve_entity_type
+        from app.rdf.rdfs_layer import ENTITY_TYPE_ALIASES as ENTITY_TYPES, RDFSLayer as _RDFSLayer
+        _rdfs_compat = _RDFSLayer("_compat")
+        resolve_entity_type = _rdfs_compat.resolve_entity_type
         
         try:
             client = DeepInfraLLMClient()

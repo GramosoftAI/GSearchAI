@@ -215,28 +215,33 @@ class PandasQueryEngine:
         # DUCKDB BINDING (CSV or PARQUET)
         logger.info(f"Initializing DuckDB on dataset(s): {target_path} | total_paths: {len(paths_to_register)}")
         try:
-            temp_db_path = os.path.join(tempfile.gettempdir(), f"duckdb_{id(self)}.db")
-            engine = create_engine(f"duckdb:///{temp_db_path}")
-            
-            with engine.connect() as conn:
-                union_sql = self._build_union_query(paths_to_register, with_row_id=True)
-                conn.execute(text("DROP VIEW IF EXISTS dataset;"))
-                conn.execute(text(f"CREATE VIEW dataset AS {union_sql};"))
+            import asyncio
+            def _setup_db():
+                temp_db_path = os.path.join(tempfile.gettempdir(), f"duckdb_{id(self)}.db")
+                engine = create_engine(f"duckdb:///{temp_db_path}")
                 
-                # Also register individual views (dataset_1, dataset_2, etc.) for backwards compatibility
-                for idx, path_item in enumerate(paths_to_register):
-                    safe_path = str(path_item).replace('\\', '/')
-                    view_name = f"dataset_{idx+1}"
-                    conn.execute(text(f"DROP VIEW IF EXISTS {view_name};"))
-                    reader = f"read_parquet('{safe_path}')" if safe_path.lower().endswith(".parquet") else f"read_csv_auto('{safe_path}', sample_size=10000, nullstr='NULL')"
-                    conn.execute(text(f"CREATE VIEW {view_name} AS SELECT row_number() OVER () AS row_id, * FROM {reader};"))
-                try:
-                    conn.commit()
-                except:
-                    pass
+                with engine.connect() as conn:
+                    union_sql = self._build_union_query(paths_to_register, with_row_id=True)
+                    conn.execute(text("DROP VIEW IF EXISTS dataset;"))
+                    conn.execute(text(f"CREATE VIEW dataset AS {union_sql};"))
                     
-                result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dataset';"))
-                columns = [row[0] for row in result.fetchall()]
+                    # Also register individual views (dataset_1, dataset_2, etc.) for backwards compatibility
+                    for idx, path_item in enumerate(paths_to_register):
+                        safe_path = str(path_item).replace('\\', '/')
+                        view_name = f"dataset_{idx+1}"
+                        conn.execute(text(f"DROP VIEW IF EXISTS {view_name};"))
+                        reader = f"read_parquet('{safe_path}')" if safe_path.lower().endswith(".parquet") else f"read_csv_auto('{safe_path}', sample_size=10000, nullstr='NULL')"
+                        conn.execute(text(f"CREATE VIEW {view_name} AS SELECT row_number() OVER () AS row_id, * FROM {reader};"))
+                    try:
+                        conn.commit()
+                    except:
+                        pass
+                        
+                    result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dataset';"))
+                    columns = [row[0] for row in result.fetchall()]
+                return engine, columns
+                
+            engine, columns = await asyncio.to_thread(_setup_db)
 
             # 3. GENERATE DUCKDB SQL DIRECTLY
             prompt = ChatPromptTemplate.from_messages([
@@ -306,44 +311,52 @@ class PandasQueryEngine:
                 return "Error: Security violation - only read-only SELECT queries are permitted."
             
             # 5. EXECUTE SECURELY (with Layer 2 Self-Healing SQL Repair on Parser/Syntax Errors)
-            with engine.connect() as conn:
+            rows = []
+            col_names = []
+            
+            def _execute_sql(sql_str):
+                with engine.connect() as conn:
+                    res = conn.execute(text(sql_str))
+                    return res.fetchall(), list(res.keys())
+                    
+            try:
+                rows, col_names = await asyncio.to_thread(_execute_sql, sql_query)
+            except Exception as e:
+                logger.warning(f"Initial SQL execution failed ({sql_query}): {e}. Attempting self-healing repair...")
                 try:
-                    result = conn.execute(text(sql_query))
-                    rows = result.fetchall()
-                    col_names = list(result.keys())
-                except Exception as e:
-                    logger.warning(f"Initial SQL execution failed ({sql_query}): {e}. Attempting self-healing repair...")
-                    try:
-                        repair_prompt = ChatPromptTemplate.from_messages([
-                            ("system",
-                             "You are an enterprise DuckDB SQL expert. Fix the syntax error in the DuckDB SELECT SQL query on table 'dataset'.\n\n"
-                             "Available columns in 'dataset':\n{columns}\n\n"
-                             "CRITICAL RULES:\n"
-                             "1. Return ONLY valid JSON with 'sql' and 'explanation'. No markdown, no <think> tags.\n"
-                             "2. ALWAYS enclose column names containing spaces or symbols in DOUBLE QUOTES (e.g. \"Customer ID\").\n"
-                             "3. When searching for strings containing apostrophes or single quotes (e.g. 'Ron''s Gone Wrong'), double the single quotes in SQL ('%ron''s gone wrong%') or use wildcards ('%ron%gone%wrong%').\n"
-                             "4. The query MUST be a read-only DuckDB SELECT on table 'dataset'."),
-                            ("user",
-                             "User Question: {question}\n\nFailed SQL Query:\n{sql}\n\nDuckDB Error Message:\n{error}\n\nProvide the corrected DuckDB SQL query in valid JSON.")
-                        ])
-                        repair_chain = repair_prompt | self.llm | StrOutputParser() | parse_json_from_thinking
-                        repaired_dict = await repair_chain.ainvoke({
-                            "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns),
-                            "question": query,
-                            "sql": sql_query,
-                            "error": str(e)
-                        })
-                        repaired_plan = DuckDBSemanticQuery(**repaired_dict)
-                        sql_query = repaired_plan.sql.strip().rstrip(";") + ";"
-                        logger.info(f"Self-Healed DuckDB SQL: {sql_query} | Explanation: {repaired_plan.explanation}")
-                        result = conn.execute(text(sql_query))
-                        rows = result.fetchall()
-                        col_names = list(result.keys())
-                        query_plan = repaired_plan
-                    except Exception as e_retry:
-                        logger.error(f"Self-healing SQL retry failed: {e_retry}", exc_info=True)
-                        return f"Error executing SQL ({sql_query}): {str(e)}"
-                        
+                    repair_prompt = ChatPromptTemplate.from_messages([
+                        ("system",
+                         "You are an enterprise DuckDB SQL expert. Fix the syntax error in the DuckDB SELECT SQL query on table 'dataset'.\n\n"
+                         "Available columns in 'dataset':\n{columns}\n\n"
+                         "CRITICAL RULES:\n"
+                         "1. Return ONLY valid JSON with 'sql' and 'explanation'. No markdown, no <think> tags.\n"
+                         "2. ALWAYS enclose column names containing spaces or symbols in DOUBLE QUOTES (e.g. \"Customer ID\").\n"
+                         "3. When searching for strings containing apostrophes or single quotes (e.g. 'Ron''s Gone Wrong'), double the single quotes in SQL ('%ron''s gone wrong%') or use wildcards ('%ron%gone%wrong%').\n"
+                         "4. The query MUST be a read-only DuckDB SELECT on table 'dataset'."),
+                        ("user",
+                         "User Question: {question}\n\nFailed SQL Query:\n{sql}\n\nDuckDB Error Message:\n{error}\n\nProvide the corrected DuckDB SQL query in valid JSON.")
+                    ])
+                    repair_chain = repair_prompt | self.llm | StrOutputParser() | parse_json_from_thinking
+                    repaired_dict = await repair_chain.ainvoke({
+                        "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns),
+                        "question": query,
+                        "sql": sql_query,
+                        "error": str(e)
+                    })
+                    repaired_plan = DuckDBSemanticQuery(**repaired_dict)
+                    sql_query = repaired_plan.sql.strip().rstrip(";") + ";"
+                    logger.info(f"Self-Healed DuckDB SQL: {sql_query} | Explanation: {repaired_plan.explanation}")
+                    
+                    rows, col_names = await asyncio.to_thread(_execute_sql, sql_query)
+                    query_plan = repaired_plan
+                except Exception as e_retry:
+                    logger.error(f"Self-healing SQL retry failed: {e_retry}", exc_info=True)
+                    return f"Error executing SQL ({sql_query}): {str(e)}"
+                    
+            # Early semantic exit
+            if "WHERE FALSE" in sql_query.upper() or "not present in dataset" in query_plan.explanation.lower():
+                return f"{query_plan.explanation}\nNo records matched your query."
+                    
             if not rows and "WHERE " in sql_query.upper():
                 logger.warning(f"Query returned 0 rows with WHERE filter ({sql_query}). Attempting Layer 3 fuzzy string matching retry...")
                 try:
@@ -368,9 +381,8 @@ class PandasQueryEngine:
                     fuzzy_plan = DuckDBSemanticQuery(**fuzzy_dict)
                     sql_query = fuzzy_plan.sql.strip().rstrip(";") + ";"
                     logger.info(f"Layer 3 Healed DuckDB SQL: {sql_query} | Explanation: {fuzzy_plan.explanation}")
-                    result = conn.execute(text(sql_query))
-                    rows = result.fetchall()
-                    col_names = list(result.keys())
+                    
+                    rows, col_names = await asyncio.to_thread(_execute_sql, sql_query)
                     query_plan = fuzzy_plan
                 except Exception as fuzzy_err:
                     logger.warning(f"Fuzzy retry failed: {fuzzy_err}")

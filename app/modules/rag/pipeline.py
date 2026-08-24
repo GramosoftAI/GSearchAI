@@ -138,6 +138,7 @@ class RetrievedChunk:
     page: Optional[int] = None
     section: Optional[str] = None
     ontology_node: Optional[str] = None
+    retrieval_path: Optional[str] = None
     provenance_metadata: Optional[Dict] = None
 
 
@@ -376,6 +377,7 @@ class RAGPipeline:
         max_depth: int = 2,
         max_tokens: int = 24000,
         kb_context: str = "",
+        analysis = None
     ) -> RAGContext:
 
 
@@ -487,27 +489,8 @@ class RAGPipeline:
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
 
         # --- SUPPLEMENTARY PANDAS CSV EXTRACTION ---
-        # Uses description='excel_parquet' as the authoritative detection flag.
-        # parsed_path is a bare dataset name; actual data is in local parquet via ParquetIngester.
+        # Removed redundant interception (now handled by service.py hybrid routing)
         supplementary_csv_context = ""
-        try:
-            from sqlalchemy import text
-            if getattr(self, "db", None):
-                kb_query = "SELECT parsed_path, description FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[]));"
-                result = await self.db.execute(text(kb_query), {"kb_ids": kb_ids})
-                kb_path_rows = result.all()
-
-                has_excel_kb = any(getattr(r, 'description', '') == 'excel_parquet' for r in kb_path_rows)
-
-                if has_excel_kb:
-                    logger.info(" excel_parquet KB detected! Gathering supplementary tabular context.")
-                    pandas_result = await self._execute_table_analytics(query, kb_ids)
-                    if pandas_result and "validation error" not in pandas_result.lower() and "No valid spreadsheet" not in pandas_result:
-                        supplementary_csv_context = f"\n\n### Supplementary Tabular Data\n{pandas_result}\n"
-                    else:
-                        logger.warning(f" Supplementary CSV extraction returned no usable results: {pandas_result}")
-        except Exception as e:
-            logger.error(f"Failed supplementary CSV extraction: {e}", exc_info=True)
         # ---------------------------------------------
 
         # STAGE 0: EARLY PARALLEL PRE-REQUISITES
@@ -517,7 +500,11 @@ class RAGPipeline:
         import time
         start_time = time.time()
         
-        analyzer_task = asyncio.create_task(QueryAnalyzer().analyze_query(query, kb_context=kb_context))
+        if analysis is None:
+            analyzer_task = asyncio.create_task(QueryAnalyzer().analyze_query(query, kb_context=kb_context))
+        else:
+            async def _return_analysis(): return analysis
+            analyzer_task = asyncio.create_task(_return_analysis())
         embedding_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(query))
         
         # We can also prefetch KB metadata here
@@ -548,6 +535,7 @@ class RAGPipeline:
         
         from app.modules.rag.orchestrator.section_ranker import SectionRanker
 
+        total_pipeline_start = time.time()
         # Now wait for analysis to finish (needed for routing)
         analysis = await analyzer_task
         if kb_metadata_task:
@@ -568,10 +556,33 @@ class RAGPipeline:
             )
             query = corrected
 
+        # STAGE 0.5: EARLY EXIT FOR TABLE ANALYTICS (Using new QueryAnalyzer)
+        if analysis.is_tabular:
+            logger.info("   -> Intercepting query for SQL Table Analytics engine!")
+            try:
+                table_results = await self._execute_table_analytics(query, kb_ids)
+                if table_results and "validation error" not in table_results.lower():
+                    return RAGContext(
+                        query=query,
+                        chunks=[],
+                        entity_mentions={},
+                        total_tokens=0,
+                        triplet_context=f"### Table Analytics Results\n\n{table_results}",
+                        search_type="TABLE_ANALYTICS"
+                    )
+                else:
+                    logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to RRF vector search.")
+            except Exception as e:
+                logger.error(f"   -> SQL Table Analytics failed: {e}. Falling back to RRF vector search.", exc_info=True)
+                if self.db:
+                    await self.db.rollback()
+
         # Gather structured queries. If none, default to corrected/original query.
         structured_queries = getattr(analysis.metadata, "structured_queries", [])
         if not structured_queries:
             structured_queries = [query]
+            
+        table_analytics_attempted = False
 
         for sq_idx, sq in enumerate(structured_queries):
             logger.info(
@@ -580,26 +591,11 @@ class RAGPipeline:
                 len(structured_queries),
                 sq
             )
+            variation_start_time = time.time()
             current_query = sq
 
-            # STAGE 0.1: EARLY INTERCEPT FOR TABLE ANALYTICS (Deterministic SQL Execution)
-            table_analytics_attempted = False
+            # Tabular analysis is now handled concurrently in service.py
             extractive_context_text = ""
-            is_table_query = analysis.is_tabular or analysis.intent in (QueryIntent.CALCULATION, QueryIntent.TABLE)
-            if is_table_query:
-                try:
-                    table_analytics_attempted = True
-                    logger.info("   -> Intercepting query for SQL Table Analytics engine BEFORE Adaptive Planner!")
-                    table_results = await self._execute_table_analytics(current_query, kb_ids)
-                    if table_results and "validation error" not in table_results.lower():
-                        extractive_context_text = f"### Table Analytics Results\n\n{table_results}\n\n"
-                        logger.info("   -> Table analytics successful. Appended to extractive context. Continuing to Adaptive Planner for cross-source retrieval.")
-                    else:
-                        logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to Adaptive Planner.")
-                except Exception as e:
-                    logger.error(f"   -> SQL Table Analytics preprocessing failed: {e}. Falling back to Adaptive Planner.", exc_info=True)
-                    if self.db:
-                        await self.db.rollback()
 
             # Ensure embedding is generated ONCE for this structured query
             if current_query == original_query:
@@ -610,147 +606,321 @@ class RAGPipeline:
             
             analysis.metadata.query_embedding = query_embedding_val
             
-            from app.modules.rag.orchestrator.planner import AdaptivePlanner
-            from app.modules.rag.orchestrator.aggregator import EvidenceAggregator
             from app.modules.rag.orchestrator.conflict_detector import ConflictDetector
-            from app.modules.rag.engines.registry import CapabilityRegistry
             from app.modules.rag.telemetry import TelemetryLogger
 
-            planner = AdaptivePlanner(self.neo4j_repo, self.tenant_id)
-            plan = await planner.create_plan(analysis, current_query)
+            # Define RRF parameters
+            RRF_K = 60
+            WEIGHT_GRAPH = 1.5
+            WEIGHT_KEYWORD = 1.0
+            WEIGHT_VECTOR = 1.0
+            TOP_N = 15
+
+            # Convert analysis metadata to dictionary for RetrievalTasks
+            meta_dict = {}
+            if analysis and hasattr(analysis, "metadata") and analysis.metadata:
+                if hasattr(analysis.metadata, "model_dump"):
+                    meta_dict = analysis.metadata.model_dump()
+                elif hasattr(analysis.metadata, "dict"):
+                    meta_dict = analysis.metadata.dict()
+                elif isinstance(analysis.metadata, dict):
+                    meta_dict = analysis.metadata
+                else:
+                    meta_dict = vars(analysis.metadata)
             
-            planner_time = time.time() - start_time
+            # Fix 2: Explicitly inject top-level AnalysisResult fields that were dropped
+            if analysis:
+                meta_dict["is_tabular"] = getattr(analysis, "is_tabular", False)
+                meta_dict["intent"] = getattr(analysis, "intent", None)
+                meta_dict["confidence"] = getattr(analysis, "confidence", 0.0)
+                meta_dict["reasoning"] = getattr(analysis, "reasoning", "")
+
+            # 0. Section Ranking
+            async def _run_section_ranking():
+                try:
+                    from app.modules.rag.engines.vector_engine import VectorEngine
+                    from app.modules.rag.orchestrator.section_ranker import SectionRanker
+                    from app.modules.rag.schemas import RetrievalTask
+                    
+                    v_engine = VectorEngine(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
+                    dummy_task = RetrievalTask(
+                        task_id="section_ranking",
+                        query=current_query,
+                        metadata_filters=meta_dict,
+                        top_k=50,
+                        target_section_ids=[]
+                    )
+                    candidate_sections = await v_engine.get_candidate_sections(dummy_task, kb_ids)
+                    if not candidate_sections:
+                        return []
+                        
+                    ranker = SectionRanker()
+                    ranked_sections = ranker.rank_sections(current_query, candidate_sections, top_k=5)
+                    logger.info(f"SectionRanker selected {len(ranked_sections)} candidate sections out of {len(candidate_sections)}")
+                    
+                    # Implement fallback logic:
+                    if not ranked_sections:
+                        return []
+                        
+                    top_score = ranked_sections[0].get("rank_score", 0.0)
+                    if top_score < 2.0:
+                        logger.info(f"[FALLBACK] SectionRanker top score ({top_score}) < 2.0. Falling back to full-KB search.")
+                        return []
+                        
+                    if len(ranked_sections) > 1:
+                        second_score = ranked_sections[1].get("rank_score", 0.0)
+                        gap = top_score - second_score
+                        if gap < (0.3 * top_score):
+                            logger.info(f"[FALLBACK] SectionRanker score gap between {top_score} and {second_score} is < 30%. Falling back to full-KB search.")
+                            return []
+
+                    return [s.get("section_id") for s in ranked_sections if s.get("section_id")]
+                except Exception as e:
+                    logger.warning(f"Section ranking failed (non-blocking): {e}")
+                    return []
+
+            # 1. Graph Traversal
+            async def _run_triplet_search(target_sections=None):
+                if not self.settings.use_triplet_extraction:
+                    return []
+                try:
+                    from app.core.triplet_extractor import TripletRetriever
+                    retriever = TripletRetriever(self.tenant_id)
+                    return await retriever.search_triplets(
+                        query_embedding=query_embedding_val,
+                        kb_ids=kb_ids,
+                        top_k=20,
+                        target_sections=target_sections,
+                    )
+                except Exception as e:
+                    logger.warning(f"Triplet retrieval failed (non-blocking): {e}")
+                    return []
+
+            # 2. Neo4j Keyword Search
+            async def _run_keyword_search(target_sections=None):
+                try:
+                    keywords = getattr(analysis.metadata, "keywords", [])
+                    if not keywords:
+                        # Extract simple words if no keywords provided
+                        keywords = [w for w in current_query.split() if len(w) > 3]
+                    if not keywords:
+                        return []
+                    
+                    cypher = """
+                    MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk)
+                    WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
+                    """
+                    if target_sections:
+                        cypher += " AND c.section IN $target_sections "
+                    
+                    cypher += """
+                    AND any(word IN $keywords WHERE toLower(c.text) CONTAINS toLower(word))
+                    RETURN DISTINCT c.id as section_id
+                    LIMIT 50
+                    """
+                    
+                    params = {"kb_ids": kb_ids, "tenant_id": self.tenant_id, "keywords": keywords}
+                    if target_sections:
+                        params["target_sections"] = target_sections
+                        
+                    results = await self.neo4j_repo.execute_read(cypher, params)
+                    return [r.get("section_id") for r in results] if results else []
+                except Exception as e:
+                    logger.warning(f"Keyword search failed (non-blocking): {e}")
+                    return []
+
+            # 3. pgvector Full-KB Semantic Search
+            async def _run_vector_search(target_sections=None):
+                try:
+                    from app.modules.rag.engines.vector_engine import VectorEngine
+                    from app.modules.rag.schemas import RetrievalTask
+                    vector_engine = VectorEngine(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
+                    
+                    dummy_task = RetrievalTask(
+                        task_id="full_kb_search",
+                        query=current_query,
+                        metadata_filters=meta_dict,
+                        top_k=TOP_N,
+                        target_section_ids=target_sections or []
+                    )
+                    return await vector_engine.retrieve(dummy_task, kb_ids)
+                except Exception as e:
+                    logger.warning(f"Vector search failed (non-blocking): {e}")
+                    return []
+
+            # Launch sequentially then concurrently (2-wave design)
             engine_start = time.time()
             
-            # --- PARALLELIZE TRIPLET RETRIEVAL ---
-            triplet_task = None
-            if self.settings.use_triplet_extraction:
-                async def _run_triplet_search():
-                    try:
-                        from app.core.triplet_extractor import TripletRetriever
-                        retriever = TripletRetriever(self.tenant_id)
-                        return await retriever.search_triplets(
-                            query_embedding=query_embedding_val,
-                            kb_ids=kb_ids,
-                            top_k=self.settings.triplet_retrieval_top_k,
-                        )
-                    except Exception as e:
-                        logger.warning(f"Triplet retrieval failed (non-blocking): {e}")
-                        return None
-                triplet_task = asyncio.create_task(_run_triplet_search())
+            # WAVE 1
+            section_res = await _run_section_ranking()
+            target_sections = section_res if isinstance(section_res, list) else []
             
-            # --- PHASE 1: CANDIDATE SECTION GATHERING (PARALLEL) ---
-            async def _fetch_sections(t):
-                setattr(t, "top_k", top_k)
-                engine_cls = CapabilityRegistry.get_engine_class(t.engine_name)
-                if engine_cls:
-                    engine = engine_cls(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
-                    return await engine.get_candidate_sections(t, kb_ids)
-                return []
-
-            section_results = await asyncio.gather(*[_fetch_sections(t) for t in plan.tasks])
-            candidate_sections = [sec for secs in section_results for sec in secs]
-                    
-            # --- PHASE 2: SECTION RANKING ---
-            ranker = SectionRanker()
-            ranked_sections = ranker.rank_sections(current_query, candidate_sections, top_k=5)
-            logger.info(f"SectionRanker selected {len(ranked_sections)} candidate sections out of {len(candidate_sections)}")
-            
-            # Group top sections by task
-            for task in plan.tasks:
-                task_sections = [s["section_id"] for s in ranked_sections if s.get("task_id") == getattr(task, "task_id", "")]
-                if task_sections:
-                    setattr(task, "target_section_ids", task_sections)
-                    
-            # --- PHASE 3: CHUNK RETRIEVAL (PARALLEL) ---
-            async def _retrieve_chunks(t):
-                engine_cls = CapabilityRegistry.get_engine_class(t.engine_name)
-                if engine_cls:
-                    engine = engine_cls(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
-                    return await engine.retrieve(t, kb_ids)
-                return []
-
-            chunk_results = await asyncio.gather(*[_retrieve_chunks(t) for t in plan.tasks])
-            all_chunks = [c for chunks in chunk_results for c in chunks]
-                    
-            # COVERAGE VALIDATION LOOP
-            retrieved_nodes = {c.ontology_node for c in all_chunks if getattr(c, "ontology_node", None)}
-            missing_goals = set(plan.coverage_goals) - retrieved_nodes
-            
-            if missing_goals:
-                logger.warning(f"Coverage Validation failed. Missing goals: {missing_goals}. Triggering fallback.")
-                from app.modules.rag.engines.vector_engine import VectorEngine
-                vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
-                from app.modules.rag.orchestrator.planner import RetrievalTask
-                for missing in missing_goals:
-                    fallback_task = RetrievalTask(
-                        engine_name="vector",
-                        query=current_query,
-                        metadata_filters=analysis.metadata,
-                        task_id=f"fallback_{missing}",
-                        target_section=missing
-                    )
-                    setattr(fallback_task, "top_k", top_k)
-                    fb_chunks = await vector_fallback.retrieve(fallback_task, kb_ids)
-                    all_chunks.extend(fb_chunks)
-                    
+            # WAVE 2
+            triplet_res, keyword_res, vector_res = await asyncio.gather(
+                _run_triplet_search(target_sections),
+                _run_keyword_search(target_sections),
+                _run_vector_search(target_sections),
+                return_exceptions=True
+            )
             engine_time = time.time() - engine_start
-                    
-            if all_chunks:
-                aggregator = EvidenceAggregator()
-                final_chunks = aggregator.aggregate(all_chunks, plan.aggregator_strategy, current_query, max_tokens=max_tokens)
-                if final_chunks:
-                    logger.info("Adaptive Orchestrator successfully retrieved and aggregated chunks. Returning early.")
-                    
-                    triplet_context_str = ""
-                    relevant_triplets_list = None
-                    if triplet_task:
-                        relevant_triplets_list = await triplet_task
-                        if relevant_triplets_list:
-                            from app.core.triplet_extractor import TripletRetriever
-                            retriever = TripletRetriever(self.tenant_id)
-                            triplet_context_str = retriever.format_triplets_as_context(relevant_triplets_list)
 
-                    rag_context = RAGContext(
-                        query=original_query,
-                        chunks=final_chunks,
-                        entity_mentions={},
-                        total_tokens=sum(len(c.text.split()) for c in final_chunks),
-                        triplet_context=extractive_context_text + triplet_context_str + supplementary_csv_context,
-                        triplets=relevant_triplets_list,
-                        search_type=analysis.intent.name
-                    )
-                    
-                    # Pre-generation conflict detection
-                    detector = ConflictDetector()
-                    conflict_res = await detector.detect_conflicts(rag_context)
-                    if conflict_res.get("conflict_found"):
-                        logger.warning(f"Conflict detected in evidence: {conflict_res.get('explanation')}")
-                        rag_context.triplet_context = f"### SYSTEM WARNING: CONFLICTING EVIDENCE DETECTED\n{conflict_res.get('explanation')}\nExplicitly address and resolve this conflict in your response based on the provided snippets."
-                        
-                    # Calculate coverage score
-                    final_retrieved_nodes = {c.ontology_node for c in final_chunks if getattr(c, "ontology_node", None)}
-                    coverage_score = len(final_retrieved_nodes.intersection(set(plan.coverage_goals))) / max(len(plan.coverage_goals), 1)
-                    
-                    # Telemetry logging
-                    TelemetryLogger.log_query(
-                        query=original_query,
-                        intent=analysis.intent.name,
-                        planner_latency=planner_time,
-                        engine_latency=engine_time,
-                        coverage_score=coverage_score,
-                        conflict_found=conflict_res.get("conflict_found", False),
-                        token_usage=rag_context.total_tokens,
-                        evidence_count=len(final_chunks)
-                    )
-                        
-                    return rag_context
+            # Handle exceptions cleanly
+            if isinstance(triplet_res, Exception): triplet_res = []
+            if isinstance(keyword_res, Exception): keyword_res = []
+            if isinstance(vector_res, Exception): vector_res = []
+
+            logger.info(f"[RRF_FLOW_MARKER] RRF Sources returned: Graph={len(triplet_res)}, Keyword={len(keyword_res)}, Vector={len(vector_res)}")
+
+            # --- RECIPROCAL RANK FUSION ---
+            logger.info("[RRF_FLOW_MARKER] Starting Reciprocal Rank Fusion...")
+            fused_scores = {}
             
+            # Graph scoring
+            for rank, t in enumerate(triplet_res):
+                cid = t.get("chunk_id")
+                if not cid: continue
+                score = WEIGHT_GRAPH / (RRF_K + rank + 1)
+                fused_scores[cid] = fused_scores.get(cid, 0.0) + score
+
+            # Keyword scoring
+            for rank, cid in enumerate(keyword_res):
+                if not cid: continue
+                score = WEIGHT_KEYWORD / (RRF_K + rank + 1)
+                fused_scores[cid] = fused_scores.get(cid, 0.0) + score
+
+            # Vector scoring
+            vector_chunk_map = {}
+            for rank, chunk in enumerate(vector_res):
+                cid = chunk.chunk_id
+                vector_chunk_map[cid] = chunk
+                score = WEIGHT_VECTOR / (RRF_K + rank + 1)
+                fused_scores[cid] = fused_scores.get(cid, 0.0) + score
+
+            # Apply SectionRanker boost post-hoc
+            boosted_count = 0
+            SECTION_BOOST_WEIGHT = 2.0  # Configurable RRF weight bonus
+            if section_res:
+                target_sections_set = set(section_res)
+                for cid in fused_scores.keys():
+                    chunk_obj = vector_chunk_map.get(cid)
+                    c_section = None
+                    if chunk_obj:
+                        c_section = getattr(chunk_obj, "section_id", None) or getattr(chunk_obj, "section", None)
+                    if cid in target_sections_set or c_section in target_sections_set:
+                        fused_scores[cid] += SECTION_BOOST_WEIGHT
+                        boosted_count += 1
+            
+            logger.info(f"[RRF_FLOW_MARKER] Target section IDs from SectionRanker: {section_res}. Boost applied to {boosted_count} chunks.")
+
+            # Sort top N chunks
+            sorted_fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[:TOP_N]
+            top_cids = [cid for cid, score in sorted_fused]
+            logger.info(f"[RRF_FLOW_MARKER] Fusion complete. Top {len(top_cids)} chunk IDs selected.")
+            
+            # Fetch missing chunks from postgres
+            final_chunks = []
+            missing_cids = [cid for cid in top_cids if cid not in vector_chunk_map]
+            
+            if missing_cids and getattr(self, "db", None):
+                from app.modules.knowledge_bases.models import DocumentChunk
+                from sqlalchemy import select
+                from uuid import UUID
+                
+                try:
+                    uuid_list = []
+                    for cid in missing_cids:
+                        try:
+                            uuid_list.append(UUID(str(cid)))
+                        except:
+                            pass
+                    
+                    if uuid_list:
+                        stmt = select(DocumentChunk).where(DocumentChunk.id.in_(uuid_list))
+                        result = await self.db.execute(stmt)
+                        for row in result.scalars():
+                            c_id = str(row.id)
+                            # Create RetrievedChunk object
+                            from app.modules.rag.pipeline import RetrievedChunk
+                            s3_path = row.metadata_json.get("s3_path") if row.metadata_json else None
+                            rc = RetrievedChunk(
+                                chunk_id=c_id,
+                                text=row.text,
+                                kb_id=str(row.kb_id),
+                                position=row.chunk_index,
+                                embedding_similarity=0.0,
+                                graph_score=0.0,
+                                hybrid_score=0.0, # Will be set next
+                                reason="RRF_MERGE",
+                                source=s3_path or f"DocumentChunk {row.chunk_index}",
+                                s3_path=s3_path,
+                                engine_name="hybrid_rrf",
+                                section="Unknown",
+                                ontology_node=None
+                            )
+                            vector_chunk_map[c_id] = rc
+                except Exception as e:
+                    logger.error(f"Failed to fetch missing chunks: {e}")
+
+            # Build final chunk list and assign hybrid_score
+            for rank, (cid, score) in enumerate(sorted_fused):
+                if cid in vector_chunk_map:
+                    rc = vector_chunk_map[cid]
+                    # Map RRF rank to a safe hybrid_score range [0.85, 0.99] so service.py doesn't drop them
+                    rc.hybrid_score = 0.99 - (rank * 0.01)
+                    final_chunks.append(rc)
+                    
+            if final_chunks:
+                logger.info(f"RRF successfully aggregated {len(final_chunks)} chunks. Returning early.")
+                
+                triplet_context_str = ""
+                if triplet_res:
+                    from app.core.triplet_extractor import TripletRetriever
+                    retriever = TripletRetriever(self.tenant_id)
+                    triplet_context_str = retriever.format_triplets_as_context(triplet_res)
+
+                rag_context = RAGContext(
+                    query=original_query,
+                    chunks=final_chunks,
+                    entity_mentions={},
+                    total_tokens=sum(len(c.text.split()) for c in final_chunks),
+                    triplet_context=extractive_context_text + triplet_context_str,
+                    triplets=triplet_res,
+                    search_type=analysis.intent.name
+                )
+                
+                # Pre-generation conflict detection
+                detector = ConflictDetector()
+                conflict_res = await detector.detect_conflicts(rag_context)
+                if conflict_res.get("conflict_found"):
+                    logger.warning(f"Conflict detected in evidence: {conflict_res.get('explanation')}")
+                    rag_context.triplet_context += f"\n\n### SYSTEM WARNING: CONFLICTING EVIDENCE DETECTED\n{conflict_res.get('explanation')}\nExplicitly address and resolve this conflict in your response based on the provided snippets."
+                    
+                # Telemetry logging
+                TelemetryLogger.log_query(
+                    query=original_query,
+                    intent=analysis.intent.name,
+                    planner_latency=0.0,
+                    engine_latency=engine_time,
+                    coverage_score=1.0,
+                    conflict_found=conflict_res.get("conflict_found", False),
+                    token_usage=rag_context.total_tokens,
+                    evidence_count=len(final_chunks)
+                )
+                    
+                variation_elapsed = time.time() - variation_start_time
+                pipeline_total_elapsed = time.time() - total_pipeline_start
+                logger.info(f"TELEMETRY: Structured query variation {sq_idx + 1} completed in {variation_elapsed:.2f}s")
+                logger.info(f"TELEMETRY: Pipeline total retrieval phase completed in {pipeline_total_elapsed:.2f}s")
+                
+                return rag_context
+            
+            variation_elapsed = time.time() - variation_start_time
             logger.warning(
-                "Structured query variation %d/%d (%r) did not yield results. Proceeding to next query.",
+                "TELEMETRY: Structured query %d yielded no final chunks after %s aggregation in %.2fs. "
+                "Moving to next variation.",
                 sq_idx + 1,
-                len(structured_queries),
-                sq
+                "RRF",
+                variation_elapsed
             )
 
         # Fallback to standard router using the first structured query or original query if all fail
@@ -871,32 +1041,7 @@ class RAGPipeline:
 
 
 
-        # STAGE 0.5: EARLY EXIT FOR TABLE ANALYTICS
-        if search_type == SearchType.TABLE_ANALYTICS:
-            if table_analytics_attempted:
-                logger.info("   -> SQL Table Analytics already attempted and failed. Forcing fallback to vector search.")
-                search_type = SearchType.CHUNK_SEARCH
-            else:
-                logger.info("   -> Intercepting query for SQL Table Analytics engine!")
-                try:
-                    table_results = await self._execute_table_analytics(query, kb_ids)
-                    if table_results and "validation error" not in table_results.lower():
-                        return RAGContext(
-                            query=query,
-                            chunks=[],
-                            entity_mentions={},
-                            total_tokens=0,
-                            triplet_context=f"### Table Analytics Results\n\n{table_results}",
-                            search_type=search_type.name
-                        )
-                    else:
-                        logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to vector search.")
-                        search_type = SearchType.CHUNK_SEARCH
-                except Exception as e:
-                    logger.error(f"   -> SQL Table Analytics failed: {e}. Falling back to vector search.", exc_info=True)
-                    if self.db:
-                        await self.db.rollback()
-                    search_type = SearchType.CHUNK_SEARCH
+        # Old Table Analytics block removed since it is now executed before RRF
 
         # STAGE 0.6: HYBRID CONTEXT INJECTION (Extractive DB + Vector Search)
         extractive_context_text = ""
@@ -2134,8 +2279,11 @@ class RAGPipeline:
         
         # 1. Fetch schema, name, parsed_path AND s3_path for target KBs
         import uuid
-        kb_query = "SELECT id, name, dataset_schema, parsed_path, s3_path, source, description FROM knowledge_bases WHERE id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id;"
-        result = await self.db.execute(text(kb_query), {"kb_ids": kb_ids, "tenant_id": uuid.UUID(str(self.tenant_id))})
+        kb_param_dict = {f"kb_{i}": uuid.UUID(str(k)) for i, k in enumerate(kb_ids)}
+        kb_param_dict["tenant_id"] = uuid.UUID(str(self.tenant_id))
+        kb_in_str = ", ".join([f":kb_{i}" for i in range(len(kb_ids))])
+        kb_query = f"SELECT id, name, dataset_schema, parsed_path, s3_path, source, description FROM knowledge_bases WHERE id IN ({kb_in_str}) AND tenant_id = :tenant_id;"
+        result = await self.db.execute(text(kb_query), kb_param_dict)
         kb_rows = result.all()
         
         if not kb_rows:
@@ -2201,8 +2349,11 @@ class RAGPipeline:
         source = non_excel_rows[0].source if non_excel_rows else kb_rows[0].source
         # Fallback to standard SQL generation over document_table_rows
         if not dataset_schema:
-            sample_query = "SELECT row_data FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id LIMIT 300;"
-            result = await self.db.execute(text(sample_query), {"kb_ids": kb_ids, "tenant_id": uuid.UUID(str(self.tenant_id))})
+            kb_param_dict = {f"kb_{i}": uuid.UUID(str(k)) for i, k in enumerate(kb_ids)}
+            kb_param_dict["tenant_id"] = uuid.UUID(str(self.tenant_id))
+            kb_in_str = ", ".join([f":kb_{i}" for i in range(len(kb_ids))])
+            sample_query = f"SELECT row_data FROM document_table_rows WHERE kb_id IN ({kb_in_str}) AND tenant_id = :tenant_id LIMIT 300;"
+            result = await self.db.execute(text(sample_query), kb_param_dict)
             rows = result.scalars().all()
             if rows:
                 dataset_schema = {}
@@ -2411,8 +2562,12 @@ CRITICAL RULES:
                 # Dynamically check if the values in database are actually numeric
                 try:
                     import re
-                    sample_query = "SELECT row_data->>:field as val FROM document_table_rows WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) AND tenant_id = :tenant_id LIMIT 20;"
-                    sample_res = await self.db.execute(text(sample_query), {"kb_ids": kb_ids, "field": target_field, "tenant_id": uuid.UUID(str(self.tenant_id))})
+                    kb_param_dict = {f"kb_{i}": uuid.UUID(str(k)) for i, k in enumerate(kb_ids)}
+                    kb_param_dict["tenant_id"] = uuid.UUID(str(self.tenant_id))
+                    kb_param_dict["field"] = target_field
+                    kb_in_str = ", ".join([f":kb_{i}" for i in range(len(kb_ids))])
+                    sample_query = f"SELECT row_data->>:field as val FROM document_table_rows WHERE kb_id IN ({kb_in_str}) AND tenant_id = :tenant_id LIMIT 20;"
+                    sample_res = await self.db.execute(text(sample_query), kb_param_dict)
                     sample_vals = [r.val for r in sample_res.all() if r.val is not None and str(r.val).strip() != ""]
                     if sample_vals:
                         non_empty_count = 0
@@ -2495,43 +2650,84 @@ CRITICAL RULES:
         if operation in ["AVG", "MAX", "MIN", "SUM"] and ast.get("limit") and (ast.get("sort_by") or ast.get("filters") or ast.get("difference_fields")):
             use_subquery = True
 
-        where_clauses = ["kb_id = ANY(CAST(:kb_ids AS uuid[]))", "tenant_id = :tenant_id"]
-        params = {"kb_ids": kb_ids, "tenant_id": uuid.UUID(str(self.tenant_id))}
+        kb_param_dict = {f"kb_{i}": uuid.UUID(str(k)) for i, k in enumerate(kb_ids)}
+        kb_param_dict["tenant_id"] = uuid.UUID(str(self.tenant_id))
+        kb_in_str = ", ".join([f":kb_{i}" for i in range(len(kb_ids))])
+        where_clauses = [f"kb_id IN ({kb_in_str})", "tenant_id = :tenant_id"]
+        params = kb_param_dict
         
         # Build explainability parts
         explain_filters = []
+        
+        # Group filters by field so multiple filters on the SAME field can be joined with OR.
+        # Across fields, groups will still be joined with AND.
+        # Note: If mixed AND/OR logic is needed in the future, a generalized 'logic'
+        # node could be added to the AST.
+        from collections import defaultdict
+        field_groups = defaultdict(list)
         for i, f in enumerate(ast.get("filters", [])):
-            field = f.get("field")
-            op = str(f.get("operator", "=")).upper()
-            val = f.get("value")
+            field_groups[f.get("field")].append((i, f))
             
-            # Translate contains to ILIKE
-            if op == "CONTAINS":
-                op = "ILIKE"
-                if isinstance(val, str) and not val.startswith("%"):
-                    val = f"%{val}%"
-                    
-            field_type = dataset_schema.get(field, "string")
-            if field_type in numeric_types and op in [">", "<", ">=", "<=", "=", "!="]:
-                try:
-                    val_str = re.sub(r'[^\d.-]', '', str(val))
-                    val_cast = float(val_str)
-                    if val_cast.is_integer():
-                        val_cast = int(val_cast)
-                except ValueError:
-                    val_cast = val
-                where_clauses.append(f"{safe_numeric_cast(field)} {op} :val_{i}")
-                params[f"val_{i}"] = val_cast
-            elif field_type == "boolean":
-                safe_bool = f"CASE WHEN LOWER({get_json_val(field)}) IN ('true', 'yes', 't', '1') THEN TRUE WHEN LOWER({get_json_val(field)}) IN ('false', 'no', 'f', '0') THEN FALSE ELSE NULL END"
-                bool_val = str(val).lower().strip() in ["true", "yes", "t", "1"]
-                where_clauses.append(f"{safe_bool} = :val_{i}")
-                params[f"val_{i}"] = bool_val
-            else:
-                where_clauses.append(f"{get_json_val(field)} {op} :val_{i}")
-                params[f"val_{i}"] = val
+        for field, group_filters in field_groups.items():
+            group_clauses = []
+            for i, f in group_filters:
+                op = str(f.get("operator", "=")).upper()
+                val = f.get("value")
                 
-            explain_filters.append(f"{field} {op} {val}")
+                # Translate contains to ILIKE
+                if op == "CONTAINS":
+                    op = "ILIKE"
+                    if isinstance(val, str) and not val.startswith("%"):
+                        val = f"%{val}%"
+                        
+                field_type = dataset_schema.get(field, "string")
+                if field_type in numeric_types and op in [">", "<", ">=", "<=", "=", "!="]:
+                    try:
+                        val_str = re.sub(r'[^\d.-]', '', str(val))
+                        val_cast = float(val_str)
+                        if val_cast.is_integer():
+                            val_cast = int(val_cast)
+                    except ValueError:
+                        val_cast = val
+                    group_clauses.append(f"{safe_numeric_cast(field)} {op} :val_{i}")
+                    params[f"val_{i}"] = val_cast
+                elif field_type == "boolean":
+                    safe_bool = f"CASE WHEN LOWER({get_json_val(field)}) IN ('true', 'yes', 't', '1') THEN TRUE WHEN LOWER({get_json_val(field)}) IN ('false', 'no', 'f', '0') THEN FALSE ELSE NULL END"
+                    bool_val = str(val).lower().strip() in ["true", "yes", "t", "1"]
+                    group_clauses.append(f"{safe_bool} = :val_{i}")
+                    params[f"val_{i}"] = bool_val
+                else:
+                    if op == "ILIKE" and isinstance(val, str):
+                        clean_val = val.strip('%')
+                        words = [w.strip() for w in re.split(r'\s+', clean_val) if len(w.strip()) > 1]
+                        if not words:
+                            words = [clean_val]
+                            
+                        word_clauses = []
+                        for w_idx, word in enumerate(words):
+                            # Naive singularization for trailing 'es' and 's'
+                            if word.lower().endswith('es') and len(word) > 4:
+                                word = word[:-2]
+                            elif word.lower().endswith('s') and len(word) > 3:
+                                word = word[:-1]
+                            
+                            word_clauses.append(f"{get_json_val(field)} ILIKE :val_{i}_{w_idx}")
+                            params[f"val_{i}_{w_idx}"] = f"%{word}%"
+                            
+                        if len(word_clauses) > 1:
+                            group_clauses.append("(" + " AND ".join(word_clauses) + ")")
+                        else:
+                            group_clauses.append(word_clauses[0])
+                    else:
+                        group_clauses.append(f"{get_json_val(field)} {op} :val_{i}")
+                        params[f"val_{i}"] = val
+                    
+                explain_filters.append(f"{field} {op} {val}")
+                
+            if len(group_clauses) > 1:
+                where_clauses.append("(" + " OR ".join(group_clauses) + ")")
+            elif len(group_clauses) == 1:
+                where_clauses.append(group_clauses[0])
             
         where_str = " AND ".join(where_clauses)
 
@@ -2611,6 +2807,8 @@ CRITICAL RULES:
             if debug_mode:
                 trace_log.append(f"Execution Time:\n{int(t_total*1000)} ms (AST: {int(t_ast_gen*1000)}ms, Val: {int(t_ast_val*1000)}ms, SQL Gen: {int(t_sql_gen*1000)}ms, DB Exec: {int(t_exec*1000)}ms)\n")
                 trace_log.append(f"Rows Returned:\n{len(rows)}\n")
+            
+            logger.info(f"SQL Table Analytics execution returned {len(rows)} rows.")
             
             if not rows:
                 logger.warning(f"SQL execution returned no records: {query_str}")
@@ -3117,7 +3315,7 @@ CRITICAL RULES:
                    ({max_clauses}) AS unique_hits,
                    ({sum_clauses}) AS total_hits
             FROM document_table_rows 
-            WHERE kb_id = ANY(CAST(:kb_ids AS uuid[])) AND ({like_clauses})
+            WHERE kb_id IN ({kb_in_str}) AND ({like_clauses})
             GROUP BY kb_id, page_number, table_index
             ORDER BY unique_hits DESC, total_hits DESC
         """

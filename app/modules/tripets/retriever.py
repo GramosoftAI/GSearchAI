@@ -27,6 +27,7 @@ class TripletRetriever:
         query_embedding: List[float],
         kb_ids: List[str],
         top_k: int = 20,
+        target_sections: List[str] = None,
     ) -> List[Dict]:
         """
         Search triplets by embedding similarity.
@@ -39,6 +40,9 @@ class TripletRetriever:
         Returns:
             List of triplet dicts with text, subject, predicate, object, score
         """
+        import time
+        trace_start = time.time()
+        logger.info(f"[TRACE_E2E] [ENTRY] TripletRetriever.search_triplets - Input: KB {kb_ids}")
         # Get triplets linked to chunks in this KB OR memory-based triplets (not linked to KB)
         query = """
         // Part 1: KB-linked triplets
@@ -46,6 +50,12 @@ class TripletRetriever:
         WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
         MATCH (kb)-[:HAS_CHUNK]->(c:Chunk)-[:HAS_TRIPLET]->(t:Triplet {tenant_id: $tenant_id})
         WHERE t.embedding IS NOT NULL AND size(t.embedding) = $dimension
+        """
+
+        if target_sections:
+            query += " AND c.section IN $target_sections "
+
+        query += """
         RETURN t.id as id, t.text as text, t.subject as subject,
                t.predicate as predicate, t.object as object,
                t.embedding as embedding, t.chunk_id as chunk_id
@@ -70,6 +80,7 @@ class TripletRetriever:
                     "kb_ids": kb_ids,
                     "tenant_id": self.tenant_id,
                     "dimension": EmbeddingGenerator.get_dimension(),
+                    "target_sections": target_sections if target_sections else []
                 },
             )
 
@@ -94,9 +105,14 @@ class TripletRetriever:
 
             # Sort by similarity, return top-k
             scored_triplets.sort(key=lambda x: x["similarity"], reverse=True)
-            return scored_triplets[:top_k]
+            final_triplets = scored_triplets[:top_k]
+            latency = time.time() - trace_start
+            logger.info(f"[TRACE_E2E] [EXIT] TripletRetriever.search_triplets - Output: {len(final_triplets)} triplets - Latency: {latency:.2f}s")
+            return final_triplets
 
         except Exception as e:
+            latency = time.time() - trace_start
+            logger.error(f"[TRACE_E2E] [EXIT] TripletRetriever.search_triplets - Output: ERROR - Latency: {latency:.2f}s - {e}")
             logger.warning(f" Triplet search failed: {e}")
             return []
 

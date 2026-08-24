@@ -732,22 +732,52 @@ async def process_turn(payload: MemoryProcessRequest):
     if _is_delete_statement(payload.query):
         is_feedback_only = True
     else:
-        triage_prompt = (
-            "You are a precise agent memory router. Analyze the user's message and categorize it.\n\n"
-            "Reply with EXACTLY 'FEEDBACK_ONLY' if the user's message is doing one of the following:\n"
-            "1. Stating a personal fact, instruction, preference, or rule for you to remember (e.g., 'remember that I am a developer', 'from now on, use python', 'always reply in markdown').\n"
-            "2. Providing corrective feedback or adjustments to your behavior.\n"
-            "3. Giving a simple conversational acknowledgement or greeting/closing that does not ask for information (e.g., 'got it', 'thanks', 'ok', 'good job').\n"
-            "4. Requesting to delete, forget, or clear memories (e.g., 'forget my name').\n\n"
-            "Reply with EXACTLY 'NORMAL_QUERY' if the user's message is:\n"
-            "1. Asking a question, requesting information, or looking up facts about the organization, database, documents, or team members (e.g., 'who is CCO', 'tell me about Arun', 'who is CEO', 'what is the capital of France').\n"
-            "2. Directing you to analyze data, search documents, or extract records.\n"
-            "3. Stating a short keyword, search term, ID, serial number, or code (e.g., 'SL.NO 5402', '5402', 'ID-203', 'invoice').\n\n"
-            "CRITICAL: If the message is a question, search query, serial number, ID, code, or generic keyword (even if it is extremely short or lacks grammar/question words), you MUST output 'NORMAL_QUERY'.\n"
-            "Output ONLY the category name ('FEEDBACK_ONLY' or 'NORMAL_QUERY') with no other text, explanation, or quotes."
-        )
-        triage_decision = await run_llm_completion(triage_prompt, payload.query, priority="live")
-        is_feedback_only = "FEEDBACK_ONLY" in triage_decision
+        # ---------------------------------------------------------------
+        # DETERMINISTIC GUARDS (prevent LLM misclassification)
+        # These checks run BEFORE the LLM call to catch obvious cases
+        # where the small triage model gets confused by imperative verbs
+        # like "Trace", "Describe", "Compare", "Detail", "Explain".
+        # ---------------------------------------------------------------
+        query_stripped = payload.query.strip()
+        word_count = len(query_stripped.split())
+
+        # Guard 1: If it looks like a question (starts with question word
+        #          or ends with '?'), it is NEVER feedback.
+        if _QUESTION_INDICATOR.search(query_stripped):
+            logger.info(f"[process-turn] Deterministic guard: question indicator matched → NORMAL_QUERY | query={query_stripped[:80]!r}")
+            is_feedback_only = False
+
+        # Guard 2: Long messages (>20 words) are almost never simple
+        #          preference statements — they are analytical queries.
+        elif word_count > 20:
+            logger.info(f"[process-turn] Deterministic guard: long query ({word_count} words) → NORMAL_QUERY | query={query_stripped[:80]!r}")
+            is_feedback_only = False
+
+        # Guard 3: Use existing deterministic preference detector.
+        #          If the regex says it IS a preference, trust it.
+        elif _is_deterministic_preference_statement(query_stripped):
+            logger.info(f"[process-turn] Deterministic guard: preference pattern matched → FEEDBACK_ONLY | query={query_stripped[:80]!r}")
+            is_feedback_only = True
+
+        # Guard 4: Only call LLM for short, ambiguous statements that
+        #          don't match any deterministic pattern.
+        else:
+            triage_prompt = (
+                "You are a precise agent memory router. Analyze the user's message and categorize it.\n\n"
+                "Reply with EXACTLY 'FEEDBACK_ONLY' if the user's message is doing one of the following:\n"
+                "1. Stating a personal fact, instruction, preference, or rule for you to remember (e.g., 'remember that I am a developer', 'from now on, use python', 'always reply in markdown').\n"
+                "2. Providing corrective feedback or adjustments to your behavior.\n"
+                "3. Giving a simple conversational acknowledgement or greeting/closing that does not ask for information (e.g., 'got it', 'thanks', 'ok', 'good job').\n"
+                "4. Requesting to delete, forget, or clear memories (e.g., 'forget my name').\n\n"
+                "Reply with EXACTLY 'NORMAL_QUERY' if the user's message is:\n"
+                "1. Asking a question, requesting information, or looking up facts about the organization, database, documents, or team members (e.g., 'who is CCO', 'tell me about Arun', 'who is CEO', 'what is the capital of France').\n"
+                "2. Directing you to analyze data, search documents, or extract records.\n"
+                "3. Stating a short keyword, search term, ID, serial number, or code (e.g., 'SL.NO 5402', '5402', 'ID-203', 'invoice').\n\n"
+                "CRITICAL: If the message is a question, search query, serial number, ID, code, or generic keyword (even if it is extremely short or lacks grammar/question words), you MUST output 'NORMAL_QUERY'.\n"
+                "Output ONLY the category name ('FEEDBACK_ONLY' or 'NORMAL_QUERY') with no other text, explanation, or quotes."
+            )
+            triage_decision = await run_llm_completion(triage_prompt, payload.query, priority="live")
+            is_feedback_only = "FEEDBACK_ONLY" in triage_decision
 
     if is_feedback_only:
         return {

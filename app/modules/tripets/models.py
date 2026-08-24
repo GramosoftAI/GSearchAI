@@ -1,35 +1,21 @@
-import urllib.parse
 from typing import List, Optional, Literal
 from dataclasses import dataclass, field
 from pydantic import BaseModel, ConfigDict
 
 # ============================================================================
-# RDF SEMANTIC ONTOLOGY MAPPER
+# BACKWARD-COMPATIBLE RE-EXPORTS (moved to app.rdf)
 # ============================================================================
-CANONICAL_RELATIONS = {
-    "issued": "ISSUED_BY",
-    "created_bill": "ISSUED_BY",
-    "generated_invoice": "ISSUED_BY",
-    "purchased": "PURCHASED",
-    "bought": "PURCHASED",
-    "ordered": "PURCHASED",
-    "supplied_by": "SUPPLIED_BY",
-    "provided_by": "SUPPLIED_BY",
-    "contains": "CONTAINS_PRODUCT",
-    "includes": "CONTAINS_PRODUCT",
-    "belongs_to": "BELONGS_TO",
-    "located_in": "LOCATED_IN",
-    "has_amount": "HAS_AMOUNT",
-    "has_date": "HAS_DATE",
-    "references": "REFERENCES",
-    "derived_from": "DERIVED_FROM"
-}
+# CANONICAL_RELATIONS and create_uri now live in the RDF stack.
+# These re-exports ensure existing imports still work.
+from app.rdf.rdfs_layer import CANONICAL_RELATIONS  # noqa: F401
+from app.rdf.namespace import Namespace as _Namespace
 
 def create_uri(entity_type: str, text: str) -> str:
-    """Generate globally unique RDF-compliant URI for an entity."""
-    clean_type = urllib.parse.quote(entity_type.lower().strip())
-    clean_text = urllib.parse.quote(text.lower().strip().replace(' ', '_'))
-    return f"https://grag.ai/kg/{clean_type}/{clean_text}"
+    """Generate globally unique RDF-compliant URI for an entity.
+    
+    Backward-compatible wrapper around app.rdf.namespace.Namespace.
+    """
+    return _Namespace(tenant_id="default").entity_uri(entity_type, text)
 
 # ============================================================================
 # DATA MODELS & SHACL-LITE VALIDATION
@@ -194,6 +180,8 @@ class ExtractedEvent(ExtractedFact):
         self.object_type = "CONCEPT"
 
 # --- SHACL-LITE PYDANTIC SHAPES ---
+# These shapes are now part of the RDF SHACL layer (app.rdf.shacl_layer).
+# Kept here for backward compatibility with existing imports.
 class ExtractedParticipantShape(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     entity: str

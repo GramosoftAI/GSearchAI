@@ -16,8 +16,6 @@ from app.modules.tripets import (
     CANONICAL_RELATIONS,
     create_uri,
     needs_event_hub,
-    StandardTripletWriter,
-    EventHubWriter,
     TRIPLET_EXTRACTION_PROMPT,
     TripletExtractor,
     TripletRetriever,

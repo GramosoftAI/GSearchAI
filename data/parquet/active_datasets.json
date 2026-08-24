@@ -6,9 +6,8 @@
     "Backend_Issues_Assignment": "Backend_Issues_Assignment_1785246767.parquet",
     "questions_with_LLM_answers": "questions_with_LLM_answers_1785336308.parquet",
     "wa": "wa_1785491056.parquet",
-    "WA_Fn-UseC_-HR-Employee-Attrition": "WA_Fn-UseC_-HR-Employee-Attrition_1787306700.parquet",
-    "sme-5lac": "sme-5lac_1787306782.parquet",
     "dummy_employees_details (1)": "dummy_employees_details (1)_1785846511.parquet",
     "mymoviedbt2": "mymoviedbt2_1785250219.parquet",
-    "VENDOR DETAILS_Update": "VENDOR DETAILS_Update_1785250380.parquet"
+    "VENDOR DETAILS_Update": "VENDOR DETAILS_Update_1785250380.parquet",
+    "sales_data": "sales_data_1787554961.parquet"
 }

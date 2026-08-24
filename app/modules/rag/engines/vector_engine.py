@@ -2,6 +2,7 @@ import logging
 from typing import List, Dict, Any
 from app.core.neo4j_repository import Neo4jRepository
 from app.modules.rag.pipeline import RetrievedChunk
+from app.modules.rag.schemas import RetrievalTask
 from app.modules.rag.orchestrator.query_analyzer import QueryIntent
 from app.modules.rag.engines.registry import BaseEngine, CapabilityRegistry
 
@@ -34,39 +35,57 @@ class VectorEngine(BaseEngine):
         self.tenant_id = tenant_id
         self.neo4j_repo = neo4j_repo
         self.db = db
+    async def get_candidate_sections(self, task: RetrievalTask, kb_ids: List[str]) -> List[Dict[str, Any]]:
+        import time
+        trace_start = time.time()
+        logger.info(f"[TRACE_E2E] [ENTRY] VectorEngine.get_candidate_sections - Input: KB {kb_ids}")
+        keywords = task.metadata_filters.get("keywords", []) if isinstance(task.metadata_filters, dict) else (task.metadata_filters.keywords if getattr(task, "metadata_filters", None) else [])
+        
+        broad_keywords = []
+        stopwords = {"what", "when", "this", "that", "code", "data", "info", "find", "how", "why", "where", "which", "with", "does", "then", "from", "they"}
+        for kw in keywords:
+            for word in kw.split():
+                word = word.strip()
+                if len(word) > 3 and word.lower() not in stopwords:
+                    broad_keywords.append(word)
+                    
+        if not broad_keywords:
+            broad_keywords = keywords
 
-    async def get_candidate_sections(self, task: Any, kb_ids: List[str]) -> List[Dict[str, Any]]:
-        keywords = task.metadata_filters.keywords if task.metadata_filters else []
-        if not keywords:
-            keywords = [task.query.split()[0]] if task.query else []
+        if not broad_keywords:
+            logger.warning("VectorEngine received empty keywords from task metadata. Candidate section search may return 0 results.")
 
         cypher = """
         MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk)
         WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
+        AND c.section IS NOT NULL
         AND any(word IN $keywords WHERE toLower(c.text) CONTAINS toLower(word))
-        RETURN DISTINCT c.section as title, c.source_type as doc_type, c.id as section_id
+        RETURN DISTINCT c.section as title, c.source_type as doc_type
         LIMIT 50
         """
         try:
             results = await self.neo4j_repo.execute_read(
                 cypher,
-                {"kb_ids": kb_ids, "tenant_id": self.tenant_id, "keywords": keywords}
+                {"kb_ids": kb_ids, "tenant_id": self.tenant_id, "keywords": broad_keywords}
             )
             sections = []
             if results:
                 for r in results:
                     sections.append({
-                        "section_id": r.get("section_id"),
+                        "section_id": r.get("title", ""),
                         "title": r.get("title", ""),
                         "doc_type": r.get("doc_type", "unknown"),
                         "task_id": getattr(task, "task_id", "")
                     })
+            latency = time.time() - trace_start
+            logger.info(f"[TRACE_E2E] [EXIT] VectorEngine.get_candidate_sections - Output: {len(sections)} sections - Latency: {latency:.2f}s")
             return sections
         except Exception as e:
-            logger.error(f"VectorEngine failed to get candidate sections: {e}")
+            latency = time.time() - trace_start
+            logger.error(f"[TRACE_E2E] [EXIT] VectorEngine.get_candidate_sections - Output: ERROR - Latency: {latency:.2f}s - {e}")
             return []
 
-    async def retrieve(self, task: Any, kb_ids: List[str]) -> List[RetrievedChunk]:
+    async def retrieve(self, task: RetrievalTask, kb_ids: List[str]) -> List[RetrievedChunk]:
         """
         Retrieves chunks using PostgreSQL pgvector when db session is available.
         Otherwise, falls back to simulated vector retrieval using Cypher.
@@ -88,37 +107,32 @@ class VectorEngine(BaseEngine):
           with ``"fallback_"``), which is deliberately created without section
           restriction - it is the pipeline's intentional broad-search safety net.
         """
+        import time
+        trace_start = time.time()
+        logger.info(f"[TRACE_E2E] [ENTRY] VectorEngine.retrieve - Input: Task {task.task_id}, KB {kb_ids}")
         logger.info(f"VectorEngine executing task: {task.task_id}")
 
-        target_section_ids = getattr(task, "target_section_ids", []) or []
-        keywords = task.metadata_filters.keywords if task.metadata_filters else []
-        if not keywords:
-            keywords = [task.query.split()[0]] if task.query else []
+        target_sections = getattr(task, "target_section_ids", []) or []
+        is_tabular = False
+        if getattr(task, "metadata_filters", None):
+            is_tabular = task.metadata_filters.get("is_tabular", False) if isinstance(task.metadata_filters, dict) else getattr(task.metadata_filters, "is_tabular", False)
 
         # ------------------------------------------------------------------
-        # Zero-section guard
-        # When SectionRanker produced no valid candidates, target_section_ids
-        # will be an empty list on a normal retrieval task.  Returning []
-        # here prevents a full-KB vector scan from fabricating coverage.
-        # Coverage-validation fallback tasks (task_id prefix "fallback_") are
-        # the pipeline's intentional broad-search safety net and are allowed
-        # through without a section restriction.
+        # Zero-section guard branched on is_tabular.
+        # When target_sections is empty, we fall back to a full pgvector search 
+        # strictly scoped by kb_ids and tenant_id, UNLESS it's a tabular query,
+        # in which case we isolate to synthetic table chunks only.
         # ------------------------------------------------------------------
-        is_coverage_fallback = getattr(task, "task_id", "").startswith("fallback_")
-
-        if not target_section_ids and not is_coverage_fallback:
-            logger.info(
-                "VectorEngine task=%s: target_section_ids is empty "
-                "(SectionRanker found 0 valid candidates). "
-                "Returning [] to prevent full-KB scan.",
-                task.task_id,
-            )
-            return []
+        if not target_sections:
+            retrieval_path = "table_fallback" if is_tabular else "full_kb_fallback"
+        else:
+            retrieval_path = "targeted_section"
+        logger.info(f"zero_section_guard_path: {retrieval_path}")
 
         if self.db:
             try:
                 from app.core.embeddings import EmbeddingGenerator
-                from sqlalchemy import select, and_, case, Float
+                from sqlalchemy import select, and_, or_, case, Float
                 from app.modules.knowledge_bases.models import DocumentChunk, KnowledgeBase
                 from uuid import UUID
 
@@ -145,26 +159,24 @@ class VectorEngine(BaseEngine):
                     DocumentChunk.kb_id.in_([UUID(str(kb_id)) for kb_id in kb_ids]),
                 ]
 
-                if target_section_ids:
-                    try:
-                        section_uuids = [UUID(str(sid)) for sid in target_section_ids]
-                        base_conditions.append(DocumentChunk.id.in_(section_uuids))
-                        logger.info(
-                            "VectorEngine task=%s: restricting pgvector search "
-                            "to %d target section IDs.",
-                            task.task_id,
-                            len(section_uuids),
-                        )
-                    except (ValueError, AttributeError) as uuid_err:
-                        # target_section_ids may contain non-UUID strings from
-                        # Neo4j (e.g. element IDs).  Fail closed and return no evidence
-                        # rather than broadening the search scope incorrectly.
-                        logger.error(
-                            "VectorEngine task=%s: invalid target_section_ids: %s",
-                            task.task_id,
-                            uuid_err,
-                        )
-                        return []
+                if target_sections:
+                    base_conditions.append(or_(
+                        DocumentChunk.section.in_(target_sections),
+                        DocumentChunk.chunk_index >= 90000
+                    ))
+                    logger.info(
+                        "VectorEngine task=%s: restricting pgvector search "
+                        "to %d target section names (or synthetic table chunks).",
+                        task.task_id,
+                        len(target_sections),
+                    )
+                elif is_tabular:
+                    base_conditions.append(DocumentChunk.chunk_index >= 90000)
+                    logger.info(
+                        "VectorEngine task=%s: restricting pgvector search "
+                        "to synthetic table chunks ONLY (table_fallback).",
+                        task.task_id,
+                    )
 
                 stmt = (
                     select(
@@ -222,41 +234,42 @@ class VectorEngine(BaseEngine):
                         # membership.  Assigning task.target_section here would
                         # fabricate coverage-validation evidence.
                         ontology_node=None,
+                        retrieval_path=retrieval_path,
                     ))
 
                 # Rerank in python
                 chunks.sort(key=lambda x: x.hybrid_score, reverse=True)
-                return chunks[:candidate_limit]
+                final_chunks = chunks[:candidate_limit]
+                latency = time.time() - trace_start
+                logger.info(f"[TRACE_E2E] [EXIT] VectorEngine.retrieve - Output: {len(final_chunks)} chunks (pgvector) - Latency: {latency:.2f}s")
+                return final_chunks
             except Exception as e:
                 logger.error(f"VectorEngine pgvector retrieval failed: {e}. Falling back to Cypher.")
 
         # ------------------------------------------------------------------
         # Cypher fallback (no db session available)
         # Uses keyword-in-text matching.  Apply section restriction when
-        # target_section_ids is present.  Return [] on zero sections (unless
-        # coverage-fallback) for the same reason as the pgvector branch.
+        # target_section_ids is present.  Zero-section guard removed here too (Fix 2).
         # ------------------------------------------------------------------
+        
+        keywords = getattr(task.metadata_filters, "keywords", []) if getattr(task, "metadata_filters", None) else []
+        if not keywords:
+            keywords = [w for w in task.query.split() if len(w) > 3]
+
         cypher = """
         MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk)
         WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
         """
         params = {"kb_ids": kb_ids, "tenant_id": self.tenant_id, "keywords": keywords}
 
-        if target_section_ids:
-            cypher += " AND c.id IN $target_section_ids "
-            params["target_section_ids"] = target_section_ids
-        elif not is_coverage_fallback:
-            logger.info(
-                "VectorEngine Cypher task=%s: target_section_ids empty, "
-                "returning [] to prevent full-graph scan.",
-                task.task_id,
-            )
-            return []
+        if target_sections:
+            cypher += " AND c.section IN $target_sections "
+            params["target_sections"] = target_sections
 
         cypher += """
         AND any(word IN $keywords WHERE toLower(c.text) CONTAINS toLower(word))
         RETURN c.id as chunk_id, c.text as text, c.section as section
-        LIMIT 5
+        LIMIT 50
         """
         try:
             results = await self.neo4j_repo.execute_read(cypher, params)
@@ -287,8 +300,13 @@ class VectorEngine(BaseEngine):
                         engine_name="vector",
                         section=chunk_section,
                         ontology_node=node_value,
+                        retrieval_path=retrieval_path,
                     ))
+            latency = time.time() - trace_start
+            logger.info(f"[TRACE_E2E] [EXIT] VectorEngine.retrieve - Output: {len(chunks)} chunks (cypher) - Latency: {latency:.2f}s")
             return chunks
         except Exception as e:
+            latency = time.time() - trace_start
+            logger.error(f"[TRACE_E2E] [EXIT] VectorEngine.retrieve - Output: ERROR - Latency: {latency:.2f}s - {e}")
             logger.error(f"VectorEngine Cypher fallback failed: {e}")
             return []

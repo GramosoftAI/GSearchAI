@@ -105,6 +105,12 @@ class RAGService:
     ):
         logger.info(f" RAG Service: Streaming answer for agent={agent_id}, kb={kb_id}")
         
+        import time
+        trace_start_time = time.time()
+        # Ensure query length is safe for logging
+        short_query = query[:50] + "..." if len(query) > 50 else query
+        logger.info(f"[TRACE_E2E] [ENTRY] ChatService.stream_rag_answer - Input: '{short_query}', Tenant: {self.tenant_id}, Agent: {agent_id}, KB: {kb_id}")
+        
         sql_task = None
         vector_task = None
         memory_task = None
@@ -167,8 +173,22 @@ class RAGService:
                 kb_context_lines.append(f"- {name}: {desc}")
             kb_context = "\n".join(kb_context_lines) if kb_context_lines else "None provided."
 
+            # ============= EARLY QUERY ANALYSIS (ROUTING) =============
+            from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer
+            import time
+            
+            analyzer_start = time.time()
+            analyzer = QueryAnalyzer()
+            
+            logger.info(f"[TRACE_E2E] [ENTRY] QueryAnalyzer.analyze_query - Input: '{short_query}'")
+            analysis = await analyzer.analyze_query(query, kb_context=kb_context)
+            analyzer_latency = time.time() - analyzer_start
+            logger.info(f"[TRACE_E2E] [EXIT] QueryAnalyzer.analyze_query - Output: {getattr(analysis, 'intent', 'Unknown')} - Latency: {analyzer_latency:.2f}s")
+            logger.info(f"TELEMETRY: QueryAnalyzer completed in {analyzer_latency:.2f}s")
+
             # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
             hybrid_merge_context = ""
+            sql_task = None
             if excel_kbs:
                 from app.core.parquet_ingester import ParquetIngester
                 from app.modules.rag.pandas_engine import PandasQueryEngine
@@ -192,13 +212,52 @@ class RAGService:
                     return
     
                 if active_paths:
-                    engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
-                    sql_task = asyncio.create_task(engine.execute_query(query))
+                    import pyarrow.parquet as pq
+                    
+                    overlap = False
+                    reason = "not_tabular"
+                    
+                    if analysis.is_tabular or getattr(analysis.metadata, "tabular_subquery", None):
+                        overlap = True
+                        reason = "is_tabular_intent"
+                    elif not doc_kbs:
+                        overlap = True
+                        reason = "only_kb_available"
+                    else:
+                        # Fast schema overlap check
+                        try:
+                            schema = pq.read_schema(active_paths[0])
+                            cols = [str(name).lower() for name in schema.names]
+                            keywords_lower = [k.lower() for k in analysis.metadata.keywords]
+                            
+                            # Check if any keyword matches or is substring of column name (or vice versa)
+                            for k in keywords_lower:
+                                for c in cols:
+                                    if len(k) > 2 and (k in c or c in k):
+                                        overlap = True
+                                        reason = f"keyword_schema_overlap ({k} matches {c})"
+                                        break
+                                if overlap: break
+                        except Exception as e:
+                            logger.error(f"Fast schema check failed: {e}")
+                            overlap = True # fallback
+                            reason = "schema_check_failed"
+                            
+                    if overlap:
+                        logger.info(f"TELEMETRY: tabular_invoked=True, reason={reason}")
+                        engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                        sql_task = asyncio.create_task(engine.execute_query(query))
+                    else:
+                        logger.info(f"TELEMETRY: tabular_invoked=False, reason=no_schema_overlap")
     
             vector_task = None
             if not skip_search and (doc_kbs or not excel_kbs):
-                vector_task = asyncio.create_task(
-                    self.pipeline.query(
+                logger.info("TELEMETRY: vector_invoked=True")
+                
+                async def wrapped_vector_query():
+                    logger.info(f"[TRACE_E2E] [ENTRY] RAGPipeline.query - Input: '{short_query}'")
+                    vec_start = time.time()
+                    res = await self.pipeline.query(
                         query=query,
                         agent_id=agent_id,
                         kb_id=kb_ids,
@@ -206,15 +265,20 @@ class RAGService:
                         top_k=top_k,
                         max_depth=max_depth,
                         kb_context=kb_context,
+                        analysis=analysis
                     )
-                )
+                    vec_latency = time.time() - vec_start
+                    logger.info(f"[TRACE_E2E] [EXIT] RAGPipeline.query - Output: {len(res.chunks) if res and res.chunks else 0} chunks - Latency: {vec_latency:.2f}s")
+                    return res
+                vector_task = asyncio.create_task(wrapped_vector_query())
     
             context = None
             metadata_yielded = False
             if excel_kbs and sql_task and vector_task:
                 logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
-                
+                gather_start = time.time()
                 res = await asyncio.gather(vector_task, sql_task, return_exceptions=True)
+                logger.info(f"TELEMETRY: Parallel engines completed in {time.time() - gather_start:.2f}s")
                 context_res, sql_res = res[0], res[1]
                 
                 if not isinstance(context_res, Exception):
@@ -259,8 +323,10 @@ class RAGService:
     
             elif sql_task:
                 logger.info("Executing TABULAR_SQL standalone...")
+                tabular_start = time.time()
                 try:
                     sql_res = await asyncio.wait_for(sql_task, timeout=30.0)
+                    logger.info(f"TELEMETRY: Standalone tabular engine completed in {time.time() - tabular_start:.2f}s")
                     unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
                     is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
                     if is_unmatched:
@@ -281,8 +347,10 @@ class RAGService:
     
             elif vector_task:
                 logger.info("Executing VECTOR_DOCS standalone...")
+                vector_start = time.time()
                 try:
                     context = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
+                    logger.info(f"TELEMETRY: Standalone vector engine completed in {time.time() - vector_start:.2f}s")
                 except asyncio.TimeoutError:
                     logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
                     yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
@@ -435,6 +503,8 @@ class RAGService:
                 
             if not skip_search:
                 try:
+                    logger.info(f"[TRACE_E2E] [ENTRY] RAGPipeline.query - Input: '{short_query}'")
+                    pipeline_start = time.time()
                     context = await asyncio.wait_for(
                         self.pipeline.query(
                             query=query,
@@ -446,6 +516,10 @@ class RAGService:
                         ),
                         timeout=_RAG_TIMEOUT_SECONDS,
                     )
+                    pipeline_latency = time.time() - pipeline_start
+                    chunk_count_pipeline = len(context.chunks) if context and context.chunks else 0
+                    logger.info(f"[TRACE_E2E] [EXIT] RAGPipeline.query - Output: {chunk_count_pipeline} chunks - Latency: {pipeline_latency:.2f}s")
+
                 except asyncio.TimeoutError:
                     logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
                     yield json.dumps(
@@ -519,49 +593,56 @@ class RAGService:
     
             if is_extractive or is_table_analytics:
                 logger.info(f"Checking direct extraction for {context.search_type} mode.")
-                has_direct_output = False
-                if getattr(context, "authoritative_entities", None):
-                    for ent in context.authoritative_entities:
-                        clean_name = ent["entity_type"].replace("_", " ").title()
-                        clean_src = clean_source_name(
-                            ent.get("source", "document_entities")
-                        )
-                        yield f"**{clean_name}:** {ent['value']} (Page {ent.get('page', 1)}) [Source: {clean_src}]\n"
+                try:
+                    logger.info(f"[DIRECT_EXTRACTION_INPUT] has authoritative_entities: {bool(getattr(context, 'authoritative_entities', None))}, triplet_context length: {len(context.triplet_context) if context.triplet_context else 0}")
+                    has_direct_output = False
+                    if getattr(context, "authoritative_entities", None):
+                        for ent in context.authoritative_entities:
+                            clean_name = ent["entity_type"].replace("_", " ").title()
+                            clean_src = clean_source_name(
+                                ent.get("source", "document_entities")
+                            )
+                            yield f"**{clean_name}:** {ent['value']} (Page {ent.get('page', 1)}) [Source: {clean_src}]\n"
+                            has_direct_output = True
+                        if has_direct_output:
+                            yield "\n"
+        
+                    # Strip any <think> tags from triplet_context (gateway LLM leak guard)
+                    import re as _re
+        
+                    clean_triplet = context.triplet_context or ""
+                    clean_triplet = _re.sub(
+                        r"<think>.*?</think>", "", clean_triplet, flags=_re.DOTALL
+                    ).strip()
+                    if "<think>" in clean_triplet:
+                        clean_triplet = clean_triplet[: clean_triplet.index("<think>")].strip()
+        
+                    if clean_triplet:
+                        logger.info(f"[DIRECT_EXTRACTION_OUTPUT] yielding clean_triplet length: {len(clean_triplet)}")
+                        yield clean_triplet
                         has_direct_output = True
+        
                     if has_direct_output:
-                        yield "\n"
-    
-                # Strip any <think> tags from triplet_context (gateway LLM leak guard)
-                import re as _re
-    
-                clean_triplet = context.triplet_context or ""
-                clean_triplet = _re.sub(
-                    r"<think>.*?</think>", "", clean_triplet, flags=_re.DOTALL
-                ).strip()
-                if "<think>" in clean_triplet:
-                    clean_triplet = clean_triplet[: clean_triplet.index("<think>")].strip()
-    
-                if clean_triplet:
-                    yield clean_triplet
-                    has_direct_output = True
-    
-                if has_direct_output:
-                    # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
-                    # Use the kb object already fetched for metadata (line 661 scope)
-                    try:
-                        _src_name = (
-                            kb.name
-                            if len(kb_ids) == 1
-                            else (kb_ids[0] if kb_ids else "Dataset")
+                        # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
+                        # Use the kb object already fetched for metadata (line 661 scope)
+                        try:
+                            _src_name = (
+                                kb.name
+                                if len(kb_ids) == 1
+                                else (kb_ids[0] if kb_ids else "Dataset")
+                            )
+                            yield f"\n\n[Source: {_src_name}]"
+                            logger.info("[DIRECT_EXTRACTION_OUTPUT] yielded source citation")
+                        except Exception as e:
+                            logger.warning(f"[DIRECT_EXTRACTION] Exception while yielding source citation: {e}")
+                            pass
+                        return
+                    else:
+                        logger.warning(
+                            f"[{context.search_type}] mode yielded no direct entities or triplets. Falling through to standard LLM chunk generation!"
                         )
-                        yield f"\n\n[Source: {_src_name}]"
-                    except Exception:
-                        pass
-                    return
-                else:
-                    logger.warning(
-                        f"[{context.search_type}] mode yielded no direct entities or triplets. Falling through to standard LLM chunk generation!"
-                    )
+                except Exception as ex:
+                    logger.error(f"[DIRECT_EXTRACTION_ERROR] Exception in direct extraction logic: {ex}", exc_info=True)
     
             has_valid_chunks = context and context.chunks
             has_valid_triplets = context and context.triplets
@@ -644,6 +725,11 @@ class RAGService:
                         f"Failed to rollback analytics transaction: {rollback_err}"
                     )
         finally:
+            import time
+            trace_latency = time.time() - trace_start_time
+            chunk_count = len(context.chunks) if ('context' in locals() and context and context.chunks) else 0
+            logger.info(f"[TRACE_E2E] [EXIT] ChatService.stream_rag_answer - Output: {chunk_count} chunks streamed - Latency: {trace_latency:.2f}s")
+            
             current_task = asyncio.current_task()
             tasks = (sql_task, vector_task, memory_task)
             pending_tasks = [

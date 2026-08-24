@@ -9,7 +9,7 @@ from .triplet_extractor import ExtractedTriplet, ExtractedEvent, ExtractedPartic
 from .pdf_extractor import PDFExtractor
 from .llm.deepinfra_llm import DeepInfraLLMClient
 from json_repair import repair_json
-from .schema_config import ALLOWED_SCHEMA_MATRIX
+from app.rdf.owl_layer import DEFAULT_SCHEMA_MATRIX as ALLOWED_SCHEMA_MATRIX
 
 logger = logging.getLogger(__name__)
 

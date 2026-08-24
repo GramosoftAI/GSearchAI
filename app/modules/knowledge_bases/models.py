@@ -234,6 +234,7 @@ class DocumentChunk(Base):
 
     text = Column(Text, nullable=False)
     chunk_index = Column(Integer, nullable=False)
+    section = Column(String(255), nullable=True)
     
     # Store the vector. Dimension is 4096 as per EMBEDDING_DIMENSION in .env (Qwen/Qwen3-Embedding-8B)
     from pgvector.sqlalchemy import Vector
@@ -250,6 +251,7 @@ class DocumentChunk(Base):
     __table_args__ = (
         Index("ix_chunks_tenant_id", "tenant_id"),
         Index("ix_chunks_kb_id", "kb_id"),
+        Index("ix_chunks_kb_section", "kb_id", "section"),
         # We can add an hnsw or ivfflat index later for performance
     )
     

@@ -964,6 +964,11 @@ class KnowledgeBaseService:
             # 5. BATCH CREATE CHUNK NODES
 
             chunk_ids = [str(uuid.uuid4()) for _ in range(len(chunks))]
+            chunk_section_map = {
+                chunk_ids[i]: chunk_metadata_list[i].get("section") 
+                for i in range(len(chunks)) 
+                if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i]
+            }
 
             chunk_data = [{
 
@@ -1000,6 +1005,8 @@ class KnowledgeBaseService:
                     chunk_index=i,
 
                     embedding=embeddings[i],
+                    
+                    section=chunk_section_map.get(chunk_ids[i]),
 
                 )
 

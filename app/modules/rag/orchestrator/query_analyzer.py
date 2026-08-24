@@ -67,6 +67,12 @@ class QueryAnalyzer:
                 reasoning="Fast-path greeting regex match"
             )
 
+        # Fast-Path 2: Deterministic tabular property lookups
+        is_tabular_override = False
+        tabular_pattern = r'\b(what is|find|get|give me|show)\b.*\b(hsn|mrp|price|cost|gst|tax|rate|part number|sku)\b'
+        if re.search(tabular_pattern, q_strip, re.IGNORECASE):
+            is_tabular_override = True
+
         kb_context_section = f"\n[ACTIVE KNOWLEDGE BASES CONTEXT]\nThe user is searching across these knowledge bases. Use this context to deduce the meaning of ambiguous terms:\n{kb_context}\n" if kb_context else ""
 
         prompt = f"""
@@ -90,7 +96,7 @@ You must dynamically analyze the underlying intent of the user's query rather th
 
 CRITICAL TASK: TABULAR VS VECTOR CLASSIFICATION
 You must output an `is_tabular` boolean field in the JSON root.
-- Set `is_tabular` to true if the query is seeking structured data, lists of entities, counts, aggregates, sums, averages, or specific database records (e.g. "how many rows", "what is David's email", "list of companies in Chennai", "what is the total salary", "how many columns").
+- Set `is_tabular` to true if the query is seeking structured data, lists of entities, counts, aggregates, sums, averages, or specific database records/property lookups (e.g. "what is the HSN code for X", "what is the MRP of Y", "how many rows", "what is David's email", "list of companies in Chennai", "what is the total salary").
 - Set `is_tabular` to false if the query is purely conversational, seeking unstructured text, biography, background info, or asking about a topic not stored in spreadsheet columns (e.g. "who is vijay", "tell me about Smackcoders", "what did we discuss", "explain quantum computing").
 
 CRITICAL TASK: COMPOSITE QUERY DECOMPOSITION & CO-REFERENCE RESOLUTION
@@ -164,68 +170,102 @@ QUERY:
 {query}
 """
         from app.core.llm.routing import LLMTask
-        try:
-            response = await self.llm_client.generate_cloud(
-                prompt=prompt,
-                system_prompt="You are an expert financial query analyzer. Return only JSON.",
-                temperature=0.0,
-                max_tokens=1024,
-                enable_thinking=False,
-                model=self.llm_client.model_intent,
-                timeout=15.0, # Increased safety buffer
-                task=LLMTask.INTENT_DETECTION
-            )
-            
-            # Extract JSON block
-            json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
-            if json_match:
-                cleaned = json_match.group(1)
-            else:
-                start_idx = response.find('{')
-                end_idx = response.rfind('}')
-                if start_idx != -1 and end_idx != -1:
-                    cleaned = response[start_idx:end_idx+1]
-                else:
-                    cleaned = response.strip()
-                    
-            data = json.loads(cleaned)
-            
-            intent_str = data.get("intent", "UNKNOWN").upper()
+        
+        # We will try up to 2 times (1 initial + 1 retry)
+        max_attempts = 2
+        for attempt in range(max_attempts):
             try:
-                intent = QueryIntent(intent_str)
-            except ValueError:
-                intent = QueryIntent.UNKNOWN
+                response = await self.llm_client.generate_cloud(
+                    prompt=prompt,
+                    system_prompt="You are an expert financial query analyzer. Return only JSON.",
+                    temperature=0.0,
+                    max_tokens=1024,
+                    enable_thinking=False,
+                    model=self.llm_client.model_intent,
+                    timeout=15.0, # Increased safety buffer
+                    task=LLMTask.INTENT_DETECTION
+                )
                 
-            metadata_dict = data.get("metadata", {})
-            metadata = QueryMetadata(
-                quarter=metadata_dict.get("quarter"),
-                year=metadata_dict.get("year"),
-                company=metadata_dict.get("company"),
-                document_type=metadata_dict.get("document_type"),
-                primary_topic=metadata_dict.get("primary_topic"),
-                keywords=metadata_dict.get("keywords", []),
-                corrected_query=metadata_dict.get("corrected_query"),
-                tabular_subquery=metadata_dict.get("tabular_subquery"),
-                vector_subquery=metadata_dict.get("vector_subquery"),
-                structured_queries=metadata_dict.get("structured_queries", [])
-            )
+                # Extract JSON block
+                json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
+                if json_match:
+                    cleaned = json_match.group(1)
+                else:
+                    start_idx = response.find('{')
+                    end_idx = response.rfind('}')
+                    if start_idx != -1 and end_idx != -1:
+                        cleaned = response[start_idx:end_idx+1]
+                    else:
+                        cleaned = response.strip()
+                        
+                data = json.loads(cleaned)
+                
+                # Check for empty keywords
+                metadata_dict = data.get("metadata", {})
+                keywords = metadata_dict.get("keywords", [])
+                
+                # If keywords are empty and we have a retry left, modify prompt and retry
+                if not keywords and attempt < max_attempts - 1:
+                    logger.warning("QueryAnalyzer returned empty keywords. Retrying with explicit repair instruction.")
+                    prompt += "\n\nCRITICAL REPAIR INSTRUCTION: You previously returned an empty keywords list. You MUST extract the key entities/nouns from this query into the `keywords` array."
+                    continue
+                    
+                # Final fallback NLP extraction (using LLM as requested, since spaCy is missing)
+                if not keywords and attempt == max_attempts - 1:
+                    logger.warning("QueryAnalyzer LLM retry failed to produce keywords. Running fast NLP fallback extraction.")
+                    fallback_prompt = f"Extract the most important nouns or proper nouns from this query. Output ONLY a comma-separated list of words. Query: {query}"
+                    try:
+                        fallback_resp = await self.llm_client.generate_cloud(
+                            prompt=fallback_prompt, 
+                            system_prompt="You are a strict keyword extractor.",
+                            temperature=0.0,
+                            max_tokens=30,
+                            model=self.llm_client.model_intent
+                        )
+                        keywords = [k.strip().strip('"\'') for k in fallback_resp.split(",") if k.strip()]
+                        logger.info("keyword_extraction_fallback_triggered: nlp_fallback")
+                    except Exception as fallback_err:
+                        logger.error(f"NLP fallback keyword extraction failed: {fallback_err}")
+                elif keywords:
+                    tier = "llm_initial" if attempt == 0 else "llm_retry"
+                    logger.info(f"keyword_extraction_fallback_triggered: {tier}")
+                    
+                intent_str = data.get("intent", "UNKNOWN").upper()
+                try:
+                    intent = QueryIntent(intent_str)
+                except ValueError:
+                    intent = QueryIntent.UNKNOWN
+                    
+                metadata = QueryMetadata(
+                    quarter=metadata_dict.get("quarter"),
+                    year=metadata_dict.get("year"),
+                    company=metadata_dict.get("company"),
+                    document_type=metadata_dict.get("document_type"),
+                    primary_topic=metadata_dict.get("primary_topic"),
+                    keywords=keywords,
+                    corrected_query=metadata_dict.get("corrected_query"),
+                    tabular_subquery=metadata_dict.get("tabular_subquery"),
+                    vector_subquery=metadata_dict.get("vector_subquery"),
+                    structured_queries=metadata_dict.get("structured_queries", [])
+                )
 
-            is_tabular = bool(data.get("is_tabular", False))
-
-            return AnalysisResult(
-                intent=intent,
-                metadata=metadata,
-                is_tabular=is_tabular,
-                confidence=float(data.get("confidence", 0.5)),
-                reasoning=data.get("reasoning", "LLM determined")
-            )
-            
-        except Exception as e:
-            logger.error(f"QueryAnalyzer failed: {e}")
-            return AnalysisResult(
-                intent=QueryIntent.UNKNOWN,
-                metadata=QueryMetadata(keywords=[]),
-                is_tabular=False,
-                confidence=0.0,
-                reasoning=f"Failed to parse: {e}"
-            )
+                is_tabular = bool(data.get("is_tabular", False)) or is_tabular_override
+                
+                return AnalysisResult(
+                    intent=intent,
+                    metadata=metadata,
+                    is_tabular=is_tabular,
+                    confidence=float(data.get("confidence", 0.5)),
+                    reasoning=data.get("reasoning", "LLM determined")
+                )
+                
+            except Exception as e:
+                logger.error(f"QueryAnalyzer failed on attempt {attempt + 1}: {e}")
+                if attempt == max_attempts - 1:
+                    return AnalysisResult(
+                        intent=QueryIntent.UNKNOWN,
+                        metadata=QueryMetadata(keywords=[]),
+                        is_tabular=False,
+                        confidence=0.0,
+                        reasoning=f"Failed to parse: {e}"
+                    )
