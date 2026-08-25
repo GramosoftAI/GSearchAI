@@ -836,13 +836,12 @@ async def init_db():
         logger.debug(f"Registered models: {list(Base.metadata.tables.keys())}")
 
         async with engine.begin() as conn:
-
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-
             # Create tables first if they don't exist
             await conn.run_sync(Base.metadata.create_all)
 
-            # Auto-migrate document_chunks vector column type if dimension changed (e.g., 1024 -> 4096)
+        # Run vector column check in separate transaction
+        async with engine.begin() as conn:
             try:
                 await conn.execute(
                     text(f"ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector({settings.embedding_dimension});")
@@ -850,19 +849,38 @@ async def init_db():
                 logger.info(f" Verified/migrated document_chunks.embedding to vector({settings.embedding_dimension})")
             except Exception as e:
                 logger.warning(
-                    f"Could not directly alter document_chunks.embedding to vector({settings.embedding_dimension}) "
-                    f"(existing incompatible rows): {e}. Clearing old chunks and altering column..."
+                    f"Could not directly alter document_chunks.embedding to vector({settings.embedding_dimension}): {e}. Clearing old chunks..."
                 )
-                await conn.execute(text("DELETE FROM document_chunks;"))
-                await conn.execute(
-                    text(f"ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector({settings.embedding_dimension});")
-                )
-                logger.info(f" Recreated document_chunks.embedding column as vector({settings.embedding_dimension})")
+                async with engine.begin() as clear_conn:
+                    await clear_conn.execute(text("DELETE FROM document_chunks;"))
+                    await clear_conn.execute(
+                        text(f"ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector({settings.embedding_dimension});")
+                    )
 
+        async with engine.begin() as conn:
             # Run migration to add file_hash to knowledge_bases table if not present in older databases
             await conn.execute(text("ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_kbs_file_hash ON knowledge_bases(file_hash)"))
 
+            # Auto-migrate FTS and Hybrid Search columns/indexes
+            await conn.execute(text("ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS language regconfig DEFAULT 'english'::regconfig;"))
+            await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS language regconfig DEFAULT 'english'::regconfig;"))
+            
+            fts_col_check = await conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='document_chunks' AND column_name='search_vector'"))
+            if not fts_col_check.fetchone():
+                await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN search_vector tsvector GENERATED ALWAYS AS (to_tsvector(language, coalesce(text, ''))) STORED;"))
+
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_chunks_search_vector_gin ON document_chunks USING GIN(search_vector);"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_chunks_tenant_kb ON document_chunks (tenant_id, kb_id);"))
+
+        # Run HNSW index creation in its own transaction block
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw ON document_chunks USING hnsw (embedding vector_cosine_ops);"))
+        except Exception as hnsw_err:
+            logger.warning(f"HNSW vector index notice: {hnsw_err}")
+
+        async with engine.begin() as conn:
             # Auto-migrate users columns
             user_cols = [
                 ("preferred_llm_model", "VARCHAR(255)"),

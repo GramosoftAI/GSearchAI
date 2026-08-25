@@ -187,63 +187,46 @@ async def lifespan(app: FastAPI):
 
 
 
-        # Asynchronously synchronize LiteLLM remote pricing registry
+        # Start recurring daily LiteLLM remote pricing sync worker (runs on startup + every 24 hours)
         try:
-            from app.core.llm.pricing import reload_litellm_pricing_registry
-            asyncio.create_task(reload_litellm_pricing_registry())
-            logger.info("[STARTUP] LiteLLM dynamic pricing sync worker scheduled.")
+            from app.core.llm.pricing import start_daily_pricing_sync_worker
+            start_daily_pricing_sync_worker(interval_seconds=86400)
+            logger.info("[STARTUP] LiteLLM daily pricing sync worker initialized (24h loop).")
         except Exception as e:
-            logger.warning(f"[STARTUP] Could not schedule pricing sync: {e}")
+            logger.warning(f"[STARTUP] Could not initialize pricing sync worker: {e}")
 
         logger.info("=" * 80)
-
         logger.info("[STARTUP] Application startup COMPLETE")
-
         logger.info(f"[STARTUP] API available at: http://{settings.host}:{settings.port}")
-
         logger.info(f"[STARTUP] Swagger docs at: http://{settings.host}:{settings.port}/docs")
-
         logger.info("[STARTUP] MULTI-TENANCY ENFORCED - RLS POLICIES ACTIVE")
-
         logger.info("=" * 80)
-
-
 
     except Exception as e:
-
         logger.error("=" * 80)
-
         logger.error(f"[STARTUP] STARTUP FAILED: {e}")
-
         logger.error(f"[STARTUP] APPLICATION CANNOT START - RLS enforcement is CRITICAL")
-
         logger.error("=" * 80)
-
         raise
-
-
 
     yield  # Application is running
 
-
-
     # ============= SHUTDOWN =============
-
     logger.info("Shutting down application...")
 
     try:
-        await close_db()
+        from app.core.llm.pricing import stop_daily_pricing_sync_worker
+        stop_daily_pricing_sync_worker()
+    except Exception as e:
+        logger.warning(f"Error stopping pricing sync worker: {e}")
 
+    try:
+        await close_db()
         logger.info(" Database connections closed")
 
-
-
         await close_neo4j()
-
         logger.info(" Neo4j driver closed")
-
     except Exception as e:
-
         logger.error(f"Error during shutdown: {e}")
 
 

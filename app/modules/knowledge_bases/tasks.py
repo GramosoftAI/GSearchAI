@@ -118,8 +118,8 @@ async def generate_kb_noisy_words(kb_id: str, tenant_id: str) -> None:
             chunk_texts = [row[0] for row in res.fetchall()]
             
             total_chunks = len(chunk_texts)
-            if total_chunks == 0:
-                logger.warning(f"No chunks found for KB={kb_id}. Skipping noisy words generation.")
+            if total_chunks <= 3:
+                logger.warning(f"KB={kb_id} has {total_chunks} chunk(s). Too small for meaningful TF-IDF noise filtering. Skipping.")
                 return
                 
             # 2. Tokenize chunks, normalize terms, and count document frequencies

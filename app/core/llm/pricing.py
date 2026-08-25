@@ -29,6 +29,7 @@ Features:
 """
 
 import os
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple, Set
@@ -83,6 +84,7 @@ class ModelPricingInfo:
     output_cost_per_token: Optional[float] = None
     cached_price_per_1m: Optional[float] = None
     pricing_status: str = "known"  # "known" or "unknown"
+    pricing_source: str = "unknown"
     is_pricing_available: bool = True
     pricing_notice: Optional[str] = None
     context_window: int = 32768
@@ -381,13 +383,85 @@ class GraphMindPricingRegistry:
     def __init__(self):
         self._custom_overrides: Dict[str, Any] = {}
         self._remote_registry: Dict[str, Any] = {}
+        self._load_yaml_overrides()
         self._sync_metadata: Dict[str, Any] = {
             "version": "1.0.0",
             "last_synced_at": None,
-            "sync_source": "in_memory_default",
+            "sync_source": "models_yaml_and_litellm",
             "sync_status": "initialized",
-            "total_models": len(litellm.model_cost),
+            "total_models": len(litellm.model_cost) + len(self._custom_overrides),
         }
+
+    def _load_yaml_overrides(self) -> None:
+        """Load static model pricing definitions from app/core/multi_llm/config/models.yaml."""
+        import pathlib
+        import yaml
+
+        # Path relative to this file: ../multi_llm/config/models.yaml
+        yaml_path = pathlib.Path(__file__).resolve().parent.parent / "multi_llm" / "config" / "models.yaml"
+        if not yaml_path.exists():
+            # Fallback to workspace root relative path
+            yaml_path = pathlib.Path("app/core/multi_llm/config/models.yaml").resolve()
+
+        if yaml_path.exists():
+            try:
+                with open(yaml_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+                pricing_sec = data.get("pricing", {})
+                for provider, models in pricing_sec.items():
+                    clean_prov = str(provider).strip().lower()
+                    for m_name, p_data in models.items():
+                        if not isinstance(p_data, dict):
+                            continue
+                        in_cost = float(p_data.get("input_per_1m", 0.0)) / 1_000_000.0
+                        out_cost = float(p_data.get("output_per_1m", 0.0)) / 1_000_000.0
+                        cached_cost = (
+                            float(p_data.get("cached_per_1m", 0.0)) / 1_000_000.0
+                            if "cached_per_1m" in p_data and p_data["cached_per_1m"] is not None
+                            else None
+                        )
+                        entry = {
+                            "input_cost_per_token": in_cost,
+                            "output_cost_per_token": out_cost,
+                            "cache_read_input_token_cost": cached_cost,
+                            "litellm_provider": clean_prov,
+                            "pricing_status": "known",
+                            "is_pricing_available": True,
+                            "max_tokens": 131072,
+                        }
+
+                        # Generate all lookup alias keys for robust resolution
+                        keys = [
+                            m_name,
+                            f"{clean_prov}/{m_name}",
+                            m_name.lower(),
+                            f"{clean_prov}/{m_name.lower()}",
+                        ]
+                        if "Llama-" in m_name:
+                            meta_var = m_name.replace("Llama-", "Meta-Llama-")
+                            keys.extend([meta_var, f"{clean_prov}/{meta_var}", meta_var.lower(), f"{clean_prov}/{meta_var.lower()}"])
+                        elif "Meta-Llama-" in m_name:
+                            plain_var = m_name.replace("Meta-Llama-", "Llama-")
+                            keys.extend([plain_var, f"{clean_prov}/{plain_var}", plain_var.lower(), f"{clean_prov}/{plain_var.lower()}"])
+
+                        if "gpt-oss-" in m_name:
+                            plain_oss = m_name.replace("deepinfra/gpt-oss-", "gpt-oss-").replace("openai/gpt-oss-", "gpt-oss-")
+                            openai_oss = f"openai/{plain_oss}"
+                            deepinfra_oss = f"deepinfra/{plain_oss}"
+                            keys.extend([plain_oss, openai_oss, deepinfra_oss, f"{clean_prov}/{openai_oss}"])
+
+                        if "DeepSeek-V3.2" in m_name:
+                            hyphen_var = m_name.replace("DeepSeek-V3.2", "DeepSeek-V3-2")
+                            keys.extend([hyphen_var, f"{clean_prov}/{hyphen_var}", hyphen_var.lower(), f"{clean_prov}/{hyphen_var.lower()}"])
+                        elif "DeepSeek-V3-2" in m_name:
+                            dot_var = m_name.replace("DeepSeek-V3-2", "DeepSeek-V3.2")
+                            keys.extend([dot_var, f"{clean_prov}/{dot_var}", dot_var.lower(), f"{clean_prov}/{dot_var.lower()}"])
+
+                        for k in keys:
+                            self._custom_overrides[k] = entry
+                logger.info(f"[PRICING_REGISTRY] Loaded {len(self._custom_overrides)} model pricing overrides from models.yaml")
+            except Exception as exc:
+                logger.warning(f"[PRICING_REGISTRY] Failed to load models.yaml: {exc}")
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -445,31 +519,27 @@ class GraphMindPricingRegistry:
                 if clean_model in k and ("anthropic." in k or k.startswith("claude")):
                     candidates.append(k)
 
-        # 1. Check custom overrides
-        for candidate in candidates:
-            if candidate in self._custom_overrides:
-                info = dict(self._custom_overrides[candidate])
-                info["matched_key"] = candidate
-                info["pricing_source"] = "graphmind_custom_override"
-                return info
-
-        # 2. Check remote validated registry
+        # 1. Check remote validated registry (LiteLLM synced master) - FIRST PRIORITY
         for candidate in candidates:
             if candidate in self._remote_registry:
-                info = dict(self._remote_registry[candidate])
-                info["matched_key"] = candidate
-                info["pricing_source"] = "remote_master_registry"
-                return info
+                entry = self._remote_registry[candidate]
+                if entry.get("input_cost_per_token") is not None or entry.get("output_cost_per_token") is not None:
+                    info = dict(entry)
+                    info["matched_key"] = candidate
+                    info["pricing_source"] = "remote_master_registry"
+                    return info
 
-        # 3. Check LiteLLM in-memory registry
+        # 2. Check LiteLLM in-memory registry - FIRST PRIORITY
         for candidate in candidates:
             if candidate in litellm.model_cost:
-                info = dict(litellm.model_cost[candidate])
-                info["matched_key"] = candidate
-                info["pricing_source"] = "litellm_built_in"
-                return info
+                entry = litellm.model_cost[candidate]
+                if entry.get("input_cost_per_token") is not None or entry.get("output_cost_per_token") is not None:
+                    info = dict(entry)
+                    info["matched_key"] = candidate
+                    info["pricing_source"] = "litellm_built_in"
+                    return info
 
-        # 4. Fallback to litellm.get_model_info helper
+        # 3. Check litellm.get_model_info helper
         try:
             info = litellm.get_model_info(model=clean_model, custom_llm_provider=clean_provider)
             if info and (info.get("input_cost_per_token") is not None or info.get("output_cost_per_token") is not None):
@@ -485,6 +555,14 @@ class GraphMindPricingRegistry:
                 return info
         except Exception:
             pass
+
+        # 4. Fallback to custom overrides (models.yaml) when LiteLLM does not have the model
+        for candidate in candidates:
+            if candidate in self._custom_overrides:
+                info = dict(self._custom_overrides[candidate])
+                info["matched_key"] = candidate
+                info["pricing_source"] = "graphmind_models_yaml_fallback"
+                return info
 
         return None
 
@@ -547,6 +625,7 @@ def get_model_pricing(
             output_cost_per_token=out_token,
             cached_price_per_1m=cached_1m,
             pricing_status="known",
+            pricing_source=raw_info.get("pricing_source", "litellm"),
             is_pricing_available=True,
             pricing_notice=None,
             context_window=ctx_win,
@@ -822,3 +901,62 @@ async def reload_litellm_pricing_registry(remote_url: Optional[str] = None) -> D
             "registry_metadata": PRICING_REGISTRY.metadata,
             "message": f"Remote sync encountered an error: {str(exc)}. In-memory registry retained.",
         }
+
+
+# ============================================================================
+# SCHEDULED DAILY SYNC WORKER (24-Hour Interval)
+# ============================================================================
+
+_DAILY_SYNC_TASK: Optional[asyncio.Task] = None
+
+
+async def _daily_pricing_sync_loop(interval_seconds: int = 86400):
+    """
+    Background worker loop running once daily (every 24 hours)
+    to keep LiteLLM master pricing synced without manual intervention.
+    """
+    # 1. Initial sync on boot
+    try:
+        await reload_litellm_pricing_registry()
+    except Exception as exc:
+        logger.warning(f"[PRICING_REGISTRY] Initial startup pricing sync failed: {exc}")
+
+    # 2. Recurring 24-hour sync loop
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            logger.info("[PRICING_REGISTRY] Starting scheduled daily LiteLLM pricing sync...")
+            res = await reload_litellm_pricing_registry()
+            logger.info(
+                f"[PRICING_REGISTRY] Scheduled daily sync completed: status='{res.get('status')}', "
+                f"models_loaded={res.get('models_loaded')}"
+            )
+        except asyncio.CancelledError:
+            logger.info("[PRICING_REGISTRY] Daily pricing sync task cancelled.")
+            break
+        except Exception as exc:
+            logger.warning(f"[PRICING_REGISTRY] Scheduled daily pricing sync error: {exc}")
+
+
+def start_daily_pricing_sync_worker(interval_seconds: int = 86400) -> Optional[asyncio.Task]:
+    """Start the recurring daily pricing synchronization background task."""
+    global _DAILY_SYNC_TASK
+    if _DAILY_SYNC_TASK is None or _DAILY_SYNC_TASK.done():
+        try:
+            loop = asyncio.get_running_loop()
+            _DAILY_SYNC_TASK = loop.create_task(_daily_pricing_sync_loop(interval_seconds=interval_seconds))
+            logger.info("[PRICING_REGISTRY] Recurring daily LiteLLM pricing sync worker started (24-hour interval).")
+            return _DAILY_SYNC_TASK
+        except RuntimeError:
+            logger.warning("[PRICING_REGISTRY] No running event loop to start daily pricing sync worker.")
+    return _DAILY_SYNC_TASK
+
+
+def stop_daily_pricing_sync_worker() -> None:
+    """Cancel the recurring daily pricing synchronization background task."""
+    global _DAILY_SYNC_TASK
+    if _DAILY_SYNC_TASK and not _DAILY_SYNC_TASK.done():
+        _DAILY_SYNC_TASK.cancel()
+        _DAILY_SYNC_TASK = None
+        logger.info("[PRICING_REGISTRY] Daily pricing sync worker stopped.")
+

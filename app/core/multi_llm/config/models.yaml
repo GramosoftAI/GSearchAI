@@ -1,33 +1,74 @@
 # app/core/multi_llm/config/models.yaml
-# Remove the entire 'ollama:' pricing section.
-# Keep only deepinfra entries.
+# Complete DeepInfra Pricing Registry for GraphMind Pipeline
 
 pricing:
   deepinfra:
+    # Embedding Models
     Qwen/Qwen3-Embedding-8B:
       input_per_1m: 0.010
       output_per_1m: 0.000
+
+    # Intent Classification & Routing
     google/gemma-4-E4B-it:
       input_per_1m: 0.020
       output_per_1m: 0.100
-    deepseek-ai/DeepSeek-V4-Flash:
-      input_per_1m: 0.090
-      cached_per_1m: 0.018
-      output_per_1m: 0.180
+
+    # NL -> Cypher Models
+    openai/gpt-oss-120b:
+      input_per_1m: 0.037
+      output_per_1m: 0.170
     deepinfra/gpt-oss-120b:
       input_per_1m: 0.037
       output_per_1m: 0.170
+    openai/gpt-oss-20b:
+      input_per_1m: 0.030
+      output_per_1m: 0.140
+    deepinfra/gpt-oss-20b:
+      input_per_1m: 0.030
+      output_per_1m: 0.140
+
+    # Reranking Models
     Qwen/Qwen3-Reranker-4B:
       input_per_1m: 0.025
       output_per_1m: 0.025
+    Qwen/Qwen3-Reranker-0.6B:
+      input_per_1m: 0.010
+      output_per_1m: 0.010
+
+    # Memory & Summarization Models
+    meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo:
+      input_per_1m: 0.020
+      output_per_1m: 0.040
     meta-llama/Llama-3.1-8B-Instruct-Turbo:
       input_per_1m: 0.020
-      output_per_1m: 0.030
+      output_per_1m: 0.040
+    meta-llama/Meta-Llama-3.1-8B-Instruct:
+      input_per_1m: 0.030
+      output_per_1m: 0.050
+
+    # Answer Generation & Extraction
+    meta-llama/Llama-3.3-70B-Instruct-Turbo:
+      input_per_1m: 0.100
+      output_per_1m: 0.320
+    deepseek-ai/DeepSeek-V3:
+      input_per_1m: 0.320
+      output_per_1m: 0.890
+    deepseek-ai/DeepSeek-V3.2:
+      input_per_1m: 0.260
+      cached_per_1m: 0.130
+      output_per_1m: 0.380
     deepseek-ai/DeepSeek-V3-2:
       input_per_1m: 0.260
       cached_per_1m: 0.130
       output_per_1m: 0.380
+    deepseek-ai/DeepSeek-V4-Flash:
+      input_per_1m: 0.090
+      cached_per_1m: 0.018
+      output_per_1m: 0.180
+
+    # Vision & Multimodal
     meta-llama/Llama-3.2-11B-Vision-Instruct:
       input_per_1m: 0.055
       output_per_1m: 0.055
-  # ollama: REMOVED — do not re-add
+
+

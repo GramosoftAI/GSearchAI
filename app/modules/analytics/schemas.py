@@ -78,6 +78,8 @@ class TokenConsumptionItem(BaseModel):
     llm_output_tokens: int
     embedding_tokens: int
     total_tokens: int
+    input_cost_usd: float = 0.0
+    output_cost_usd: float = 0.0
     llm_cost_usd: float
     embedding_cost_usd: float
     total_cost_usd: float
@@ -91,6 +93,9 @@ class TokenConsumptionSummary(BaseModel):
     total_output_tokens: int
     total_embedding_tokens: int
     total_tokens: int
+    total_input_cost_usd: float = 0.0
+    total_output_cost_usd: float = 0.0
+    total_embedding_cost_usd: float = 0.0
     total_cost_usd: float
     total_queries: int
 
@@ -99,12 +104,27 @@ class ModelTokenUsageBreakdown(BaseModel):
     input_tokens: int
     output_tokens: int
     total_tokens: int
+    input_cost_usd: float = 0.0
+    output_cost_usd: float = 0.0
+    embedding_cost_usd: float = 0.0
     total_cost_usd: float
     request_count: int
     purpose: Optional[str] = None
     model_type: Optional[str] = None
     status: Optional[str] = None
     provider: Optional[str] = None
+
+class UserModelUsageBreakdown(BaseModel):
+    model_name: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    embedding_tokens: int = 0
+    total_tokens: int = 0
+    input_cost_usd: float = 0.0
+    output_cost_usd: float = 0.0
+    embedding_cost_usd: float = 0.0
+    total_cost_usd: float = 0.0
+    request_count: int = 0
 
 class UserTokenUsageBreakdown(BaseModel):
     user_id: Optional[UUID] = None
@@ -113,8 +133,12 @@ class UserTokenUsageBreakdown(BaseModel):
     output_tokens: int
     embedding_tokens: int
     total_tokens: int
+    input_cost_usd: float = 0.0
+    output_cost_usd: float = 0.0
+    embedding_cost_usd: float = 0.0
     total_cost_usd: float
     request_count: int
+    models: List[UserModelUsageBreakdown] = Field(default_factory=list)
 
 class DailyTokenUsageItem(BaseModel):
     date: str
@@ -122,6 +146,9 @@ class DailyTokenUsageItem(BaseModel):
     output_tokens: int
     embedding_tokens: int
     total_tokens: int
+    input_cost_usd: float = 0.0
+    output_cost_usd: float = 0.0
+    embedding_cost_usd: float = 0.0
     total_cost_usd: float
     query_count: int
 
@@ -229,5 +256,12 @@ class AppErrorLogsPaginatedResponse(BaseModel):
 class UserCostItem(BaseModel):
     user_id: UUID
     user_email: str
+    input_tokens: Optional[int] = 0
+    output_tokens: Optional[int] = 0
+    embedding_tokens: Optional[int] = 0
     total_tokens: int
+    input_cost_usd: Optional[float] = 0.0
+    output_cost_usd: Optional[float] = 0.0
+    embedding_cost_usd: Optional[float] = 0.0
     total_cost_usd: float
+    models: Optional[List[UserModelUsageBreakdown]] = Field(default_factory=list)

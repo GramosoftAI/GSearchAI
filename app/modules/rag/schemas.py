@@ -122,7 +122,7 @@ class UnifiedChatRequest(BaseModel):
             raise ValueError("Missing 'query' or 'message' field")
         return cls(
             query=query,
-            top_k=payload.get("top_k", 10),
-            max_depth=payload.get("max_depth", 2),
+            top_k=10,
+            max_depth=2,
             session_id=payload.get("session_id"),
         )

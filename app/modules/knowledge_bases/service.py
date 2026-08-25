@@ -593,6 +593,11 @@ class KnowledgeBaseService:
 
 
 
+            # Detect document language and assign to KnowledgeBase
+            from ...core.language import detect_document_language
+            doc_language = detect_document_language(document_text)
+            kb.language = doc_language
+
             # 2. CHUNK THE TEXT
             source_type = "pdf"
             path_to_check = s3_path or source or ""
@@ -1008,6 +1013,8 @@ class KnowledgeBaseService:
                     chunk_index=i,
 
                     embedding=embeddings[i],
+
+                    language=doc_language,
 
                 )
 
@@ -3763,7 +3770,7 @@ class KnowledgeBaseService:
                     "part_number": ["part number", "part no", "item code", "sku", "product id"],
                     "product_name": ["product", "description", "item name", "product name", "item description"],
                     "mrp": ["mrp", "price", "rate", "unit price", "retail price", "selling price", "cost"],
-                    "gst": ["gst", "tax", "gst %", "tax %", "igst", "cgst", "sgst"],
+                    "gst": ["gst", "tax", "gst%", "tax%", "igst", "cgst", "sgst"],
                     "hsn_code": ["hsn", "hsn code", "sac code"]
                 }
                 

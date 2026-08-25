@@ -15,6 +15,20 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 from urllib.parse import urlparse
 
+@dataclass
+class AgentData:
+    id: str
+    name: str
+    system_prompt: Optional[str] = None
+    personality: Optional[str] = None
+    personality_id: Optional[str] = None
+    agent_type: Optional[str] = None
+    contact_phone: Optional[str] = None
+    contact_email: Optional[str] = None
+    website_url: Optional[str] = None
+    organization_name: Optional[str] = None
+    fallback_message_enabled: Optional[bool] = None
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -134,6 +148,9 @@ class RAGService:
         model_override: Optional[str] = None,
     ):
         logger.info(f" RAG Service: Streaming answer for agent={agent_id}, kb={kb_id}")
+        
+        # Immediate zero-width space token to reset frontend UI timeouts (like "Still working...").
+        yield "\u200b"
 
         # Resolve active LLM model preference: explicit override > user's preference in DB > system default
         active_model = model_override
@@ -177,10 +194,35 @@ class RAGService:
                 doc_kbs.append(kb)
 
         # Pre-load Agent and Ontology concurrently
-        agent_task = asyncio.create_task(self.agent_repo.get_by_id(agent_id))
         from ..ontology.service import OntologyService
         ont_svc = OntologyService(self.tenant_id)
         ontology_task = asyncio.create_task(ont_svc.get_ontology())
+        
+        async def fetch_agent_data():
+            agent_orm = await self.agent_repo.get_by_id(agent_id)
+            if not agent_orm:
+                return None
+            personality_desc = getattr(agent_orm, "personality", None)
+            if getattr(agent_orm, "personality_id", None):
+                from app.modules.personalities.models import Personality
+                p = await self.db.get(Personality, agent_orm.personality_id)
+                if p:
+                    personality_desc = p.description or p.name
+            return AgentData(
+                id=str(agent_orm.id),
+                name=agent_orm.name,
+                system_prompt=getattr(agent_orm, "system_prompt", None),
+                personality=personality_desc,
+                personality_id=getattr(agent_orm, "personality_id", None),
+                agent_type=getattr(agent_orm, "agent_type", None),
+                contact_phone=getattr(agent_orm, "contact_phone", None),
+                contact_email=getattr(agent_orm, "contact_email", None),
+                website_url=getattr(agent_orm, "website_url", None),
+                organization_name=getattr(agent_orm, "organization_name", None),
+                fallback_message_enabled=getattr(agent_orm, "fallback_message_enabled", None)
+            )
+            
+        agent_task = asyncio.create_task(fetch_agent_data())
 
         # ============= MEMORY-API: RECALL USER PREFERENCES & EPISODIC GUIDANCE =============
         episodic_guidance = await self._fetch_episodic_guidance(query, agent_id, user_id, memory_enabled)
@@ -345,6 +387,7 @@ class RAGService:
                     f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
                 )
     
+            # 1. Fetch Agent (fresh query, AFTER all potential rollbacks)
             agent = await agent_task
             if not agent:
                 yield json.dumps(
@@ -354,16 +397,14 @@ class RAGService:
                 )
                 return
 
+            # Check if a specific personality is assigned, otherwise fallback to standard behavior
             base_prompt = agent.system_prompt or ""
             personality_description = (
                 agent.personality
                 or "You are a warm, approachable, and supportive assistant."
             )
 
-            if agent.personality_id:
-                personality = await self.db.get(Personality, agent.personality_id)
-                if personality:
-                    personality_description = personality.description or personality.name
+
 
             accuracy_directives = (
                 "\n- Enforce 100% factual accuracy based strictly on the retrieved context."
@@ -449,6 +490,7 @@ FORMATTING RULES
 Use Markdown tables whenever information is easier to compare in rows and columns.
 Use bullet points when listing multiple items.
 Use paragraphs for explanations.
+- NEVER quote internal system metadata, relevance scores (e.g., 'relevance: 0.85', 'score: 0.8'), or raw graph brackets (e.g., '[USES]') in your final answer. Present all facts seamlessly in clean, natural English.
 
 ==================================================
 SOURCE CITATION RULES (STRICT)
@@ -563,10 +605,6 @@ FINAL RESPONSE FORMAT
                 ).strip()
                 if "<think>" in clean_triplet:
                     clean_triplet = clean_triplet[: clean_triplet.index("<think>")].strip()
-
-                if clean_triplet:
-                    yield clean_triplet
-                    has_direct_output = True
 
                 if has_direct_output:
                     try:

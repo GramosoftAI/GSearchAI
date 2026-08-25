@@ -31,10 +31,10 @@ class FinancialEngine(BaseEngine):
     def domain(cls) -> List[str]:
         return ["Accounting", "Revenue", "Expenses", "Tax"]
         
-    def __init__(self, tenant_id: str, neo4j_repo: Neo4jRepository, db: Any = None):
+    def __init__(self, tenant_id: str, neo4j_repo: Neo4jRepository, session_factory: Any = None):
         self.tenant_id = tenant_id
         self.neo4j_repo = neo4j_repo
-        self.db = db
+        self.session_factory = session_factory
         
     async def get_candidate_sections(self, task: Any, kb_ids: List[str]) -> List[Dict[str, Any]]:
         section_filter = getattr(task, "target_section", None)

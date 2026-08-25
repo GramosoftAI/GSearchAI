@@ -298,7 +298,7 @@ class PDFExtractor:
                 
             try:
                 client = GdoczaiClient(api_key=api_key)
-                options = ConvertOptions(mode="accurate")
+                options = ConvertOptions(mode="olmocr")
                 
                 max_retries = 2
                 last_err = None
@@ -880,8 +880,12 @@ class PDFExtractor:
                 max_tokens=max_tokens
             )
             res = res.strip()
+            
+            # Strip common conversational prefixes from LLM
+            res = re.sub(r"^(?i)(?:here is|below is|this is|sure|certainly|the repaired|i have repaired).*?:?\s*\n+", "", res).strip()
+            
             if res.startswith("```"):
-                res = re.sub(r"^```(?:markdown)?\r?\n", "", res)
+                res = re.sub(r"^```(?:markdown|html)?\r?\n", "", res)
                 res = re.sub(r"\r?\n```$", "", res)
                 res = res.strip()
             return res if res else segment
@@ -908,8 +912,12 @@ class PDFExtractor:
                 max_tokens=max_tokens
             )
             res = res.strip()
+            
+            # Strip common conversational prefixes from LLM
+            res = re.sub(r"^(?i)(?:here is|below is|this is|sure|certainly|the reconstructed|i have reconstructed).*?:?\s*\n+", "", res).strip()
+            
             if res.startswith("```"):
-                res = re.sub(r"^```(?:markdown)?\r?\n", "", res)
+                res = re.sub(r"^```(?:markdown|html)?\r?\n", "", res)
                 res = re.sub(r"\r?\n```$", "", res)
                 res = res.strip()
             return res if res else segment

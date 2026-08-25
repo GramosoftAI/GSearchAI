@@ -786,11 +786,8 @@ class TripletRetriever:
         if not triplets:
             return ""
 
-        lines = ["KNOWLEDGE GRAPH RELATIONSHIPS:"]
+        lines = ["Knowledge Base Facts & Relationships:"]
         for t in triplets:
-            score = t.get("similarity", 0)
-            lines.append(
-                f"   {t['subject']} [{t['predicate']}] {t['object']} "
-                f"(relevance: {score:.2f})"
-            )
+            pred = str(t.get('predicate', '')).replace('_', ' ').lower()
+            lines.append(f"• {t.get('subject', '')} {pred} {t.get('object', '')}")
         return "\n".join(lines)

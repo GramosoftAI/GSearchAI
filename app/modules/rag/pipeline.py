@@ -597,6 +597,8 @@ class RAGPipeline:
         from app.modules.rag.orchestrator.aggregator import EvidenceAggregator
         from app.modules.rag.orchestrator.conflict_detector import ConflictDetector
         from app.modules.rag.engines.registry import CapabilityRegistry
+        from app.core.database import get_db_with_tenant
+        import functools
         from app.modules.rag.telemetry import TelemetryLogger
         
         # Ensure engines are loaded to register them
@@ -634,7 +636,8 @@ class RAGPipeline:
             setattr(t, "top_k", top_k)
             engine_cls = CapabilityRegistry.get_engine_class(t.engine_name)
             if engine_cls:
-                engine = engine_cls(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
+                factory = functools.partial(get_db_with_tenant, self.tenant_id)
+                engine = engine_cls(self.tenant_id, self.neo4j_repo, factory)
                 return await engine.get_candidate_sections(t, kb_ids)
             return []
 
@@ -656,7 +659,8 @@ class RAGPipeline:
         async def _retrieve_chunks(t):
             engine_cls = CapabilityRegistry.get_engine_class(t.engine_name)
             if engine_cls:
-                engine = engine_cls(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
+                factory = functools.partial(get_db_with_tenant, self.tenant_id)
+                engine = engine_cls(self.tenant_id, self.neo4j_repo, factory)
                 return await engine.retrieve(t, kb_ids)
             return []
 
@@ -670,7 +674,8 @@ class RAGPipeline:
         if missing_goals:
             logger.warning(f"Coverage Validation failed. Missing goals: {missing_goals}. Triggering fallback.")
             from app.modules.rag.engines.vector_engine import VectorEngine
-            vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
+            factory = functools.partial(get_db_with_tenant, self.tenant_id)
+            vector_fallback = VectorEngine(self.tenant_id, self.neo4j_repo, factory)
             from app.modules.rag.orchestrator.planner import RetrievalTask
             for missing in missing_goals:
                 fallback_task = RetrievalTask(
@@ -690,7 +695,9 @@ class RAGPipeline:
             aggregator = EvidenceAggregator()
             final_chunks = aggregator.aggregate(all_chunks, plan.aggregator_strategy, query, max_tokens=max_tokens)
             if final_chunks:
-                logger.info("Adaptive Orchestrator successfully retrieved and aggregated chunks. Returning early.")
+                # Enforce absolute top_k across all tasks
+                final_chunks = final_chunks[:top_k]
+                logger.info(f"Adaptive Orchestrator successfully retrieved and aggregated {len(final_chunks)} chunks. Returning early.")
                 
                 triplet_context_str = ""
                 relevant_triplets_list = None

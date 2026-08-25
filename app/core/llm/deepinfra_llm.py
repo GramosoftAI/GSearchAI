@@ -431,6 +431,7 @@ class DeepInfraLLMClient:
         model: Optional[str] = None,
         timeout: Optional[float] = None,
         task: Optional[Any] = None,
+        response_format: Optional[dict] = None,
     ) -> str:
         """
         Equivalent to generate() but explicitly routes to the cloud DeepInfra model 
@@ -455,6 +456,8 @@ class DeepInfraLLMClient:
             "enable_thinking": False,
             "reasoning_effort": "none"
         }
+        if response_format:
+            payload["response_format"] = response_format
         
         last_error = None
         for attempt in range(3):
@@ -665,6 +668,11 @@ class DeepInfraLLMClient:
                                         if on_usage_callback:
                                             on_usage_callback(usage_data)
                                         continue
+
+                                    if "error" in data:
+                                        logger.error(f"DeepInfra API Error: {data['error']}")
+                                        yield f"\n[LLM Provider Error: {data['error']}]"
+                                        break
 
                                     if not data.get("choices"):
                                         continue
