@@ -273,7 +273,7 @@ class EmbeddingGenerator:
 
         # Handle zero vectors
 
-        if not embedding1 or not embedding2:
+        if embedding1 is None or embedding2 is None or len(embedding1) == 0 or len(embedding2) == 0:
 
             return 0.0
 

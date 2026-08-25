@@ -199,14 +199,19 @@ class TripletExtractor:
                 if not name:
                     continue
                 
-                mode_hint = raw_fact.get("mode_hint", "relationship").strip().lower()
-                event_type = raw_fact.get("event_type", "EVENT").strip().upper()
+                mode_hint = str(raw_fact.get("mode_hint", "relationship")).strip().lower()
+                event_type = str(raw_fact.get("event_type", "EVENT")).strip().upper()
+                
                 subject = raw_fact.get("subject")
-                if subject: subject = subject.strip()
+                if isinstance(subject, list): subject = ", ".join(str(v) for v in subject)
+                if subject: subject = str(subject).strip()
+                
                 obj = raw_fact.get("object")
-                if obj: obj = obj.strip()
-                subject_type = raw_fact.get("subject_type", "CONCEPT").strip().upper()
-                object_type = raw_fact.get("object_type", "CONCEPT").strip().upper()
+                if isinstance(obj, list): obj = ", ".join(str(v) for v in obj)
+                if obj: obj = str(obj).strip()
+                
+                subject_type = str(raw_fact.get("subject_type", "CONCEPT")).strip().upper()
+                object_type = str(raw_fact.get("object_type", "CONCEPT")).strip().upper()
                 
                 raw_participants = raw_fact.get("participants", [])
                 raw_attributes = raw_fact.get("attributes", [])
@@ -216,17 +221,33 @@ class TripletExtractor:
                 
                 for p in raw_participants:
                     if not isinstance(p, dict): continue
-                    entity = p.get("entity", "").strip()
-                    role = p.get("role", "participant").strip().upper()
-                    ent_type = p.get("entity_type", "CONCEPT").strip().upper()
+                    
+                    entity = p.get("entity", "")
+                    if isinstance(entity, list): entity = ", ".join(str(v) for v in entity)
+                    entity = str(entity).strip()
+                    
+                    role = p.get("role", "participant")
+                    if isinstance(role, list): role = ", ".join(str(v) for v in role)
+                    role = str(role).strip().upper()
+                    
+                    ent_type = str(p.get("entity_type", "CONCEPT")).strip().upper()
+                    
                     if entity and len(entity) >= 2:
                         participants.append(ExtractedParticipant(entity=entity.lower(), role=role, entity_type=ent_type))
 
                 for a in raw_attributes:
                     if not isinstance(a, dict): continue
-                    attr = a.get("attribute", "has_attribute").strip().upper().replace(" ", "_")
-                    val = a.get("value", "").strip()
-                    ent_type = a.get("entity_type", "CONCEPT").strip().upper()
+                    
+                    attr = a.get("attribute", "has_attribute")
+                    if isinstance(attr, list): attr = ", ".join(str(v) for v in attr)
+                    attr = str(attr).strip().upper().replace(" ", "_")
+                    
+                    val = a.get("value", "")
+                    if isinstance(val, list): val = ", ".join(str(v) for v in val)
+                    val = str(val).strip()
+                    
+                    ent_type = str(a.get("entity_type", "CONCEPT")).strip().upper()
+                    
                     if val and len(val) >= 2:
                         attributes.append(ExtractedAttribute(attribute=attr, value=val.lower(), entity_type=ent_type))
 

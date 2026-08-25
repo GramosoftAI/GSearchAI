@@ -188,7 +188,6 @@ class RAGService:
 
             # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
             hybrid_merge_context = ""
-            sql_task = None
             if excel_kbs:
                 from app.core.parquet_ingester import ParquetIngester
                 from app.modules.rag.pandas_engine import PandasQueryEngine
@@ -214,6 +213,8 @@ class RAGService:
                 if active_paths:
                     import pyarrow.parquet as pq
                     
+                    schema_col_terms = set()
+                    schema_name_terms = set()
                     overlap = False
                     reason = "not_tabular"
                     
@@ -221,142 +222,164 @@ class RAGService:
                         overlap = True
                         reason = "only_kb_available"
                     else:
-                        # Fast schema overlap check for disambiguation (Stage 1.6)
+                        # Tabular Intent Refinement (Stage 1.6)
                         try:
                             schema = pq.read_schema(active_paths[0])
                             cols = [str(name).lower() for name in schema.names]
+                            
                             import re
                             query_terms = set(re.findall(r'[a-zA-Z0-9]+', query.lower()))
                             
-                            col_terms = set()
                             for c in cols:
-                                col_terms.update(re.findall(r'[a-zA-Z0-9]+', c))
-                            name_terms = set(re.findall(r'[a-zA-Z0-9]+', str(active_paths[0]).lower()))
+                                schema_col_terms.update(re.findall(r'[a-zA-Z0-9]+', c))
+                            schema_name_terms = set(re.findall(r'[a-zA-Z0-9]+', str(active_paths[0]).lower()))
                             
-                            term_overlap = len(query_terms & (col_terms | name_terms))
+                            term_overlap = len(query_terms & (schema_col_terms | schema_name_terms))
                             
-                            if term_overlap > 0:
+                            # ID Regex (e.g., EMP1006, INV2023)
+                            has_id_regex = bool(re.search(r'[a-zA-Z]{2,5}[0-9]{3,}', query))
+                            
+                            # Analytic verbs
+                            analytic_verbs = {"average", "total", "sum", "count", "list", "how many", "max", "min"}
+                            has_analytic_verb = bool(query_terms & analytic_verbs)
+                            
+                            # Final decision logic
+                            strict_schema_overlap = (
+                                has_id_regex or 
+                                term_overlap >= 2 or 
+                                (term_overlap == 1 and has_analytic_verb)
+                            )
+                            
+                            if strict_schema_overlap:
                                 overlap = True
-                                reason = f"schema_overlap (score: {term_overlap})"
+                                reason = f"strict_schema_overlap (score: {term_overlap}, id: {has_id_regex}, verb: {has_analytic_verb})"
+                                # FORCE tabular intent so pipeline.py intercepts it
+                                analysis.is_tabular = True
+                                logger.info(f"   -> Overriding analysis.is_tabular to True based on {reason}")
                             else:
                                 overlap = False
-                                reason = "zero_schema_overlap"
+                                reason = "weak_or_zero_schema_overlap"
                                 if analysis.is_tabular or getattr(analysis.metadata, "tabular_subquery", None):
-                                    logger.warning(f"Query is tabular intent, but 0 overlap with Parquet schema. Disambiguation failed. Bypassing DuckDB.")
+                                    logger.info("   -> LLM classified as TABULAR, but schema overlap was too weak. Trusting LLM but logging as ambiguous.")
                         except Exception as e:
                             logger.error(f"Fast schema check failed: {e}")
                             if analysis.is_tabular or getattr(analysis.metadata, "tabular_subquery", None):
                                 overlap = True # fallback
                                 reason = "schema_check_failed_but_tabular"
                             
-                    if overlap:
-                        logger.info(f"TELEMETRY: tabular_invoked=True, reason={reason}")
-                        engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
-                        sql_task = asyncio.create_task(engine.execute_query(query))
-                    else:
-                        logger.info(f"TELEMETRY: tabular_invoked=False, reason=no_schema_overlap")
-    
-            vector_task = None
-            if not skip_search and (doc_kbs or not excel_kbs):
-                logger.info("TELEMETRY: vector_invoked=True")
+                    # We no longer execute PandasQueryEngine here! We leave it to pipeline.py.
+                    logger.info(f"TELEMETRY: schema_overlap_evaluated, result={overlap}, reason={reason}")
+
+            context = None
+            is_composite = bool(getattr(analysis.metadata, "tabular_subquery", None)) and bool(getattr(analysis.metadata, "vector_subquery", None))
+            
+            if is_composite and not skip_search:
+                logger.info("TELEMETRY: composite_query_detected (Routing to BOTH tabular and vector engines)")
                 
-                async def wrapped_vector_query():
-                    logger.info(f"[TRACE_E2E] [ENTRY] RAGPipeline.query - Input: '{short_query}'")
+                tabular_subquery = analysis.metadata.tabular_subquery
+                vector_subquery = analysis.metadata.vector_subquery
+                
+                # Pre-strip the tabular subquery to drop non-schema clauses
+                import re
+                clauses = re.split(r'\s+and\s+|\s*,\s*', tabular_subquery.lower())
+                valid_clauses = []
+                analytic_verbs = {"average", "total", "sum", "count", "list", "how many", "max", "min"}
+                for clause in clauses:
+                    clause_terms = set(re.findall(r'[a-zA-Z0-9]+', clause))
+                    t_overlap = len(clause_terms & (schema_col_terms | schema_name_terms))
+                    c_id_regex = bool(re.search(r'[a-zA-Z]{2,5}[0-9]{3,}', clause))
+                    if c_id_regex or t_overlap >= 1: 
+                        valid_clauses.append(clause)
+                
+                stripped_tabular = " and ".join(valid_clauses) if valid_clauses else tabular_subquery
+                logger.info(f"Stripped composite tabular query: {tabular_subquery} -> {stripped_tabular}")
+
+                import copy
+                vec_analysis = copy.deepcopy(analysis)
+                vec_analysis.is_tabular = False 
+                
+                async def run_vector_leg(subq, name):
                     vec_start = time.time()
                     res = await self.pipeline.query(
-                        query=query,
+                        query=subq,
                         agent_id=agent_id,
                         kb_id=kb_ids,
                         user_id=user_id,
                         top_k=top_k,
                         max_depth=max_depth,
                         kb_context=kb_context,
-                        analysis=analysis
+                        analysis=vec_analysis
+                    )
+                    logger.info(f"[TRACE_E2E] [EXIT] RAGPipeline.query ({name}) - Latency: {time.time() - vec_start:.2f}s")
+                    return res
+                    
+                async def run_tabular_leg():
+                    tab_start = time.time()
+                    sql_res = await self.pipeline._execute_table_analytics(stripped_tabular, kb_ids)
+                    logger.info(f"[TRACE_E2E] [EXIT] _execute_table_analytics (Composite Tabular) - Latency: {time.time() - tab_start:.2f}s")
+                    return sql_res
+                    
+                gather_start = time.time()
+                try:
+                    res = await asyncio.gather(
+                        asyncio.wait_for(run_vector_leg(vector_subquery, "Vector-Only Subq"), timeout=_RAG_TIMEOUT_SECONDS),
+                        asyncio.wait_for(run_vector_leg(tabular_subquery, "Tabular-for-Vector Subq"), timeout=_RAG_TIMEOUT_SECONDS),
+                        asyncio.wait_for(run_tabular_leg(), timeout=30.0),
+                        return_exceptions=True
+                    )
+                    logger.info(f"TELEMETRY: Composite engines completed in {time.time() - gather_start:.2f}s")
+                    vec1_res, vec2_res, tab_res = res[0], res[1], res[2]
+                    
+                    merged_chunks = []
+                    if not isinstance(vec1_res, Exception) and vec1_res:
+                        merged_chunks.extend(vec1_res.chunks)
+                    if not isinstance(vec2_res, Exception) and vec2_res:
+                        merged_chunks.extend(vec2_res.chunks)
+                        
+                    if merged_chunks:
+                        # deduplicate chunks by chunk_id and sort by hybrid_score
+                        seen = set()
+                        deduped = []
+                        for c in merged_chunks:
+                            if c.chunk_id not in seen:
+                                seen.add(c.chunk_id)
+                                deduped.append(c)
+                        deduped.sort(key=lambda x: getattr(x, 'hybrid_score', 0), reverse=True)
+                        
+                        context = vec1_res if not isinstance(vec1_res, Exception) else vec2_res
+                        context.chunks = deduped
+                        
+                    if not isinstance(tab_res, Exception) and tab_res:
+                        unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                        if not any(sig in str(tab_res).lower() for sig in unmatched_signals):
+                            hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(tab_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                except Exception as e:
+                    logger.error(f"Composite Execution failed: {e}")
+                
+                skip_search = True
+                
+            elif not skip_search and (doc_kbs or not excel_kbs or excel_kbs):
+                logger.info("TELEMETRY: single_intent_invoked (Pipeline will handle SQL interception if tabular)")
+                
+                logger.info(f"[TRACE_E2E] [ENTRY] RAGPipeline.query - Input: '{short_query}'")
+                vec_start = time.time()
+                try:
+                    res = await asyncio.wait_for(
+                        self.pipeline.query(
+                            query=query,
+                            agent_id=agent_id,
+                            kb_id=kb_ids,
+                            user_id=user_id,
+                            top_k=top_k,
+                            max_depth=max_depth,
+                            kb_context=kb_context,
+                            analysis=analysis
+                        ),
+                        timeout=_RAG_TIMEOUT_SECONDS
                     )
                     vec_latency = time.time() - vec_start
                     logger.info(f"[TRACE_E2E] [EXIT] RAGPipeline.query - Output: {len(res.chunks) if res and res.chunks else 0} chunks - Latency: {vec_latency:.2f}s")
-                    return res
-                vector_task = asyncio.create_task(wrapped_vector_query())
-    
-            context = None
-            metadata_yielded = False
-            if excel_kbs and sql_task and vector_task:
-                logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
-                gather_start = time.time()
-                res = await asyncio.gather(vector_task, sql_task, return_exceptions=True)
-                logger.info(f"TELEMETRY: Parallel engines completed in {time.time() - gather_start:.2f}s")
-                context_res, sql_res = res[0], res[1]
-                
-                if not isinstance(context_res, Exception):
-                    context = context_res
-                    
-                    # Yield metadata immediately so the UI doesn't hang!
-                    metadata = {
-                        "type": "metadata",
-                        "sources": [
-                            {
-                                "chunk_id": c.chunk_id,
-                                "source": c.source,
-                                "score": round(c.hybrid_score, 3),
-                                "position": c.position,
-                                "reason": c.reason,
-                                "kb_id": c.kb_id,
-                                "content_type": getattr(c, "content_type", "original")
-                            }
-                            for c in context.chunks
-                        ],
-                        "triplets": [
-                            {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
-                            for t in (context.triplets or [])
-                        ],
-                        "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-                        "augmented_query": query,
-                        "authoritative_entities": context.authoritative_entities or []
-                    }
-                    yield json.dumps(metadata)
-                    metadata_yielded = True
-                else:
-                    logger.error(f"Parallel RAG Retrieval failed: {context_res}")
-                    yield json.dumps({"error": f"Retrieval failed: {str(context_res)}"})
-                    return
-    
-                if not isinstance(sql_res, Exception) and sql_res:
-                    unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                    if not any(sig in str(sql_res).lower() for sig in unmatched_signals):
-                        hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
-                elif isinstance(sql_res, Exception):
-                    logger.warning(f"Parallel TABULAR_SQL failed: {sql_res}")
-    
-            elif sql_task:
-                logger.info("Executing TABULAR_SQL standalone...")
-                tabular_start = time.time()
-                try:
-                    sql_res = await asyncio.wait_for(sql_task, timeout=30.0)
-                    logger.info(f"TELEMETRY: Standalone tabular engine completed in {time.time() - tabular_start:.2f}s")
-                    unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                    is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
-                    if is_unmatched:
-                        logger.info(f"Excel dataset lacked answer ({sql_res}).")
-                    else:
-                        yield json.dumps({
-                            "type": "metadata",
-                            "sources": [],
-                            "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
-                            "context_type": "duckdb_parquet"
-                        })
-                        yield str(sql_res)
-                        return
-                except Exception as e:
-                    logger.error(f"PandasQueryEngine stream failed: {e}")
-                    yield json.dumps({"error": str(e)})
-                    return
-    
-            elif vector_task:
-                logger.info("Executing VECTOR_DOCS standalone...")
-                vector_start = time.time()
-                try:
-                    context = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
-                    logger.info(f"TELEMETRY: Standalone vector engine completed in {time.time() - vector_start:.2f}s")
+                    context = res
                 except asyncio.TimeoutError:
                     logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
                     yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
@@ -365,7 +388,7 @@ class RAGService:
                     logger.error(f"RAG Retrieval failed for stream: {e}")
                     yield json.dumps({"error": f"Retrieval failed: {e}"})
                     return
-    
+                    
             skip_search = True  # Bypass redundant sequential search below
     
             if len(kb_ids) > 1:
@@ -553,6 +576,7 @@ class RAGService:
                     logger.info(f"Relevance Filter: Dropped {dropped} irrelevant chunks (score < {min_score}) to prevent hallucination.")
     
             # 3. Yield metadata first
+            metadata_yielded = False
             if not metadata_yielded:
                 if context:
                     for c in context.chunks:
@@ -624,12 +648,16 @@ class RAGService:
                         clean_triplet = clean_triplet[: clean_triplet.index("<think>")].strip()
         
                     if clean_triplet:
-                        logger.info(f"[DIRECT_EXTRACTION_OUTPUT] yielding clean_triplet length: {len(clean_triplet)}")
-                        yield clean_triplet
-                        has_direct_output = True
-        
+                        if is_extractive:
+                            logger.info(f"[DIRECT_EXTRACTION_OUTPUT] yielding clean_triplet length: {len(clean_triplet)}")
+                            yield clean_triplet
+                            has_direct_output = True
+                        elif is_table_analytics:
+                            logger.info(f"[TABLE_ANALYTICS] Mapping raw SQL output to hybrid_merge_context for Answer LLM")
+                            hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{clean_triplet}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                            
                     if has_direct_output:
-                        # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
+                        # Append source citation for EXTRACTIVE so the frontend source pills appear
                         # Use the kb object already fetched for metadata (line 661 scope)
                         try:
                             _src_name = (
@@ -645,7 +673,7 @@ class RAGService:
                         return
                     else:
                         logger.warning(
-                            f"[{context.search_type}] mode yielded no direct entities or triplets. Falling through to standard LLM chunk generation!"
+                            f"[{context.search_type}] mode yielded no direct entities or falling through to standard LLM chunk generation!"
                         )
                 except Exception as ex:
                     logger.error(f"[DIRECT_EXTRACTION_ERROR] Exception in direct extraction logic: {ex}", exc_info=True)
@@ -737,15 +765,10 @@ class RAGService:
             logger.info(f"[TRACE_E2E] [EXIT] ChatService.stream_rag_answer - Output: {chunk_count} chunks streamed - Latency: {trace_latency:.2f}s")
             
             current_task = asyncio.current_task()
-            tasks = (sql_task, vector_task, memory_task)
-            pending_tasks = [
-                task for task in tasks
-                if task is not None and task is not current_task and not task.done()
-            ]
-            for task in pending_tasks:
-                task.cancel()
-            if pending_tasks:
-                await asyncio.gather(*pending_tasks, return_exceptions=True)
+            
+            # memory_task is created earlier in the file (if it exists, cancel it)
+            if 'memory_task' in locals() and memory_task and not memory_task.done():
+                memory_task.cancel()
 
 
     async def generate_answer(

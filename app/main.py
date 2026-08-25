@@ -188,9 +188,16 @@ async def lifespan(app: FastAPI):
 
 
         logger.info("=" * 80)
+        
+        # Trigger background KB Summary backfill for legacy files
+        try:
+            from scripts.backfill_kb_summaries import main as backfill_kbs
+            logger.info("[STARTUP] Triggering background KB Summary Backfill process...")
+            asyncio.create_task(backfill_kbs())
+        except Exception as e:
+            logger.error(f"[STARTUP] Failed to trigger background KB backfill: {e}")
 
         logger.info("[STARTUP] Application startup COMPLETE")
-
         logger.info(f"[STARTUP] API available at: http://{settings.host}:{settings.port}")
 
         logger.info(f"[STARTUP] Swagger docs at: http://{settings.host}:{settings.port}/docs")

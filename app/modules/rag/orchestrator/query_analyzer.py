@@ -69,7 +69,7 @@ class QueryAnalyzer:
 
         # Fast-Path 2: Deterministic tabular property lookups
         is_tabular_override = False
-        tabular_pattern = r'\b(what is|find|get|give me|show)\b.*\b(hsn|mrp|price|cost|gst|tax|rate|part number|sku)\b'
+        tabular_pattern = r'\b(what is|find|get|give me|show)\b.*\b(salary|age|count|employee id|email)\b'
         if re.search(tabular_pattern, q_strip, re.IGNORECASE):
             is_tabular_override = True
 
@@ -96,7 +96,7 @@ You must dynamically analyze the underlying intent of the user's query rather th
 
 CRITICAL TASK: TABULAR VS VECTOR CLASSIFICATION
 You must output an `is_tabular` boolean field in the JSON root.
-- Set `is_tabular` to true if the query is seeking structured data, lists of entities, counts, aggregates, sums, averages, or specific database records/property lookups (e.g. "what is the HSN code for X", "what is the MRP of Y", "how many rows", "what is David's email", "list of companies in Chennai", "what is the total salary").
+- Set `is_tabular` to true if the query is seeking structured data, lists of entities, counts, aggregates, sums, averages, or specific database records/property lookups (e.g. "how many rows", "what is David's email", "list of companies in Chennai", "what is the total salary").
 - Set `is_tabular` to false if the query is purely conversational, seeking unstructured text, biography, background info, or asking about a topic not stored in spreadsheet columns (e.g. "who is vijay", "tell me about Smackcoders", "what did we discuss", "explain quantum computing").
 
 CRITICAL TASK: COMPOSITE QUERY DECOMPOSITION & CO-REFERENCE RESOLUTION

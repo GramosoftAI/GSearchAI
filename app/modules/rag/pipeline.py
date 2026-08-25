@@ -352,6 +352,67 @@ class RAGPipeline:
 
 
 
+    async def _execute_semantic_file_gate(self, query_embedding: List[float], kb_ids: List[str]) -> List[str]:
+        """
+        Filters the initial kb_ids down to only highly relevant KBs using a 
+        gap-based cosine similarity check against KB summary embeddings.
+        Unbackfilled KBs are safely passed through to avoid missing evidence.
+        """
+        import time
+        trace_start = time.time()
+        
+        kb_scores = []
+        unbackfilled_kbs = []
+        
+        for kb_id in kb_ids:
+            kb_meta = self._kb_metadata.get(str(kb_id), {})
+            summary_emb = kb_meta.get("summary_embedding")
+            
+            if summary_emb is None:
+                unbackfilled_kbs.append(kb_id)
+                continue
+                
+            from app.core.embeddings import EmbeddingGenerator
+            score = EmbeddingGenerator.cosine_similarity(query_embedding, summary_emb)
+            kb_scores.append({"kb_id": kb_id, "score": score})
+
+        # Sort descending by similarity
+        kb_scores.sort(key=lambda x: x["score"], reverse=True)
+        logger.info(f"[GATE_FLOW_MARKER] KB Scores: {kb_scores}")
+        
+        # If all KBs were unbackfilled, return them all instantly
+        if not kb_scores:
+            logger.info(f"[GATE_FLOW_MARKER] All {len(kb_ids)} KBs unbackfilled. Passing through.")
+            return unbackfilled_kbs
+            
+        top_score = kb_scores[0]["score"]
+        
+        # Absolute minimum threshold to prevent completely irrelevant files from being routed
+        if top_score < 0.60:
+            logger.info(f"[GATE_FLOW_MARKER] Top score {top_score:.3f} is below minimum threshold of 0.60. Selecting 0 KBs.")
+            return unbackfilled_kbs
+            
+        final_kbs = unbackfilled_kbs.copy()
+            
+        # Gap-based Top-N Selection
+        GAP_THRESHOLD = 0.05 
+        selected_kbs = []
+        
+        for item in kb_scores:
+            gap = top_score - item["score"]
+            if gap <= GAP_THRESHOLD:
+                selected_kbs.append(item["kb_id"])
+            else:
+                break
+                
+        # Unconditionally add unbackfilled KBs
+        final_kbs = selected_kbs + unbackfilled_kbs
+        
+        latency = time.time() - trace_start
+        logger.info(f"[GATE_FLOW_MARKER] Gate complete. Selected {len(selected_kbs)} (scored) + {len(unbackfilled_kbs)} (unbackfilled) / {len(kb_ids)} total KBs. Top score: {top_score:.2f}, Cutoff gap: {GAP_THRESHOLD}. Latency: {latency:.2f}s")
+        
+        return final_kbs
+
     async def query(
 
 
@@ -515,14 +576,15 @@ class RAGPipeline:
                     from app.modules.knowledge_bases.models import KnowledgeBase
                     from sqlalchemy import select
                     from uuid import UUID
-                    stmt = select(KnowledgeBase.id, KnowledgeBase.name, KnowledgeBase.total_chunks).where(
+                    stmt = select(KnowledgeBase.id, KnowledgeBase.name, KnowledgeBase.total_chunks, KnowledgeBase.summary_embedding).where(
                         KnowledgeBase.id.in_([UUID(kbid) if isinstance(kbid, str) else kbid for kbid in kb_ids])
                     )
                     res = await self.db.execute(stmt)
                     for row in res.all():
                         self._kb_metadata[str(row.id)] = {
                             "name": row.name,
-                            "total_chunks": row.total_chunks
+                            "total_chunks": row.total_chunks,
+                            "summary_embedding": row.summary_embedding
                         }
                 except Exception as e:
                     logger.error(f"Error prefetching KB metadata: {e}")
@@ -540,6 +602,26 @@ class RAGPipeline:
         analysis = await analyzer_task
         if kb_metadata_task:
             await kb_metadata_task
+
+        # Wait for the embedding so we can use it for the routing gate
+        # (It will also be cached/reused in the structured queries loop)
+        original_query_embedding, _ = await embedding_task
+        
+        # Execute Semantic File Routing Gate
+        filtered_kb_ids = await self._execute_semantic_file_gate(original_query_embedding, kb_ids)
+        
+        if not filtered_kb_ids:
+            logger.info("File Routing Gate determined no relevant files. Fast failing to insufficient knowledge.")
+            return RAGContext(
+                query=query,
+                chunks=[],
+                entity_mentions={},
+                total_tokens=0,
+                search_type="INSUFFICIENT_KNOWLEDGE"
+            )
+            
+        # Overwrite the pipeline's kb_ids with the filtered list
+        kb_ids = filtered_kb_ids
 
         # Preserve the original query as an immutable reference throughout this pipeline run
         original_query = query
@@ -2333,28 +2415,26 @@ class RAGPipeline:
             await log_attempt(0)
             return None
 
-        # --- STAGE 1.6: DISAMBIGUATION SCOPING GATE ---
-        if len(kb_rows) > 1:
+        # --- DEFINITIVE FIX: Filter to Excel KBs BEFORE disambiguation ---
+        excel_kb_rows = [r for r in kb_rows if getattr(r, 'description', '') == 'excel_parquet']
+        
+        if not excel_kb_rows:
+            logger.warning(f"No excel_parquet KBs found among {len(kb_rows)} total KBs for table analytics.")
+            await log_attempt(0)
+            return None
+
+        # --- STAGE 1.6: DISAMBIGUATION SCOPING GATE (Only for Spreadsheets) ---
+        if len(excel_kb_rows) > 1:
             try:
-                selected_kb = self._disambiguate_tables(query, kb_rows)
-                kb_rows = [selected_kb]
-                logger.info(f" Disambiguated {len(kb_rows)} candidate KBs down to {selected_kb.name}")
+                selected_kb = self._disambiguate_tables(query, excel_kb_rows)
+                excel_kb_rows = [selected_kb]
+                logger.info(f" Disambiguated multiple candidate spreadsheets down to {selected_kb.name}")
             except self.AmbiguousTableError as e:
                 logger.warning(f" Ambiguous table routing for '{query}': {e}. Falling back to SEMANTIC.")
                 await log_attempt(0)
                 return None
-            
-        kb_names = {str(r.id): r.name for r in kb_rows}
-        # --- DEFINITIVE FIX: Use ParquetIngester registry to resolve local parquet path ---
-        # The CSV ingestion pipeline converts CSV->Parquet and registers the path in
-        # data/parquet/active_datasets.json under the key kb.parsed_path (e.g. 'dummy_employees_details').
-        # kb.description == 'excel_parquet' is the authoritative flag for spreadsheet KBs.
-        # We must NOT check s3_path for .csv - the S3 bucket is private (403 Forbidden).
-        # This is the same pattern used in service.py lines 130-145.
         from app.core.parquet_ingester import ParquetIngester
-
-        excel_kb_rows = [r for r in kb_rows if getattr(r, 'description', '') == 'excel_parquet']
-        non_excel_rows = [r for r in kb_rows if getattr(r, 'description', '') != 'excel_parquet']
+        kb_names = {str(r.id): r.name for r in kb_rows}
 
         # 1.5. HYBRID PANDAS ENGINE ROUTING FOR SPREADSHEET (PARQUET) FILES
         if excel_kb_rows:

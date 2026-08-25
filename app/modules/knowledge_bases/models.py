@@ -101,6 +101,10 @@ class KnowledgeBase(Base):
     # ============= STATUS =============
     is_active = Column(Boolean, default=True, nullable=False)
 
+    # ============= SEMANTIC ROUTING =============
+    from pgvector.sqlalchemy import Vector
+    summary_embedding = Column(Vector(4096), nullable=True)
+
     # ============= SOFT DELETE TRACKING =============
     deleted_at = Column(
         DateTime(timezone=True),

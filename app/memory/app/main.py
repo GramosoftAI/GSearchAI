@@ -88,14 +88,16 @@ _DELETE_PATTERNS = re.compile(
 )
 
 _QUESTION_INDICATOR = re.compile(
-    r"^\s*(what|how|when|where|why|who|which|is|are|do|does|did|can|could|would|will)\b|\?\s*$",
+    r"^\s*(what|how|when|where|why|who|which|is|are|do|does|did|can|could|would|will)\b|"
+    r"(?:,|\band\b|\bor\b)\s*(what|how|when|where|why|who|which)\b|"
+    r"\?\s*$",
     re.IGNORECASE,
 )
 
 # Broadened dynamic regex parser pattern for fallback key-value extraction
 _DYNAMIC_FACT_PATTERN = re.compile(
     r".*?\b(?:my\s+)?"
-    r"(?P<key>(?:(?:(?!and\b|where\b|or\b|,)[a-zA-Z0-9_\-']+)\s*){1,4}?)\s+"
+    r"(?P<key>(?:(?:(?!and\b|where\b|or\b|what\b|how\b|when\b|why\b|who\b|which\b|,)[a-zA-Z0-9_\-']+)\s*){1,4}?)\s+"
     r"(?:is|are|=|:|was|not\s+.*?\s+(?:it'?s|into|to)|to|into|changed?\s+to|upgraded?\s+to|upgrad\s+into)\s+"
     r"(?P<value>(?:(?:(?!is\b|are\b|was\b|and\b|where\b|or\b|,)[a-zA-Z0-9%\s_\-'\.])\s*)+)",
     re.IGNORECASE,
@@ -126,8 +128,8 @@ def _is_deterministic_preference_statement(query: str) -> bool:
         return False
     if _PREFERENCE_PATTERNS.search(query):
         return True
-    if _DYNAMIC_FACT_PATTERN.search(query):
-        return True
+    # if _DYNAMIC_FACT_PATTERN.search(query):
+    #     return True
     return False
 
 
