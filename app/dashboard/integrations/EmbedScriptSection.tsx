@@ -21,7 +21,7 @@ import {
   DislikeOutlined,
   CustomerServiceOutlined,
 } from "@ant-design/icons";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { SiCrowdsource } from "react-icons/si";
 import axios from "axios";
 import AgentList from "../../components/ui/AgentList";
@@ -106,6 +106,9 @@ export default function EmbedScriptSection() {
   const [agent, setAgent] = useState<{ id: string; name: string } | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [getAgents] = useAxios<AgentListResponse>({ endpoint: "GETAGENTLIST", hideErrorMsg: true });
+  const [getWidgetConfig] = useAxios({ endpoint: "GET_WIDGET_CONFIG", hideErrorMsg: true });
+  const [saveWidgetConfig] = useAxios({ endpoint: "SAVE_WIDGET_CONFIG", hideErrorMsg: false });
+  const [expectedVersion, setExpectedVersion] = useState<number>(1);
 
   
   const [chatType, setChatType] = useState<"icon" | "search">("icon");
@@ -211,48 +214,128 @@ export default function EmbedScriptSection() {
     return token;
   };
 
-  useEffect(() => {
-    const fetchEmbedCustomization = async () => {
-      try {
-        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
-        const token = getAuthToken();
-        const authHeader = token ? (token.startsWith("Bearer ") ? token : `Bearer ${token}`) : "";
+  const resetToDefaults = () => {
+    setChatType("icon");
+    setPosition("center");
+    setPlaceholderText("Ask about web scraping, Zyte API, anything data extraction...");
+    setThemeColor("#0fb5a1");
+    setThemeTextColor("#ffffff");
+    setBtnBgColor("#0fb5a1");
+    setBtnBorderColor("#0fb5a1");
+    setHeaderLogo(LOGO_PRESET_DARK);
+    setHeaderAlignment("center");
+    setHeaderName("Gsearch AI");
+    setHeaderSubtext("The team can also help");
+    setBotAvatar("chat");
+    setAgentLabel("Agent");
+    setButtonIcon("chat");
+    setButtonAlignment("right");
+    setShowButtonText(true);
+    setButtonText("Help");
+    setInitialMessage("Hi! I'm your AI Support Agent. How can I help you today?");
+    setDisplaySources(true);
+    setAllowDownloads(false);
+    setDisplayCopyBtn(true);
+    setDisplayFeedback(true);
+    setLinkSafety(true);
+    setLeadCollection(false);
+    setLeadFields("name,email");
+    setLeadTiming("pre-chat");
+    setEscalationEnabled(false);
+    setEscalationLink("");
+    setShowInHeader(true);
+    setShowInChat(true);
+    setShowInEmbed(false);
 
-        const tenantId = localStorage.getItem("tenantId") || agentresp?.[0]?.tenant_id || "default_tenant";
-        const res = await fetch(`${baseUrl}/embed/customization?tenant_id=${tenantId}`, {
-          headers: authHeader ? { Authorization: authHeader } : {},
-          credentials: "include"
-        });
+    // Drafts
+    setDraftChatType("icon");
+    setDraftPosition("center");
+    setDraftPlaceholderText("Ask about web scraping, Zyte API, anything data extraction...");
+    setDraftThemeColor("#0fb5a1");
+    setDraftThemeTextColor("#ffffff");
+    setDraftBtnBgColor("#0fb5a1");
+    setDraftBtnBorderColor("#0fb5a1");
+    setDraftHeaderLogo(LOGO_PRESET_DARK);
+    setDraftHeaderAlignment("center");
+    setDraftHeaderName("Gsearch AI");
+    setDraftHeaderSubtext("The team can also help");
+    setDraftBotAvatar("chat");
+    setDraftAgentLabel("Agent");
+    setDraftButtonIcon("chat");
+    setDraftButtonAlignment("right");
+    setDraftShowButtonText(true);
+    setDraftButtonText("Help");
+    setDraftInitialMessage("Hi! I'm your AI Support Agent. How can I help you today?");
+    setDraftDisplaySources(true);
+    setDraftAllowDownloads(false);
+    setDraftDisplayCopyBtn(true);
+    setDraftDisplayFeedback(true);
+    setDraftLinkSafety(true);
+    setDraftLeadCollection(false);
+    setDraftLeadFields("name,email");
+    setDraftLeadTiming("pre-chat");
+    setDraftEscalationEnabled(false);
+    setDraftEscalationLink("");
+    setDraftShowInHeader(true);
+    setDraftShowInChat(true);
+    setDraftShowInEmbed(false);
+  };
 
-        if (res.ok) {
-          const result = await res.json();
-          const data = result.data ?? result;
-          if (data) {
-            if (data.logo_url) {
-              const proxyUrl = toProxyLogoUrl(data.logo_url);
-              setHeaderLogo(proxyUrl);
-              setDraftHeaderLogo(proxyUrl);
-            }
-            if (typeof data.show_in_header === "boolean") {
-              setShowInHeader(data.show_in_header);
-              setDraftShowInHeader(data.show_in_header);
-            }
-            if (typeof data.show_in_chat === "boolean") {
-              setShowInChat(data.show_in_chat);
-              setDraftShowInChat(data.show_in_chat);
-            }
-            if (typeof data.show_in_embed === "boolean") {
-              setShowInEmbed(data.show_in_embed);
-              setDraftShowInEmbed(data.show_in_embed);
-            }
-          }
+  const fetchWidgetConfig = useCallback((agentId: string) => {
+    getWidgetConfig({ path: `/${agentId}` }, (payload) => {
+      if (payload?.success && payload?.data && payload?.data.exists) {
+        const data = payload.data;
+        setExpectedVersion(data.version || 1);
+
+        if (data.theme_color) { setThemeColor(data.theme_color); setDraftThemeColor(data.theme_color); }
+        if (data.theme_text_color) { setThemeTextColor(data.theme_text_color); setDraftThemeTextColor(data.theme_text_color); }
+        if (data.btn_bg_color) { setBtnBgColor(data.btn_bg_color); setDraftBtnBgColor(data.btn_bg_color); }
+        if (data.btn_border_color) { setBtnBorderColor(data.btn_border_color); setDraftBtnBorderColor(data.btn_border_color); }
+        if (data.header_logo) { setHeaderLogo(data.header_logo); setDraftHeaderLogo(data.header_logo); }
+        if (data.header_align) { setHeaderAlignment(data.header_align); setDraftHeaderAlignment(data.header_align); }
+        if (data.header_name) { setHeaderName(data.header_name); setDraftHeaderName(data.header_name); }
+        if (data.header_subtext) { setHeaderSubtext(data.header_subtext); setDraftHeaderSubtext(data.header_subtext); }
+        if (data.agent_label) { setAgentLabel(data.agent_label); setDraftAgentLabel(data.agent_label); }
+        if (data.bot_avatar) { setBotAvatar(data.bot_avatar); setDraftBotAvatar(data.bot_avatar); }
+        if (data.chat_type) { setChatType(data.chat_type); setDraftChatType(data.chat_type); }
+        if (data.position) { setPosition(data.position); setDraftPosition(data.position); }
+        if (data.placeholder_text) { setPlaceholderText(data.placeholder_text); setDraftPlaceholderText(data.placeholder_text); }
+        if (data.button_icon) { setButtonIcon(data.button_icon); setDraftButtonIcon(data.button_icon); }
+        if (data.button_align) { setButtonAlignment(data.button_align); setDraftButtonAlignment(data.button_align); }
+        if (typeof data.show_button_text === "boolean") { setShowButtonText(data.show_button_text); setDraftShowButtonText(data.show_button_text); }
+        if (data.button_text) { setButtonText(data.button_text); setDraftButtonText(data.button_text); }
+        if (data.initial_message) { setInitialMessage(data.initial_message); setDraftInitialMessage(data.initial_message); }
+        if (typeof data.display_sources === "boolean") { setDisplaySources(data.display_sources); setDraftDisplaySources(data.display_sources); }
+        if (typeof data.allow_downloads === "boolean") { setAllowDownloads(data.allow_downloads); setDraftAllowDownloads(data.allow_downloads); }
+        if (typeof data.display_copy === "boolean") { setDisplayCopyBtn(data.display_copy); setDraftDisplayCopyBtn(data.display_copy); }
+        if (typeof data.display_feedback === "boolean") { setDisplayFeedback(data.display_feedback); setDraftDisplayFeedback(data.display_feedback); }
+        if (typeof data.link_safety === "boolean") { setLinkSafety(data.link_safety); setDraftLinkSafety(data.link_safety); }
+        if (typeof data.lead_collection === "boolean") { setLeadCollection(data.lead_collection); setDraftLeadCollection(data.lead_collection); }
+        if (data.lead_fields) {
+          const formattedFields = Array.isArray(data.lead_fields) ? data.lead_fields.join(",") : data.lead_fields;
+          setLeadFields(formattedFields);
+          setDraftLeadFields(formattedFields);
         }
-      } catch (err) {
-        console.warn("Failed to fetch customization:", err);
+        if (data.lead_timing) { setLeadTiming(data.lead_timing); setDraftLeadTiming(data.lead_timing); }
+        if (typeof data.escalation_enabled === "boolean") { setEscalationEnabled(data.escalation_enabled); setDraftEscalationEnabled(data.escalation_enabled); }
+        if (data.escalation_link) { setEscalationLink(data.escalation_link); setDraftEscalationLink(data.escalation_link); }
+        if (typeof data.show_in_header === "boolean") { setShowInHeader(data.show_in_header); setDraftShowInHeader(data.show_in_header); }
+        if (typeof data.show_in_chat === "boolean") { setShowInChat(data.show_in_chat); setDraftShowInChat(data.show_in_chat); }
+        if (typeof data.show_in_embed === "boolean") { setShowInEmbed(data.show_in_embed); setDraftShowInEmbed(data.show_in_embed); }
+      } else {
+        resetToDefaults();
+        setExpectedVersion(1);
       }
-    };
-    fetchEmbedCustomization();
-  }, []);
+    });
+  }, [getWidgetConfig]);
+
+  useEffect(() => {
+    if (agent?.id) {
+      fetchWidgetConfig(agent.id);
+    } else {
+      resetToDefaults();
+    }
+  }, [agent?.id, fetchWidgetConfig]);
 
   const [previewMessages, setPreviewMessages] = useState<any[]>([]);
   const [previewInput, setPreviewInput] = useState("");
@@ -317,6 +400,13 @@ export default function EmbedScriptSection() {
   }, [draftChatType, draftPosition]);
 
   const openCustomizer = () => {
+    if (!agent?.id) {
+      notification.warning({
+        message: "Select an Agent",
+        description: "Please select an agent before customizing the widget.",
+      });
+      return;
+    }
     setDraftChatType(chatType);
     setDraftPosition(position);
     setDraftPlaceholderText(placeholderText);
@@ -358,101 +448,99 @@ export default function EmbedScriptSection() {
 
  
   const handleApply = async () => {
-    setChatType(draftChatType);
-    setPosition(draftPosition);
-    setPlaceholderText(draftPlaceholderText);
-    setThemeColor(draftThemeColor);
-    setThemeTextColor(draftThemeTextColor);
-    setBtnBgColor(draftBtnBgColor);
-    setBtnBorderColor(draftBtnBorderColor);
-    setHeaderLogo(draftHeaderLogo);
-    setHeaderAlignment(draftHeaderAlignment);
-    setHeaderName(draftHeaderName);
-    setHeaderSubtext(draftHeaderSubtext);
-    setBotAvatar(draftBotAvatar);
-    setAgentLabel(draftAgentLabel);
-    setButtonIcon(draftButtonIcon);
-    setButtonAlignment(draftButtonAlignment);
-    setShowButtonText(draftShowButtonText);
-    setButtonText(draftButtonText);
-
-    setShowInHeader(draftShowInHeader);
-    setShowInChat(draftShowInChat);
-    setShowInEmbed(draftShowInEmbed);
-
-    setInitialMessage(draftInitialMessage);
-    setDisplaySources(draftDisplaySources);
-    setAllowDownloads(draftAllowDownloads);
-    setDisplayCopyBtn(draftDisplayCopyBtn);
-    setDisplayFeedback(draftDisplayFeedback);
-    setLinkSafety(draftLinkSafety);
-
-    setLeadCollection(draftLeadCollection);
-    setLeadFields(draftLeadFields);
-    setLeadTiming(draftLeadTiming);
-    setEscalationEnabled(draftEscalationEnabled);
-    setEscalationLink(draftEscalationLink);
-
-    try {
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
-      const token = getAuthToken();
-      const authHeader = token ? (token.startsWith("Bearer ") ? token : `Bearer ${token}`) : "";
-      const tenantId = localStorage.getItem("tenantId") || agentresp?.[0]?.tenant_id || "default_tenant";
-
-      await fetch(`${baseUrl}/embed/customization`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: authHeader,
-        },
-        credentials: "include",
-        body: JSON.stringify({
-          logo_url: draftHeaderLogo || "",
-          show_in_header: draftShowInHeader,
-          show_in_chat: draftShowInChat,
-          show_in_embed: draftShowInEmbed
-        })
+    if (!agent?.id) {
+      notification.warning({
+        message: "Select an Agent",
+        description: "Please select an agent before applying widget configuration.",
       });
-
-      const getRes = await fetch(`${baseUrl}/embed/customization?tenant_id=${tenantId}`, {
-        method: "GET",
-        headers: {
-          ...(authHeader ? { Authorization: authHeader } : {})
-        },
-        credentials: "include"
-      });
-      if (getRes.ok) {
-        const result = await getRes.json();
-        const data = result.data ?? result;
-        if (data) {
-          if (data.logo_url) {
-            const proxyUrl = toProxyLogoUrl(data.logo_url);
-            setHeaderLogo(proxyUrl);
-            setDraftHeaderLogo(proxyUrl);
-          }
-          if (typeof data.show_in_header === "boolean") {
-            setShowInHeader(data.show_in_header);
-            setDraftShowInHeader(data.show_in_header);
-          }
-          if (typeof data.show_in_chat === "boolean") {
-            setShowInChat(data.show_in_chat);
-            setDraftShowInChat(data.show_in_chat);
-          }
-          if (typeof data.show_in_embed === "boolean") {
-            setShowInEmbed(data.show_in_embed);
-            setDraftShowInEmbed(data.show_in_embed);
-          }
-        }
-      }
-    } catch (err) {
-      console.warn("Failed to persist or fetch customization API:", err);
+      return;
     }
 
-    setIsCustomizerOpen(false);
-    notification.success({
-      message: "Widget Configuration Applied",
-      description: "All header, content, bot avatar, entry button, and styling attributes have been updated.",
-      placement: "topRight",
+    const leadFieldsArray = draftLeadFields.split(",").map(f => f.trim()).filter(Boolean);
+    const savePayload = {
+      agent_id: agent.id,
+      expected_version: expectedVersion,
+      change_reason: "Dashboard customizer apply",
+      theme_color: draftThemeColor,
+      theme_text_color: draftThemeTextColor,
+      btn_bg_color: draftBtnBgColor,
+      btn_border_color: draftBtnBorderColor,
+      header_logo: draftHeaderLogo,
+      header_align: draftHeaderAlignment,
+      header_name: draftHeaderName,
+      header_subtext: draftHeaderSubtext,
+      agent_label: draftAgentLabel,
+      bot_avatar: draftBotAvatar,
+      chat_type: draftChatType,
+      position: draftPosition,
+      placeholder_text: draftPlaceholderText,
+      button_icon: draftButtonIcon,
+      button_align: draftButtonAlignment,
+      show_button_text: draftShowButtonText,
+      button_text: draftButtonText,
+      initial_message: draftInitialMessage,
+      display_sources: draftDisplaySources,
+      allow_downloads: draftAllowDownloads,
+      display_copy: draftDisplayCopyBtn,
+      display_feedback: draftDisplayFeedback,
+      link_safety: draftLinkSafety,
+      lead_collection: draftLeadCollection,
+      lead_fields: leadFieldsArray,
+      lead_timing: draftLeadTiming,
+      escalation_enabled: draftEscalationEnabled,
+      escalation_link: draftEscalationLink,
+      show_in_header: draftShowInHeader,
+      show_in_chat: draftShowInChat,
+      show_in_embed: draftShowInEmbed
+    };
+
+    saveWidgetConfig({ data: savePayload }, (responsePayload) => {
+      if (responsePayload?.success) {
+        setChatType(draftChatType);
+        setPosition(draftPosition);
+        setPlaceholderText(draftPlaceholderText);
+        setThemeColor(draftThemeColor);
+        setThemeTextColor(draftThemeTextColor);
+        setBtnBgColor(draftBtnBgColor);
+        setBtnBorderColor(draftBtnBorderColor);
+        setHeaderLogo(draftHeaderLogo);
+        setHeaderAlignment(draftHeaderAlignment);
+        setHeaderName(draftHeaderName);
+        setHeaderSubtext(draftHeaderSubtext);
+        setBotAvatar(draftBotAvatar);
+        setAgentLabel(draftAgentLabel);
+        setButtonIcon(draftButtonIcon);
+        setButtonAlignment(draftButtonAlignment);
+        setShowButtonText(draftShowButtonText);
+        setButtonText(draftButtonText);
+
+        setShowInHeader(draftShowInHeader);
+        setShowInChat(draftShowInChat);
+        setShowInEmbed(draftShowInEmbed);
+
+        setInitialMessage(draftInitialMessage);
+        setDisplaySources(draftDisplaySources);
+        setAllowDownloads(draftAllowDownloads);
+        setDisplayCopyBtn(draftDisplayCopyBtn);
+        setDisplayFeedback(draftDisplayFeedback);
+        setLinkSafety(draftLinkSafety);
+
+        setLeadCollection(draftLeadCollection);
+        setLeadFields(draftLeadFields);
+        setLeadTiming(draftLeadTiming);
+        setEscalationEnabled(draftEscalationEnabled);
+        setEscalationLink(draftEscalationLink);
+
+        setIsCustomizerOpen(false);
+        notification.success({
+          message: "Widget Configuration Saved",
+          description: "All style and branding attributes have been updated successfully.",
+          placement: "topRight",
+        });
+
+        // Trigger GET API call to refresh settings
+        fetchWidgetConfig(agent.id);
+      }
     });
   };
 

@@ -120,6 +120,14 @@ export const endpoints = {
   URL_SELECT: {
     url: "/agents",
     method: methods.post,
+  },
+  GET_WIDGET_CONFIG: {
+    url: "/embed/configs",
+    method: methods.get,
+  },
+  SAVE_WIDGET_CONFIG: {
+    url: "/embed/configs",
+    method: methods.post,
   }
 } as const;
 

@@ -1034,6 +1034,16 @@ export default function ChatPlaygroundPage() {
   const [activeExcelSheet, setActiveExcelSheet] = useState<string>("");
   const [excelPage, setExcelPage] = useState<number>(1);
   const excelArrayBufferRef = useRef<ArrayBuffer | null>(null);
+  const chatInputRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!isTyping && wsStatus === "open" && agent) {
+      const timer = setTimeout(() => {
+        chatInputRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isTyping, wsStatus, agent]);
 
   const resetChatStates = () => {
     setIsTyping(false);
@@ -2999,6 +3009,7 @@ export default function ChatPlaygroundPage() {
            
             <div className="w-full">
               <Input.TextArea
+                ref={chatInputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}

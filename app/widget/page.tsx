@@ -1377,7 +1377,7 @@ function WidgetContent() {
 
   const initialQuerySentRef = useRef(false);
   const pendingQueryRef = useRef("");
-  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const wsDoneRef = useRef(false);
   const currentMsgIdRef = useRef<string | null>(null);
@@ -1519,14 +1519,7 @@ function WidgetContent() {
     }
   }, [isTyping, chatType]);
 
-  // Auto-grow textarea height on value change
-  useEffect(() => {
-    const textarea = inputRef.current;
-    if (!textarea) return;
-    textarea.style.height = "20px";
-    const newHeight = Math.min(120, textarea.scrollHeight);
-    textarea.style.height = `${newHeight}px`;
-  }, [input]);
+  // Single-line input, no auto-grow needed
 
   useEffect(() => {
     if (typeof document !== "undefined") {
@@ -1572,7 +1565,10 @@ function WidgetContent() {
 
   useEffect(() => {
     if (!isTyping && chatType !== "search") {
-      inputRef.current?.focus();
+      const timer = setTimeout(() => {
+        inputRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
     }
   }, [isTyping, chatType]);
 
@@ -2639,7 +2635,8 @@ function WidgetContent() {
               borderRadius: "24px",
               padding: "6px 8px 6px 18px",
               gap: "12px",
-              height: "46px",
+              minHeight: "46px",
+              height: "auto",
               boxSizing: "border-box",
             }}
           >
@@ -2651,19 +2648,19 @@ function WidgetContent() {
               </svg>
             </span>
 
-            <textarea
+            <input
               ref={inputRef}
+              type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (e.key === "Enter") {
                   e.preventDefault();
                   if (!isTyping && input.trim()) handleSend();
                 }
               }}
               placeholder={placeholder}
               disabled={isTyping}
-              rows={1}
               style={{
                 flex: 1,
                 padding: "0",
@@ -2673,7 +2670,6 @@ function WidgetContent() {
                 fontSize: "14px",
                 outline: "none",
                 cursor: isTyping ? "not-allowed" : "text",
-                resize: "none",
                 height: "20px",
                 // fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
                 lineHeight: "20px",

@@ -39,6 +39,15 @@
     buttonBottom = buttonBottom + "px";
   }
 
+  let userInteracted = false;
+  const setInteracted = () => {
+    userInteracted = true;
+    window.removeEventListener("mousedown", setInteracted, { capture: true });
+    window.removeEventListener("keydown", setInteracted, { capture: true });
+  };
+  window.addEventListener("mousedown", setInteracted, { capture: true });
+  window.addEventListener("keydown", setInteracted, { capture: true });
+
   // Lead Collection & Support Escalation Attributes
   const leadCollection = script.getAttribute("data-lead-collection") || "false";
   const leadFields = script.getAttribute("data-lead-fields") || "";
@@ -499,13 +508,11 @@
         const wasDisabled = searchInput.disabled;
         searchInput.disabled = isBotTyping;
         searchInput.style.cursor = isBotTyping ? "not-allowed" : "text";
-        if (isBotTyping) {
-          searchInput.placeholder = "Agent is typing...";
-        } else {
-          searchInput.placeholder = placeholder;
-          if (wasDisabled) {
+        searchInput.placeholder = placeholder;
+        if (!isBotTyping) {
+          setTimeout(() => {
             searchInput.focus();
-          }
+          }, 100);
         }
       }
       if (searchSendBtn) {
@@ -596,6 +603,12 @@
     `;
 
     searchInput.onfocus = () => {
+      if (!userInteracted) return;
+      searchGlowContainer.classList.add("active");
+      openIframe("");
+    };
+    searchInput.onclick = () => {
+      userInteracted = true;
       searchGlowContainer.classList.add("active");
       openIframe("");
     };
