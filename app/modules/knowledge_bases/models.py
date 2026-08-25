@@ -91,10 +91,6 @@ class KnowledgeBase(Base):
     noisy_words = Column(JSONB, nullable=True)
     noisy_words_generated_at = Column(DateTime(timezone=True), nullable=True)
 
-    # ============= LANGUAGE CONFIGURATION =============
-    from sqlalchemy.dialects.postgresql import REGCONFIG, TSVECTOR
-    language = Column(REGCONFIG, nullable=False, server_default="english")
-
     # ============= CONTENT TRACKING =============
     total_chunks = Column(
         Integer,
@@ -238,24 +234,15 @@ class DocumentChunk(Base):
 
     text = Column(Text, nullable=False)
     chunk_index = Column(Integer, nullable=False)
+    section = Column(String(255), nullable=True)
     
     # Store the vector. Dimension is 4096 as per EMBEDDING_DIMENSION in .env (Qwen/Qwen3-Embedding-8B)
     from pgvector.sqlalchemy import Vector
     embedding = Column(Vector(4096), nullable=True)
 
-    from sqlalchemy.dialects.postgresql import JSONB, REGCONFIG, TSVECTOR
-    from sqlalchemy import Computed
+    from sqlalchemy.dialects.postgresql import JSONB
     metadata_json = Column(JSONB, nullable=True)
 
-    # Language regconfig (inherited from parent KnowledgeBase)
-    language = Column(REGCONFIG, nullable=False, server_default="english")
-
-    # Stored generated tsvector column for full-text search
-    search_vector = Column(
-        TSVECTOR,
-        Computed("to_tsvector(language, coalesce(text, ''))", persisted=True),
-        nullable=True,
-    )
 
     created_at = Column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -264,8 +251,8 @@ class DocumentChunk(Base):
     __table_args__ = (
         Index("ix_chunks_tenant_id", "tenant_id"),
         Index("ix_chunks_kb_id", "kb_id"),
-        Index("idx_chunks_tenant_kb", "tenant_id", "kb_id"),
-        Index("idx_chunks_search_vector_gin", "search_vector", postgresql_using="gin"),
+        Index("ix_chunks_kb_section", "kb_id", "section"),
+        # We can add an hnsw or ivfflat index later for performance
     )
     
     def __repr__(self) -> str:

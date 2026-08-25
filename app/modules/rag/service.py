@@ -15,21 +15,6 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 from urllib.parse import urlparse
 
-@dataclass
-class AgentData:
-    id: str
-    name: str
-    system_prompt: Optional[str] = None
-    personality: Optional[str] = None
-    personality_id: Optional[str] = None
-    agent_type: Optional[str] = None
-    contact_phone: Optional[str] = None
-    contact_email: Optional[str] = None
-    website_url: Optional[str] = None
-    organization_name: Optional[str] = None
-    fallback_message_enabled: Optional[bool] = None
-
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .pipeline import RAGPipeline, RAGContext
@@ -39,7 +24,6 @@ from ..personalities.models import Personality
 from ...core.database import AsyncSessionLocal
 from ...core.embeddings import EmbeddingGenerator
 from ...core.llm.deepinfra_llm import DeepInfraLLMClient, LLMResponse
-from ...core.llm.pricing import get_model_pricing, calculate_token_cost
 from ...core.billing.utils import is_billing_enabled
 
 # Analytics Integration
@@ -106,32 +90,6 @@ class RAGService:
         self.agent_repo = AgentRepository(db, self.tenant_id)
         self.llm_client = DeepInfraLLMClient()
 
-    async def _fetch_episodic_guidance(
-        self, query: str, agent_id: str, user_id: Optional[str], memory_enabled: bool = True
-    ) -> str:
-        if not memory_enabled or not user_id:
-            return ""
-        try:
-            import httpx
-            base_url = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
-            async with httpx.AsyncClient() as client:
-                res = await client.post(
-                    f"{base_url}/api/v1/memory/process-turn",
-                    json={
-                        "query": query,
-                        "agent_id": str(agent_id),
-                        "user_id": str(user_id),
-                        "tenant_id": str(self.tenant_id),
-                    },
-                    timeout=4.0,
-                )
-                if res.status_code == 200:
-                    data = res.json()
-                    return data.get("guidance_context") or ""
-        except Exception as e:
-            logger.debug(f"Failed to fetch episodic guidance: {e}")
-        return ""
-
     async def stream_rag_answer(
         self,
         query: str,
@@ -144,125 +102,97 @@ class RAGService:
         on_usage_callback: Optional[Callable[[dict], None]] = None,
         chat_history: Optional[str] = None,
         skip_search: bool = False,
-        memory_enabled: bool = True,
-        model_override: Optional[str] = None,
     ):
         logger.info(f" RAG Service: Streaming answer for agent={agent_id}, kb={kb_id}")
         
-        # Immediate zero-width space token to reset frontend UI timeouts (like "Still working...").
-        yield "\u200b"
-
-        # Resolve active LLM model preference: explicit override > user's preference in DB > system default
-        active_model = model_override
-        if not active_model and user_id:
-            try:
-                from app.modules.auth.models import User
-                user_res = await self.db.execute(select(User.preferred_llm_model).where(User.id == UUID(str(user_id))))
-                user_pref = user_res.scalar_one_or_none()
-                if user_pref and user_pref.strip():
-                    active_model = user_pref.strip()
-            except Exception as e:
-                logger.debug(f"Could not fetch user model preference: {e}")
-
-        if not active_model:
-            active_model = self.llm_client.model_answer
-
-        # 1. Validate KB ownership
-        kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
-
-        # 1. Validate KB ownership and separate Excel vs Document KBs
-        excel_kbs = []
-        doc_kbs = []
+        import time
+        trace_start_time = time.time()
+        # Ensure query length is safe for logging
+        short_query = query[:50] + "..." if len(query) > 50 else query
+        logger.info(f"[TRACE_E2E] [ENTRY] ChatService.stream_rag_answer - Input: '{short_query}', Tenant: {self.tenant_id}, Agent: {agent_id}, KB: {kb_id}")
         
-        async def _fetch_kb(kid):
-            return kid, await self.kb_repo.get_by_id(kid)
-            
-        import asyncio
-        kb_results = await asyncio.gather(*[_fetch_kb(kid) for kid in kb_ids])
-        for kid, kb in kb_results:
-            if not kb:
-                yield json.dumps({"error": f"Knowledge Base {kid} not found"})
-                return
-            if str(kb.agent_id) != str(agent_id):
-                yield json.dumps(
-                    {"error": "Unauthorized: Agent does not own this Knowledge Base"}
-                )
-                return
-            if getattr(kb, "description", "") == "excel_parquet":
-                excel_kbs.append(kb)
-            else:
-                doc_kbs.append(kb)
-
-        # Pre-load Agent and Ontology concurrently
-        from ..ontology.service import OntologyService
-        ont_svc = OntologyService(self.tenant_id)
-        ontology_task = asyncio.create_task(ont_svc.get_ontology())
-        
-        async def fetch_agent_data():
-            agent_orm = await self.agent_repo.get_by_id(agent_id)
-            if not agent_orm:
-                return None
-            personality_desc = getattr(agent_orm, "personality", None)
-            if getattr(agent_orm, "personality_id", None):
-                from app.modules.personalities.models import Personality
-                p = await self.db.get(Personality, agent_orm.personality_id)
-                if p:
-                    personality_desc = p.description or p.name
-            return AgentData(
-                id=str(agent_orm.id),
-                name=agent_orm.name,
-                system_prompt=getattr(agent_orm, "system_prompt", None),
-                personality=personality_desc,
-                personality_id=getattr(agent_orm, "personality_id", None),
-                agent_type=getattr(agent_orm, "agent_type", None),
-                contact_phone=getattr(agent_orm, "contact_phone", None),
-                contact_email=getattr(agent_orm, "contact_email", None),
-                website_url=getattr(agent_orm, "website_url", None),
-                organization_name=getattr(agent_orm, "organization_name", None),
-                fallback_message_enabled=getattr(agent_orm, "fallback_message_enabled", None)
-            )
-            
-        agent_task = asyncio.create_task(fetch_agent_data())
-
-        # ============= MEMORY-API: RECALL USER PREFERENCES & EPISODIC GUIDANCE =============
-        episodic_guidance = await self._fetch_episodic_guidance(query, agent_id, user_id, memory_enabled)
-
-        # Upfront Query Classification and Decomposition
-        from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer
-        analyzer = QueryAnalyzer()
-        tabular_query = query
-        vector_query = query
-        try:
-            analysis_res = await analyzer.analyze_query(query)
-            if analysis_res and analysis_res.metadata:
-                corrected = getattr(analysis_res.metadata, "corrected_query", None)
-                if corrected:
-                    query = corrected
-                    tabular_query = corrected
-                    vector_query = corrected
-                
-                tab_sub = getattr(analysis_res.metadata, "tabular_subquery", None)
-                vec_sub = getattr(analysis_res.metadata, "vector_subquery", None)
-                if tab_sub:
-                    logger.info(f"Decomposed tabular sub-query: {tab_sub}")
-                    tabular_query = tab_sub
-                if vec_sub:
-                    logger.info(f"Decomposed vector sub-query: {vec_sub}")
-                    vector_query = vec_sub
-        except Exception as e:
-            logger.error(f"QueryAnalyzer upfront decomposition failed: {e}")
-
-        # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
-        hybrid_merge_context = ""
         sql_task = None
         vector_task = None
         memory_task = None
 
         try:
+            # 1. Validate KB ownership
+            kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
+    
+            # 1. Validate KB ownership and separate Excel vs Document KBs
+            excel_kbs = []
+            doc_kbs = []
+            
+            kb_results = []
+            for kid in kb_ids:
+                kb = await self.kb_repo.get_by_id(kid)
+                if kb:
+                    self.db.expunge(kb)
+                kb_results.append((kid, kb))
+            
+            for kid, kb in kb_results:
+                if not kb:
+                    yield json.dumps({"error": f"Knowledge Base {kid} not found"})
+                    return
+                if str(kb.agent_id) != str(agent_id):
+                    yield json.dumps(
+                        {"error": "Unauthorized: Agent does not own this Knowledge Base"}
+                    )
+                    return
+                if getattr(kb, "description", "") == "excel_parquet":
+                    excel_kbs.append(kb)
+                else:
+                    doc_kbs.append(kb)
+
+            agent = await self.agent_repo.get_by_id(agent_id)
+            if agent:
+                self.db.expunge(agent)
+                agent_name = agent.name
+                base_prompt = agent.system_prompt or ""
+                personality_description = agent.personality or "You are a warm, approachable, and supportive assistant."
+                
+                # Fetch personality details early too
+                if agent.personality_id:
+                    from app.modules.personalities.models import Personality
+                    personality = await self.db.get(Personality, agent.personality_id)
+                    if personality:
+                        personality_description = personality.description or personality.name
+            else:
+                agent_name = "Unknown"
+                base_prompt = ""
+                personality_description = "You are a warm, approachable, and supportive assistant."
+
+            from ..ontology.service import OntologyService
+            ont_svc = OntologyService(self.tenant_id)
+            ontology = await ont_svc.get_ontology()
+    
+            kb_context_lines = []
+            for kb in (doc_kbs + excel_kbs):
+                name = getattr(kb, 'name', 'Unknown')
+                desc = getattr(kb, 'description', '')
+                kb_context_lines.append(f"- {name}: {desc}")
+            kb_context = "\n".join(kb_context_lines) if kb_context_lines else "None provided."
+
+            # ============= EARLY QUERY ANALYSIS (ROUTING) =============
+            from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer
+            import time
+            
+            analyzer_start = time.time()
+            analyzer = QueryAnalyzer()
+            
+            logger.info(f"[TRACE_E2E] [ENTRY] QueryAnalyzer.analyze_query - Input: '{short_query}'")
+            analysis = await analyzer.analyze_query(query, kb_context=kb_context)
+            analyzer_latency = time.time() - analyzer_start
+            logger.info(f"[TRACE_E2E] [EXIT] QueryAnalyzer.analyze_query - Output: {getattr(analysis, 'intent', 'Unknown')} - Latency: {analyzer_latency:.2f}s")
+            logger.info(f"TELEMETRY: QueryAnalyzer completed in {analyzer_latency:.2f}s")
+
+            # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
+            hybrid_merge_context = ""
+            sql_task = None
             if excel_kbs:
                 from app.core.parquet_ingester import ParquetIngester
                 from app.modules.rag.pandas_engine import PandasQueryEngine
-
+    
                 active_paths = []
                 for ekb in excel_kbs:
                     dataset_name = getattr(ekb, "parsed_path", None) or getattr(
@@ -272,7 +202,7 @@ class RAGService:
                         p = ParquetIngester.get_active_dataset(dataset_name)
                         if p:
                             active_paths.append(p)
-
+    
                 if not active_paths and not doc_kbs:
                     yield json.dumps(
                         {
@@ -280,29 +210,81 @@ class RAGService:
                         }
                     )
                     return
-
+    
                 if active_paths:
-                    engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
-                    sql_task = asyncio.create_task(engine.execute_query(tabular_query))
-
+                    import pyarrow.parquet as pq
+                    
+                    overlap = False
+                    reason = "not_tabular"
+                    
+                    if not doc_kbs:
+                        overlap = True
+                        reason = "only_kb_available"
+                    else:
+                        # Fast schema overlap check for disambiguation (Stage 1.6)
+                        try:
+                            schema = pq.read_schema(active_paths[0])
+                            cols = [str(name).lower() for name in schema.names]
+                            import re
+                            query_terms = set(re.findall(r'[a-zA-Z0-9]+', query.lower()))
+                            
+                            col_terms = set()
+                            for c in cols:
+                                col_terms.update(re.findall(r'[a-zA-Z0-9]+', c))
+                            name_terms = set(re.findall(r'[a-zA-Z0-9]+', str(active_paths[0]).lower()))
+                            
+                            term_overlap = len(query_terms & (col_terms | name_terms))
+                            
+                            if term_overlap > 0:
+                                overlap = True
+                                reason = f"schema_overlap (score: {term_overlap})"
+                            else:
+                                overlap = False
+                                reason = "zero_schema_overlap"
+                                if analysis.is_tabular or getattr(analysis.metadata, "tabular_subquery", None):
+                                    logger.warning(f"Query is tabular intent, but 0 overlap with Parquet schema. Disambiguation failed. Bypassing DuckDB.")
+                        except Exception as e:
+                            logger.error(f"Fast schema check failed: {e}")
+                            if analysis.is_tabular or getattr(analysis.metadata, "tabular_subquery", None):
+                                overlap = True # fallback
+                                reason = "schema_check_failed_but_tabular"
+                            
+                    if overlap:
+                        logger.info(f"TELEMETRY: tabular_invoked=True, reason={reason}")
+                        engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
+                        sql_task = asyncio.create_task(engine.execute_query(query))
+                    else:
+                        logger.info(f"TELEMETRY: tabular_invoked=False, reason=no_schema_overlap")
+    
+            vector_task = None
             if not skip_search and (doc_kbs or not excel_kbs):
-                vector_task = asyncio.create_task(
-                    self.pipeline.query(
-                        query=vector_query,
+                logger.info("TELEMETRY: vector_invoked=True")
+                
+                async def wrapped_vector_query():
+                    logger.info(f"[TRACE_E2E] [ENTRY] RAGPipeline.query - Input: '{short_query}'")
+                    vec_start = time.time()
+                    res = await self.pipeline.query(
+                        query=query,
                         agent_id=agent_id,
                         kb_id=kb_ids,
                         user_id=user_id,
                         top_k=top_k,
                         max_depth=max_depth,
+                        kb_context=kb_context,
+                        analysis=analysis
                     )
-                )
-
+                    vec_latency = time.time() - vec_start
+                    logger.info(f"[TRACE_E2E] [EXIT] RAGPipeline.query - Output: {len(res.chunks) if res and res.chunks else 0} chunks - Latency: {vec_latency:.2f}s")
+                    return res
+                vector_task = asyncio.create_task(wrapped_vector_query())
+    
             context = None
             metadata_yielded = False
             if excel_kbs and sql_task and vector_task:
                 logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
-                
+                gather_start = time.time()
                 res = await asyncio.gather(vector_task, sql_task, return_exceptions=True)
+                logger.info(f"TELEMETRY: Parallel engines completed in {time.time() - gather_start:.2f}s")
                 context_res, sql_res = res[0], res[1]
                 
                 if not isinstance(context_res, Exception):
@@ -314,7 +296,7 @@ class RAGService:
                         "sources": [
                             {
                                 "chunk_id": c.chunk_id,
-                                "source": clean_source_name(getattr(c, "s3_path", None) or c.source),
+                                "source": c.source,
                                 "score": round(c.hybrid_score, 3),
                                 "position": c.position,
                                 "reason": c.reason,
@@ -344,11 +326,13 @@ class RAGService:
                         hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
                 elif isinstance(sql_res, Exception):
                     logger.warning(f"Parallel TABULAR_SQL failed: {sql_res}")
-
+    
             elif sql_task:
                 logger.info("Executing TABULAR_SQL standalone...")
+                tabular_start = time.time()
                 try:
                     sql_res = await asyncio.wait_for(sql_task, timeout=30.0)
+                    logger.info(f"TELEMETRY: Standalone tabular engine completed in {time.time() - tabular_start:.2f}s")
                     unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
                     is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
                     if is_unmatched:
@@ -366,11 +350,13 @@ class RAGService:
                     logger.error(f"PandasQueryEngine stream failed: {e}")
                     yield json.dumps({"error": str(e)})
                     return
-
+    
             elif vector_task:
                 logger.info("Executing VECTOR_DOCS standalone...")
+                vector_start = time.time()
                 try:
                     context = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
+                    logger.info(f"TELEMETRY: Standalone vector engine completed in {time.time() - vector_start:.2f}s")
                 except asyncio.TimeoutError:
                     logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
                     yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
@@ -379,16 +365,14 @@ class RAGService:
                     logger.error(f"RAG Retrieval failed for stream: {e}")
                     yield json.dumps({"error": f"Retrieval failed: {e}"})
                     return
-
+    
             skip_search = True  # Bypass redundant sequential search below
-
+    
             if len(kb_ids) > 1:
                 logger.info(
                     f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
                 )
     
-            # 1. Fetch Agent (fresh query, AFTER all potential rollbacks)
-            agent = await agent_task
             if not agent:
                 yield json.dumps(
                     {
@@ -396,16 +380,9 @@ class RAGService:
                     }
                 )
                 return
-
-            # Check if a specific personality is assigned, otherwise fallback to standard behavior
-            base_prompt = agent.system_prompt or ""
-            personality_description = (
-                agent.personality
-                or "You are a warm, approachable, and supportive assistant."
-            )
-
-
-
+            
+            # base_prompt and personality_description are pre-loaded at the top of stream_rag_answer
+    
             accuracy_directives = (
                 "\n- Enforce 100% factual accuracy based strictly on the retrieved context."
                 "\n- Correct any obvious spelling or grammatical errors found in the source documents; do not copy typos."
@@ -413,10 +390,10 @@ class RAGService:
             )
             if "factual accuracy" not in personality_description.lower():
                 personality_description += accuracy_directives
-
+    
             # Ontology Grounding
             try:
-                ontology = await ontology_task
+                # ontology already pre-loaded
                 ontology_rules_str = ""
                 if ontology and ontology.get("rules"):
                     rules_list = [
@@ -433,101 +410,139 @@ class RAGService:
             except Exception as e:
                 logger.warning(f"Failed fetching active ontology for RAG prompt: {e}")
                 ontology_rules_str = ""
-
+    
             injected_system_prompt = f"""
-[PERSONALITY MODE: STRICT]
-
-You MUST strictly follow the personality defined below.
-Every response MUST reflect this personality strongly in tone, wording, and structure.
-Deviation is NOT allowed.
-
-Personality Definition:
-{personality_description}
-
-Base Instruction:
-{base_prompt}{ontology_rules_str}
-
-{hybrid_merge_context}
-
-You are an enterprise AI assistant.
-
-==================================================
-MEMORY AUTHORITY (HIGHEST PRIORITY — READ FIRST)
-==================================================
-If the user's message contains a section beginning with:
-  "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES"
-then you MUST treat everything in that section as VERIFIED GROUND TRUTH about the user.
-- These facts are authoritative and override document context.
-- Use them to answer personal questions directly (e.g., "what is my name?", "what is my 10th grade mark?").
-- You are ALLOWED and REQUIRED to answer from this memory section even if the answer is not in the documents.
-- Do NOT say "I couldn't find it" if the answer is present in the memory/preferences section.
-- When answering from memory, say "Based on your saved profile, ..." to be transparent.
-
-==================================================
-GROUNDING RULES & HALLUCINATION PREVENTION
-==================================================
-Never complete missing information using prior knowledge.
-If retrieved passages conflict, state the conflict. Do not resolve it yourself.
-- Answer ONLY using the provided context OR verified user memory (see MEMORY AUTHORITY above).
-- Before answering, verify that every factual statement in your response is explicitly supported by the retrieved context or user memory.
-- If a statement is not directly supported by either source, do not include it.
-- Do not combine information from your general knowledge with the retrieved context.
-- Never use outside knowledge.
-- Never invent, infer, estimate, or assume facts.
-- If the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
-  "I couldn't find it."
-- If only part of the answer exists, answer only that part.
-- Mention the relevant source at the end.
-- Answer ONLY the specific question asked by the user. If the user asks a complex or multi-part question, you MUST address EVERY part of the question in your response. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
-- Be concise. Focus strictly on direct answers and avoid filler.
-- TRANSACTION CLASSIFICATION: Categorize transactions strictly:
-  * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
-  * Debit (Withdrawal/Outgoing/Payment): ATM withdrawals, payments to merchants, fees, taxes, outgoing transfers.
-
-==================================================
-FORMATTING RULES
-==================================================
-Use Markdown tables whenever information is easier to compare in rows and columns.
-Use bullet points when listing multiple items.
-Use paragraphs for explanations.
-- NEVER quote internal system metadata, relevance scores (e.g., 'relevance: 0.85', 'score: 0.8'), or raw graph brackets (e.g., '[USES]') in your final answer. Present all facts seamlessly in clean, natural English.
-
-==================================================
-SOURCE CITATION RULES (STRICT)
-==================================================
-1. GREETINGS & CASUAL CONVERSATION (CRITICAL):
-- If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, DO NOT output any source citation tag at all.
-- NEVER include [Source: ...] for greetings, introduction messages, or general chitchat.
-
-2. DOCUMENT CONTENT & ACCURATE CITATIONS:
-- Cite a source ONLY IF information from retrieved document/data chunks was ACTUALLY USED to answer the user's specific question.
-- Cite ONLY the specific filename(s) from which relevant facts were extracted.
-- Single Source: If the answer came from only one document (e.g. ARUN_N.pdf), cite ONLY that single document: [Source: ARUN_N.pdf]. Do NOT list other unused files.
-- Multi Source: If the answer combined information from multiple documents, list only those specific documents: [Source: file1.pdf, file2.pdf].
-- Deduplicate sources so each unique filename appears ONLY ONCE.
-- Format the citation at the very end of your response on its own single line:
-  [Source: filename1, filename2]
-
-==================================================
-FINAL RESPONSE FORMAT
-==================================================
-<grounded answer>
-
-[Source: <only include source file(s) actually used to answer document questions>]
-""".strip()
-
+    [PERSONALITY MODE: STRICT]
+    
+    You MUST strictly follow the personality defined below.
+    Every response MUST reflect this personality strongly in tone, wording, and structure.
+    Deviation is NOT allowed.
+    
+    Personality Definition:
+    {personality_description}
+    
+    Base Instruction:
+    {base_prompt}{ontology_rules_str}
+    
+    {hybrid_merge_context}
+    
+    You are an enterprise AI assistant.
+    
+    ==================================================
+    MEMORY AUTHORITY (HIGHEST PRIORITY - READ FIRST)
+    ==================================================
+    If the user's message contains a section beginning with:
+      "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES"
+    then you MUST treat everything in that section as VERIFIED GROUND TRUTH about the user.
+    - These facts are authoritative and override document context.
+    - Use them to answer personal questions directly (e.g., "what is my name?", "what is my 10th grade mark?").
+    - You are ALLOWED and REQUIRED to answer from this memory section even if the answer is not in the documents.
+    - Do NOT say "I couldn't find it" if the answer is present in the memory/preferences section.
+    - When answering from memory, say "Based on your saved profile, ..." to be transparent.
+    
+    ==================================================
+    GROUNDING RULES & HALLUCINATION PREVENTION
+    ==================================================
+    Never complete missing information using prior knowledge.
+    If retrieved passages conflict, state the conflict. Do not resolve it yourself.
+    - Answer ONLY using the provided context OR verified user memory (see MEMORY AUTHORITY above).
+    - Before answering, verify that every factual statement in your response is explicitly supported by the retrieved context or user memory.
+    - If a statement is not directly supported by either source, do not include it.
+    - Do not combine information from your general knowledge with the retrieved context.
+    - Never use outside knowledge.
+    - Never invent, infer, estimate, or assume facts.
+    - If the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
+      "I couldn't find it."
+    - If only part of the answer exists, answer only that part.
+    - Mention the relevant source at the end.
+    - Answer ONLY the specific question asked by the user. If the user asks a complex or multi-part question, you MUST address EVERY part of the question in your response. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
+    - Be concise. Focus strictly on direct answers and avoid filler.
+    - TRANSACTION CLASSIFICATION: Categorize transactions strictly:
+      * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
+      * Debit (Withdrawal/Outgoing/Payment): ATM withdrawals, payments to merchants, fees, taxes, outgoing transfers.
+    
+    ==================================================
+    FORMATTING RULES
+    ==================================================
+    Use Markdown tables whenever information is easier to compare in rows and columns.
+    Use bullet points when listing multiple items.
+    Use paragraphs for explanations.
+    
+    ==================================================
+    SOURCE CITATION RULES (STRICT)
+    ==================================================
+    1. GREETINGS & CASUAL CONVERSATION (CRITICAL):
+    - If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, DO NOT output any source citation tag at all.
+    - NEVER include [Source: ...] for greetings, introduction messages, or general chitchat.
+    
+    2. DOCUMENT CONTENT & ACCURATE CITATIONS:
+    - Cite a source ONLY IF information from retrieved document/data chunks was ACTUALLY USED to answer the user's specific question.
+    - Cite ONLY the specific filename(s) from which relevant facts were extracted.
+    - Single Source: If the answer came from only one document (e.g. ARUN_N.pdf), cite ONLY that single document: [Source: ARUN_N.pdf]. Do NOT list other unused files.
+    - Multi Source: If the answer combined information from multiple documents, list only those specific documents: [Source: file1.pdf, file2.pdf].
+    - Deduplicate sources so each unique filename appears ONLY ONCE.
+    - Format the citation at the very end of your response on its own single line:
+      [Source: filename1, filename2]
+    
+    ==================================================
+    FINAL RESPONSE FORMAT
+    ==================================================
+    <grounded answer>
+    
+    [Source: <only include source file(s) actually used to answer document questions>]
+    """.strip()
+    
             agent_persona = {
-                "name": agent.name if agent else "Assistant",
+                "name": agent_name,
                 "personality": personality_description,
                 "system_prompt": injected_system_prompt,
             }
-
+    
             if chat_history:
                 agent_persona[
                     "system_prompt"
                 ] += f"\n\n==================================================\nCONVERSATION HISTORY\n==================================================\n{chat_history}\n\nCRITICAL INSTRUCTION: If the user's current question asks to filter, modify, or extract from the 'above' or 'previous' answer, you MUST use the CONVERSATION HISTORY as your primary source of truth and ignore any conflicting retrieved documents below."
+    
+            # 2. Retrieve Context
+            if 'context' not in locals():
+                context = None
+                
+            if not skip_search:
+                try:
+                    logger.info(f"[TRACE_E2E] [ENTRY] RAGPipeline.query - Input: '{short_query}'")
+                    pipeline_start = time.time()
+                    context = await asyncio.wait_for(
+                        self.pipeline.query(
+                            query=query,
+                            agent_id=agent_id,
+                            kb_id=kb_ids,
+                            user_id=user_id,
+                            top_k=top_k,
+                            max_depth=max_depth,
+                        ),
+                        timeout=_RAG_TIMEOUT_SECONDS,
+                    )
+                    pipeline_latency = time.time() - pipeline_start
+                    chunk_count_pipeline = len(context.chunks) if context and context.chunks else 0
+                    logger.info(f"[TRACE_E2E] [EXIT] RAGPipeline.query - Output: {chunk_count_pipeline} chunks - Latency: {pipeline_latency:.2f}s")
 
-            # Relevance filter (Context Poisoning Protection)
+                except asyncio.TimeoutError:
+                    logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
+                    yield json.dumps(
+                        {
+                            "error": "The AI provider is taking too long to respond. Please try again later."
+                        }
+                    )
+                    return
+                except Exception as e:
+                    error_msg = str(e) if str(e) else e.__class__.__name__
+                    logger.error(f"RAG Retrieval failed for stream: {error_msg}")
+                    yield json.dumps({"error": f"Retrieval failed: {error_msg}"})
+                    return
+                    
+            # ==================================================
+            # RELEVANCE FILTER (Context Poisoning Protection)
+            # ==================================================
             import os
             min_score = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.6"))
             if context and context.chunks:
@@ -536,19 +551,19 @@ FINAL RESPONSE FORMAT
                 dropped = original_count - len(context.chunks)
                 if dropped > 0:
                     logger.info(f"Relevance Filter: Dropped {dropped} irrelevant chunks (score < {min_score}) to prevent hallucination.")
-
+    
             # 3. Yield metadata first
             if not metadata_yielded:
                 if context:
                     for c in context.chunks:
                         logger.info(f"Chunk={c.chunk_id} Source={c.source} Score={c.hybrid_score}")
-
+    
                     metadata = {
                         "type": "metadata",
                         "sources": [
                             {
                                 "chunk_id": c.chunk_id,
-                                "source": clean_source_name(getattr(c, "s3_path", None) or c.source),
+                                "source": c.source,
                                 "score": round(c.hybrid_score, 3),
                                 "position": c.position,
                                 "reason": c.reason,
@@ -574,96 +589,95 @@ FINAL RESPONSE FORMAT
                         "augmented_query": query,
                         "authoritative_entities": []
                     }
-
+    
                 yield json.dumps(metadata)
-
+    
             is_extractive = context.search_type == "EXTRACTIVE" if context else False
             is_table_analytics = (
                 context.search_type == "TABLE_ANALYTICS" if context else False
             )
-
+    
             if is_extractive or is_table_analytics:
                 logger.info(f"Checking direct extraction for {context.search_type} mode.")
-                has_direct_output = False
-                if getattr(context, "authoritative_entities", None):
-                    for ent in context.authoritative_entities:
-                        clean_name = ent["entity_type"].replace("_", " ").title()
-                        clean_src = clean_source_name(
-                            ent.get("source", "document_entities")
-                        )
-                        yield f"**{clean_name}:** {ent['value']} (Page {ent.get('page', 1)}) [Source: {clean_src}]\n"
+                try:
+                    logger.info(f"[DIRECT_EXTRACTION_INPUT] has authoritative_entities: {bool(getattr(context, 'authoritative_entities', None))}, triplet_context length: {len(context.triplet_context) if context.triplet_context else 0}")
+                    has_direct_output = False
+                    if getattr(context, "authoritative_entities", None):
+                        for ent in context.authoritative_entities:
+                            clean_name = ent["entity_type"].replace("_", " ").title()
+                            clean_src = clean_source_name(
+                                ent.get("source", "document_entities")
+                            )
+                            yield f"**{clean_name}:** {ent['value']} (Page {ent.get('page', 1)}) [Source: {clean_src}]\n"
+                            has_direct_output = True
+                        if has_direct_output:
+                            yield "\n"
+        
+                    # Strip any <think> tags from triplet_context (gateway LLM leak guard)
+                    import re as _re
+        
+                    clean_triplet = context.triplet_context or ""
+                    clean_triplet = _re.sub(
+                        r"<think>.*?</think>", "", clean_triplet, flags=_re.DOTALL
+                    ).strip()
+                    if "<think>" in clean_triplet:
+                        clean_triplet = clean_triplet[: clean_triplet.index("<think>")].strip()
+        
+                    if clean_triplet:
+                        logger.info(f"[DIRECT_EXTRACTION_OUTPUT] yielding clean_triplet length: {len(clean_triplet)}")
+                        yield clean_triplet
                         has_direct_output = True
+        
                     if has_direct_output:
-                        yield "\n"
-
-                # Strip any <think> tags from triplet_context (gateway LLM leak guard)
-                import re as _re
-
-                clean_triplet = context.triplet_context or ""
-                clean_triplet = _re.sub(
-                    r"<think>.*?</think>", "", clean_triplet, flags=_re.DOTALL
-                ).strip()
-                if "<think>" in clean_triplet:
-                    clean_triplet = clean_triplet[: clean_triplet.index("<think>")].strip()
-
-                if has_direct_output:
-                    try:
-                        unique_srcs = []
-                        if context and context.chunks:
-                            for chk in context.chunks:
-                                s_name = clean_source_name(getattr(chk, "s3_path", None) or chk.source)
-                                if s_name and s_name not in unique_srcs:
-                                    unique_srcs.append(s_name)
-                        if not unique_srcs:
-                            raw_kb_src = (getattr(kb, "source", None) or getattr(kb, "s3_path", None) or getattr(kb, "name", None)) if kb else ("Dataset" if not kb_ids else kb_ids[0])
-                            if kb and "ENTERPRISE SPREADSHEET ANALYSIS" in str(getattr(kb, "name", "")).upper() and getattr(kb, "source", None):
-                                raw_kb_src = kb.source
-                            clean_kb = clean_source_name(str(raw_kb_src))
-                            unique_srcs = [clean_kb]
-                        _src_name = ", ".join(unique_srcs)
-                        yield f"\n\n[Source: {_src_name}]"
-                    except Exception:
-                        pass
-                    return
-                else:
-                    logger.warning(
-                        f"[{context.search_type}] mode yielded no direct entities or triplets. Falling through to standard LLM chunk generation!"
-                    )
-
+                        # Append source citation for TABLE_ANALYTICS so the frontend source pills appear
+                        # Use the kb object already fetched for metadata (line 661 scope)
+                        try:
+                            _src_name = (
+                                kb.name
+                                if len(kb_ids) == 1
+                                else (kb_ids[0] if kb_ids else "Dataset")
+                            )
+                            yield f"\n\n[Source: {_src_name}]"
+                            logger.info("[DIRECT_EXTRACTION_OUTPUT] yielded source citation")
+                        except Exception as e:
+                            logger.warning(f"[DIRECT_EXTRACTION] Exception while yielding source citation: {e}")
+                            pass
+                        return
+                    else:
+                        logger.warning(
+                            f"[{context.search_type}] mode yielded no direct entities or triplets. Falling through to standard LLM chunk generation!"
+                        )
+                except Exception as ex:
+                    logger.error(f"[DIRECT_EXTRACTION_ERROR] Exception in direct extraction logic: {ex}", exc_info=True)
+    
             has_valid_chunks = context and context.chunks
             has_valid_triplets = context and context.triplets
-            if not has_valid_chunks and not has_valid_triplets and not chat_history and not hybrid_merge_context and not episodic_guidance:
+            if not has_valid_chunks and not has_valid_triplets and not chat_history and not hybrid_merge_context:
                 logger.info("Empty context retrieved for stream, returning fallback message.")
                 yield "I'm sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
                 return
-
+    
             # 4. Stream chunks
             formatted_context = self._format_context(context, hybrid_merge_context=hybrid_merge_context) if context else (hybrid_merge_context or "")
-            if episodic_guidance:
-                formatted_context = (
-                    "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
-                    f"{episodic_guidance}\n\n"
-                ) + formatted_context
             start_time = datetime.now()
-
+    
             full_answer = []
             token_usage = {}
-
+    
             def handle_usage(usage_dict):
                 token_usage.update(usage_dict)
                 if on_usage_callback:
                     on_usage_callback(usage_dict)
-
+    
             async for chunk in self.llm_client.stream_answer(
                 query,
                 formatted_context,
                 agent_persona=agent_persona,
                 enable_thinking=False,
                 on_usage_callback=handle_usage,
-                model=active_model,
             ):
                 yield chunk
-
+    
             # 5. ASYNC LOGGING (Background)
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
             confidence = (
@@ -676,39 +690,32 @@ FINAL RESPONSE FORMAT
                 if (context and context.chunks)
                 else (ResponseStatus.SUCCESS if chat_history else ResponseStatus.UNANSWERED)
             )
-
-            model_used = token_usage.get("model_name") or active_model
+    
             llm_input_tokens = token_usage.get("prompt_tokens", 0)
             llm_output_tokens = token_usage.get("completion_tokens", 0)
-            total_tokens = token_usage.get("total_tokens", llm_input_tokens + llm_output_tokens)
-            request_id_val = token_usage.get("request_id")
             embedding_tokens = getattr(context, "query_embedding_tokens", 0) or max(
                 1, len(query) // 4
             )
-
-            inp_price, out_price = get_model_pricing(model_used)
-            llm_cost_usd = ((llm_input_tokens / 1_000_000.0) * inp_price) + (
-                (llm_output_tokens / 1_000_000.0) * out_price
-            )
-            embedding_cost_usd = (embedding_tokens / 1_000_000.0) * 0.010
-            total_cost_usd = round(llm_cost_usd + embedding_cost_usd, 6)
-
+    
+            llm_cost_usd = (llm_input_tokens / 1000000.0) * 0.10 + (
+                llm_output_tokens / 1000000.0
+            ) * 0.15
+            embedding_cost_usd = (embedding_tokens / 1000000.0) * 0.01
+            total_cost_usd = llm_cost_usd + embedding_cost_usd
+    
             try:
-                analytics_repo = AnalyticsRepository(self.db, UUID(str(self.tenant_id)))
+                analytics_repo = AnalyticsRepository(self.db, UUID(self.tenant_id))
                 await analytics_repo.create_query_log(
                     {
                         "query": query,
                         "response_status": status,
                         "confidence_score": confidence,
                         "latency_ms": latency_ms,
-                        "session_id": UUID(str(session_id)) if session_id else None,
-                        "user_id": UUID(str(user_id)) if user_id else None,
-                        "request_id": request_id_val,
-                        "model_name": model_used,
+                        "session_id": UUID(session_id) if session_id else None,
+                        "user_id": UUID(user_id) if user_id else None,
                         "llm_input_tokens": llm_input_tokens,
                         "llm_output_tokens": llm_output_tokens,
                         "embedding_tokens": embedding_tokens,
-                        "total_tokens": total_tokens,
                         "llm_cost_usd": llm_cost_usd,
                         "embedding_cost_usd": embedding_cost_usd,
                         "total_cost_usd": total_cost_usd,
@@ -724,6 +731,11 @@ FINAL RESPONSE FORMAT
                         f"Failed to rollback analytics transaction: {rollback_err}"
                     )
         finally:
+            import time
+            trace_latency = time.time() - trace_start_time
+            chunk_count = len(context.chunks) if ('context' in locals() and context and context.chunks) else 0
+            logger.info(f"[TRACE_E2E] [EXIT] ChatService.stream_rag_answer - Output: {chunk_count} chunks streamed - Latency: {trace_latency:.2f}s")
+            
             current_task = asyncio.current_task()
             tasks = (sql_task, vector_task, memory_task)
             pending_tasks = [
@@ -746,25 +758,9 @@ FINAL RESPONSE FORMAT
         max_depth: int = 2,
         reasoning_enabled: bool = True,
         memory_enabled: bool = True,
-        model_override: Optional[str] = None,
     ) -> dict:
         logger.info(f" RAG Service: Generating answer for agent={agent_id}, kb={kb_id}")
         start_time_total = datetime.now()
-
-        # Resolve active LLM model preference: explicit override > user's preference in DB > system default
-        active_model = model_override
-        if not active_model and user_id:
-            try:
-                from app.modules.auth.models import User
-                user_res = await self.db.execute(select(User.preferred_llm_model).where(User.id == UUID(str(user_id))))
-                user_pref = user_res.scalar_one_or_none()
-                if user_pref and user_pref.strip():
-                    active_model = user_pref.strip()
-            except Exception as e:
-                logger.debug(f"Could not fetch user model preference: {e}")
-
-        if not active_model:
-            active_model = self.llm_client.model_answer
 
         kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
         hybrid_merge_context = ""
@@ -775,6 +771,7 @@ FINAL RESPONSE FORMAT
             k_obj = await self.kb_repo.get_by_id(kid)
             if not k_obj:
                 continue
+            self.db.expunge(k_obj)
             if str(k_obj.agent_id) != str(agent_id):
                 logger.error(f"Agent {agent_id} does not own KB {kid}")
                 return {
@@ -874,6 +871,7 @@ FINAL RESPONSE FORMAT
                 "answer": None,
                 "sources": [],
             }
+        self.db.expunge(agent)
 
         base_prompt = agent.system_prompt or ""
         personality_description = (
@@ -963,7 +961,7 @@ Base Instruction:
 You are an enterprise AI assistant.
 
 ==================================================
-MEMORY AUTHORITY (HIGHEST PRIORITY — READ FIRST)
+MEMORY AUTHORITY (HIGHEST PRIORITY - READ FIRST)
 ==================================================
 If the user's message contains a section beginning with:
   "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES"
@@ -1258,7 +1256,6 @@ RESPONSE FORMAT
             tenant_id=self.tenant_id,
             agent_id=agent_id,
             agent_persona=agent_persona,
-            model=active_model,
         )
         answer = llm_response.answer
 
@@ -1316,7 +1313,6 @@ RESPONSE FORMAT
                 "llm_tokens": llm_response.total_tokens,
                 "llm_input_tokens": llm_response.prompt_tokens,
                 "llm_output_tokens": llm_response.completion_tokens,
-                "llm_model": getattr(llm_response, "model_name", None) or active_model,
                 "llm_source": llm_response.source,
                 "llm_prompt_version": llm_response.prompt_version,
                 "search_strategy": context.search_type,
@@ -1330,26 +1326,13 @@ RESPONSE FORMAT
             ),
         }
 
-        model_used = getattr(llm_response, "model_name", None) or active_model
-        llm_input_tokens = llm_response.prompt_tokens
-        llm_output_tokens = llm_response.completion_tokens
-        total_tokens = llm_response.total_tokens or (llm_input_tokens + llm_output_tokens)
-        embedding_tokens = getattr(context, "query_embedding_tokens", 0) or max(1, len(query) // 4)
-
-        inp_price, out_price = get_model_pricing(model_used)
-        llm_cost_usd = ((llm_input_tokens / 1_000_000.0) * inp_price) + (
-            (llm_output_tokens / 1_000_000.0) * out_price
-        )
-        embedding_cost_usd = (embedding_tokens / 1_000_000.0) * 0.010
-        total_cost_usd = round(llm_cost_usd + embedding_cost_usd, 6)
-
         if is_billing_enabled():
             response["stats"]["llm_cost_estimate"] = round(
-                llm_response.cost_estimate or total_cost_usd, 6
+                llm_response.cost_estimate, 6
             )
 
         try:
-            analytics_repo = AnalyticsRepository(self.db, UUID(str(self.tenant_id)))
+            analytics_repo = AnalyticsRepository(self.db, UUID(self.tenant_id))
             await analytics_repo.create_query_log(
                 {
                     "query": query,
@@ -1361,19 +1344,8 @@ RESPONSE FORMAT
                     "confidence_score": confidence,
                     "latency_ms": (datetime.now() - start_time_total).total_seconds()
                     * 1000,
-                    "user_id": UUID(str(user_id)) if user_id else None,
-                    "request_id": getattr(llm_response, "request_id", None),
-                    "model_name": model_used,
-                    "llm_input_tokens": llm_input_tokens,
-                    "llm_output_tokens": llm_output_tokens,
-                    "embedding_tokens": embedding_tokens,
-                    "total_tokens": total_tokens,
-                    "llm_cost_usd": llm_cost_usd,
-                    "embedding_cost_usd": embedding_cost_usd,
-                    "total_cost_usd": total_cost_usd,
                 }
             )
-            await self.db.commit()
         except Exception as ae:
             logger.warning(f"Failed to log query to analytics: {ae}")
 
@@ -1492,7 +1464,6 @@ RESPONSE FORMAT
         tenant_id: str,
         agent_id: str,
         agent_persona: Optional[dict] = None,
-        model: Optional[str] = None,
     ) -> LLMResponse:
         try:
             llm_response = await self.llm_client.generate_answer(
@@ -1502,7 +1473,6 @@ RESPONSE FORMAT
                 agent_id=agent_id,
                 agent_persona=agent_persona,
                 enable_thinking=False,
-                model=model,
             )
             return llm_response
         except Exception as e:

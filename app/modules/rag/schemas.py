@@ -126,3 +126,11 @@ class UnifiedChatRequest(BaseModel):
             max_depth=2,
             session_id=payload.get("session_id"),
         )
+
+class RetrievalTask(BaseModel):
+    """Shared task contract for vector engines and other retrieval modules"""
+    task_id: str
+    query: str
+    metadata_filters: Optional[Dict] = None
+    top_k: int = 15
+    target_section_ids: Optional[List[str]] = None

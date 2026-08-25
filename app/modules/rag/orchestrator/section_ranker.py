@@ -19,7 +19,13 @@ class SectionRanker:
         """
         Scores and ranks sections based on temporal constraints, semantic keyword overlap, and doc type.
         """
+        import time
+        trace_start = time.time()
+        logger.info(f"[TRACE_E2E] [ENTRY] SectionRanker.rank_sections - Input: {len(candidate_sections) if candidate_sections else 0} candidates")
+        
         if not candidate_sections:
+            latency = time.time() - trace_start
+            logger.info(f"[TRACE_E2E] [EXIT] SectionRanker.rank_sections - Output: 0 sections - Latency: {latency:.2f}s")
             return []
             
         query_lower = query.lower()
@@ -59,13 +65,16 @@ class SectionRanker:
         # Sort descending by score
         scored_sections.sort(key=lambda x: x["rank_score"], reverse=True)
         
-        # Deduplicate by section_id just in case multiple engines yielded the same section
+        # Deduplicate by section name just in case multiple engines yielded the same section
         seen = set()
         unique_ranked = []
         for s in scored_sections:
-            sid = s.get("section_id")
-            if sid not in seen:
-                seen.add(sid)
+            s_name = s.get("title")
+            if s_name not in seen and s_name:
+                seen.add(s_name)
                 unique_ranked.append(s)
                 
-        return unique_ranked[:top_k]
+        final_sections = unique_ranked[:top_k]
+        latency = time.time() - trace_start
+        logger.info(f"[TRACE_E2E] [EXIT] SectionRanker.rank_sections - Output: {len(final_sections)} sections - Latency: {latency:.2f}s")
+        return final_sections

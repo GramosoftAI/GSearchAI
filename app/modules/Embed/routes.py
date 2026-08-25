@@ -1004,9 +1004,16 @@ async def preview_embed_file(kb_id: str):
 # WIDGET CUSTOMIZATION ENDPOINTS
 # ============================================================================
 
+
 from fastapi import UploadFile, File
-from .schemas import WidgetCustomizationUpdate, WidgetCustomizationResponse, LogoUploadResponse, CustomizationSaveResponse
-from .service import WidgetCustomizationService
+from .schemas import (
+    WidgetCustomizationUpdate, WidgetCustomizationResponse,
+    LogoUploadResponse, CustomizationSaveResponse,
+    WidgetEmbedConfigCreate,
+)
+from .service import WidgetCustomizationService, WidgetEmbedConfigService
+from .repository import OptimisticLockError
+
 
 
 from ...core.security import verify_access_token
@@ -1029,6 +1036,184 @@ async def get_tenant_and_user_embed(request: Request) -> tuple[str, str]:
 
     raise HTTPException(status_code=401, detail="Unauthorized")
 
+
+# ============================================================================
+# NEW CRUD: Full Widget Embed Configuration Endpoints
+# ============================================================================
+
+@router.get("/configs", status_code=status.HTTP_200_OK)
+async def list_embed_configs(request: Request):
+    """
+    List all widget embed configurations for the authenticated tenant.
+    Requires JWT authentication.
+    Returns newest-first list of all saved configs.
+    """
+    try:
+        tenant_id, user_id = await get_tenant_and_user_embed(request)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    async with AsyncSessionLocal() as db:
+        service = WidgetEmbedConfigService(db, tenant_id)
+        result = await service.list_configs()
+        logger.info(
+            "Embed configs listed",
+            extra={"tenant_id": tenant_id, "user_id": user_id, "total": result.get("total", 0)},
+        )
+        return format_success(result)
+
+
+@router.get("/configs/{agent_id}", status_code=status.HTTP_200_OK)
+async def get_embed_config(
+    agent_id: str,
+    request: Request,
+    tenant_id: Optional[str] = Query(None, description="Tenant UUID — required for public widget access (no JWT)"),
+):
+    """
+    Get widget embed configuration for a specific agent.
+
+    Dual access mode:
+    - Authenticated (JWT): returns full config including metadata (id, version, user_id).
+    - Public (tenant_id query param, no JWT): returns sanitized config for chat.js widget init.
+
+    If no configuration is saved, returns safe defaults.
+    """
+    # Try JWT first; fall back to query-param tenant_id for public widget use
+    resolved_tenant_id = tenant_id
+    is_public_access = False
+
+    if not resolved_tenant_id:
+        try:
+            resolved_tenant_id, _ = await get_tenant_and_user_embed(request)
+        except HTTPException:
+            raise HTTPException(
+                status_code=400,
+                detail="Either a valid JWT or 'tenant_id' query parameter is required."
+            )
+    else:
+        is_public_access = True
+
+    # Validate agent_id format
+    try:
+        uuid.UUID(agent_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid agent_id UUID format")
+
+    async with AsyncSessionLocal() as db:
+        service = WidgetEmbedConfigService(db, str(resolved_tenant_id))
+        config = await service.get_config(agent_id)
+
+    if is_public_access:
+        # Return sanitized public response — excludes internal metadata
+        PUBLIC_FIELDS = {
+            "agent_id", "theme_color", "theme_text_color", "btn_bg_color", "btn_border_color",
+            "header_logo", "header_align", "header_name", "header_subtext",
+            "agent_label", "bot_avatar", "chat_type", "position", "placeholder_text",
+            "button_icon", "button_align", "show_button_text", "button_text",
+            "initial_message", "display_sources", "allow_downloads", "display_copy",
+            "display_feedback", "link_safety", "lead_collection", "lead_fields",
+            "lead_timing", "escalation_enabled", "escalation_link",
+        }
+        sanitized = {k: v for k, v in config.items() if k in PUBLIC_FIELDS}
+        return format_success(sanitized)
+
+    return format_success(config)
+
+
+@router.post("/configs", status_code=status.HTTP_200_OK)
+async def save_embed_config(
+    request: Request,
+    body: WidgetEmbedConfigCreate,
+):
+    """
+    Create or update widget embed configuration for an agent (UPSERT).
+
+    - First save creates the config (version=1).
+    - Subsequent saves increment the version atomically.
+    - Pass 'expected_version' in the body to enable Optimistic Concurrency Control.
+      If the DB version doesn't match, HTTP 409 Conflict is returned.
+    - Appends an immutable history record on every save.
+
+    Requires JWT authentication.
+    """
+    try:
+        tenant_id, user_id = await get_tenant_and_user_embed(request)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    async with AsyncSessionLocal() as db:
+        service = WidgetEmbedConfigService(db, tenant_id)
+        try:
+            result = await service.save_config(user_id=user_id, data=body)
+        except OptimisticLockError as e:
+            logger.warning(
+                "Embed config OCC conflict",
+                extra={
+                    "tenant_id": tenant_id,
+                    "agent_id": body.agent_id,
+                    "expected_version": body.expected_version,
+                    "detail": str(e),
+                },
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(e),
+            )
+        except Exception as e:
+            logger.error(
+                "Embed config save failed",
+                extra={"tenant_id": tenant_id, "agent_id": body.agent_id, "error": str(e)},
+                exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail="Failed to save embed configuration.")
+
+    return format_success(result)
+
+
+@router.delete("/configs/{agent_id}", status_code=status.HTTP_200_OK)
+async def delete_embed_config(
+    agent_id: str,
+    request: Request,
+    change_reason: Optional[str] = Query(None, description="Optional reason for deletion (audit log)"),
+):
+    """
+    Delete widget embed configuration for a specific agent.
+
+    - Appends a 'delete' history record before deletion (audit preserved).
+    - Returns HTTP 200 with success=False if no config exists (idempotent).
+    - Requires JWT authentication.
+    """
+    try:
+        tenant_id, user_id = await get_tenant_and_user_embed(request)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Validate agent_id format
+    try:
+        uuid.UUID(agent_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid agent_id UUID format")
+
+    async with AsyncSessionLocal() as db:
+        service = WidgetEmbedConfigService(db, tenant_id)
+        result = await service.delete_config(
+            agent_id=agent_id,
+            user_id=user_id,
+            change_reason=change_reason,
+        )
+
+    return format_success(result)
+
+
+# ============================================================================
+# LEGACY: Logo Upload & Customization (kept for backward compatibility)
+# ============================================================================
 
 @router.post("/logo", response_model=LogoUploadResponse, status_code=status.HTTP_200_OK)
 async def upload_widget_logo(

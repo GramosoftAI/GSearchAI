@@ -513,16 +513,12 @@ class KnowledgeBaseService:
         import time
         import json
         
-        from app.core.config import get_settings
-        _settings = get_settings()
-
         audit_run = DocumentIngestionRun(
             tenant_id=self.tenant_id,
             document_id=uuid.UUID(kb_id),
             document_category=document_category,
             started_at=datetime.utcnow(),
             status="IN_PROGRESS",
-            model_name=_settings.model_extraction,
             chunk_count=0,
             entity_count=0,
             triplet_count=0,
@@ -592,11 +588,6 @@ class KnowledgeBaseService:
 
 
 
-
-            # Detect document language and assign to KnowledgeBase
-            from ...core.language import detect_document_language
-            doc_language = detect_document_language(document_text)
-            kb.language = doc_language
 
             # 2. CHUNK THE TEXT
             source_type = "pdf"
@@ -765,7 +756,7 @@ class KnowledgeBaseService:
                 routing_stats["kg_calls"] += 1
                 try:
                     async with sem:
-                        result = await asyncio.wait_for(unified_extractor.extract_all(chunk_id, text), timeout=45.0)
+                        result = await asyncio.wait_for(unified_extractor.extract_all(chunk_id, text), timeout=120.0)
                     _chunk_extract_cache[text_hash] = result
                     return result
                 except Exception as e:
@@ -787,7 +778,7 @@ class KnowledgeBaseService:
             
             if use_triplets:
                 from ...core.triplet_extractor import TripletExtractionResult
-                triplet_results = [TripletExtractionResult(chunk_id=f"idx_{i}", triplets=res.get("triplets", [])) for i, res in enumerate(unified_results)]
+                triplet_results = [TripletExtractionResult(chunk_id=f"idx_{i}", triplets=res.get("triplets", []), events=res.get("events", [])) for i, res in enumerate(unified_results)]
             else:
                 triplet_results = []
                 
@@ -862,11 +853,7 @@ class KnowledgeBaseService:
             audit_run.kg_extraction_calls = routing_stats["kg_calls"]
             
             audit_run.llm_calls = len(chunks) + retry_count - routing_stats["fluff"] - routing_stats["cache_hits"]
-            ext_model = first_meta.get("model_name")
-            if not ext_model or ext_model in ("unknown", "deepseek-v3"):
-                from app.core.config import get_settings
-                ext_model = get_settings().model_extraction
-            audit_run.model_name = ext_model
+            audit_run.model_name = first_meta.get("model_name", "unknown")
             audit_run.schema_version = first_meta.get("schema_version", "unknown")
             audit_run.extractor_version = "legacy_ensemble" if first_meta.get("fallback_used") else "unified_extractor_v1"
             audit_run.llm_input_tokens = prompt_tokens
@@ -977,6 +964,11 @@ class KnowledgeBaseService:
             # 5. BATCH CREATE CHUNK NODES
 
             chunk_ids = [str(uuid.uuid4()) for _ in range(len(chunks))]
+            chunk_section_map = {
+                chunk_ids[i]: chunk_metadata_list[i].get("section") 
+                for i in range(len(chunks)) 
+                if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i]
+            }
 
             chunk_data = [{
 
@@ -1013,8 +1005,8 @@ class KnowledgeBaseService:
                     chunk_index=i,
 
                     embedding=embeddings[i],
-
-                    language=doc_language,
+                    
+                    section=chunk_section_map.get(chunk_ids[i]),
 
                 )
 
@@ -1556,7 +1548,6 @@ class KnowledgeBaseService:
             kb_dict["time_metrics"] = None
             if job_dict and job_dict.get("started_at") and job_dict.get("completed_at") and run_info and run_info.started_at and run_info.completed_at:
                 try:
-                    from datetime import datetime
                     j_start = datetime.fromisoformat(job_dict["started_at"].replace("Z", "+00:00"))
                     j_end = datetime.fromisoformat(job_dict["completed_at"].replace("Z", "+00:00"))
                     
@@ -3770,17 +3761,30 @@ class KnowledgeBaseService:
                     "part_number": ["part number", "part no", "item code", "sku", "product id"],
                     "product_name": ["product", "description", "item name", "product name", "item description"],
                     "mrp": ["mrp", "price", "rate", "unit price", "retail price", "selling price", "cost"],
-                    "gst": ["gst", "tax", "gst%", "tax%", "igst", "cgst", "sgst"],
+                    "gst": ["gst", "tax", "gst %", "gst%", "tax %", "tax%", "igst", "cgst", "sgst"],
                     "hsn_code": ["hsn", "hsn code", "sac code"]
                 }
+                
+                import difflib
                 
                 # Case-insensitive key matching for common columns
                 row_keys_lower = {k.lower().strip(): k for k in row_data.keys()}
                 
                 def find_mapped_value(canonical_name):
+                    # 1. Exact match against our semantic alias list (handles "cost" = "mrp")
                     for alias in CANONICAL_COLUMNS[canonical_name]:
                         if alias in row_keys_lower:
                             return row_data[row_keys_lower[alias]]
+                            
+                    # 2. Fuzzy match fallback
+                    # Handles typos or minor variations (e.g., "prod num" matching "product name")
+                    aliases = CANONICAL_COLUMNS[canonical_name]
+                    for row_key in row_keys_lower:
+                        # Compare the row key against all known aliases for this canonical field
+                        matches = difflib.get_close_matches(row_key, aliases, n=1, cutoff=0.8)
+                        if matches:
+                            return row_data[row_keys_lower[row_key]]
+                            
                     return None
                 
                 # Extract typed columns
@@ -3808,14 +3812,16 @@ class KnowledgeBaseService:
                 )
 
                 # ============= ROW-LEVEL EMBEDDING CHUNK =============
-                # Create highly structured semantic chunks avoiding SL.NO and metadata
-                # This prevents flattened table math hallucination (e.g., 1 + 2996 = 12996)
+                # Dynamically build chunk text from ALL columns in row_data.
+                # Every column with a non-empty value is included to ensure
+                # nothing is lost (UOS, GST%, SL.NO, custom columns, etc.).
                 chunk_parts = []
-                if part_number: chunk_parts.append(f"Part Number: {part_number}")
-                if product_name: chunk_parts.append(f"Product Name: {product_name}")
-                if mrp is not None: chunk_parts.append(f"MRP: {mrp}")
-                if hsn_code: chunk_parts.append(f"HSN Code: {hsn_code}")
-                if gst is not None: chunk_parts.append(f"GST: {gst}%")
+                for col_name, col_value in row_data.items():
+                    val = str(col_value).strip() if col_value else ""
+                    if not val:
+                        continue
+                    # Use the original column name as the label (preserves context)
+                    chunk_parts.append(f"{col_name.strip()}: {val}")
                 
                 if chunk_parts:
                     chunk_texts.append("\n".join(chunk_parts))

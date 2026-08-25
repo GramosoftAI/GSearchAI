@@ -5,22 +5,28 @@ import time
 from typing import Dict, List, Any
 
 from .entity_extraction import Entity, EntityExtractor
-from .triplet_extractor import ExtractedTriplet, TripletExtractor
+from .triplet_extractor import ExtractedTriplet, ExtractedEvent, ExtractedParticipant, ExtractedAttribute, TripletExtractor
 from .pdf_extractor import PDFExtractor
 from .llm.deepinfra_llm import DeepInfraLLMClient
 from json_repair import repair_json
-from .schema_config import ALLOWED_SCHEMA_MATRIX
+from app.rdf.owl_layer import DEFAULT_SCHEMA_MATRIX as ALLOWED_SCHEMA_MATRIX
 
 logger = logging.getLogger(__name__)
 
 UNIFIED_PROMPT = """
-You are a knowledge graph extraction engine. Read the TEXT and extract ALL entities, triplets, and structured business data into a SINGLE JSON object.
+You are a knowledge graph extraction engine. Read the TEXT and extract ALL entities, triplets, events, and structured business data into a SINGLE JSON object.
+
+Valid entity types: PERSON, ORGANIZATION, LOCATION, CONCEPT, EVENT, PRODUCT, TECHNOLOGY, NUMERIC, DATE, STRUCTURED_IDENTIFIER
 
 Extract Entities:
 Names, Organizations, Locations, Concepts. Provide exact start_char and end_char offsets based on the TEXT.
 
 Extract Triplets:
-(Subject -> Predicate -> Object). Provide the exact text quote as 'evidence'.
+(Subject -> Predicate -> Object). Provide the exact text quote as 'evidence'. Use this for simple 2-entity relations.
+
+Extract Events:
+For complex facts involving 3 or more participants OR any attached attributes (date, amount, status), use the 'events' array. Do not split one event into multiple flat triplets.
+Include a 'mode_hint': 'event' for these.
 
 Extract Structured Identifiers:
 E-WAY_BILL_NUMBER, INVOICE_NUMBER, GSTIN, PAN, REGISTRATION_NO. Provide the exact text span as 'source_span'.
@@ -28,7 +34,12 @@ E-WAY_BILL_NUMBER, INVOICE_NUMBER, GSTIN, PAN, REGISTRATION_NO. Provide the exac
 Extract Document Sections:
 "Place of Delivery", "Billing Address".
 
-CRITICAL INSTRUCTION: You MUST NOT output any reasoning, explanations, or <think> blocks. Your very first output character MUST be `{` and your last MUST be `}`. Return EXACTLY the following JSON format:
+CRITICAL INSTRUCTIONS - PENALTY FOR NON-COMPLIANCE IS FAILURE:
+1. NO CONVERSATIONAL TEXT: You MUST NOT output any reasoning, explanations, conversational text, or <think> blocks. Your very first output character MUST be `{` and your very last MUST be `}`.
+2. STRICT JSON FORMAT: The JSON must be perfectly well-formed. Do not truncate the output, do not forget commas, and ensure all brackets are closed.
+3. STRICT SCHEMA VERSION: You MUST explicitly include `"schema_version": "1.0"` at the top of your JSON. Do not change this version number.
+
+Return EXACTLY the following JSON format:
 {
     "schema_version": "1.0",
     "metadata": {
@@ -40,6 +51,21 @@ CRITICAL INSTRUCTION: You MUST NOT output any reasoning, explanations, or <think
     ],
     "triplets": [
         {"subject": "Apple Inc", "predicate": "LOCATED_IN", "object": "California", "subject_type": "ORGANIZATION", "object_type": "LOCATION", "evidence": "Apple Inc is based in California", "confidence": 0.95}
+    ],
+    "events": [
+        {
+            "mode_hint": "event",
+            "name": "Google acquisition of DeepMind",
+            "event_type": "EVENT",
+            "participants": [
+                {"entity": "Google", "role": "buyer", "entity_type": "ORGANIZATION"},
+                {"entity": "DeepMind", "role": "acquired_company", "entity_type": "ORGANIZATION"}
+            ],
+            "attributes": [
+                {"attribute": "date", "value": "2014", "entity_type": "DATE"},
+                {"attribute": "amount", "value": "500 million dollars", "entity_type": "NUMERIC"}
+            ]
+        }
     ],
     "identifiers": [
         {"type": "GSTIN", "candidate_value": "33AAACS8779D1Z7", "source_span": "GSTIN: 33AAACS8779D1Z7", "confidence": 0.99}
@@ -156,6 +182,7 @@ class UnifiedExtractor:
         result = {
             "entities": [],
             "triplets": [],
+            "events": [],
             "structured": {"identifiers": [], "sections": []}
         }
         
@@ -255,6 +282,35 @@ class UnifiedExtractor:
                             result["triplets"].append(t)
                         else:
                             logger.warning(f"Hallucination caught: Triplet evidence not in source. Triplet: {t}")
+                            
+                # Parse Events
+                for ev in data.get("events", []):
+                    if ev.get("name"):
+                        event_name = str(ev["name"]).strip()
+                        
+                        participants = []
+                        for p in ev.get("participants", []):
+                            participants.append(ExtractedParticipant(
+                                entity=str(p.get("entity", "")).strip().lower(),
+                                role=str(p.get("role", "")).strip().upper(),
+                                entity_type=str(p.get("entity_type", "CONCEPT")).strip().upper()
+                            ))
+                            
+                        attributes = []
+                        for a in ev.get("attributes", []):
+                            attributes.append(ExtractedAttribute(
+                                attribute=str(a.get("attribute", "")).strip().upper(),
+                                value=str(a.get("value", "")).strip().lower(),
+                                entity_type=str(a.get("entity_type", "CONCEPT")).strip().upper()
+                            ))
+                            
+                        e = ExtractedEvent(
+                            name=event_name,
+                            event_type=str(ev.get("event_type", "EVENT")).strip().upper(),
+                            participants=participants,
+                            attributes=attributes
+                        )
+                        result["events"].append(e)
                         
                 # Parse Structured Identifiers (Deterministic Validation)
                 for ident in data.get("identifiers", []):
@@ -341,6 +397,7 @@ class UnifiedExtractor:
         fallback_result = {
             "entities": [],
             "triplets": [],
+            "events": [],
             "structured": {"identifiers": [], "sections": []}
         }
         
@@ -351,8 +408,11 @@ class UnifiedExtractor:
             
         try:
             triplet_res = await self.triplet_extractor.extract_from_chunk(chunk_id, chunk_text)
-            if triplet_res and triplet_res.triplets:
-                fallback_result["triplets"] = triplet_res.triplets
+            if triplet_res:
+                if triplet_res.triplets:
+                    fallback_result["triplets"] = triplet_res.triplets
+                if hasattr(triplet_res, 'events') and triplet_res.events:
+                    fallback_result["events"] = triplet_res.events
         except Exception as e:
             logger.error(f"Fallback Triplet extraction failed: {e}")
             
