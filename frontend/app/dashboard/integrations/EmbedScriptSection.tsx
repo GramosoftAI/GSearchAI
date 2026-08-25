@@ -23,7 +23,7 @@ import {
   UserOutlined,
   CustomerServiceOutlined,
 } from "@ant-design/icons";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { SiCrowdsource } from "react-icons/si";
 import axios from "axios";
 import AgentList from "../../components/ui/AgentList";
@@ -110,6 +110,8 @@ export default function EmbedScriptSection() {
   const [agent, setAgent] = useState<{ id: string; name: string } | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [getAgents] = useAxios<AgentListResponse>({ endpoint: "GETAGENTLIST", hideErrorMsg: true });
+  const [saveEmbedConfig, saveEmbedConfigLoading] = useAxios({ endpoint: "SAVE_EMBED_CONFIG", hideErrorMsg: true });
+  const [getEmbedConfig] = useAxios({ endpoint: "GET_EMBED_CONFIG", hideErrorMsg: true });
 
   // 1. Core Layout & Theme States
   const [chatType, setChatType] = useState<"icon" | "search">("icon");
@@ -217,48 +219,54 @@ export default function EmbedScriptSection() {
     return token;
   };
 
-  // Fetch Stored Embed Customization (GET API)
-  useEffect(() => {
-    const fetchEmbedCustomization = async () => {
-      try {
-        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
-        const token = getAuthToken();
-        const authHeader = token ? (token.startsWith("Bearer ") ? token : `Bearer ${token}`) : "";
+  // ── Track version for Optimistic Concurrency Control ──────────────────────
+  const [savedConfigVersion, setSavedConfigVersion] = useState<number | null>(null);
 
-        const tenantId = localStorage.getItem("tenantId") || agentresp?.[0]?.tenant_id || "default_tenant";
-        const res = await fetch(`${baseUrl}/embed/customization?tenant_id=${tenantId}`, {
-          headers: authHeader ? { Authorization: authHeader } : {},
-          credentials: "include"
-        });
+  // ── Load full embed config from backend when agent selection changes ───────
+  const loadConfigForAgent = useCallback((agentId: string) => {
+    getEmbedConfig(
+      { path: `/${agentId}` } as any,
+      (payload: any) => {
+        const data = payload?.data ?? payload;
+        if (!data) return;
 
-        if (res.ok) {
-          const result = await res.json();
-          const data = result.data ?? result;
-          if (data) {
-            if (data.logo_url) {
-              const proxyUrl = toProxyLogoUrl(data.logo_url);
-              setHeaderLogo(proxyUrl);
-              setDraftHeaderLogo(proxyUrl);
-            }
-            if (typeof data.show_in_header === "boolean") {
-              setShowInHeader(data.show_in_header);
-              setDraftShowInHeader(data.show_in_header);
-            }
-            if (typeof data.show_in_chat === "boolean") {
-              setShowInChat(data.show_in_chat);
-              setDraftShowInChat(data.show_in_chat);
-            }
-            if (typeof data.show_in_embed === "boolean") {
-              setShowInEmbed(data.show_in_embed);
-              setDraftShowInEmbed(data.show_in_embed);
-            }
-          }
-        }
-      } catch (err) {
-        console.warn("Failed to fetch customization:", err);
+        // Track the version for OCC on next save
+        if (typeof data.version === "number") setSavedConfigVersion(data.version);
+
+        // Populate APPLIED state (what the snippet shows)
+        if (data.theme_color) setThemeColor(data.theme_color);
+        if (data.theme_text_color) setThemeTextColor(data.theme_text_color);
+        if (data.btn_bg_color) setBtnBgColor(data.btn_bg_color);
+        if (data.btn_border_color) setBtnBorderColor(data.btn_border_color);
+        if (data.header_logo) { const u = toProxyLogoUrl(data.header_logo); setHeaderLogo(u); setDraftHeaderLogo(u); }
+        if (data.header_align) setHeaderAlignment(data.header_align as "left" | "center");
+        if (data.header_name) setHeaderName(data.header_name);
+        if (data.agent_label) setAgentLabel(data.agent_label);
+        if (data.bot_avatar) setBotAvatar(data.bot_avatar);
+        if (data.chat_type) setChatType(data.chat_type as "icon" | "search");
+        if (data.position) setPosition(data.position as "center" | "right");
+        if (data.placeholder_text) setPlaceholderText(data.placeholder_text);
+        if (data.button_icon) setButtonIcon(data.button_icon);
+        if (data.button_align) setButtonAlignment(data.button_align as "left" | "right");
+        if (typeof data.show_button_text === "boolean") setShowButtonText(data.show_button_text);
+        if (data.button_text) setButtonText(data.button_text);
+        if (data.initial_message) setInitialMessage(data.initial_message);
+        if (typeof data.display_sources === "boolean") setDisplaySources(data.display_sources);
+        if (typeof data.allow_downloads === "boolean") setAllowDownloads(data.allow_downloads);
+        if (typeof data.display_copy === "boolean") setDisplayCopyBtn(data.display_copy);
+        if (typeof data.display_feedback === "boolean") setDisplayFeedback(data.display_feedback);
+        if (typeof data.link_safety === "boolean") setLinkSafety(data.link_safety);
+        if (typeof data.lead_collection === "boolean") setLeadCollection(data.lead_collection);
+        if (Array.isArray(data.lead_fields)) setLeadFields(data.lead_fields.join(","));
+        if (data.lead_timing) setLeadTiming(data.lead_timing);
+        if (typeof data.escalation_enabled === "boolean") setEscalationEnabled(data.escalation_enabled);
+        if (data.escalation_link !== undefined) setEscalationLink(data.escalation_link);
+        if (typeof data.show_in_header === "boolean") { setShowInHeader(data.show_in_header); setDraftShowInHeader(data.show_in_header); }
+        if (typeof data.show_in_chat === "boolean") { setShowInChat(data.show_in_chat); setDraftShowInChat(data.show_in_chat); }
+        if (typeof data.show_in_embed === "boolean") { setShowInEmbed(data.show_in_embed); setDraftShowInEmbed(data.show_in_embed); }
       }
-    };
-    fetchEmbedCustomization();
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Sandbox Live Preview States (Inside Modal)
@@ -367,8 +375,17 @@ export default function EmbedScriptSection() {
     setIsCustomizerOpen(true);
   };
 
-  // Apply customizations and update the code block
+  // ── Load config when agent changes ───────────────────────────────────────
+  useEffect(() => {
+    if (agent?.id) {
+      loadConfigForAgent(agent.id);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent?.id]);
+
+  // Apply customizations and persist ALL fields to backend
   const handleApply = async () => {
+    // 1. Commit draft → applied state (updates the script snippet immediately)
     setChatType(draftChatType);
     setPosition(draftPosition);
     setPlaceholderText(draftPlaceholderText);
@@ -385,85 +402,79 @@ export default function EmbedScriptSection() {
     setButtonAlignment(draftButtonAlignment);
     setShowButtonText(draftShowButtonText);
     setButtonText(draftButtonText);
-
     setShowInHeader(draftShowInHeader);
     setShowInChat(draftShowInChat);
     setShowInEmbed(draftShowInEmbed);
-
     setInitialMessage(draftInitialMessage);
     setDisplaySources(draftDisplaySources);
     setAllowDownloads(draftAllowDownloads);
     setDisplayCopyBtn(draftDisplayCopyBtn);
     setDisplayFeedback(draftDisplayFeedback);
     setLinkSafety(draftLinkSafety);
-
     setLeadCollection(draftLeadCollection);
     setLeadFields(draftLeadFields);
     setLeadTiming(draftLeadTiming);
     setEscalationEnabled(draftEscalationEnabled);
     setEscalationLink(draftEscalationLink);
 
-    // Call PUT /api/v1/embed/customization to persist backend configuration
-    try {
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
-      const token = getAuthToken();
-      const authHeader = token ? (token.startsWith("Bearer ") ? token : `Bearer ${token}`) : "";
-      const tenantId = localStorage.getItem("tenantId") || agentresp?.[0]?.tenant_id || "default_tenant";
+    // 2. Persist ALL 25+ fields via the new centralized embed config endpoint
+    if (agent?.id) {
+      const payload = {
+        agent_id: agent.id,
+        expected_version: savedConfigVersion ?? undefined, // OCC: send known version
+        change_reason: "Dashboard customizer apply",
+        // Theme
+        theme_color: draftThemeColor,
+        theme_text_color: draftThemeTextColor,
+        btn_bg_color: draftBtnBgColor,
+        btn_border_color: draftBtnBorderColor,
+        // Header
+        header_logo: draftHeaderLogo || "",
+        header_align: draftHeaderAlignment,
+        header_name: draftHeaderName,
+        // Bot Identity
+        agent_label: draftAgentLabel,
+        bot_avatar: draftBotAvatar,
+        // Chat Type & Layout
+        chat_type: draftChatType,
+        position: draftPosition,
+        placeholder_text: draftPlaceholderText,
+        // Button
+        button_icon: draftButtonIcon,
+        button_align: draftButtonAlignment,
+        show_button_text: draftShowButtonText,
+        button_text: draftButtonText,
+        // Content
+        initial_message: draftInitialMessage,
+        display_sources: draftDisplaySources,
+        allow_downloads: draftAllowDownloads,
+        display_copy: draftDisplayCopyBtn,
+        display_feedback: draftDisplayFeedback,
+        link_safety: draftLinkSafety,
+        // Lead Capture
+        lead_collection: draftLeadCollection,
+        lead_fields: draftLeadFields.split(",").map((f) => f.trim()).filter(Boolean),
+        lead_timing: draftLeadTiming,
+        // Escalation
+        escalation_enabled: draftEscalationEnabled,
+        escalation_link: draftEscalationLink,
+        // Logo Visibility
+        show_in_header: draftShowInHeader,
+        show_in_chat: draftShowInChat,
+        show_in_embed: draftShowInEmbed,
+      };
 
-      await fetch(`${baseUrl}/embed/customization`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: authHeader,
-        },
-        credentials: "include",
-        body: JSON.stringify({
-          logo_url: draftHeaderLogo || "",
-          show_in_header: draftShowInHeader,
-          show_in_chat: draftShowInChat,
-          show_in_embed: draftShowInEmbed
-        })
+      saveEmbedConfig({ data: payload }, (resp: any) => {
+        // Update the version tracker after a successful save
+        const newVersion = resp?.data?.config?.version;
+        if (typeof newVersion === "number") setSavedConfigVersion(newVersion);
       });
-
-      // Call GET /api/v1/embed/customization on OK/Apply to fetch and store stored settings
-      const getRes = await fetch(`${baseUrl}/embed/customization?tenant_id=${tenantId}`, {
-        method: "GET",
-        headers: {
-          ...(authHeader ? { Authorization: authHeader } : {})
-        },
-        credentials: "include"
-      });
-      if (getRes.ok) {
-        const result = await getRes.json();
-        const data = result.data ?? result;
-        if (data) {
-          if (data.logo_url) {
-            const proxyUrl = toProxyLogoUrl(data.logo_url);
-            setHeaderLogo(proxyUrl);
-            setDraftHeaderLogo(proxyUrl);
-          }
-          if (typeof data.show_in_header === "boolean") {
-            setShowInHeader(data.show_in_header);
-            setDraftShowInHeader(data.show_in_header);
-          }
-          if (typeof data.show_in_chat === "boolean") {
-            setShowInChat(data.show_in_chat);
-            setDraftShowInChat(data.show_in_chat);
-          }
-          if (typeof data.show_in_embed === "boolean") {
-            setShowInEmbed(data.show_in_embed);
-            setDraftShowInEmbed(data.show_in_embed);
-          }
-        }
-      }
-    } catch (err) {
-      console.warn("Failed to persist or fetch customization API:", err);
     }
 
     setIsCustomizerOpen(false);
     notification.success({
-      message: "Widget Configuration Applied",
-      description: "All header, content, bot avatar, entry button, and styling attributes have been updated.",
+      message: "Widget Configuration Saved",
+      description: "All settings have been saved to the database and the snippet is updated.",
       placement: "topRight",
     });
   };
