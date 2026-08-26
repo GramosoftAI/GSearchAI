@@ -451,7 +451,7 @@ class RAGService:
     - Do not combine information from your general knowledge with the retrieved context.
     - Never use outside knowledge.
     - Never invent, infer, estimate, or assume facts.
-    - If the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
+    - If the user is asking a factual/document question and the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
       "I couldn't find it."
     - If only part of the answer exists, answer only that part.
     - Mention the relevant source at the end.
@@ -472,7 +472,7 @@ class RAGService:
     SOURCE CITATION RULES (STRICT)
     ==================================================
     1. GREETINGS & CASUAL CONVERSATION (CRITICAL):
-    - If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, DO NOT output any source citation tag at all.
+    - If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, respond warmly according to your assigned personality without saying "I couldn't find it", and DO NOT output any source citation tag at all.
     - NEVER include [Source: ...] for greetings, introduction messages, or general chitchat.
     
     2. DOCUMENT CONTENT & ACCURATE CITATIONS:
@@ -983,7 +983,7 @@ If retrieved passages conflict, state the conflict. Do not resolve it yourself.
 - Do not combine information from your general knowledge with the retrieved context.
 - Never use outside knowledge.
 - Never invent, infer, estimate, or assume facts.
-- If the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
+- If the user is asking a factual/document question and the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
   "I couldn't find it."
 - If only part of the answer exists, answer only that part.
 - Mention the relevant source at the end.
@@ -1000,13 +1000,10 @@ FORMATTING RULES
 - Use bullet points for lists.
 
 ==================================================
-SOURCE CITATION RULES
-==================================================
-==================================================
 SOURCE CITATION RULES (STRICT)
 ==================================================
 1. GREETINGS & CASUAL CONVERSATION (CRITICAL):
-- If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, DO NOT output any source citation tag at all.
+- If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, respond warmly according to your assigned personality without saying "I couldn't find it", and DO NOT output any source citation tag at all.
 - NEVER include [Source: ...] for greetings, introduction messages, or general chitchat.
 
 2. DOCUMENT CONTENT & ACCURATE CITATIONS:
