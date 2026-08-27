@@ -428,8 +428,10 @@ class RAGService:
                     )
                     vec_latency = time.time() - vec_start
                     logger.info(f"[TRACE_E2E] [EXIT] RAGPipeline.query - Output: {len(res.chunks) if res and res.chunks else 0} chunks - Latency: {vec_latency:.2f}s")
-                    return res
-                vector_task = asyncio.create_task(wrapped_vector_query())
+                    context = res
+                except Exception as e:
+                    logger.error(f"Vector query failed: {e}")
+                    context = None
     
             context = None
             metadata_yielded = False
