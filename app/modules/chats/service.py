@@ -40,12 +40,132 @@ from ..knowledge_bases.repository import KnowledgeBaseRepository
 from ...core.memory.consolidation import MemoryConsolidator
 from ...core.memory.personalization import PersonalMemoryService
 
+import httpx
+import os
+import time
+import asyncio
+
 logger = logging.getLogger(__name__)
 
 # Default memory window: 10 messages = 5 conversation turns
 DEFAULT_MEMORY_WINDOW = 10
 # Max memory window to prevent token overflow
 MAX_MEMORY_WINDOW = 20
+
+# Shared persistent HTTP client & circuit breaker for Memory API
+_memory_client: Optional[httpx.AsyncClient] = None
+_resolved_memory_api_url: Optional[str] = None
+_memory_api_last_failed: float = 0.0
+_CIRCUIT_BREAKER_COOLDOWN = 30.0  # seconds
+
+
+async def _get_memory_http_client() -> httpx.AsyncClient:
+    """Get or create shared persistent HTTP client for Memory API with fast timeouts."""
+    global _memory_client
+    if _memory_client is None or _memory_client.is_closed:
+        _memory_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=0.5, read=1.5, write=1.0, pool=2.0),
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=10),
+        )
+    return _memory_client
+
+
+async def _fetch_memory_guidance(
+    query: str, session_id: str, agent_id: str, user_id: str, tenant_id: str
+) -> str:
+    """Fast-failover retrieval of episodic guidance from memory-api."""
+    global _resolved_memory_api_url, _memory_api_last_failed
+
+    now = time.time()
+    if _memory_api_last_failed > 0 and (now - _memory_api_last_failed) < _CIRCUIT_BREAKER_COOLDOWN:
+        return ""
+
+    payload = {
+        "query": query,
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "user_id": user_id,
+        "tenant_id": tenant_id,
+    }
+
+    client = await _get_memory_http_client()
+
+    # Fast path: Use previously resolved URL if available
+    if _resolved_memory_api_url:
+        try:
+            resp = await client.post(
+                f"{_resolved_memory_api_url}/process-turn", json=payload, timeout=0.8
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("guidance_context") or ""
+        except Exception:
+            _resolved_memory_api_url = None
+
+    # Discovery path: probe candidate URLs concurrently with short timeout
+    memory_api_base = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
+    candidate_bases = [
+        memory_api_base,
+        "http://localhost:8003/api/v1/memory",
+        "http://127.0.0.1:8003/api/v1/memory",
+        "http://localhost:8002/api/v1/memory",
+        "http://memory-api:8001/api/v1/memory",
+    ]
+    # Normalize candidate URLs
+    candidate_urls = []
+    for b in list(dict.fromkeys(candidate_bases)):
+        b_clean = b.rstrip("/")
+        if not b_clean.endswith("/api/v1/memory"):
+            candidate_urls.append(f"{b_clean}/api/v1/memory/process-turn")
+        else:
+            candidate_urls.append(f"{b_clean}/process-turn")
+
+    async def _try_url(url: str):
+        try:
+            resp = await client.post(url, json=payload, timeout=0.5)
+            if resp.status_code == 200:
+                base = url.rsplit("/process-turn", 1)[0]
+                return base, resp.json()
+        except Exception:
+            pass
+        return None, None
+
+    try:
+        tasks = [_try_url(url) for url in candidate_urls]
+        done, pending = await asyncio.wait(
+            [asyncio.create_task(t) for t in tasks],
+            timeout=0.6,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for p in pending:
+            p.cancel()
+
+        for d in done:
+            base_url, res = d.result()
+            if base_url and res:
+                _resolved_memory_api_url = base_url
+                _memory_api_last_failed = 0.0
+                return res.get("guidance_context") or ""
+    except Exception as e:
+        logger.debug(f"Memory API fast discovery note: {e}")
+
+    _memory_api_last_failed = time.time()
+    return ""
+
+
+async def _save_memory_turn_background(payload: dict):
+    """Fire-and-forget background task to persist chat turns to Memory API without blocking responses."""
+    global _resolved_memory_api_url
+    try:
+        client = await _get_memory_http_client()
+        target_url = (
+            f"{_resolved_memory_api_url}/save-turn"
+            if _resolved_memory_api_url
+            else "http://memory-api:8001/api/v1/memory/save-turn"
+        )
+        await client.post(target_url, json=payload, timeout=2.0)
+    except Exception as e:
+        logger.debug(f"Background save-turn to memory-api note: {e}")
 
 
 class ChatService:
@@ -298,42 +418,18 @@ class ChatService:
         augmented_query = message
         conversation_turns = 0
 
-        # 3a. Load long-term persistent user preferences and episodic memory from memory-api
+        # 3a. Load long-term persistent user preferences and episodic memory from memory-api (fast failover)
         episodic_guidance = ""
         try:
-            import httpx
-            import os
-            memory_api_base = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
-            candidate_urls = [
-                f"{memory_api_base}/api/v1/memory/process-turn",
-                "http://localhost:8003/api/v1/memory/process-turn",
-                "http://127.0.0.1:8003/api/v1/memory/process-turn",
-                "http://localhost:8002/api/v1/memory/process-turn",
-                "http://memory-api:8001/api/v1/memory/process-turn"
-            ]
-            urls = list(dict.fromkeys(candidate_urls))
-            async with httpx.AsyncClient() as client:
-                for url in urls:
-                    try:
-                        resp = await client.post(
-                            url,
-                            json={
-                                "query": message,
-                                "session_id": session_id,
-                                "agent_id": agent_id,
-                                "user_id": user_id,
-                                "tenant_id": self.tenant_id
-                            },
-                            timeout=5.0
-                        )
-                        if resp.status_code == 200:
-                            mem_data = resp.json()
-                            episodic_guidance = mem_data.get("guidance_context") or ""
-                            break
-                    except Exception as e:
-                        logger.debug(f"Memory API process-turn attempt {url} failed: {e}")
+            episodic_guidance = await _fetch_memory_guidance(
+                query=message,
+                session_id=session_id,
+                agent_id=agent_id,
+                user_id=user_id,
+                tenant_id=self.tenant_id,
+            )
         except Exception as pe:
-            logger.warning(f"Memory API process-turn failed: {pe}")
+            logger.debug(f"Memory API guidance fetch note: {pe}")
 
         # 3b. Load in-session recent conversation turns
         if session.message_count > 1:  # >1 because we just added the user message
@@ -483,20 +579,8 @@ class ChatService:
             f"memory={'ON' if memory_used else 'OFF'}"
         )
 
-        # Trigger Standalone Memory API Save-Turn
+        # Trigger Standalone Memory API Save-Turn (Non-blocking background task)
         try:
-            import httpx
-            import os
-            memory_api_base = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
-            candidate_urls = [
-                f"{memory_api_base}/api/v1/memory/save-turn",
-                "http://localhost:8003/api/v1/memory/save-turn",
-                "http://127.0.0.1:8003/api/v1/memory/save-turn",
-                "http://localhost:8002/api/v1/memory/save-turn",
-                "http://127.0.0.1:8002/api/v1/memory/save-turn",
-                "http://memory-api:8001/api/v1/memory/save-turn"
-            ]
-            urls = list(dict.fromkeys(candidate_urls))
             payload = {
                 "query": message,
                 "ai_response": answer,
@@ -506,16 +590,9 @@ class ChatService:
                 "tenant_id": self.tenant_id,
                 "metadata": {"source_doc_count": len(sources)}
             }
-            async with httpx.AsyncClient() as client:
-                for url in urls:
-                    try:
-                        resp = await client.post(url, json=payload, timeout=3.0)
-                        if resp.status_code == 200:
-                            break
-                    except Exception as e:
-                        logger.debug(f"Memory API save-turn attempt {url} failed: {e}")
+            asyncio.create_task(_save_memory_turn_background(payload))
         except Exception as me:
-            logger.warning(f"Failed to push turn to memory-api save-turn: {me}")
+            logger.debug(f"Failed to dispatch background save-turn: {me}")
 
         # ============= STEP 9: MEMORY CONSOLIDATION (Pattern #11) =============
         # Trigger background consolidation to update Knowledge Graph with new facts

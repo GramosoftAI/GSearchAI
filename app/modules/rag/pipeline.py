@@ -500,12 +500,21 @@ class RAGPipeline:
         import time
         start_time = time.time()
         
+        # Focus on the actual user question if history is attached
+        focused_query = query
+        if "CURRENT QUESTION:" in query:
+            focused_query = query.split("CURRENT QUESTION:", 1)[1].strip()
+        elif "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES" in query:
+            parts = query.split("### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES", 1)
+            if len(parts) > 1 and "\n\n" in parts[1]:
+                focused_query = parts[1].split("\n\n", 1)[1].strip()
+
         if analysis is None:
-            analyzer_task = asyncio.create_task(QueryAnalyzer().analyze_query(query, kb_context=kb_context, tenant_id=self.tenant_id, user_id=user_id))
+            analyzer_task = asyncio.create_task(QueryAnalyzer().analyze_query(focused_query, kb_context=kb_context, tenant_id=self.tenant_id, user_id=user_id))
         else:
             async def _return_analysis(): return analysis
             analyzer_task = asyncio.create_task(_return_analysis())
-        embedding_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(query))
+        embedding_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(focused_query))
         
         # We can also prefetch KB metadata here
         kb_metadata_task = None
@@ -555,6 +564,16 @@ class RAGPipeline:
                 "Query spell checked: %r -> %r", original_query, corrected
             )
             query = corrected
+
+        if getattr(analysis, "reasoning", "") == "Fast-path greeting regex match":
+            logger.info("Fast-path greeting detected. Skipping document retrieval.")
+            return RAGContext(
+                query=query,
+                chunks=[],
+                entity_mentions={},
+                total_tokens=0,
+                search_type="SOCIAL"
+            )
 
         # STAGE 0.5: EARLY EXIT FOR TABLE ANALYTICS (Using new QueryAnalyzer)
         if analysis.is_tabular:
@@ -637,7 +656,7 @@ class RAGPipeline:
 
         for sq_idx, sq in enumerate(structured_queries):
             logger.info(
-                "Running retrieval for structured query variation %d/%d: %r",
+                "Running retrieval for structured query %d/%d: %r",
                 sq_idx + 1,
                 len(structured_queries),
                 sq
@@ -648,8 +667,8 @@ class RAGPipeline:
             # Tabular analysis is now handled concurrently in service.py
             extractive_context_text = ""
 
-            # Ensure embedding is generated ONCE for this structured query
-            if current_query == original_query:
+            # Ensure embedding is generated ONCE for this query (reusing early parallel task when available)
+            if current_query in (original_query, focused_query):
                 query_embedding_val, emb_tokens = await embedding_task
             else:
                 from app.core.embeddings import EmbeddingGenerator
@@ -684,6 +703,8 @@ class RAGPipeline:
                 meta_dict["intent"] = getattr(analysis, "intent", None)
                 meta_dict["confidence"] = getattr(analysis, "confidence", 0.0)
                 meta_dict["reasoning"] = getattr(analysis, "reasoning", "")
+            
+            meta_dict["query_embedding"] = query_embedding_val
 
             # 0. Section Ranking
             async def _run_section_ranking():

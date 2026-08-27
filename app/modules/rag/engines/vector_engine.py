@@ -136,11 +136,12 @@ class VectorEngine(BaseEngine):
                 from app.modules.knowledge_bases.models import DocumentChunk, KnowledgeBase
                 from uuid import UUID
 
-                query_embedding = (
-                    getattr(task.metadata_filters, "query_embedding", None)
-                    if getattr(task, "metadata_filters", None)
-                    else None
-                )
+                query_embedding = None
+                if isinstance(task.metadata_filters, dict):
+                    query_embedding = task.metadata_filters.get("query_embedding")
+                elif hasattr(task.metadata_filters, "query_embedding"):
+                    query_embedding = getattr(task.metadata_filters, "query_embedding", None)
+
                 if not query_embedding:
                     query_embedding = await EmbeddingGenerator.generate_embedding(task.query)
 

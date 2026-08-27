@@ -858,6 +858,10 @@ async def init_db():
                     )
 
         async with engine.begin() as conn:
+            # Auto-migrate document_chunks columns
+            await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS section VARCHAR(255)"))
+            await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS metadata_json JSONB"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chunks_kb_section ON document_chunks(kb_id, section)"))
             # Run migration to add file_hash to knowledge_bases table if not present in older databases
             await conn.execute(text("ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_kbs_file_hash ON knowledge_bases(file_hash)"))

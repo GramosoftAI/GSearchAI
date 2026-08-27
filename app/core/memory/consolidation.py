@@ -105,18 +105,30 @@ class MemoryConsolidator:
         """
         logger.info(f" Memory Consolidation: Analyzing interaction for session {session_id[:8]}")
         
+        # Non-blocking debounce to prevent background tasks competing with immediate user queries
+        import asyncio
+        await asyncio.sleep(2.0)
+
+        # Skip small talk and simple queries from heavy consolidation
+        msg_clean = user_message.strip().lower()
+        if len(user_message.split()) < 4 or msg_clean in ["hello", "hi", "hey", "thanks", "thank you", "ok", "okay", "bye"]:
+            logger.debug(" Consolidation skipped for small talk/greeting.")
+            return {"facts_extracted": 0, "success": True}
+        
         try:
-            # 1. Extract facts via LLM
+            # 1. Extract facts via fast cloud LLM (8B)
             prompt = MEMORY_CONSOLIDATION_PROMPT.format(
                 user_message=user_message[:1000],
                 assistant_message=assistant_message[:2000]
             )
             
-            response_text = await self.llm_client.generate(
+            response_text = await self.llm_client.generate_cloud(
                 prompt=prompt,
                 system_prompt="You are a knowledge consolidation engine. Extract persistent facts into JSON.",
-                temperature=0.0, # Deterministic
-                max_tokens=512
+                temperature=0.0,
+                max_tokens=300,
+                model=self.llm_client.model_intent,
+                timeout=10.0
             )
             
             extracted_facts = self._parse_facts(response_text)
