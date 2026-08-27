@@ -119,9 +119,19 @@ async def generate_kb_noisy_words(kb_id: str, tenant_id: str) -> None:
             
             total_chunks = len(chunk_texts)
             if total_chunks <= 3:
-                logger.warning(f"KB={kb_id} has {total_chunks} chunk(s). Too small for meaningful TF-IDF noise filtering. Skipping.")
+                logger.info(f"KB={kb_id} has {total_chunks} chunk(s). Storing empty noisy_words list.")
+                update_query = (
+                    update(KnowledgeBase)
+                    .where(KnowledgeBase.id == kb_uuid)
+                    .values(
+                        noisy_words=[],
+                        noisy_words_generated_at=datetime.utcnow()
+                    )
+                )
+                await db.execute(update_query)
+                await db.commit()
                 return
-                
+
             # 2. Tokenize chunks, normalize terms, and count document frequencies
             word_doc_counts = Counter()
             
@@ -186,3 +196,73 @@ async def generate_kb_noisy_words(kb_id: str, tenant_id: str) -> None:
         except Exception as e:
             await db.rollback()
             logger.error(f"Error generating dynamic noisy words for KB={kb_id}: {e}", exc_info=True)
+
+
+async def generate_kb_summary_embedding(kb_id: str, tenant_id: str) -> None:
+    """
+    Asynchronously generates a summary for a KB based on its first few chunks,
+    embeds the summary, and saves the embedding vector in the database.
+    """
+    logger.info(f"Starting background summary embedding generation for KB={kb_id}, Tenant={tenant_id}")
+    async with AsyncSessionLocal() as db:
+        try:
+            kb_uuid = UUID(kb_id)
+            tenant_uuid = UUID(tenant_id)
+
+            from sqlalchemy import text
+            await db.execute(
+                text("SELECT set_config('app.current_tenant', :tenant_id, false)"),
+                {"tenant_id": str(tenant_uuid)}
+            )
+
+            kb_res = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_uuid))
+            kb = kb_res.scalar_one_or_none()
+            if not kb:
+                logger.warning(f"KB={kb_id} not found for summary embedding. Skipping.")
+                return
+
+            chunk_query = (
+                select(DocumentChunk.text)
+                .where(DocumentChunk.kb_id == kb_uuid)
+                .order_by(DocumentChunk.chunk_index.asc())
+                .limit(5)
+            )
+            chunk_res = await db.execute(chunk_query)
+            chunk_texts = [row[0] for row in chunk_res.fetchall()]
+
+            if not chunk_texts:
+                logger.warning(f"KB={kb_id} has 0 chunks. Skipping summary embedding.")
+                return
+
+            document_text = "\n\n".join(chunk_texts)
+
+            from app.core.llm.deepinfra_llm import DeepInfraLLMClient
+            from app.core.embeddings import EmbeddingGenerator
+
+            prompt = f"""
+You are an expert enterprise indexer. Summarize the following document accurately in 2-3 sentences.
+Focus strictly on the core topics, entities, and purpose of the document so a search engine can route queries to it.
+
+Title: {kb.name or 'Document'}
+Content Excerpt:
+{document_text[:4000]}
+
+Summary:
+"""
+            llm = DeepInfraLLMClient()
+            summary = await llm.generate(prompt, temperature=0.0)
+            summary_text = summary.strip() if summary else (kb.name or "")
+
+            logger.info(f"Generated Summary for KB={kb_id}: {summary_text[:100]}...")
+
+            embedding, _ = await EmbeddingGenerator.generate_embedding_with_usage(
+                f"Title: {kb.name or ''}\nSummary: {summary_text}"
+            )
+
+            kb.summary_embedding = embedding
+            await db.commit()
+            logger.info(f"Successfully saved summary_embedding for KB={kb_id}")
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Error generating summary embedding for KB={kb_id}: {e}", exc_info=True)
+
