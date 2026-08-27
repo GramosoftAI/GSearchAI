@@ -858,15 +858,6 @@ async def init_db():
                     )
 
         async with engine.begin() as conn:
-            try:
-                await conn.execute(
-                    text(f"ALTER TABLE knowledge_bases ALTER COLUMN summary_embedding TYPE vector({settings.embedding_dimension});")
-                )
-                logger.info(f" Verified/migrated knowledge_bases.summary_embedding to vector({settings.embedding_dimension})")
-            except Exception as e:
-                logger.warning(f"Could not alter knowledge_bases.summary_embedding: {e}")
-
-        async with engine.begin() as conn:
             # Auto-migrate document_chunks columns
             await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS section VARCHAR(255)"))
             await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS metadata_json JSONB"))

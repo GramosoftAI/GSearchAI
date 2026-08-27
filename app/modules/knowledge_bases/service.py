@@ -1223,10 +1223,9 @@ class KnowledgeBaseService:
 
             await self.db.commit()
 
-            # Trigger background dynamic noisy words extraction & summary embedding
-            from .tasks import generate_kb_noisy_words, generate_kb_summary_embedding
+            # Trigger background dynamic noisy words extraction
+            from .tasks import generate_kb_noisy_words
             asyncio.create_task(generate_kb_noisy_words(kb_id, str(self.tenant_id)))
-            asyncio.create_task(generate_kb_summary_embedding(kb_id, str(self.tenant_id)))
 
             
 
