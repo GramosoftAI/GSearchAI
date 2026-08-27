@@ -54,6 +54,7 @@ from ..config import get_settings
 
 import re
 from ..billing.utils import is_billing_enabled
+from app.core.llm.routing import LLMTask
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,13 @@ def strip_think_tags(text: str) -> str:
     if not text:
         return ""
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+
+def _task_label(task) -> str:
+    """Normalize a task identifier (enum, string, or None) to a
+    clean human-readable label for storage/logging."""
+    if task is None:
+        return "unknown"
+    return task.value if hasattr(task, "value") else str(task)
 
 # Prompt versioning (for A/B testing and rollout tracking)
 PROMPT_VERSION = "v1"
@@ -99,6 +107,17 @@ _total_prompt_tokens = 0
 _total_completion_tokens = 0
 
 _total_cost_estimate = 0.0
+
+# Keep strong references to fire-and-forget background tasks so they
+# aren't garbage collected mid-flight (see asyncio docs on
+# create_task: "the event loop only keeps weak references to tasks").
+_background_tasks: set = set()
+
+def _fire_and_forget(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 
 
 
@@ -350,29 +369,20 @@ class DeepInfraLLMClient:
 
 
     async def generate(
-
         self,
-
         prompt: str,
-
         system_prompt: str = "You are a helpful assistant.",
-
         max_tokens: Optional[int] = None,
-
         temperature: Optional[float] = None,
-
         enable_thinking: bool = False,
-
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        task: Optional[LLMTask] = None,
     ) -> str:
-
         """
-
         Generic prompt generation (for entity extraction, triplet extraction, etc.)
-
         Includes retry logic and extended timeout for extraction tasks.
-
         """
-
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -403,6 +413,21 @@ class DeepInfraLLMClient:
                 data = response.json()
 
                 content = data["choices"][0]["message"]["content"].strip()
+                
+                if tenant_id:
+                    usage = data.get("usage", {})
+                    _fire_and_forget(
+                        self._log_usage_to_db(
+                            tenant_id=tenant_id,
+                            user_id=user_id,
+                            model_name=self.model_extraction,
+                            input_tokens=usage.get("prompt_tokens", 0),
+                            output_tokens=usage.get("completion_tokens", 0),
+                            task_type=_task_label(task) if task else "entity_extraction",
+                            query=prompt[:500]
+                        )
+                    )
+                    
                 return strip_think_tags(content)
 
             except Exception as e:
@@ -439,6 +464,10 @@ class DeepInfraLLMClient:
         (qwen3.5-9B) for faster processing (e.g. query routing, planning, answer generation).
         Thinking is disabled by default to save tokens.
         """
+        tenant_id = kwargs.get("tenant_id")
+        if not tenant_id:
+            logger.warning(f"generate_cloud() called without tenant_id for task {getattr(task, 'value', task)}! Token usage will NOT be logged.")
+
         headers = {
             "Content-Type": "application/json",
         }
@@ -477,18 +506,18 @@ class DeepInfraLLMClient:
                 tenant_id = kwargs.get("tenant_id")
                 if tenant_id:
                     user_id = kwargs.get("user_id")
-                    task_name = str(task) if task else "generate_cloud"
-                    import asyncio
-                    asyncio.create_task(db_task(
-                        self._log_usage_to_db,
-                        tenant_id,
-                        user_id,
-                        payload["model"],
-                        prompt,
-                        in_toks,
-                        out_toks,
-                        task_name
-                    ))
+                    task_name = _task_label(task) if task else "generate_cloud"
+                    _fire_and_forget(
+                        self._log_usage_to_db(
+                            tenant_id=tenant_id,
+                            user_id=user_id,
+                            model_name=payload["model"],
+                            query=prompt,
+                            input_tokens=in_toks,
+                            output_tokens=out_toks,
+                            task_type=task_name
+                        )
+                    )
                     
                 return strip_think_tags(content)
             except Exception as e:
@@ -650,9 +679,10 @@ class DeepInfraLLMClient:
                     "max_tokens": self.max_tokens_answer,
                     "stream": True,
                     "stream_options": {"include_usage": True},
-                    "enable_thinking": False,
-                    "reasoning_effort": "none",
                 }
+                if enable_thinking:
+                    payload["enable_thinking"] = True
+                    payload["reasoning_effort"] = "medium"
 
                 think_state = 0
                 think_buf = ""
@@ -663,8 +693,10 @@ class DeepInfraLLMClient:
                 try:
                     async with client.stream("POST", self.deepinfra_base_url, headers=headers, json=payload, timeout=stream_timeout) as response:
                         if response.status_code != 200:
-                            logger.warning(
-                                f"LLM API Error {response.status_code} for model '{target_model}' (Attempt {attempt}/{max_attempts})"
+                            err_body = await response.aread()
+                            err_msg = err_body.decode("utf-8", errors="ignore")
+                            logger.error(
+                                f"LLM API Error {response.status_code} for model '{target_model}' (Attempt {attempt}/{max_attempts}): {err_msg}"
                             )
                             if attempt < max_attempts:
                                 await asyncio.sleep(1.0 * attempt)
@@ -1099,6 +1131,59 @@ ANSWER:
 
 
 
+    async def _log_usage_to_db(
+        self,
+        tenant_id: Optional[str],
+        user_id: Optional[str],
+        model_name: str,
+        query: str,
+        input_tokens: int,
+        output_tokens: int,
+        task_type: str,
+    ) -> None:
+        """
+        Persist usage for a non-answer-generation LLM stage (rerank, intent,
+        nl_to_cypher, extraction, etc.) directly to AnalyticsQueryLog.
+
+        Writes its own short-lived DB session rather than reusing the request's
+        session, since this always runs as a detached asyncio.create_task()
+        fire-and-forget call, after the original request's session may already
+        be closed/committed.
+        """
+        if not tenant_id:
+            return
+
+        try:
+            from uuid import UUID
+            from app.core.database import AsyncSessionLocal
+            from app.modules.analytics.models import LLMStageUsageLog
+            from app.core.llm.pricing import calculate_token_cost
+
+            cost = calculate_token_cost(
+                model_name=model_name,
+                input_tokens=input_tokens or 0,
+                output_tokens=output_tokens or 0,
+            )
+
+            async with AsyncSessionLocal() as db:
+                log = LLMStageUsageLog(
+                    tenant_id=UUID(str(tenant_id)),
+                    user_id=UUID(str(user_id)) if user_id else None,
+                    model_name=model_name,
+                    task_type=task_type,
+                    input_tokens=input_tokens or 0,
+                    output_tokens=output_tokens or 0,
+                    cost_usd=cost,
+                    query_preview=(query or '')[:400],
+                )
+                db.add(log)
+                await db.commit()
+        except Exception as e:
+            logger.error(
+                f"_log_usage_to_db failed for task={task_type}, model={model_name}, tenant={tenant_id}: {e}",
+                exc_info=True,
+            )
+
     def _track_billing(
 
         self,
@@ -1241,23 +1326,31 @@ ANSWER:
             results = sorted(results, key=lambda x: x["relevance_score"], reverse=True)
             
             if tenant_id:
-                import asyncio
-                asyncio.create_task(db_task(
-                    self._log_usage_to_db,
-                    tenant_id,
-                    user_id,
-                    model,
-                    query,
-                    input_tokens,
-                    0,
-                    "Document Chunk Reranking"
-                ))
+                _fire_and_forget(
+                    self._log_usage_to_db(
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        model_name=model,
+                        query=query,
+                        input_tokens=input_tokens,
+                        output_tokens=0,
+                        task_type="Document Chunk Reranking"
+                    )
+                )
                 
             return results[:top_n]
             
         except httpx.HTTPError as e:
+            if tenant_id:
+                _fire_and_forget(
+                    self._log_usage_to_db(tenant_id=tenant_id, user_id=user_id, model_name=model, query=query, input_tokens=0, output_tokens=0, task_type="Document Chunk Reranking")
+                )
             return [{"text": doc, "relevance_score": 1.0 / (i + 1), "original_index": i} for i, doc in enumerate(documents[:top_n])]
         except Exception as e:
+            if tenant_id:
+                _fire_and_forget(
+                    self._log_usage_to_db(tenant_id=tenant_id, user_id=user_id, model_name=model, query=query, input_tokens=0, output_tokens=0, task_type="Document Chunk Reranking")
+                )
             return [{"text": doc, "relevance_score": 1.0 / (i + 1), "original_index": i} for i, doc in enumerate(documents[:top_n])]
 
 

@@ -21,6 +21,10 @@ def resolve_memory_api_base_url() -> str:
 
 async def _persist_partial(db, chat_service, session_id, user_id, query, response_buffer, reason: str, channel: str = "dashboard") -> None:
     try:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         await chat_service.chat_repo.add_message(
             session_id=session_id,
             role="assistant",
@@ -298,18 +302,38 @@ async def run_unified_rag_websocket_loop(
             )
 
             # 6. DB Persistence
-            assistant_msg = await chat_service.chat_repo.add_message(
-                session_id=active_session_id,
-                role="assistant",
-                content=full_response,
-                metadata={
-                    "sources": collected_sources,
-                    "status": "complete",
-                    "escalation_detected": is_escalated,
-                    "channel": channel,
-                },
-            )
-            await db.commit()
+            assistant_msg = None
+            try:
+                assistant_msg = await chat_service.chat_repo.add_message(
+                    session_id=active_session_id,
+                    role="assistant",
+                    content=full_response,
+                    metadata={
+                        "sources": collected_sources,
+                        "status": "complete",
+                        "escalation_detected": is_escalated,
+                        "channel": channel,
+                    },
+                )
+                await db.commit()
+            except Exception as db_err:
+                logger.warning(f"Failed to add message on active db transaction, attempting rollback and retry: {db_err}")
+                try:
+                    await db.rollback()
+                    assistant_msg = await chat_service.chat_repo.add_message(
+                        session_id=active_session_id,
+                        role="assistant",
+                        content=full_response,
+                        metadata={
+                            "sources": collected_sources,
+                            "status": "complete",
+                            "escalation_detected": is_escalated,
+                            "channel": channel,
+                        },
+                    )
+                    await db.commit()
+                except Exception as retry_err:
+                    logger.error(f"Failed to persist assistant message after rollback: {retry_err}")
 
             # 7. Memory API Persistence
             if enable_memory:
@@ -337,7 +361,6 @@ async def run_unified_rag_websocket_loop(
                 kb_id = kb_ids[0] if kb_ids else None
                 if top_chunk_id and kb_id:
                     from ..chats.knowledge_service import ChatKnowledgeService
-                    # It's an async method meant to be run in background tasks normally, but we can await it here or use asyncio.create_task
                     import asyncio
                     asyncio.create_task(ChatKnowledgeService.run_sync_background(
                         tenant_id=tenant_id,
@@ -360,6 +383,13 @@ async def run_unified_rag_websocket_loop(
             return
 
         except Exception as e:
-            await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, str(e), channel=channel)
-            await adapter.send_error(websocket, "internal_error")
             logger.exception("unified_rag_loop_failure", extra={"tenant_id": tenant_id, "agent_id": agent_id})
+            await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, str(e), channel=channel)
+            try:
+                await adapter.send_error(websocket, "internal_error")
+            except Exception:
+                pass
+            try:
+                await adapter.send(websocket, LoopEvent(type="done", escalation_detected=False))
+            except Exception:
+                pass

@@ -90,6 +90,65 @@ class RAGService:
         self.agent_repo = AgentRepository(db, self.tenant_id)
         self.llm_client = DeepInfraLLMClient()
 
+    async def _log_query_analytics_safely(
+        self,
+        query: str,
+        user_id: Optional[str],
+        session_id: Optional[str],
+        status: ResponseStatus,
+        confidence: float,
+        latency_ms: float,
+        model_name: str,
+        llm_input_tokens: int = 0,
+        llm_output_tokens: int = 0,
+        embedding_tokens: int = 0,
+    ):
+        try:
+            from app.core.database import get_db_with_tenant
+            from app.core.llm.pricing import calculate_token_cost
+            from app.core.config import get_settings
+
+            llm_cost_usd = calculate_token_cost(
+                model_name=model_name,
+                input_tokens=llm_input_tokens,
+                output_tokens=llm_output_tokens,
+            )
+            embedding_cost_usd = (
+                calculate_token_cost(
+                    model_name=get_settings().model_embedding,
+                    input_tokens=embedding_tokens,
+                    output_tokens=0,
+                )
+                if embedding_tokens
+                else 0.0
+            )
+            total_cost_usd = llm_cost_usd + embedding_cost_usd
+
+            async with get_db_with_tenant(str(self.tenant_id)) as session:
+                analytics_repo = AnalyticsRepository(session, UUID(self.tenant_id))
+                await analytics_repo.create_query_log(
+                    {
+                        "query": query,
+                        "response_status": status,
+                        "confidence_score": confidence,
+                        "latency_ms": latency_ms,
+                        "session_id": UUID(session_id) if session_id else None,
+                        "user_id": UUID(user_id) if user_id else None,
+                        "llm_input_tokens": llm_input_tokens,
+                        "llm_output_tokens": llm_output_tokens,
+                        "embedding_tokens": embedding_tokens,
+                        "llm_cost_usd": llm_cost_usd,
+                        "embedding_cost_usd": embedding_cost_usd,
+                        "total_cost_usd": total_cost_usd,
+                        "model_name": model_name,
+                    }
+                )
+                await session.commit()
+        except Exception as ae:
+            logger.exception(
+                f"Failed to log analytics for stream (Tenant: {self.tenant_id}, User: {user_id}, Session: {session_id}): {ae}"
+            )
+
     async def stream_rag_answer(
         self,
         query: str,
@@ -181,7 +240,7 @@ class RAGService:
             analyzer = QueryAnalyzer()
             
             logger.info(f"[TRACE_E2E] [ENTRY] QueryAnalyzer.analyze_query - Input: '{short_query}'")
-            analysis = await analyzer.analyze_query(query, kb_context=kb_context)
+            analysis = await analyzer.analyze_query(query, kb_context=kb_context, tenant_id=self.tenant_id, user_id=user_id)
             analyzer_latency = time.time() - analyzer_start
             logger.info(f"[TRACE_E2E] [EXIT] QueryAnalyzer.analyze_query - Output: {getattr(analysis, 'intent', 'Unknown')} - Latency: {analyzer_latency:.2f}s")
             logger.info(f"TELEMETRY: QueryAnalyzer completed in {analyzer_latency:.2f}s")
@@ -345,6 +404,19 @@ class RAGService:
                             "context_type": "duckdb_parquet"
                         })
                         yield str(sql_res)
+                        latency_ms = (time.time() - trace_start_time) * 1000
+                        await self._log_query_analytics_safely(
+                            query=query,
+                            user_id=user_id,
+                            session_id=session_id,
+                            status=ResponseStatus.SUCCESS,
+                            confidence=1.0,
+                            latency_ms=latency_ms,
+                            model_name=self.llm_client.model_answer,
+                            llm_input_tokens=0,
+                            llm_output_tokens=0,
+                            embedding_tokens=max(1, len(query) // 4),
+                        )
                         return
                 except Exception as e:
                     logger.error(f"PandasQueryEngine stream failed: {e}")
@@ -642,6 +714,21 @@ class RAGService:
                         except Exception as e:
                             logger.warning(f"[DIRECT_EXTRACTION] Exception while yielding source citation: {e}")
                             pass
+                        
+                        latency_ms = (time.time() - trace_start_time) * 1000
+                        emb_tok = getattr(context, "query_embedding_tokens", 0) or max(1, len(query) // 4)
+                        await self._log_query_analytics_safely(
+                            query=query,
+                            user_id=user_id,
+                            session_id=session_id,
+                            status=ResponseStatus.SUCCESS,
+                            confidence=1.0,
+                            latency_ms=latency_ms,
+                            model_name=self.llm_client.model_answer,
+                            llm_input_tokens=0,
+                            llm_output_tokens=0,
+                            embedding_tokens=emb_tok,
+                        )
                         return
                     else:
                         logger.warning(
@@ -656,6 +743,20 @@ class RAGService:
             if not has_valid_chunks and not has_valid_triplets and not has_triplet_context and not chat_history and not hybrid_merge_context:
                 logger.info("Empty context retrieved for stream, returning fallback message.")
                 yield "I'm sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
+                latency_ms = (time.time() - trace_start_time) * 1000
+                emb_tok = getattr(context, "query_embedding_tokens", 0) if context else max(1, len(query) // 4)
+                await self._log_query_analytics_safely(
+                    query=query,
+                    user_id=user_id,
+                    session_id=session_id,
+                    status=ResponseStatus.UNANSWERED,
+                    confidence=0.0,
+                    latency_ms=latency_ms,
+                    model_name=self.llm_client.model_answer,
+                    llm_input_tokens=0,
+                    llm_output_tokens=0,
+                    embedding_tokens=emb_tok,
+                )
                 return
     
             # 4. Stream chunks
@@ -697,41 +798,20 @@ class RAGService:
             embedding_tokens = getattr(context, "query_embedding_tokens", 0) or max(
                 1, len(query) // 4
             )
+            used_model_name = token_usage.get("model_name", self.llm_client.model_answer)
     
-            llm_cost_usd = (llm_input_tokens / 1000000.0) * 0.10 + (
-                llm_output_tokens / 1000000.0
-            ) * 0.15
-            embedding_cost_usd = (embedding_tokens / 1000000.0) * 0.01
-            total_cost_usd = llm_cost_usd + embedding_cost_usd
-    
-            try:
-                analytics_repo = AnalyticsRepository(self.db, UUID(self.tenant_id))
-                await analytics_repo.create_query_log(
-                    {
-                        "query": query,
-                        "response_status": status,
-                        "confidence_score": confidence,
-                        "latency_ms": latency_ms,
-                        "session_id": UUID(session_id) if session_id else None,
-                        "user_id": UUID(user_id) if user_id else None,
-                        "llm_input_tokens": llm_input_tokens,
-                        "llm_output_tokens": llm_output_tokens,
-                        "embedding_tokens": embedding_tokens,
-                        "llm_cost_usd": llm_cost_usd,
-                        "embedding_cost_usd": embedding_cost_usd,
-                        "total_cost_usd": total_cost_usd,
-                        "model_name": self.llm_client.model_answer,
-                    }
-                )
-                await self.db.commit()
-            except Exception as ae:
-                logger.warning(f"Failed to log analytics for stream: {ae}")
-                try:
-                    await self.db.rollback()
-                except Exception as rollback_err:
-                    logger.error(
-                        f"Failed to rollback analytics transaction: {rollback_err}"
-                    )
+            await self._log_query_analytics_safely(
+                query=query,
+                user_id=user_id,
+                session_id=session_id,
+                status=status,
+                confidence=confidence,
+                latency_ms=latency_ms,
+                model_name=used_model_name,
+                llm_input_tokens=llm_input_tokens,
+                llm_output_tokens=llm_output_tokens,
+                embedding_tokens=embedding_tokens,
+            )
         finally:
             import time
             trace_latency = time.time() - trace_start_time
@@ -1044,6 +1124,28 @@ RESPONSE FORMAT
                 cache_hit=True,
                 seed_chunks_count=len(cached_response.get("sources", [])),
             )
+            try:
+                from app.modules.analytics.repository import AnalyticsRepository, ResponseStatus
+                from uuid import UUID
+                analytics_repo = AnalyticsRepository(self.db, UUID(self.tenant_id))
+                await analytics_repo.create_query_log({
+                    "query": query,
+                    "response_status": ResponseStatus.SUCCESS,
+                    "confidence_score": 1.0,
+                    "latency_ms": 0,
+                    "session_id": UUID(session_id) if session_id else None,
+                    "user_id": UUID(user_id) if user_id else None,
+                    "llm_input_tokens": 0,
+                    "llm_output_tokens": 0,
+                    "embedding_tokens": 0,
+                    "llm_cost_usd": 0.0,
+                    "embedding_cost_usd": 0.0,
+                    "total_cost_usd": 0.0,
+                    "model_name": "cache"
+                })
+                await self.db.commit()
+            except Exception as e:
+                logger.error(f"Failed to log cached query: {e}")
             return cached_response
 
         # Step 3: Retrieve context
@@ -1332,20 +1434,51 @@ RESPONSE FORMAT
 
         try:
             analytics_repo = AnalyticsRepository(self.db, UUID(self.tenant_id))
+            from app.core.llm.pricing import calculate_token_cost
+            from app.core.config import get_settings
+
+            llm_input_tokens = getattr(llm_response, "prompt_tokens", 0) or 0
+            llm_output_tokens = getattr(llm_response, "completion_tokens", 0) or 0
+            embedding_tokens = getattr(context, "query_embedding_tokens", 0) or max(1, len(query) // 4)
+            used_model_name = getattr(llm_response, "model_name", None) or self.llm_client.model_answer
+
+            llm_cost_usd = calculate_token_cost(
+                model_name=used_model_name,
+                input_tokens=llm_input_tokens,
+                output_tokens=llm_output_tokens,
+            )
+            embedding_cost_usd = (
+                calculate_token_cost(
+                    model_name=get_settings().model_embedding,
+                    input_tokens=embedding_tokens,
+                    output_tokens=0,
+                )
+                if embedding_tokens
+                else 0.0
+            )
+            total_cost_usd = llm_cost_usd + embedding_cost_usd
+
             await analytics_repo.create_query_log(
                 {
                     "query": query,
                     "response_status": (
                         ResponseStatus.SUCCESS
-                        if context.chunks
+                        if (context and context.chunks)
                         else ResponseStatus.UNANSWERED
                     ),
                     "confidence_score": confidence,
-                    "latency_ms": (datetime.now() - start_time_total).total_seconds()
-                    * 1000,
-                    "model_name": self.llm_client.model_answer,
+                    "latency_ms": (datetime.now() - start_time_total).total_seconds() * 1000,
+                    "user_id": UUID(user_id) if user_id else None,
+                    "llm_input_tokens": llm_input_tokens,
+                    "llm_output_tokens": llm_output_tokens,
+                    "embedding_tokens": embedding_tokens,
+                    "llm_cost_usd": llm_cost_usd,
+                    "embedding_cost_usd": embedding_cost_usd,
+                    "total_cost_usd": total_cost_usd,
+                    "model_name": used_model_name,
                 }
             )
+            await self.db.commit()
         except Exception as ae:
             logger.warning(f"Failed to log query to analytics: {ae}")
 

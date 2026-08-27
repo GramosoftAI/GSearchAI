@@ -601,7 +601,7 @@ class RAGPipeline:
                     schema=schema_str, 
                     few_shot_examples=few_shot_str,
                     tenant_id=str(self.tenant_id) if self.tenant_id else None,
-                    user_id=str(self.user_id) if hasattr(self, "user_id") and self.user_id else None
+                    user_id=user_id
                 )
                 
                 # Execute the Cypher via Neo4jRepository to enforce rules
