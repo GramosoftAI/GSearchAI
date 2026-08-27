@@ -86,8 +86,16 @@ class OntologyService:
         logger.info(f" Ontology Rule created: {source} -[{relation}]-> {target}")
         return {"success": True, "source": source, "relation": relation, "target": target}
 
+    _ontology_cache: Dict[str, tuple] = {}  # {tenant_id: (timestamp, data)}
+
     async def get_ontology(self) -> dict:
-        """Fetch the full ontology for a tenant"""
+        """Fetch the full ontology for a tenant (cached for 60s)"""
+        import time
+        now = time.time()
+        cached = self._ontology_cache.get(self.tenant_id)
+        if cached and (now - cached[0]) < 60.0:
+            return cached[1]
+
         query = """
         MATCH (c:OntologyClass {tenant_id: $tenant_id})
         WITH collect({name: c.name, description: c.description}) as classes
@@ -107,10 +115,9 @@ class OntologyService:
         """
         
         results = await self.neo4j_repo.execute_read(query, {"tenant_id": self.tenant_id})
-        if not results:
-            return {"classes": [], "relations": [], "rules": []}
-            
-        return results[0]
+        data = results[0] if results else {"classes": [], "relations": [], "rules": []}
+        self._ontology_cache[self.tenant_id] = (now, data)
+        return data
 
     async def ground_type(self, raw_type: str) -> Optional[str]:
         """

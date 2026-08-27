@@ -88,6 +88,7 @@ class KnowledgeBase(Base):
 
     from sqlalchemy.dialects.postgresql import JSONB
     dataset_schema = Column(JSONB, nullable=True)
+    categorical_values = Column(JSONB, nullable=True)
     noisy_words = Column(JSONB, nullable=True)
     noisy_words_generated_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -100,6 +101,10 @@ class KnowledgeBase(Base):
 
     # ============= STATUS =============
     is_active = Column(Boolean, default=True, nullable=False)
+
+    # ============= SEMANTIC ROUTING =============
+    from pgvector.sqlalchemy import Vector
+    summary_embedding = Column(Vector(4096), nullable=True)
 
     # ============= SOFT DELETE TRACKING =============
     deleted_at = Column(

@@ -14,7 +14,7 @@ class ParquetIngester:
     and writes them out as chunked, compressed Parquet files for DuckDB querying.
     """
     @staticmethod
-    def ingest_to_parquet(file_path: str, output_dir: str = "data/parquet", dataset_name: Optional[str] = None) -> Optional[str]:
+    def ingest_to_parquet(file_path: str, output_dir: str = "data/parquet", dataset_name: Optional[str] = None) -> tuple[Optional[str], dict]:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File {file_path} not found.")
             
@@ -77,7 +77,19 @@ class ParquetIngester:
             with open(registry_path, 'w') as f:
                 json.dump(registry, f, indent=4)
                 
-            return output_path
+            # Extract categorical registry
+            categorical_registry = {}
+            try:
+                df = pl.read_parquet(output_path)
+                for col in df.columns:
+                    if df[col].dtype == pl.String or df[col].dtype == pl.Utf8:
+                        unique_vals = df[col].drop_nulls().unique().to_list()
+                        if len(unique_vals) < 50:
+                            categorical_registry[col] = unique_vals
+            except Exception as e:
+                logger.warning(f"Failed to extract categorical values: {e}")
+                
+            return output_path, categorical_registry
             
         except Exception as e:
             logger.error(f"Failed to ingest file to Parquet: {e}")

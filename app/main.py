@@ -187,6 +187,8 @@ async def lifespan(app: FastAPI):
 
 
 
+        logger.info("=" * 80)
+        
         # Start recurring daily LiteLLM remote pricing sync worker (runs on startup + every 24 hours)
         try:
             from app.core.llm.pricing import start_daily_pricing_sync_worker
@@ -195,38 +197,93 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"[STARTUP] Could not initialize pricing sync worker: {e}")
 
-        logger.info("=" * 80)
+        # Trigger background KB Summary backfill for legacy files
+        try:
+            from scripts.backfill_kb_summaries import main as backfill_kbs
+            logger.info("[STARTUP] Triggering background KB Summary Backfill process...")
+            asyncio.create_task(backfill_kbs())
+        except Exception as e:
+            logger.error(f"[STARTUP] Failed to trigger background KB backfill: {e}")
+
         logger.info("[STARTUP] Application startup COMPLETE")
         logger.info(f"[STARTUP] API available at: http://{settings.host}:{settings.port}")
+
         logger.info(f"[STARTUP] Swagger docs at: http://{settings.host}:{settings.port}/docs")
+
         logger.info("[STARTUP] MULTI-TENANCY ENFORCED - RLS POLICIES ACTIVE")
+
         logger.info("=" * 80)
+        
+        # --- WARMUP DATA SCIENCE LIBRARIES ---
+        async def warmup_ds_libs():
+            import time
+            logger.info("[STARTUP] Warming up data science libraries in background...")
+            total_start = time.perf_counter()
+            
+            t0 = time.perf_counter()
+            import pandas
+            t_pandas = time.perf_counter() - t0
+            
+            t0 = time.perf_counter()
+            import pyarrow.parquet
+            t_pyarrow = time.perf_counter() - t0
+            
+            t0 = time.perf_counter()
+            import polars
+            t_polars = time.perf_counter() - t0
+            
+            t0 = time.perf_counter()
+            import duckdb
+            t_duckdb = time.perf_counter() - t0
+            
+            t0 = time.perf_counter()
+            from app.modules.rag.pandas_engine import PandasQueryEngine
+            t_engine = time.perf_counter() - t0
+            
+            total_time = time.perf_counter() - total_start
+            logger.info(f"[STARTUP] Warmup completed in {total_time:.2f}s (pandas: {t_pandas:.2f}s, pyarrow: {t_pyarrow:.2f}s, polars: {t_polars:.2f}s, duckdb: {t_duckdb:.2f}s, engine: {t_engine:.2f}s)")
+
+        # Fire and forget warmup
+        asyncio.create_task(warmup_ds_libs())
+
+
 
     except Exception as e:
+
         logger.error("=" * 80)
+
         logger.error(f"[STARTUP] STARTUP FAILED: {e}")
+
         logger.error(f"[STARTUP] APPLICATION CANNOT START - RLS enforcement is CRITICAL")
+
         logger.error("=" * 80)
+
         raise
+
+
 
     yield  # Application is running
 
+
+
     # ============= SHUTDOWN =============
+
     logger.info("Shutting down application...")
 
     try:
-        from app.core.llm.pricing import stop_daily_pricing_sync_worker
-        stop_daily_pricing_sync_worker()
-    except Exception as e:
-        logger.warning(f"Error stopping pricing sync worker: {e}")
 
-    try:
         await close_db()
+
         logger.info(" Database connections closed")
 
+
+
         await close_neo4j()
+
         logger.info(" Neo4j driver closed")
+
     except Exception as e:
+
         logger.error(f"Error during shutdown: {e}")
 
 

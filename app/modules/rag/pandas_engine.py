@@ -8,7 +8,6 @@ import tempfile
 import os
 import re
 import json
-from datetime import datetime
 from typing import Optional, Dict, Literal, List
 from sqlalchemy import create_engine, text
 
@@ -94,7 +93,6 @@ class PandasQueryEngine:
             base_url=base_url,
             temperature=0.0,
             max_tokens=2048,
-            model_kwargs={"response_format": {"type": "json_object"}},
             extra_body={"enable_thinking": False}
         )
         router_model_name = getattr(settings, "model_intent", model_name)
@@ -104,7 +102,6 @@ class PandasQueryEngine:
             base_url=base_url,
             temperature=0.0,
             max_tokens=512,
-            model_kwargs={"response_format": {"type": "json_object"}},
             extra_body={"enable_thinking": False}
         )
 
@@ -158,14 +155,14 @@ class PandasQueryEngine:
                  "4. Respond naturally, concisely, and use bolding formatting for key names, figures, dates, and comparisons.\n"
                  "5. Include the formatted Markdown table below your explanation as supporting evidence.\n"
                  "6. FOR FULL DETAILS OR MOVIE/ENTITY QUERIES: Give the complete details of the movie/entity (Title, Release Date, Overview/Plot, Popularity, Vote Average, Genre, etc.) from the table clearly and accurately. If multiple records are returned, summarize the top items clearly and concisely so the response remains focused and does not exceed token length limits.\n"
-                 "7. IMPORTANT: Do NOT output any <think> tags or internal reasoning. Output ONLY the final answer directly."),
-                ("user", "User Question: {question}\n\nSQL Explanation: {explanation}\n\nRetrieved Database Result Table:\n{table}")
+                 "7. IMPORTANT: Do NOT output any <think> tags or internal reasoning. Output ONLY the final answer directly.\n"
+                 "8. DO NOT include the SQL Explanation in your answer. The SQL Explanation is for your internal context only."),
+                ("user", "User Question: {question}\n\nRetrieved Database Result Table:\n{table}")
             ])
             from langchain_core.output_parsers import StrOutputParser
             synth_chain = synth_prompt | self.llm | StrOutputParser()
             synthesis = await synth_chain.ainvoke({
                 "question": question,
-                "explanation": explanation,
                 "table": table_md
             })
             # Strip any <think> tags the LLM may have injected
@@ -247,11 +244,9 @@ class PandasQueryEngine:
             engine, columns = await asyncio.to_thread(_setup_db)
 
             # 3. GENERATE DUCKDB SQL DIRECTLY
-            current_time = datetime.now().strftime("%A, %B %d, %Y %I:%M %p")
             prompt = ChatPromptTemplate.from_messages([
                 ("system", 
-                 f"You are an enterprise data engine and SQL expert. Convert the user's natural language question into a clean, read-only DuckDB SELECT SQL query on the view named 'dataset'.\n"
-                 f"Current Date & Time: {current_time}\n\n"
+                 "You are an enterprise data engine and SQL expert. Convert the user's natural language question into a clean, read-only DuckDB SELECT SQL query on the view named 'dataset'.\n\n"
                  "Available columns in 'dataset':\n{columns}\n\n"
                  "CRITICAL RULES FOR DUCKDB SQL:\n"
                  "1. Table name MUST ALWAYS be 'dataset'.\n"
@@ -259,37 +254,32 @@ class PandasQueryEngine:
                  "3. When performing mathematical calculations (SUM, AVG, arithmetic) on string/varchar columns, ALWAYS wrap the column in TRY_CAST(\"col\" AS DOUBLE), e.g., SUM(TRY_CAST(\"exchange_rate\" AS DOUBLE)), AVG(TRY_CAST(\"exchange_rate\" AS DOUBLE)), to prevent type conversion issues.\n"
                  "4. For counting total records, use SELECT COUNT(*) AS total_records FROM dataset;\n"
                  "5. For most frequent items or duplicate checks, use GROUP BY \"col\" ORDER BY COUNT(*) DESC LIMIT N (always quote column names if they contain spaces);\n"
-                 "6. For boolean columns (like mb_part), ALWAYS compare as uppercase string: UPPER(TRY_CAST(\"col\" AS VARCHAR)) = 'TRUE' or UPPER(TRY_CAST(\"col\" AS VARCHAR)) = 'FALSE' because boolean columns may contain string 'NULL' values.\n"
-                 "7. For time differences or durations between two timestamps, ALWAYS use DuckDB date_diff('day', TRY_CAST(\"col1\" AS TIMESTAMP), TRY_CAST(\"col2\" AS TIMESTAMP)) or (epoch(TRY_CAST(\"col2\" AS TIMESTAMP)) - epoch(TRY_CAST(\"col1\" AS TIMESTAMP))) / 86400.0.\n"
+                 "6. For boolean columns (like mb_part), NEVER use '= TRUE' or '= FALSE' directly. ALWAYS compare as uppercase string: UPPER(TRY_CAST(\"col\" AS VARCHAR)) = 'TRUE' or UPPER(TRY_CAST(\"col\" AS VARCHAR)) = 'FALSE' because boolean columns may contain string 'NULL' values.\n"
+                 "7. For time differences or durations between two timestamps, NEVER use SQLite julianday(). ALWAYS use DuckDB date_diff('day', TRY_CAST(\"col1\" AS TIMESTAMP), TRY_CAST(\"col2\" AS TIMESTAMP)) or (epoch(TRY_CAST(\"col2\" AS TIMESTAMP)) - epoch(TRY_CAST(\"col1\" AS TIMESTAMP))) / 86400.0.\n"
                  "8. For date comparisons or min/max, handle strings appropriately.\n"
                  "9. Include descriptive column aliases (e.g. AS average_rate, AS total_count).\n"
-                 "10. ONLY use read-only SELECT queries.\n"
+                 "10. NEVER use INSERT, UPDATE, DELETE, DROP, or ALTER. ONLY read-only SELECT queries.\n"
                  "11. Output ONLY valid JSON matching the schema with 'sql' and 'explanation'.\n"
-                 "12. In your 'explanation' string, ALWAYS avoid using the words 'error', 'errors', 'exception', or 'fail' (use 'issues' or 'problems' instead).\n"
+                 "12. In your 'explanation' string, NEVER use the words 'error', 'errors', 'exception', or 'fail' (use 'issues' or 'problems' instead).\n"
                  "13. For extracting YEAR, MONTH, or date parts from timestamp columns, ALWAYS cast to timestamp first: EXTRACT(YEAR FROM TRY_CAST(\"col\" AS TIMESTAMP)).\n"
-                 "14. If the user asks for information or columns that DO NOT EXIST in the schema (e.g. wholesale price, CEO, warehouse, email, warranty), generate: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset.\n"
-                 "15. STRING FILTERING & ENTITY MATCHING: When filtering string columns (e.g. employee names, IDs, departments in WHERE clauses), ALWAYS use case-insensitive matching using the ILIKE operator (e.g., \"Employee ID\" ILIKE 'EMP1005' or \"Employee Name\" ILIKE '%Matthew%') so that case differences or spacing never cause zero results.\n"
+                 "14. NO PROXY METRICS: If the user asks for information or columns that DO NOT EXIST in the schema (e.g. 'Age', 'wholesale price', 'CEO'), DO NOT hallucinate or substitute an unrelated column to estimate it (e.g. DO NOT use 'Hire Date' to calculate 'Age'). You MUST generate exactly: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset.\n"
+                 "15. STRING FILTERING & ENTITY MATCHING: When filtering string columns (e.g. employee names, IDs, departments in WHERE clauses), NEVER use exact '=' or 'LOWER(col) = ...' with mismatching case. Instead, ALWAYS use case-insensitive matching using the ILIKE operator (e.g., \"Employee ID\" ILIKE 'EMP1005' or \"Employee Name\" ILIKE '%Matthew%') so that case differences or spacing never cause zero results.\n"
                  "16. COMPARATIVE & SUPERLATIVE QUERIES: When the user asks to compare two or more entities (e.g. 'who has higher salary', 'compare the salary of both', 'who is better', 'who earns more', 'which has better'):\n"
-                 "   - If the query mentions 'both', 'all', or does not specify explicit employee names, select all rows from dataset and ORDER BY the comparison metric DESC (e.g., SELECT * FROM dataset ORDER BY TRY_CAST(\"Salary\" AS DOUBLE) DESC LIMIT 10;).\n"
+                 "   - If the query mentions 'both', 'all', or does not specify explicit employee names, DO NOT filter with WHERE name = 'both'. Instead, select all rows from dataset and ORDER BY the comparison metric DESC (e.g., SELECT * FROM dataset ORDER BY TRY_CAST(\"Salary\" AS DOUBLE) DESC LIMIT 10;).\n"
                  "   - Select all relevant columns (name, department, salary, hire date, etc.) so the response synthesizer has full structured comparison data.\n"
                  "17. SENIORITY, TENURE & JOINING DATE QUERIES: When the user asks who is the 'senior' ('snior'), 'most senior', 'oldest', or 'who joined first/earliest' among employees:\n"
                  "   - If comparing by JOINING DATE / HIRE DATE / START DATE: A senior employee joined EARLIEST in time. You MUST cast string dates to date/timestamp and order ASCENDING (ORDER BY TRY_CAST(\"Joining Date\" AS DATE) ASC) so the earliest date (earliest year, e.g. 2018 before 2022) is ranked FIRST.\n"
                  "   - If comparing by YEARS OF EXPERIENCE / TENURE / AGE: A senior employee has more years. You MUST order DESCENDING (ORDER BY TRY_CAST(\"Experience\" AS DOUBLE) DESC).\n"
-                 "   - If selecting among specific people (e.g. 'between John and Jane'), always use case-insensitive fuzzy matching (LOWER(\"col\") LIKE '%name%') for the WHERE clause.\n"
+                 "   - If selecting among specific people (e.g. 'between John and Jane'), always use case-insensitive fuzzy matching (LOWER(\"col\") LIKE '%name%') for the WHERE clause. If selecting 'among both', DO NOT filter by the word 'both'.\n"
                  "18. POSITIONAL & CHRONOLOGICAL ROW ORDERING (first, last, top, bottom, latest, oldest):\n"
-                 "   - When the user asks for the 'last row(s)', 'last N rows', 'last record(s)', 'last entry', or 'last movie/item in the dataset/excel/table' without a specific date filter, you MUST use ANSI OFFSET from total count: SELECT * FROM dataset OFFSET (SELECT COUNT(*) FROM dataset) - N LIMIT N; (e.g. OFFSET (SELECT COUNT(*) FROM dataset) - 1 LIMIT 1; for the last row).\n"
+                 "   - When the user asks for the 'last row(s)', 'last N rows', 'last record(s)', 'last entry', or 'last movie/item in the dataset/excel/table' without a specific date filter, you MUST use ANSI OFFSET from total count: SELECT * FROM dataset OFFSET (SELECT COUNT(*) FROM dataset) - N LIMIT N; (e.g. OFFSET (SELECT COUNT(*) FROM dataset) - 1 LIMIT 1; for the last row). NEVER rely on row_id ordering alone as parallel ingestion can make row_id order non-deterministic.\n"
                  "   - When the user asks for the 'first row(s)', 'first N rows', 'first record(s)', 'first entry', or 'first movie/item in the dataset/excel/table', select directly from top: SELECT * FROM dataset LIMIT N;\n"
                  "   - When the user asks for 'latest', 'newest', or 'most recent' by date/release date, cast date strings to DATE and order DESCENDING: ORDER BY TRY_CAST(\"Release_Date\" AS DATE) DESC LIMIT N;\n"
                  "   - When the user asks for 'oldest' or 'earliest' by date, order ASCENDING: ORDER BY TRY_CAST(\"Release_Date\" AS DATE) ASC LIMIT N;\n"
                  "19. SPECIFIC RECORD DETAILS LOOKUP, STRING APOSTROPHES & LENGTH GUARDS:\n"
-                 "   - When asking for 'details', 'full details', or information about a specific movie, person, or title (e.g. 'Ron''s Gone Wrong full details', 'details of King''s Man'), generate a SELECT * FROM dataset WHERE LOWER(\"Title\") LIKE '%ron%gone%wrong%'; (or corresponding name column).\n"
+                 "   - When asking for 'details', 'full details', or information about a specific movie, person, or title (e.g. 'Ron''s Gone Wrong full details', 'details of King''s Man'), generate a SELECT * FROM dataset WHERE LOWER(\"Title\") LIKE '%ron%gone%wrong%'; (or corresponding name column). NEVER generate a COUNT(*) aggregation query when the user asks for details of a specific item!\n"
                  "   - When a title or search string contains an apostrophe or single quote (''), you MUST escape it by doubling the single quote in SQL (e.g., '%ron''s gone wrong%') OR omit the apostrophe using wildcards (e.g., '%ron%gone%wrong%').\n"
-                 "   - When querying general details without an explicit WHERE name/title filter (e.g. 'show me all movies' or general overview), ALWAYS append LIMIT 10 to prevent large result sets from causing token overflow.\n\n"
-                 "EXAMPLES:\n"
-                 "Q: 'Who joined last month?'\n"
-                 "A: {{\"sql\": \"SELECT * FROM dataset WHERE TRY_CAST(\\\"Joining Date\\\" AS DATE) >= date_trunc('month', current_date - INTERVAL 1 MONTH) AND TRY_CAST(\\\"Joining Date\\\" AS DATE) < date_trunc('month', current_date);\", \"explanation\": \"Filtered records for employees who joined last month.\"}}\n\n"
-                 "Q: 'Show me details for product O''Connor'\n"
-                 "A: {{\"sql\": \"SELECT * FROM dataset WHERE \\\"Product Name\\\" ILIKE '%o''connor%';\", \"explanation\": \"Retrieved details for product O'Connor using case-insensitive matching.\"}}\n\n"
+                 "   - When querying general details without an explicit WHERE name/title filter (e.g. 'show me all movies' or general overview), ALWAYS append LIMIT 10 to prevent large result sets from causing token overflow.\n"
                  "IMPORTANT: DO NOT generate any <think> tags or internal reasoning steps. Output ONLY valid JSON immediately without any thinking."),
                 ("user", "{question}")
             ])
@@ -342,7 +332,8 @@ class PandasQueryEngine:
                          "1. Return ONLY valid JSON with 'sql' and 'explanation'. No markdown, no <think> tags.\n"
                          "2. ALWAYS enclose column names containing spaces or symbols in DOUBLE QUOTES (e.g. \"Customer ID\").\n"
                          "3. When searching for strings containing apostrophes or single quotes (e.g. 'Ron''s Gone Wrong'), double the single quotes in SQL ('%ron''s gone wrong%') or use wildcards ('%ron%gone%wrong%').\n"
-                         "4. The query MUST be a read-only DuckDB SELECT on table 'dataset'."),
+                         "4. NO PROXY METRICS: If the DuckDB Error Message indicates that a column requested by the user does not exist (e.g. 'Referenced column \"Age\" not found'), DO NOT hallucinate or substitute an unrelated column (e.g. DO NOT use 'Hire Date' to estimate 'Age'). You MUST return exactly: SELECT 'not present in dataset' AS info WHERE FALSE;\n"
+                         "5. The query MUST be a read-only DuckDB SELECT on table 'dataset'."),
                         ("user",
                          "User Question: {question}\n\nFailed SQL Query:\n{sql}\n\nDuckDB Error Message:\n{error}\n\nProvide the corrected DuckDB SQL query in valid JSON.")
                     ])
@@ -404,16 +395,16 @@ class PandasQueryEngine:
             # Format clean, enterprise-grade response
             if len(rows) == 1 and len(col_names) == 1:
                 val = rows[0][0]
-                formatted += f"**{val}**\n\n_{query_plan.explanation}_"
+                formatted += f"**{val}**"
             elif len(rows) == 1:
-                parts = [f"_{query_plan.explanation}_\n"]
+                parts = []
                 for k, v in zip(col_names, rows[0]):
                     parts.append(f"- **{k}**: {v if v is not None else 'NULL'}")
                 formatted += "\n".join(parts)
             else:
                 headers = " | ".join(str(c) for c in col_names)
                 sep = " | ".join("---" for _ in col_names)
-                formatted += f"_{query_plan.explanation}_\n\n| {headers} |\n| {sep} |\n"
+                formatted += f"| {headers} |\n| {sep} |\n"
                 for r in rows[:100]:
                     row_str = " | ".join(str(item) if item is not None else "NULL" for item in r)
                     formatted += f"| {row_str} |\n"

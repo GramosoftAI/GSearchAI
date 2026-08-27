@@ -2,6 +2,8 @@
 # NOTE: All literal {{ }} are escaped for Python .format()  only {text} is a placeholder
 TRIPLET_EXTRACTION_PROMPT = """Extract knowledge events and facts from the following text.
 
+CRITICAL INSTRUCTION: Before extracting anything, first determine whether the AI's response actually contains retrieved information, or whether it expresses that no information was found / the AI doesn't know / the question is unanswerable from context. If the response expresses absence of information in ANY phrasing (not just specific keywords), output {{"facts": []}} — do not create relations like IS_UNKNOWN, LACKS_INFORMATION, HAS_VALUE=no, or any triplet that encodes the absence itself as a fact about the subject.
+
 For each fact, decide its mode using this rule, in order:
 
 1. If the fact involves 3 or more distinct participants, OR carries any

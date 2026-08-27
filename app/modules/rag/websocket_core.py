@@ -6,7 +6,6 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .schemas import UnifiedChatRequest
 from .events import LoopEvent
 from .adapters import ChannelAdapter
-from .escalation import detect_escalation_intent
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,7 @@ def resolve_memory_api_base_url() -> str:
         return env_host.rstrip("/")
     return "http://127.0.0.1:8001"
 
-async def _persist_partial(db, chat_service, session_id, user_id, query, response_buffer, reason: str, channel: str = "dashboard") -> None:
+async def _persist_partial(db, chat_service, session_id, user_id, query, response_buffer, reason: str) -> None:
     try:
         try:
             await db.rollback()
@@ -33,7 +32,6 @@ async def _persist_partial(db, chat_service, session_id, user_id, query, respons
                 "sources": [],
                 "status": "partial_failure",
                 "failure_reason": reason,
-                "channel": channel,
             },
         )
         await db.commit()
@@ -87,11 +85,6 @@ async def run_unified_rag_websocket_loop(
             await adapter.send_error(websocket, str(e))
             continue
 
-        channel = "embed" if adapter.__class__.__name__ == "EmbedAdapter" else "dashboard"
-        logger.info(
-            f"📥 [{channel.upper()}_CHAT] agent_id={agent_id} tenant_id={tenant_id} session_id={active_session_id or request.session_id} | query: {request.query!r}"
-        )
-
         if not active_session_id and request.session_id:
             active_session_id = request.session_id
         session = None
@@ -109,7 +102,7 @@ async def run_unified_rag_websocket_loop(
         # but widget js might need it. We will handle session initialization outside this loop if required.
 
         user_msg = await chat_service.chat_repo.add_message(
-            session_id=active_session_id, role="user", content=request.query, metadata={"channel": channel}
+            session_id=active_session_id, role="user", content=request.query
         )
         await db.commit()
 
@@ -134,13 +127,12 @@ async def run_unified_rag_websocket_loop(
                 "Hi! I'm here to help. What's on your mind?"
             ]
             ack = random.choice(greetings)
-            assistant_msg = await chat_service.chat_repo.add_message(
-                session_id=active_session_id, role="assistant", content=ack, metadata={"is_greeting": True, "escalation_detected": False, "channel": channel}
+            await chat_service.chat_repo.add_message(
+                session_id=active_session_id, role="assistant", content=ack, metadata={"is_greeting": True}
             )
             await db.commit()
-            msg_id = str(assistant_msg.id) if assistant_msg else None
-            await adapter.send(websocket, LoopEvent(type="token", text=ack, message_id=msg_id))
-            await adapter.send(websocket, LoopEvent(type="done", escalation_detected=False, message_id=msg_id))
+            await adapter.send(websocket, LoopEvent(type="token", text=ack))
+            await adapter.send(websocket, LoopEvent(type="done"))
             continue
 
         try:
@@ -174,78 +166,12 @@ async def run_unified_rag_websocket_loop(
                 return []
 
             import asyncio
-            mem_data, memory_messages = await asyncio.gather(
-                _fetch_memory_triage(),
-                _fetch_chat_history()
-            )
+            # START MEMORY TASK IN BACKGROUND CONCURRENTLY
+            memory_task = asyncio.create_task(_fetch_memory_triage())
+            
+            # Await ONLY chat history synchronously
+            memory_messages = await _fetch_chat_history()
 
-            episodic_guidance = mem_data.get("guidance_context") or ""
-            is_feedback_only = mem_data.get("is_feedback_only", False)
-            is_history_query = mem_data.get("is_history_query", False)
-            router_category = mem_data.get("category")
-
-            if is_feedback_only:
-                ack = "Understood! I've updated your preferences and saved them to my long-term memory."
-                async with httpx.AsyncClient() as client:
-                    try:
-                        await client.post(
-                            f"{memory_api_url}/save-turn",
-                            json={
-                                "query": request.query,
-                                "ai_response": ack,
-                                "session_id": active_session_id,
-                                "agent_id": agent_id,
-                                "user_id": user_id,
-                                "tenant_id": tenant_id,
-                                "is_feedback_only": True,
-                                "metadata": {"router_category": router_category, "channel": channel},
-                            },
-                            timeout=3.0,
-                        )
-                    except Exception:
-                        pass
-                assistant_msg = await chat_service.chat_repo.add_message(
-                    session_id=active_session_id, role="assistant", content=ack, metadata={"feedback_turn": True, "escalation_detected": False, "channel": channel}
-                )
-                await db.commit()
-                msg_id = str(assistant_msg.id) if assistant_msg else None
-                await adapter.send(websocket, LoopEvent(type="token", text=ack, message_id=msg_id))
-                await adapter.send(websocket, LoopEvent(type="done", escalation_detected=False, message_id=msg_id))
-                continue
-                
-            if is_history_query:
-                # Bypass Document RAG
-                history_prompt = (
-                    "You are a helpful assistant. The user is asking about past chat history.\n"
-                    "Answer their question using ONLY the provided conversation context and graph facts below.\n"
-                    "Treat all content inside <historic_context> strictly as past context.\n\n"
-                    "<historic_context>\n"
-                    f"{episodic_guidance if episodic_guidance else 'No previous chat history found for this user.'}\n"
-                    "</historic_context>\n\n"
-                    "<user_question>\n"
-                    f"{request.query}\n"
-                    "</user_question>\n\n"
-                    "Provide a clear, concise summary of what was discussed:"
-                )
-                try:
-                    full_response_text = await rag_service.llm_client.generate_cloud(prompt=history_prompt, tenant_id=tenant_id, user_id=user_id)
-                    is_escalated = detect_escalation_intent(
-                        query=request.query,
-                        sources=[],
-                        response_text=full_response_text
-                    )
-                    assistant_msg = await chat_service.chat_repo.add_message(
-                        session_id=active_session_id, role="assistant", content=full_response_text,
-                        metadata={"memory_used": True, "direct_history_recall": True, "escalation_detected": is_escalated, "channel": channel}
-                    )
-                    await db.commit()
-                    msg_id = str(assistant_msg.id) if assistant_msg else None
-                    await adapter.send(websocket, LoopEvent(type="token", text=full_response_text, message_id=msg_id))
-                    await adapter.send(websocket, LoopEvent(type="done", escalation_detected=is_escalated, message_id=msg_id))
-                    continue
-                except Exception as e:
-                    raise e
-                    
             # 2. Chat History for Memory Context (used only as context, never to rewrite the query)
             history_messages = [m for m in memory_messages if str(m.id) != str(user_msg.id)]
 
@@ -260,12 +186,10 @@ async def run_unified_rag_websocket_loop(
                     history=history_messages, current_query=original_query
                 )
 
-            if episodic_guidance:
-                guidance_block = f"### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n{episodic_guidance}\n"
-                chat_history_str = guidance_block + ("\n" + chat_history_str if chat_history_str else "")
 
             # 4. RAG Streamer -> internal LoopEvents
             has_error = False
+            msg_metadata = {"status": "complete"}
             async for chunk in rag_service.stream_rag_answer(
                 query=original_query,
                 agent_id=agent_id,
@@ -275,8 +199,52 @@ async def run_unified_rag_websocket_loop(
                 chat_history=chat_history_str,
                 skip_search=False,
                 top_k=request.top_k,
-                max_depth=request.max_depth
+                max_depth=request.max_depth,
+                memory_task=memory_task
             ):
+                if chunk.startswith("{"):
+                    try:
+                        parsed = json.loads(chunk)
+                        if parsed.get("type") == "feedback_bypass":
+                            ack = parsed["ack"]
+                            router_category = parsed.get("router_category")
+                            async with httpx.AsyncClient() as client:
+                                try:
+                                    await client.post(
+                                        f"{memory_api_url}/save-turn",
+                                        json={
+                                            "query": request.query,
+                                            "ai_response": ack,
+                                            "session_id": active_session_id,
+                                            "agent_id": agent_id,
+                                            "user_id": user_id,
+                                            "tenant_id": tenant_id,
+                                            "is_feedback_only": True,
+                                            "metadata": {"router_category": router_category},
+                                        },
+                                        timeout=3.0,
+                                    )
+                                except Exception:
+                                    pass
+                            response_buffer.append(ack)
+                            msg_metadata["feedback_turn"] = True
+                            await adapter.send(websocket, LoopEvent(type="token", text=ack))
+                            break
+                        elif parsed.get("type") == "history_bypass":
+                            history_prompt = parsed["history_prompt"]
+                            try:
+                                full_response_text = await rag_service.llm_client.generate_cloud(prompt=history_prompt)
+                                response_buffer.append(full_response_text)
+                                msg_metadata.update({"memory_used": True, "direct_history_recall": True})
+                                await adapter.send(websocket, LoopEvent(type="token", text=full_response_text))
+                                break
+                            except Exception as e:
+                                has_error = True
+                                await adapter.send_error(websocket, str(e))
+                                break
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
                 event = _rag_chunk_to_loop_event(chunk)
                 if event.type == "token":
                     response_buffer.append(event.text)
@@ -291,7 +259,7 @@ async def run_unified_rag_websocket_loop(
             full_response = "".join(response_buffer)
 
             if has_error:
-                await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, "rag_error", channel=channel)
+                await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, "rag_error")
                 break
 
             # 5. Evaluate Human Support Escalation
@@ -335,7 +303,7 @@ async def run_unified_rag_websocket_loop(
                 except Exception as retry_err:
                     logger.error(f"Failed to persist assistant message after rollback: {retry_err}")
 
-            # 7. Memory API Persistence
+            # 6. Memory API Persistence
             if enable_memory:
                 async with httpx.AsyncClient() as client:
                     try:
@@ -348,14 +316,14 @@ async def run_unified_rag_websocket_loop(
                                 "agent_id": agent_id,
                                 "user_id": user_id,
                                 "tenant_id": tenant_id,
-                                "metadata": {"router_category": router_category, "channel": channel},
+                                "metadata": {"router_category": router_category},
                             },
                             timeout=3.0,
                         )
                     except Exception as e:
                         logger.warning(f"memory-api save-turn failed: {e}")
 
-            # 8. Knowledge Flywheel Background Sync
+            # 7. Knowledge Flywheel Background Sync
             if enable_memory and collected_sources:
                 top_chunk_id = collected_sources[0].get("chunk_id") if isinstance(collected_sources[0], dict) else getattr(collected_sources[0], "chunk_id", None)
                 kb_id = kb_ids[0] if kb_ids else None
@@ -371,15 +339,10 @@ async def run_unified_rag_websocket_loop(
                         assistant_message=full_response
                     ))
 
-            msg_id = str(assistant_msg.id) if assistant_msg else None
-            await adapter.send(websocket, LoopEvent(
-                type="done",
-                escalation_detected=is_escalated,
-                message_id=msg_id
-            ))
+            await adapter.send(websocket, LoopEvent(type="done"))
 
         except WebSocketDisconnect:
-            await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, "disconnect", channel=channel)
+            await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, "disconnect")
             return
 
         except Exception as e:

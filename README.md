@@ -100,6 +100,9 @@ These capabilities are implemented in the current open-source release:
 - **Multi-Tenant Isolation:** Zero-trust isolation via PostgreSQL Row-Level Security and Neo4j node constraints.
 - **Graph Traversal Depth Limiting:** Scoped queries capped at configurable hop limits (e.g. 2 hops) to prevent latency bloat.
 - **Neo4j Composite Indexing:** Pre-indexed `MERGE` properties optimize write performance and avoid full-graph scans.
+- **RDF-Backed Persistent Memory:** Graph-native session and personal memory utilizing RDF triplet representations for accurate contextual recall across long-running interactions.
+- **EventHub Architecture:** Robust event-driven backbone facilitating decoupled processing, real-time telemetry, and asynchronous knowledge ingestion.
+- **Advanced Analysis Codebase:** Comprehensive analytical modules enabling deep insights and metrics from the underlying knowledge graph and tenant interactions.
 
 > **A note on honesty:** GRAG ships a complete, runnable retrieval and ingestion pipeline today. Several *intelligence* layers — production-grade semantic embeddings, activated generative LLM responses, and LLM-grade entity extraction — are scaffolded and tracked on the [Roadmap](#-roadmap) below rather than overclaimed here. We'd rather you trust the README than be surprised by the code.
 
@@ -240,7 +243,7 @@ Tracked, honestly. These convert GRAG's scaffolded intelligence layers into full
 - [ ] **True Semantic Vector Embeddings** *(unlocks meaningful hybrid search)*
 - [ ] **Generative LLM Integration** — DeepInfra activation *(unlocks live grounded generation)*
 - [ ] **LLM-Based High-Accuracy Entity Extraction**
-- [ ] **Persistent Personal / Session Memory**
+- [x] **Persistent Personal / Session Memory** *(Implemented via RDF Memory Layer)*
 - [ ] **ANN Vector Indexing (HNSW)** for large-scale scaling
 - [ ] **Advanced Query Decomposition / Routing**
 - [ ] **In-Memory Graph Migration** (FalkorDB / Memgraph) to cut write latency

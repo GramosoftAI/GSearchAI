@@ -1007,6 +1007,8 @@ class KnowledgeBaseService:
                     embedding=embeddings[i],
                     
                     section=chunk_section_map.get(chunk_ids[i]),
+                    
+                    metadata_json=chunk_metadata_list[i] if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i] else {}
 
                 )
 
@@ -2576,6 +2578,8 @@ class KnowledgeBaseService:
 
                     embedding=item["embedding"],
 
+                    metadata_json=item.get("metadata") or {}
+
                 )
 
                 self.db.add(pg_chunk)
@@ -3499,7 +3503,8 @@ class KnowledgeBaseService:
                     kb_id=uuid.UUID(kb_id),
                     text=chunk_text,
                     chunk_index=messages_synced,
-                    embedding=emb
+                    embedding=emb,
+                    metadata_json={"source": "outlook", "subject": msg_data.get("subject"), "sender": msg_data.get("sender")}
                 )
                 self.db.add(pg_chunk)
                 messages_synced += 1
@@ -3742,6 +3747,7 @@ class KnowledgeBaseService:
         try:
             db_rows = []
             chunk_texts = []
+            chunk_metadatas = []
             import re
             
             def parse_numeric(val):
@@ -3825,6 +3831,13 @@ class KnowledgeBaseService:
                 
                 if chunk_parts:
                     chunk_texts.append("\n".join(chunk_parts))
+                    chunk_metadatas.append({
+                        "chunk_type": "table_row",
+                        "page_number": row.get("page_number", 1),
+                        "table_index": row.get("table_index", 0),
+                        "row_index": row.get("row_index", 0),
+                        "row_data": row_data
+                    })
                 
             self.db.add_all(db_rows)
             
@@ -3844,7 +3857,8 @@ class KnowledgeBaseService:
                             text=text,
                             # Offset index heavily so it doesn't conflict with normal chunks
                             chunk_index=90000 + idx, 
-                            embedding=emb
+                            embedding=emb,
+                            metadata_json=chunk_metadatas[idx]
                         )
                     )
                 self.db.add_all(chunk_rows)
