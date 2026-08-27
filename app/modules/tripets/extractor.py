@@ -40,6 +40,34 @@ class TripletExtractor:
         self.llm_client = DeepInfraLLMClient()
         self.tenant_id = tenant_id
 
+    async def _is_no_answer_found(self, text: str) -> bool:
+        if not text:
+            return False
+        # Minimal fast-path heuristic: skip the LLM check on very long responses 
+        # since not-found answers are typically short.
+        words = text.split()
+        if len(words) > 150:
+            return False
+            
+        system_prompt = (
+            "Does this response contain actual substantive information that answers the question, "
+            "or does it indicate that no information/answer was found? "
+            "Reply with exactly one word: FOUND or NOT_FOUND."
+        )
+        try:
+            classifier_resp = await self.llm_client.generate(
+                prompt=text,
+                system_prompt=system_prompt,
+                temperature=0.0,
+                max_tokens=10
+            )
+            if "NOT_FOUND" in classifier_resp.upper():
+                return True
+        except Exception as e:
+            logger.error(f"Semantic classifier failed: {e}")
+            pass
+        return False
+
     async def extract_from_chunk(
         self,
         chunk_id: str,
@@ -63,6 +91,10 @@ class TripletExtractor:
         if not TripletExtractor._init_logged:
             logger.info("Triplet Extraction Engine initialized (LLM-based)")
             TripletExtractor._init_logged = True
+            
+        if await self._is_no_answer_found(chunk_text):
+            logger.info(f"Skipping triplet extraction for chunk {chunk_id[:8]} because it is classified as a not-found answer.")
+            return TripletExtractionResult(chunk_id=chunk_id, triplets=[])
 
         try:
             # --- ONTOLOGY GROUNDING INJECTION ---

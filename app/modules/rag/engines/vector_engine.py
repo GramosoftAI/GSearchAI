@@ -199,23 +199,71 @@ class VectorEngine(BaseEngine):
                 res = await self.db.execute(stmt)
                 chunks = []
 
-                # Simple keyword extraction (alphanumeric words > 4 chars)
-                exact_terms = [w for w in task.query.split() if len(w) > 4 and w.isalnum()]
+                # Get intelligent keywords from QueryAnalyzer
+                analyzer_keywords = []
+                if getattr(task, "metadata_filters", None):
+                    if isinstance(task.metadata_filters, dict):
+                        analyzer_keywords = task.metadata_filters.get("keywords", [])
+                    else:
+                        analyzer_keywords = getattr(task.metadata_filters, "keywords", [])
+                
+                # Explode multi-word keywords to catch partial matches in filenames (e.g. '5-day hike' -> 'hike')
+                exploded_keywords = set()
+                for kw in analyzer_keywords:
+                    exploded_keywords.add(kw.lower())
+                    for w in kw.split():
+                        clean_w = ''.join(c for c in w if c.isalnum()).lower()
+                        if len(clean_w) > 3:
+                            exploded_keywords.add(clean_w)
+                
+                if not exploded_keywords:
+                    exploded_keywords = {w.lower() for w in task.query.split() if len(w) > 4 and w.isalnum()}
+                    
+                logger.info(f"[BOOST_CHECK] task_id={task.task_id} analyzer_keywords={analyzer_keywords} exploded_keywords={exploded_keywords}")
 
                 all_rows = res.fetchall()
+                
+                # To prevent log spam, we only log the match once per kb
+                matched_kbs = set()
+                
                 for idx, row in enumerate(all_rows):
                     similarity = float(row.similarity) if row.similarity is not None else 0.8
                     chunk_text = row.text or ""
+                    kb_name = (row.name or "").lower()
+                    kb_path = (row.s3_path or "").lower()
 
                     weight = 1.0
-                    for term in exact_terms:
-                        if term.lower() in chunk_text.lower():
-                            weight *= 1.15
+                    
+                    # 1. Source Identity Anchoring (Domain Match)
+                    # If the KB filename/name explicitly contains our query's core entities, massively boost it
+                    import re
+                    def basic_stem(word):
+                        if len(word) <= 3: return word
+                        for suffix in ('ing', 'ed', 'es', 's', 'e'):
+                            if word.endswith(suffix):
+                                return word[:-len(suffix)]
+                        return word
 
+                    for kw in exploded_keywords:
+                        if len(kw) > 3:
+                            # Use basic stemming to allow 'hike' to match 'hiking' (stem 'hik')
+                            stemmed_kw = basic_stem(kw)
+                            if re.search(rf"\b{re.escape(stemmed_kw)}", kb_name) or re.search(rf"\b{re.escape(stemmed_kw)}", kb_path):
+                                weight *= 1.40
+                                if row.kb_id not in matched_kbs:
+                                    logger.info(f"[BOOST_CHECK] Domain Match: stemmed keyword '{stemmed_kw}' (from '{kw}') matched kb_name '{kb_name}' or path '{kb_path}'")
+                                    matched_kbs.add(row.kb_id)
+                            
+                    # 2. Text Match Anchoring (Gentle boost for exact keyword occurrences)
+                    for kw in exploded_keywords:
+                        if len(kw) > 3 and kw in chunk_text.lower():
+                            weight *= 1.05
+
+                    base_weighted = similarity * weight
                     if row.chunk_index < 3:
-                        final_score = similarity + 1.0
+                        final_score = base_weighted + 1.0
                     else:
-                        final_score = min(similarity * weight, 1.0)
+                        final_score = min(base_weighted, 2.0)
 
                     chunks.append(RetrievedChunk(
                         chunk_id=str(row.id),

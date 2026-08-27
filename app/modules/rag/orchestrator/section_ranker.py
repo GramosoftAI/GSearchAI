@@ -47,9 +47,10 @@ class SectionRanker:
             elif "md&a" in doc_type:
                 score += 1.0
                 
-            # 3. Keyword Coverage (Basic token overlap)
-            query_tokens = set(re.findall(r'\b\w+\b', query_lower))
-            title_tokens = set(re.findall(r'\b\w+\b', title))
+            # 3. Keyword Coverage (Basic token overlap without stopwords)
+            stopwords = {"what", "when", "this", "that", "code", "data", "info", "find", "how", "why", "where", "which", "with", "does", "then", "from", "they", "i", "to", "for", "the", "a", "an", "and", "or", "but", "in", "on", "at", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "did", "of", "by", "if", "my", "your", "our", "their", "it", "he", "she", "we", "you", "me", "him", "her", "us", "them", "can", "would", "could", "should"}
+            query_tokens = {t for t in re.findall(r'\b\w+\b', query_lower) if t not in stopwords and len(t) > 2}
+            title_tokens = {t for t in re.findall(r'\b\w+\b', title) if t not in stopwords and len(t) > 2}
             overlap = len(query_tokens.intersection(title_tokens))
             score += (overlap * 2.0)
             

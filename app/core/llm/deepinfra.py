@@ -151,65 +151,76 @@ class DeepInfraEmbeddingClient:
                         f"API request attempt {attempt + 1}/{self.max_retries}"
                     )
 
-                    async with httpx.AsyncClient(timeout=self.timeout) as client:
-                        response = await client.post(
-                            self.base_url, headers=headers, json=payload
+                    global _embedding_http_client
+                    if _embedding_http_client is None or _embedding_http_client.is_closed:
+                        _embedding_http_client = httpx.AsyncClient(
+                            timeout=self.timeout,
+                            limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)
+                        )
+                    
+                    import time
+                    t0 = time.perf_counter()
+                    client = _embedding_http_client
+                    response = await client.post(
+                        self.base_url, headers=headers, json=payload
+                    )
+                    t_req = time.perf_counter() - t0
+                    logger.info(f"[LLM_TIMING] DeepInfra embedding request (single) took {t_req:.4f}s")
+
+                    # Check for HTTP errors
+                    response.raise_for_status()
+
+                    # Parse response
+                    data = response.json()
+
+                    # Extract embedding from response
+                    if "data" not in data or len(data["data"]) == 0:
+                        raise ValueError(
+                            "Invalid API response: missing embedding data"
                         )
 
-                        # Check for HTTP errors
-                        response.raise_for_status()
-
-                        # Parse response
-                        data = response.json()
-
-                        # Extract embedding from response
-                        if "data" not in data or len(data["data"]) == 0:
-                            raise ValueError(
-                                "Invalid API response: missing embedding data"
-                            )
-
-                        embedding = data["data"][0].get("embedding")
-                        if not embedding:
-                            raise ValueError(
-                                "Invalid API response: missing embedding vector"
-                            )
-
-                        # VALIDATE VECTOR DIMENSION
-                        if len(embedding) != self.expected_dimension:
-                            raise ValueError(
-                                f"Invalid embedding dimension: got {len(embedding)}, expected {self.expected_dimension}"
-                            )
-
-                        # Extract prompt tokens from usage meta
-                        prompt_tokens = data.get("usage", {}).get("prompt_tokens", 0)
-                        if prompt_tokens == 0:
-                            # Fallback token estimate
-                            prompt_tokens = max(1, len(text) // 4)
-
-                        # CACHE THE EMBEDDING (for future calls) with LRU eviction
-                        if text_hash not in _embedding_cache_insertion_order:
-                            _embedding_cache_insertion_order.append(text_hash)
-
-                        # Evict oldest entries if cache exceeds max size
-                        global _cache_evictions
-
-                        while len(_embedding_cache) > _MAX_EMBEDDING_CACHE:
-                            oldest_hash = _embedding_cache_insertion_order.pop(0)
-                            if oldest_hash in _embedding_cache:
-                                del _embedding_cache[oldest_hash]
-                                _cache_evictions += 1
-                                logger.debug(
-                                    f"  Evicted oldest embedding (cache size > {_MAX_EMBEDDING_CACHE})  total evictions: {_cache_evictions}"
-                                )
-
-                        logger.debug(
-                            f" Embedding generated and cached ({len(embedding)} dims, cache: {len(_embedding_cache)}/{_MAX_EMBEDDING_CACHE})"
+                    embedding = data["data"][0].get("embedding")
+                    if not embedding:
+                        raise ValueError(
+                            "Invalid API response: missing embedding vector"
                         )
 
-                        logger.info(
-                            f"Embedding source: DeepInfra (for text: {text[:50]}...)"
+                    # VALIDATE VECTOR DIMENSION
+                    if len(embedding) != self.expected_dimension:
+                        raise ValueError(
+                            f"Invalid embedding dimension: got {len(embedding)}, expected {self.expected_dimension}"
                         )
-                        return embedding, prompt_tokens
+
+                    # Extract prompt tokens from usage meta
+                    prompt_tokens = data.get("usage", {}).get("prompt_tokens", 0)
+                    if prompt_tokens == 0:
+                        # Fallback token estimate
+                        prompt_tokens = max(1, len(text) // 4)
+
+                    # CACHE THE EMBEDDING (for future calls) with LRU eviction
+                    if text_hash not in _embedding_cache_insertion_order:
+                        _embedding_cache_insertion_order.append(text_hash)
+
+                    # Evict oldest entries if cache exceeds max size
+                    global _cache_evictions
+
+                    while len(_embedding_cache) > _MAX_EMBEDDING_CACHE:
+                        oldest_hash = _embedding_cache_insertion_order.pop(0)
+                        if oldest_hash in _embedding_cache:
+                            del _embedding_cache[oldest_hash]
+                            _cache_evictions += 1
+                            logger.debug(
+                                f"  Evicted oldest embedding (cache size > {_MAX_EMBEDDING_CACHE})  total evictions: {_cache_evictions}"
+                            )
+
+                    logger.debug(
+                        f" Embedding generated and cached ({len(embedding)} dims, cache: {len(_embedding_cache)}/{_MAX_EMBEDDING_CACHE})"
+                    )
+
+                    logger.info(
+                        f"Embedding source: DeepInfra (for text: {text[:50]}...)"
+                    )
+                    return embedding, prompt_tokens
 
                 except httpx.TimeoutException:
                     last_error = TimeoutError(
@@ -301,13 +312,20 @@ class DeepInfraEmbeddingClient:
                 
                 global _embedding_http_client
                 if _embedding_http_client is None or _embedding_http_client.is_closed:
-                    _embedding_http_client = httpx.AsyncClient(timeout=self.timeout)
+                    _embedding_http_client = httpx.AsyncClient(
+                        timeout=self.timeout,
+                        limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)
+                    )
                 
                 last_error = None
                 for attempt in range(self.max_retries):
                     try:
                         client = _embedding_http_client
+                        import time
+                        t0 = time.perf_counter()
                         response = await client.post(self.base_url, headers=headers, json=payload)
+                        t_req = time.perf_counter() - t0
+                        logger.info(f"[LLM_TIMING] DeepInfra embedding request (batch) took {t_req:.4f}s")
                         response.raise_for_status()
                         data = response.json()
                         

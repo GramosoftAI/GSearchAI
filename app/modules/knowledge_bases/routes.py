@@ -873,7 +873,7 @@ async def ingest_file(
                     f.write(content)
                     
                 dataset_name = os.path.splitext(filename)[0]
-                ParquetIngester.ingest_to_parquet(temp_path, dataset_name=dataset_name)
+                output_path, categorical_registry = ParquetIngester.ingest_to_parquet(temp_path, dataset_name=dataset_name)
                 
                 async with AsyncSessionLocal() as db:
                     from sqlalchemy import update
@@ -882,7 +882,7 @@ async def ingest_file(
                         .where(KnowledgeBase.id == uuid.UUID(kb_id))
                         # Save dataset_name to parsed_path so query engine can retrieve active file
                         # Save description to "excel_parquet" to route queries
-                        .values(file_hash=file_hash, parsed_path=dataset_name, description="excel_parquet")
+                        .values(file_hash=file_hash, parsed_path=dataset_name, description="excel_parquet", categorical_values=categorical_registry)
                     )
                     await db.commit()
                     

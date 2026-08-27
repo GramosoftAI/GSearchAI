@@ -1,0 +1,1758 @@
+﻿diff --git a/README.md b/README.md
+index 7718e7f..6099741 100644
+--- a/README.md
++++ b/README.md
+@@ -100,6 +100,9 @@ These capabilities are implemented in the current open-source release:
+ - **Multi-Tenant Isolation:** Zero-trust isolation via PostgreSQL Row-Level Security and Neo4j node constraints.
+ - **Graph Traversal Depth Limiting:** Scoped queries capped at configurable hop limits (e.g. 2 hops) to prevent latency bloat.
+ - **Neo4j Composite Indexing:** Pre-indexed `MERGE` properties optimize write performance and avoid full-graph scans.
++- **RDF-Backed Persistent Memory:** Graph-native session and personal memory utilizing RDF triplet representations for accurate contextual recall across long-running interactions.
++- **EventHub Architecture:** Robust event-driven backbone facilitating decoupled processing, real-time telemetry, and asynchronous knowledge ingestion.
++- **Advanced Analysis Codebase:** Comprehensive analytical modules enabling deep insights and metrics from the underlying knowledge graph and tenant interactions.
+ 
+ > **A note on honesty:** GRAG ships a complete, runnable retrieval and ingestion pipeline today. Several *intelligence* layers ΓÇö production-grade semantic embeddings, activated generative LLM responses, and LLM-grade entity extraction ΓÇö are scaffolded and tracked on the [Roadmap](#-roadmap) below rather than overclaimed here. We'd rather you trust the README than be surprised by the code.
+ 
+@@ -240,7 +243,7 @@ Tracked, honestly. These convert GRAG's scaffolded intelligence layers into full
+ - [ ] **True Semantic Vector Embeddings** *(unlocks meaningful hybrid search)*
+ - [ ] **Generative LLM Integration** ΓÇö DeepInfra activation *(unlocks live grounded generation)*
+ - [ ] **LLM-Based High-Accuracy Entity Extraction**
+-- [ ] **Persistent Personal / Session Memory**
++- [x] **Persistent Personal / Session Memory** *(Implemented via RDF Memory Layer)*
+ - [ ] **ANN Vector Indexing (HNSW)** for large-scale scaling
+ - [ ] **Advanced Query Decomposition / Routing**
+ - [ ] **In-Memory Graph Migration** (FalkorDB / Memgraph) to cut write latency
+diff --git a/app/core/embeddings.py b/app/core/embeddings.py
+index c26a04f..2b400f8 100644
+--- a/app/core/embeddings.py
++++ b/app/core/embeddings.py
+@@ -121,8 +121,14 @@ class EmbeddingGenerator:
+ 
+         try:
+             if settings.use_real_embeddings:
++                import time
+                 client = _get_deepinfra_client()
+-                return await client.generate_embedding_with_usage(text)
++                t0 = time.perf_counter()
++                result = await client.generate_embedding_with_usage(text)
++                t1 = time.perf_counter()
++                if t1 - t0 > 10.0:
++                    logger.warning(f"HIGH LATENCY: DeepInfra embedding call took {t1 - t0:.2f}s")
++                return result
+             else:
+                 logger.debug(
+                     f"Embedding source: Hash (Phase 2) for text: {text[:50]}..."
+@@ -227,8 +233,14 @@ class EmbeddingGenerator:
+ 
+         try:
+             if settings.use_real_embeddings:
++                import time
+                 client = _get_deepinfra_client()
+-                return await client.generate_embeddings_batch_with_usage(texts)
++                t0 = time.perf_counter()
++                result = await client.generate_embeddings_batch_with_usage(texts)
++                t1 = time.perf_counter()
++                if t1 - t0 > 10.0:
++                    logger.warning(f"HIGH LATENCY: DeepInfra embeddings batch call took {t1 - t0:.2f}s")
++                return result
+             else:
+                 return [EmbeddingGenerator._hash_to_embedding(text) for text in texts], 0
+         except Exception as e:
+diff --git a/app/core/llm/deepinfra.py b/app/core/llm/deepinfra.py
+index 8f0d012..108a338 100644
+--- a/app/core/llm/deepinfra.py
++++ b/app/core/llm/deepinfra.py
+@@ -151,65 +151,76 @@ class DeepInfraEmbeddingClient:
+                         f"API request attempt {attempt + 1}/{self.max_retries}"
+                     )
+ 
+-                    async with httpx.AsyncClient(timeout=self.timeout) as client:
+-                        response = await client.post(
+-                            self.base_url, headers=headers, json=payload
++                    global _embedding_http_client
++                    if _embedding_http_client is None or _embedding_http_client.is_closed:
++                        _embedding_http_client = httpx.AsyncClient(
++                            timeout=self.timeout,
++                            limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)
+                         )
++                    
++                    import time
++                    t0 = time.perf_counter()
++                    client = _embedding_http_client
++                    response = await client.post(
++                        self.base_url, headers=headers, json=payload
++                    )
++                    t_req = time.perf_counter() - t0
++                    logger.info(f"[LLM_TIMING] DeepInfra embedding request (single) took {t_req:.4f}s")
+ 
+-                        # Check for HTTP errors
+-                        response.raise_for_status()
++                    # Check for HTTP errors
++                    response.raise_for_status()
+ 
+-                        # Parse response
+-                        data = response.json()
++                    # Parse response
++                    data = response.json()
+ 
+-                        # Extract embedding from response
+-                        if "data" not in data or len(data["data"]) == 0:
+-                            raise ValueError(
+-                                "Invalid API response: missing embedding data"
+-                            )
++                    # Extract embedding from response
++                    if "data" not in data or len(data["data"]) == 0:
++                        raise ValueError(
++                            "Invalid API response: missing embedding data"
++                        )
+ 
+-                        embedding = data["data"][0].get("embedding")
+-                        if not embedding:
+-                            raise ValueError(
+-                                "Invalid API response: missing embedding vector"
+-                            )
++                    embedding = data["data"][0].get("embedding")
++                    if not embedding:
++                        raise ValueError(
++                            "Invalid API response: missing embedding vector"
++                        )
+ 
+-                        # VALIDATE VECTOR DIMENSION
+-                        if len(embedding) != self.expected_dimension:
+-                            raise ValueError(
+-                                f"Invalid embedding dimension: got {len(embedding)}, expected {self.expected_dimension}"
++                    # VALIDATE VECTOR DIMENSION
++                    if len(embedding) != self.expected_dimension:
++                        raise ValueError(
++                            f"Invalid embedding dimension: got {len(embedding)}, expected {self.expected_dimension}"
++                        )
++
++                    # Extract prompt tokens from usage meta
++                    prompt_tokens = data.get("usage", {}).get("prompt_tokens", 0)
++                    if prompt_tokens == 0:
++                        # Fallback token estimate
++                        prompt_tokens = max(1, len(text) // 4)
++
++                    # CACHE THE EMBEDDING (for future calls) with LRU eviction
++                    if text_hash not in _embedding_cache_insertion_order:
++                        _embedding_cache_insertion_order.append(text_hash)
++
++                    # Evict oldest entries if cache exceeds max size
++                    global _cache_evictions
++
++                    while len(_embedding_cache) > _MAX_EMBEDDING_CACHE:
++                        oldest_hash = _embedding_cache_insertion_order.pop(0)
++                        if oldest_hash in _embedding_cache:
++                            del _embedding_cache[oldest_hash]
++                            _cache_evictions += 1
++                            logger.debug(
++                                f"  Evicted oldest embedding (cache size > {_MAX_EMBEDDING_CACHE})  total evictions: {_cache_evictions}"
+                             )
+ 
+-                        # Extract prompt tokens from usage meta
+-                        prompt_tokens = data.get("usage", {}).get("prompt_tokens", 0)
+-                        if prompt_tokens == 0:
+-                            # Fallback token estimate
+-                            prompt_tokens = max(1, len(text) // 4)
+-
+-                        # CACHE THE EMBEDDING (for future calls) with LRU eviction
+-                        if text_hash not in _embedding_cache_insertion_order:
+-                            _embedding_cache_insertion_order.append(text_hash)
+-
+-                        # Evict oldest entries if cache exceeds max size
+-                        global _cache_evictions
+-
+-                        while len(_embedding_cache) > _MAX_EMBEDDING_CACHE:
+-                            oldest_hash = _embedding_cache_insertion_order.pop(0)
+-                            if oldest_hash in _embedding_cache:
+-                                del _embedding_cache[oldest_hash]
+-                                _cache_evictions += 1
+-                                logger.debug(
+-                                    f"  Evicted oldest embedding (cache size > {_MAX_EMBEDDING_CACHE})  total evictions: {_cache_evictions}"
+-                                )
+-
+-                        logger.debug(
+-                            f" Embedding generated and cached ({len(embedding)} dims, cache: {len(_embedding_cache)}/{_MAX_EMBEDDING_CACHE})"
+-                        )
++                    logger.debug(
++                        f" Embedding generated and cached ({len(embedding)} dims, cache: {len(_embedding_cache)}/{_MAX_EMBEDDING_CACHE})"
++                    )
+ 
+-                        logger.info(
+-                            f"Embedding source: DeepInfra (for text: {text[:50]}...)"
+-                        )
+-                        return embedding, prompt_tokens
++                    logger.info(
++                        f"Embedding source: DeepInfra (for text: {text[:50]}...)"
++                    )
++                    return embedding, prompt_tokens
+ 
+                 except httpx.TimeoutException:
+                     last_error = TimeoutError(
+@@ -301,13 +312,20 @@ class DeepInfraEmbeddingClient:
+                 
+                 global _embedding_http_client
+                 if _embedding_http_client is None or _embedding_http_client.is_closed:
+-                    _embedding_http_client = httpx.AsyncClient(timeout=self.timeout)
++                    _embedding_http_client = httpx.AsyncClient(
++                        timeout=self.timeout,
++                        limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)
++                    )
+                 
+                 last_error = None
+                 for attempt in range(self.max_retries):
+                     try:
+                         client = _embedding_http_client
++                        import time
++                        t0 = time.perf_counter()
+                         response = await client.post(self.base_url, headers=headers, json=payload)
++                        t_req = time.perf_counter() - t0
++                        logger.info(f"[LLM_TIMING] DeepInfra embedding request (batch) took {t_req:.4f}s")
+                         response.raise_for_status()
+                         data = response.json()
+                         
+diff --git a/app/core/llm/deepinfra_llm.py b/app/core/llm/deepinfra_llm.py
+index 2036f63..ab712b6 100644
+--- a/app/core/llm/deepinfra_llm.py
++++ b/app/core/llm/deepinfra_llm.py
+@@ -1013,155 +1013,156 @@ class DeepInfraLLMClient:
+ 
+ 
+ 
+-                    async with httpx.AsyncClient(timeout=self.timeout) as client:
+-                        response = await client.post(
+-                            self.deepinfra_base_url, headers=headers, json=payload
+-                        )
+-
+-
+-
+-                        # Check for HTTP errors
++                    import time
++                    t0 = time.perf_counter()
++                    client = await self.get_client()
++                    response = await client.post(
++                        self.deepinfra_base_url, headers=headers, json=payload, timeout=self.timeout
++                    )
++                    t_req = time.perf_counter() - t0
++                    logger.info(f"[LLM_TIMING] DeepInfra completions request took {t_req:.4f}s")
++                    # Check for HTTP errors
+ 
+-                        response.raise_for_status()
++                    response.raise_for_status()
+ 
+ 
+ 
+-                        # Parse response
++                    # Parse response
+ 
+-                        data = response.json()
++                    data = response.json()
+ 
+ 
+ 
+-                        # Extract answer from response
++                    # Extract answer from response
+ 
+-                        # DeepInfra returns: {"choices": [{"message": {"content": "..."}}]}
++                    # DeepInfra returns: {"choices": [{"message": {"content": "..."}}]}
+ 
+-                        if "choices" not in data or len(data["choices"]) == 0:
++                    if "choices" not in data or len(data["choices"]) == 0:
+ 
+-                            raise ValueError("Invalid API response: missing choices")
++                        raise ValueError("Invalid API response: missing choices")
+ 
+ 
+ 
+-                        answer = data["choices"][0].get("message", {}).get("content")
++                    answer = data["choices"][0].get("message", {}).get("content")
+ 
+-                        if not answer:
++                    if not answer:
+ 
+-                            raise ValueError("Invalid API response: missing content")
++                        raise ValueError("Invalid API response: missing content")
+ 
+ 
+ 
+-                        # GUARD: Max answer length (prevent very long responses  latency + cost increase)
++                    # GUARD: Max answer length (prevent very long responses  latency + cost increase)
+ 
+-                        if len(answer) > self.max_answer_length:
++                    if len(answer) > self.max_answer_length:
+ 
+-                            logger.warning(
++                        logger.warning(
+ 
+-                                f"  Answer truncated ({len(answer)} > {self.max_answer_length} chars)"
++                            f"  Answer truncated ({len(answer)} > {self.max_answer_length} chars)"
+ 
+-                            )
++                        )
+ 
+-                            answer = answer[: self.max_answer_length] + "..."
++                        answer = answer[: self.max_answer_length] + "..."
+ 
+ 
+ 
+-                        answer = answer.strip()
+-                        # Strip <think>...</think> blocks (Qwen thinking mode leak guard)
+-                        import re as _re
+-                        answer = _re.sub(r'<think>.*?</think>', '', answer, flags=_re.DOTALL).strip()
+-                        if '<think>' in answer:
+-                            answer = answer[:answer.index('<think>')].strip()
++                    answer = answer.strip()
++                    # Strip <think>...</think> blocks (Qwen thinking mode leak guard)
++                    import re as _re
++                    answer = _re.sub(r'<think>.*?</think>', '', answer, flags=_re.DOTALL).strip()
++                    if '<think>' in answer:
++                        answer = answer[:answer.index('<think>')].strip()
+ 
+ 
+ 
+-                        # Extract token usage from response (if available)
++                    # Extract token usage from response (if available)
+ 
+-                        usage = data.get("usage", {})
++                    usage = data.get("usage", {})
+ 
+-                        prompt_tokens = usage.get(
++                    prompt_tokens = usage.get(
+ 
+-                            "prompt_tokens", estimated_prompt_tokens
++                        "prompt_tokens", estimated_prompt_tokens
+ 
+-                        )
++                    )
+ 
+-                        completion_tokens = usage.get(
++                    completion_tokens = usage.get(
+ 
+-                            "completion_tokens", len(answer) // 4
++                        "completion_tokens", len(answer) // 4
+ 
+-                        )
++                    )
+ 
+-                        total_tokens = prompt_tokens + completion_tokens
++                    total_tokens = prompt_tokens + completion_tokens
+ 
+ 
+ 
+-                        # Calculate cost estimate
++                    # Calculate cost estimate
+ 
+-                        cost_estimate = (
++                    cost_estimate = (
+ 
+-                            prompt_tokens / 1_000_000
++                        prompt_tokens / 1_000_000
+ 
+-                        ) * PRICE_PER_1M_INPUT_TOKENS + (
++                    ) * PRICE_PER_1M_INPUT_TOKENS + (
+ 
+-                            completion_tokens / 1_000_000
++                        completion_tokens / 1_000_000
+ 
+-                        ) * PRICE_PER_1M_OUTPUT_TOKENS
++                    ) * PRICE_PER_1M_OUTPUT_TOKENS
+ 
+ 
+ 
+-                        # Track global metrics
++                    # Track global metrics
+ 
+-                        _total_prompt_tokens += prompt_tokens
++                    _total_prompt_tokens += prompt_tokens
+ 
+-                        _total_completion_tokens += completion_tokens
++                    _total_completion_tokens += completion_tokens
+ 
+-                        _total_cost_estimate += cost_estimate
++                    _total_cost_estimate += cost_estimate
+ 
+ 
+ 
+-                        # Track per-tenant costs and per-agent usage (if billing enabled)
++                    # Track per-tenant costs and per-agent usage (if billing enabled)
+ 
+-                        self._track_billing(
++                    self._track_billing(
+ 
+-                            tenant_id, agent_id, cost_estimate, total_tokens
++                        tenant_id, agent_id, cost_estimate, total_tokens
+ 
+-                        )
++                    )
+ 
+ 
+ 
+-                        logger.debug(
++                    logger.debug(
+ 
+-                            f" Answer generated ({len(answer)} chars, {total_tokens} tokens, ${cost_estimate:.6f})"
++                        f" Answer generated ({len(answer)} chars, {total_tokens} tokens, ${cost_estimate:.6f})"
+ 
+-                        )
++                    )
+ 
+-                        logger.info(
++                    logger.info(
+ 
+-                            f"Answer source: DeepInfra (call #{_llm_calls}, tokens={total_tokens}, cost=${cost_estimate:.6f})"
++                        f"Answer source: DeepInfra (call #{_llm_calls}, tokens={total_tokens}, cost=${cost_estimate:.6f})"
+ 
+-                        )
++                    )
+ 
+ 
+ 
+-                        return LLMResponse(
++                    return LLMResponse(
+ 
+-                            answer=answer,
++                        answer=answer,
+ 
+-                            prompt_tokens=prompt_tokens,
++                        prompt_tokens=prompt_tokens,
+ 
+-                            completion_tokens=completion_tokens,
++                        completion_tokens=completion_tokens,
+ 
+-                            total_tokens=total_tokens,
++                        total_tokens=total_tokens,
+ 
+-                            cost_estimate=cost_estimate,
++                        cost_estimate=cost_estimate,
+ 
+-                            prompt_version=PROMPT_VERSION,
++                        prompt_version=PROMPT_VERSION,
+ 
+-                            source="DeepInfra",
++                        source="DeepInfra",
+ 
+-                            tenant_id=tenant_id,
++                        tenant_id=tenant_id,
+ 
+-                            agent_id=agent_id,
++                        agent_id=agent_id,
+ 
+-                        )
++                    )
+ 
+ 
+ 
+diff --git a/app/core/parquet_ingester.py b/app/core/parquet_ingester.py
+index ac536cd..ebceaf2 100644
+--- a/app/core/parquet_ingester.py
++++ b/app/core/parquet_ingester.py
+@@ -14,7 +14,7 @@ class ParquetIngester:
+     and writes them out as chunked, compressed Parquet files for DuckDB querying.
+     """
+     @staticmethod
+-    def ingest_to_parquet(file_path: str, output_dir: str = "data/parquet", dataset_name: Optional[str] = None) -> Optional[str]:
++    def ingest_to_parquet(file_path: str, output_dir: str = "data/parquet", dataset_name: Optional[str] = None) -> tuple[Optional[str], dict]:
+         if not os.path.exists(file_path):
+             raise FileNotFoundError(f"File {file_path} not found.")
+             
+@@ -77,7 +77,19 @@ class ParquetIngester:
+             with open(registry_path, 'w') as f:
+                 json.dump(registry, f, indent=4)
+                 
+-            return output_path
++            # Extract categorical registry
++            categorical_registry = {}
++            try:
++                df = pl.read_parquet(output_path)
++                for col in df.columns:
++                    if df[col].dtype == pl.String or df[col].dtype == pl.Utf8:
++                        unique_vals = df[col].drop_nulls().unique().to_list()
++                        if len(unique_vals) < 50:
++                            categorical_registry[col] = unique_vals
++            except Exception as e:
++                logger.warning(f"Failed to extract categorical values: {e}")
++                
++            return output_path, categorical_registry
+             
+         except Exception as e:
+             logger.error(f"Failed to ingest file to Parquet: {e}")
+diff --git a/app/main.py b/app/main.py
+index df6dfa7..1180386 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -205,6 +205,38 @@ async def lifespan(app: FastAPI):
+         logger.info("[STARTUP] MULTI-TENANCY ENFORCED - RLS POLICIES ACTIVE")
+ 
+         logger.info("=" * 80)
++        
++        # --- WARMUP DATA SCIENCE LIBRARIES ---
++        async def warmup_ds_libs():
++            import time
++            logger.info("[STARTUP] Warming up data science libraries in background...")
++            total_start = time.perf_counter()
++            
++            t0 = time.perf_counter()
++            import pandas
++            t_pandas = time.perf_counter() - t0
++            
++            t0 = time.perf_counter()
++            import pyarrow.parquet
++            t_pyarrow = time.perf_counter() - t0
++            
++            t0 = time.perf_counter()
++            import polars
++            t_polars = time.perf_counter() - t0
++            
++            t0 = time.perf_counter()
++            import duckdb
++            t_duckdb = time.perf_counter() - t0
++            
++            t0 = time.perf_counter()
++            from app.modules.rag.pandas_engine import PandasQueryEngine
++            t_engine = time.perf_counter() - t0
++            
++            total_time = time.perf_counter() - total_start
++            logger.info(f"[STARTUP] Warmup completed in {total_time:.2f}s (pandas: {t_pandas:.2f}s, pyarrow: {t_pyarrow:.2f}s, polars: {t_polars:.2f}s, duckdb: {t_duckdb:.2f}s, engine: {t_engine:.2f}s)")
++
++        # Fire and forget warmup
++        asyncio.create_task(warmup_ds_libs())
+ 
+ 
+ 
+diff --git a/app/memory/app/main.py b/app/memory/app/main.py
+index 7be3e2a..d7fb348 100644
+--- a/app/memory/app/main.py
++++ b/app/memory/app/main.py
+@@ -137,6 +137,50 @@ def _is_delete_statement(query: str) -> bool:
+     return bool(_DELETE_PATTERNS.search(query))
+ 
+ 
++async def _is_no_answer_found(ai_response: str) -> bool:
++    if not ai_response:
++        return False
++    ai_resp_lower = ai_response.lower()
++    negative_indicators = [
++        "couldn't find", "could not find", "don't know", "do not know",
++        "no mention", "no information", "not present in dataset",
++        "not found", "unable to find", "no matching record",
++        "does not exist", "unanswered",
++        "don't have any specific information", "donΓÇÖt have any specific information",
++        "does not include information", "don't have information",
++        "not covered in the documents", "not covered in the provided context",
++        "context does not contain", "i recommend contacting",
++        "no information available", "does not provide information",
++        "i could not find information about", "not present in the uploaded content",
++        "don't have", "do not have", "not available", "cannot find", 
++        "not in my knowledge base", "no data on", "not present in"
++    ]
++    
++    # 1. Fast path: Direct substring match
++    if any(indicator in ai_resp_lower for indicator in negative_indicators):
++        return True
++        
++    # 2. Heuristic gate: If response is short and contains negative words, check with LLM
++    words = set(ai_resp_lower.replace(",", "").replace(".", "").split())
++    negation_words = {"don't", "doesn't", "do", "does", "no", "not", "unable", "couldn't", "cannot", "none"}
++    
++    if len(words) < 50 and (negation_words.intersection(words) or "no " in ai_resp_lower or "not " in ai_resp_lower):
++        system_prompt = (
++            "Does this response indicate the AI found no relevant information regarding the user's query, "
++            "or that it found information and is providing an answer? "
++            "Respond ONLY 'NOT_FOUND' if the AI could not answer the question/lacks information, "
++            "or 'FOUND' if it provided a factual answer."
++        )
++        try:
++            classifier_resp = await run_llm_completion(system_prompt, ai_response, priority="background")
++            if "NOT_FOUND" in classifier_resp.upper():
++                return True
++        except Exception:
++            pass # Fall through to False if LLM fails
++            
++    return False
++
++
+ # ============================================================================
+ # LLM & Embedding Helpers
+ # ============================================================================
+@@ -381,7 +425,8 @@ def _extract_entity_names(raw_json_text: str) -> List[str]:
+ PREFERENCE_EXTRACTION_PROMPT = (
+     "You are a strict JSON extractor for preference/fact updates and corrections.\n"
+     "CRITICAL INSTRUCTION: DO NOT extract anything for standard search queries, questions, or one-off commands (e.g. 'i need full detail about this company pincode 110025'). ONLY extract persistent facts, personal facts, or explicit preferences.\n"
+-    "If the query is just a search question or command, return an empty JSON object: {}\n"
++    "CRITICAL INSTRUCTION 2: Before extracting anything, determine if the AI's response indicates that no information was found or the AI doesn't know. If the response expresses absence of information in ANY phrasing, return an empty JSON object: {}\n"
++    "If the query is just a search question or command, also return an empty JSON object: {}\n"
+     "Otherwise, extract the updated preference or fact into EXACTLY ONE JSON object with two keys: 'key' and 'value'.\n"
+     "CRITICAL: The 'key' MUST be a clean canonical attribute name (e.g. 'wife_name', 'user_name', 'grade_10_mark', 'ceo_tamil_nadu', 'vijay_role').\n"
+     "NEVER append action words like '_update', '_change', '_correction', or '_error' to the key name.\n"
+@@ -513,6 +558,10 @@ async def handle_memory_deletion(payload: MemorySaveRequest) -> str:
+ 
+ 
+ async def save_user_preference(payload: MemorySaveRequest):
++    if await _is_no_answer_found(payload.ai_response):
++        logger.info("[PREFERENCE INGEST BYPASS] Skipped: answer was a not-found response")
++        return
++
+     if _is_delete_statement(payload.query):
+         msg = await handle_memory_deletion(payload)
+         logger.info(f"Memory Deletion completed: {msg}")
+@@ -867,19 +916,22 @@ async def process_turn(payload: MemoryProcessRequest):
+     # COMPOUND QUERY SUPPORT: If user is updating a preference AND asking a question in the same turn,
+     # save the preference immediately so it's included in guidance_context for this turn!
+     if _PREFERENCE_PATTERNS.search(payload.query):
+-        try:
+-            logger.info(f"[COMPOUND QUERY] Extracting and saving preference immediately for turn query: {payload.query!r}")
+-            save_req = MemorySaveRequest(
+-                query=payload.query,
+-                ai_response="",
+-                session_id=payload.session_id,
+-                agent_id=payload.agent_id,
+-                user_id=payload.user_id,
+-                tenant_id=payload.tenant_id
+-            )
+-            await save_user_preference(save_req)
+-        except Exception as pe:
+-            logger.error(f"[COMPOUND QUERY PREFERENCE ERROR] Failed inline preference update: {pe}")
++        if _QUESTION_INDICATOR.search(payload.query):
++            logger.info(f"[COMPOUND QUERY BYPASS] Skipping eager preference extraction because query is a question: {payload.query!r}")
++        else:
++            try:
++                logger.info(f"[COMPOUND QUERY] Extracting and saving preference immediately for turn query: {payload.query!r}")
++                save_req = MemorySaveRequest(
++                    query=payload.query,
++                    ai_response="",
++                    session_id=payload.session_id,
++                    agent_id=payload.agent_id,
++                    user_id=payload.user_id,
++                    tenant_id=payload.tenant_id
++                )
++                await save_user_preference(save_req)
++            except Exception as pe:
++                logger.error(f"[COMPOUND QUERY PREFERENCE ERROR] Failed inline preference update: {pe}")
+ 
+     preferences = await get_user_preferences(payload.tenant_id, payload.user_id, payload.agent_id)
+ 
+@@ -919,15 +971,7 @@ async def async_ingest_turn(payload: MemorySaveRequest):
+     user_interaction = f"User: {payload.query}\nAssistant: {payload.ai_response}"
+     
+     # Check if the AI response indicates a failure to find information or missing data
+-    negative_indicators = [
+-        "couldn't find", "could not find", "don't know", "do not know",
+-        "no mention", "no information", "not present in dataset",
+-        "not found", "unable to find", "no matching record",
+-        "does not exist", "unanswered",
+-        "don't have any specific information", "donΓÇÖt have any specific information"
+-    ]
+-    ai_resp_lower = payload.ai_response.lower()
+-    if any(indicator in ai_resp_lower for indicator in negative_indicators):
++    if await _is_no_answer_found(payload.ai_response):
+         logger.info(f"[INGEST BYPASS] Skipping memory storage because AI response indicates info is missing or not found: {payload.ai_response!r}")
+         return
+ 
+@@ -944,6 +988,7 @@ async def async_ingest_turn(payload: MemorySaveRequest):
+ 
+     combined_prompt = (
+         "Analyze this conversation turn and produce BOTH of the following in ONE JSON response:\n\n"
++        "CRITICAL INSTRUCTION: Before extracting anything, first determine whether the AI's response actually contains retrieved information, or whether it expresses that no information was found / the AI doesn't know / the question is unanswerable from context. If the response expresses absence of information in ANY phrasing (not just specific keywords), output {\"triplets\": [], \"summary\": null} ΓÇö do not create relations like IS_UNKNOWN, LACKS_INFORMATION, HAS_VALUE=no, or any triplet that encodes the absence itself as a fact about the subject.\n\n"
+         "1. SUMMARY: Compress the interaction into a single concise, factual declarative statement. "
+         "Explicitly include the specific topic, entities, numbers, and answers discussed. "
+         "Example: 'User asked about their serial number; Assistant confirmed serial number 23-4583.' "
+diff --git a/app/modules/jobs/worker.py b/app/modules/jobs/worker.py
+index dc48c13..1d2958d 100644
+--- a/app/modules/jobs/worker.py
++++ b/app/modules/jobs/worker.py
+@@ -401,7 +401,7 @@ async def run_excel_ingestion_job(
+                 with os.fdopen(temp_fd, 'wb') as f:
+                     f.write(content)
+                 dataset_name = os.path.splitext(filename)[0]
+-                ParquetIngester.ingest_to_parquet(temp_path, dataset_name=dataset_name)
++                output_path, categorical_registry = ParquetIngester.ingest_to_parquet(temp_path, dataset_name=dataset_name)
+             finally:
+                 if os.path.exists(temp_path):
+                     os.remove(temp_path)
+@@ -409,7 +409,7 @@ async def run_excel_ingestion_job(
+             await db.execute(
+                 update(KnowledgeBase)
+                 .where(KnowledgeBase.id == uuid.UUID(kb_id))
+-                .values(parsed_path=dataset_name, description="excel_parquet")
++                .values(parsed_path=dataset_name, description="excel_parquet", categorical_values=categorical_registry)
+             )
+             
+             # Update Neo4j KB if needed
+diff --git a/app/modules/knowledge_bases/models.py b/app/modules/knowledge_bases/models.py
+index 446c5ff..8dbf992 100644
+--- a/app/modules/knowledge_bases/models.py
++++ b/app/modules/knowledge_bases/models.py
+@@ -88,6 +88,7 @@ class KnowledgeBase(Base):
+ 
+     from sqlalchemy.dialects.postgresql import JSONB
+     dataset_schema = Column(JSONB, nullable=True)
++    categorical_values = Column(JSONB, nullable=True)
+     noisy_words = Column(JSONB, nullable=True)
+     noisy_words_generated_at = Column(DateTime(timezone=True), nullable=True)
+ 
+diff --git a/app/modules/knowledge_bases/routes.py b/app/modules/knowledge_bases/routes.py
+index 888b8c8..bf2c4e1 100644
+--- a/app/modules/knowledge_bases/routes.py
++++ b/app/modules/knowledge_bases/routes.py
+@@ -873,7 +873,7 @@ async def ingest_file(
+                     f.write(content)
+                     
+                 dataset_name = os.path.splitext(filename)[0]
+-                ParquetIngester.ingest_to_parquet(temp_path, dataset_name=dataset_name)
++                output_path, categorical_registry = ParquetIngester.ingest_to_parquet(temp_path, dataset_name=dataset_name)
+                 
+                 async with AsyncSessionLocal() as db:
+                     from sqlalchemy import update
+@@ -882,7 +882,7 @@ async def ingest_file(
+                         .where(KnowledgeBase.id == uuid.UUID(kb_id))
+                         # Save dataset_name to parsed_path so query engine can retrieve active file
+                         # Save description to "excel_parquet" to route queries
+-                        .values(file_hash=file_hash, parsed_path=dataset_name, description="excel_parquet")
++                        .values(file_hash=file_hash, parsed_path=dataset_name, description="excel_parquet", categorical_values=categorical_registry)
+                     )
+                     await db.commit()
+                     
+diff --git a/app/modules/rag/engines/vector_engine.py b/app/modules/rag/engines/vector_engine.py
+index b0bf53a..a4e19de 100644
+--- a/app/modules/rag/engines/vector_engine.py
++++ b/app/modules/rag/engines/vector_engine.py
+@@ -199,23 +199,71 @@ class VectorEngine(BaseEngine):
+                 res = await self.db.execute(stmt)
+                 chunks = []
+ 
+-                # Simple keyword extraction (alphanumeric words > 4 chars)
+-                exact_terms = [w for w in task.query.split() if len(w) > 4 and w.isalnum()]
++                # Get intelligent keywords from QueryAnalyzer
++                analyzer_keywords = []
++                if getattr(task, "metadata_filters", None):
++                    if isinstance(task.metadata_filters, dict):
++                        analyzer_keywords = task.metadata_filters.get("keywords", [])
++                    else:
++                        analyzer_keywords = getattr(task.metadata_filters, "keywords", [])
++                
++                # Explode multi-word keywords to catch partial matches in filenames (e.g. '5-day hike' -> 'hike')
++                exploded_keywords = set()
++                for kw in analyzer_keywords:
++                    exploded_keywords.add(kw.lower())
++                    for w in kw.split():
++                        clean_w = ''.join(c for c in w if c.isalnum()).lower()
++                        if len(clean_w) > 3:
++                            exploded_keywords.add(clean_w)
++                
++                if not exploded_keywords:
++                    exploded_keywords = {w.lower() for w in task.query.split() if len(w) > 4 and w.isalnum()}
++                    
++                logger.info(f"[BOOST_CHECK] task_id={task.task_id} analyzer_keywords={analyzer_keywords} exploded_keywords={exploded_keywords}")
+ 
+                 all_rows = res.fetchall()
++                
++                # To prevent log spam, we only log the match once per kb
++                matched_kbs = set()
++                
+                 for idx, row in enumerate(all_rows):
+                     similarity = float(row.similarity) if row.similarity is not None else 0.8
+                     chunk_text = row.text or ""
++                    kb_name = (row.name or "").lower()
++                    kb_path = (row.s3_path or "").lower()
+ 
+                     weight = 1.0
+-                    for term in exact_terms:
+-                        if term.lower() in chunk_text.lower():
+-                            weight *= 1.15
++                    
++                    # 1. Source Identity Anchoring (Domain Match)
++                    # If the KB filename/name explicitly contains our query's core entities, massively boost it
++                    import re
++                    def basic_stem(word):
++                        if len(word) <= 3: return word
++                        for suffix in ('ing', 'ed', 'es', 's', 'e'):
++                            if word.endswith(suffix):
++                                return word[:-len(suffix)]
++                        return word
++
++                    for kw in exploded_keywords:
++                        if len(kw) > 3:
++                            # Use basic stemming to allow 'hike' to match 'hiking' (stem 'hik')
++                            stemmed_kw = basic_stem(kw)
++                            if re.search(rf"\b{re.escape(stemmed_kw)}", kb_name) or re.search(rf"\b{re.escape(stemmed_kw)}", kb_path):
++                                weight *= 1.40
++                                if row.kb_id not in matched_kbs:
++                                    logger.info(f"[BOOST_CHECK] Domain Match: stemmed keyword '{stemmed_kw}' (from '{kw}') matched kb_name '{kb_name}' or path '{kb_path}'")
++                                    matched_kbs.add(row.kb_id)
++                            
++                    # 2. Text Match Anchoring (Gentle boost for exact keyword occurrences)
++                    for kw in exploded_keywords:
++                        if len(kw) > 3 and kw in chunk_text.lower():
++                            weight *= 1.05
+ 
++                    base_weighted = similarity * weight
+                     if row.chunk_index < 3:
+-                        final_score = similarity + 1.0
++                        final_score = base_weighted + 1.0
+                     else:
+-                        final_score = min(similarity * weight, 1.0)
++                        final_score = min(base_weighted, 2.0)
+ 
+                     chunks.append(RetrievedChunk(
+                         chunk_id=str(row.id),
+diff --git a/app/modules/rag/orchestrator/query_analyzer.py b/app/modules/rag/orchestrator/query_analyzer.py
+index c167710..b831ea4 100644
+--- a/app/modules/rag/orchestrator/query_analyzer.py
++++ b/app/modules/rag/orchestrator/query_analyzer.py
+@@ -52,7 +52,7 @@ class QueryAnalyzer:
+     def __init__(self):
+         self.llm_client = DeepInfraLLMClient()
+         
+-    async def analyze_query(self, query: str, kb_context: str = "") -> AnalysisResult:
++    async def analyze_query(self, query: str, kb_context: str = "", chat_history: Optional[str] = None) -> AnalysisResult:
+         """
+         Uses LLM to extract intent and metadata in a single pass.
+         """
+@@ -74,9 +74,13 @@ class QueryAnalyzer:
+             is_tabular_override = True
+ 
+         kb_context_section = f"\n[ACTIVE KNOWLEDGE BASES CONTEXT]\nThe user is searching across these knowledge bases. Use this context to deduce the meaning of ambiguous terms:\n{kb_context}\n" if kb_context else ""
++        
++        chat_history_section = ""
++        if chat_history:
++            chat_history_section = f"\n[CONVERSATION HISTORY]\nUse the following recent chat history to resolve any vague pronouns (like 'he', 'she', 'it') or relative references (like 'this plan', 'the previous document') in the current query:\n{chat_history}\n"
+ 
+         prompt = f"""
+-You are an Expert Knowledge Retrieval Query Analyzer.{kb_context_section}
++You are an Expert Knowledge Retrieval Query Analyzer.{kb_context_section}{chat_history_section}
+ Your task is to classify the user's query into one of the exact intents below and extract structured metadata.
+ 
+ CRITICAL TASK: SPELL CHECK & QUERY EXPANSION
+@@ -105,6 +109,9 @@ If the query is composite (asking multiple distinct questions where some apply t
+ - `vector_subquery`: Extract the portion meant for unstructured text/document data (like job descriptions, work history, resume summaries, textual facts). RESOLVE pronouns to the actual subject name.
+ - If the query is simple and not composite, set both `tabular_subquery` and `vector_subquery` to null (or omit them).
+ 
++CRITICAL TASK: KEYWORD EXTRACTION
++You must extract the most critical entities, nouns, and domain markers from the query into the `keywords` array in the metadata. Do NOT drop contextual nouns (like "hiking", "bicycle", "employee", "company name") even if the question is primarily about numbers or pricing. These keywords are used to route the search to the correct domain.
++
+ INTENTS:
+ - FACT: Direct lookup of a single fact or entity.
+ - CALCULATION: Requires math.
+@@ -171,19 +178,23 @@ QUERY:
+ """
+         from app.core.llm.routing import LLMTask
+         
++        import asyncio
+         # We will try up to 2 times (1 initial + 1 retry)
+         max_attempts = 2
+         for attempt in range(max_attempts):
+             try:
+-                response = await self.llm_client.generate_cloud(
+-                    prompt=prompt,
+-                    system_prompt="You are an expert financial query analyzer. Return only JSON.",
+-                    temperature=0.0,
+-                    max_tokens=1024,
+-                    enable_thinking=False,
+-                    model=self.llm_client.model_intent,
+-                    timeout=15.0, # Increased safety buffer
+-                    task=LLMTask.INTENT_DETECTION
++                response = await asyncio.wait_for(
++                    self.llm_client.generate_cloud(
++                        prompt=prompt,
++                        system_prompt="You are an expert financial query analyzer. Return only JSON.",
++                        temperature=0.0,
++                        max_tokens=1024,
++                        enable_thinking=False,
++                        model=self.llm_client.model_intent,
++                        timeout=10.0, # Fast-fail timeout to mitigate provider jitter
++                        task=LLMTask.INTENT_DETECTION
++                    ),
++                    timeout=10.5
+                 )
+                 
+                 # Extract JSON block
+@@ -260,12 +271,22 @@ QUERY:
+                 )
+                 
+             except Exception as e:
+-                logger.error(f"QueryAnalyzer failed on attempt {attempt + 1}: {e}")
++                import asyncio
++                if isinstance(e, asyncio.TimeoutError):
++                    logger.error(f"QueryAnalyzer LLM request timed out on attempt {attempt + 1}")
++                else:
++                    logger.error(f"QueryAnalyzer failed on attempt {attempt + 1}: {e}")
++                    
+                 if attempt == max_attempts - 1:
++                    logger.warning("QueryAnalyzer exhausted retries. Falling back to heuristic defaults.")
++                    # Fallback path: treat as SUMMARY/FACT heuristically so request isn't blocked
+                     return AnalysisResult(
+-                        intent=QueryIntent.UNKNOWN,
+-                        metadata=QueryMetadata(keywords=[]),
+-                        is_tabular=False,
+-                        confidence=0.0,
+-                        reasoning=f"Failed to parse: {e}"
++                        intent=QueryIntent.SUMMARY,
++                        metadata=QueryMetadata(
++                            keywords=[q_strip],
++                            corrected_query=q_strip
++                        ),
++                        is_tabular=is_tabular_override,
++                        confidence=0.5,
++                        reasoning=f"Provider timeout/error fallback. Original error: {e}"
+                     )
+diff --git a/app/modules/rag/orchestrator/section_ranker.py b/app/modules/rag/orchestrator/section_ranker.py
+index d7735d5..590bcad 100644
+--- a/app/modules/rag/orchestrator/section_ranker.py
++++ b/app/modules/rag/orchestrator/section_ranker.py
+@@ -47,9 +47,10 @@ class SectionRanker:
+             elif "md&a" in doc_type:
+                 score += 1.0
+                 
+-            # 3. Keyword Coverage (Basic token overlap)
+-            query_tokens = set(re.findall(r'\b\w+\b', query_lower))
+-            title_tokens = set(re.findall(r'\b\w+\b', title))
++            # 3. Keyword Coverage (Basic token overlap without stopwords)
++            stopwords = {"what", "when", "this", "that", "code", "data", "info", "find", "how", "why", "where", "which", "with", "does", "then", "from", "they", "i", "to", "for", "the", "a", "an", "and", "or", "but", "in", "on", "at", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "did", "of", "by", "if", "my", "your", "our", "their", "it", "he", "she", "we", "you", "me", "him", "her", "us", "them", "can", "would", "could", "should"}
++            query_tokens = {t for t in re.findall(r'\b\w+\b', query_lower) if t not in stopwords and len(t) > 2}
++            title_tokens = {t for t in re.findall(r'\b\w+\b', title) if t not in stopwords and len(t) > 2}
+             overlap = len(query_tokens.intersection(title_tokens))
+             score += (overlap * 2.0)
+             
+diff --git a/app/modules/rag/pandas_engine.py b/app/modules/rag/pandas_engine.py
+index 485d6da..a4e76e3 100644
+--- a/app/modules/rag/pandas_engine.py
++++ b/app/modules/rag/pandas_engine.py
+@@ -155,14 +155,14 @@ class PandasQueryEngine:
+                  "4. Respond naturally, concisely, and use bolding formatting for key names, figures, dates, and comparisons.\n"
+                  "5. Include the formatted Markdown table below your explanation as supporting evidence.\n"
+                  "6. FOR FULL DETAILS OR MOVIE/ENTITY QUERIES: Give the complete details of the movie/entity (Title, Release Date, Overview/Plot, Popularity, Vote Average, Genre, etc.) from the table clearly and accurately. If multiple records are returned, summarize the top items clearly and concisely so the response remains focused and does not exceed token length limits.\n"
+-                 "7. IMPORTANT: Do NOT output any <think> tags or internal reasoning. Output ONLY the final answer directly."),
+-                ("user", "User Question: {question}\n\nSQL Explanation: {explanation}\n\nRetrieved Database Result Table:\n{table}")
++                 "7. IMPORTANT: Do NOT output any <think> tags or internal reasoning. Output ONLY the final answer directly.\n"
++                 "8. DO NOT include the SQL Explanation in your answer. The SQL Explanation is for your internal context only."),
++                ("user", "User Question: {question}\n\nRetrieved Database Result Table:\n{table}")
+             ])
+             from langchain_core.output_parsers import StrOutputParser
+             synth_chain = synth_prompt | self.llm | StrOutputParser()
+             synthesis = await synth_chain.ainvoke({
+                 "question": question,
+-                "explanation": explanation,
+                 "table": table_md
+             })
+             # Strip any <think> tags the LLM may have injected
+@@ -262,7 +262,7 @@ class PandasQueryEngine:
+                  "11. Output ONLY valid JSON matching the schema with 'sql' and 'explanation'.\n"
+                  "12. In your 'explanation' string, NEVER use the words 'error', 'errors', 'exception', or 'fail' (use 'issues' or 'problems' instead).\n"
+                  "13. For extracting YEAR, MONTH, or date parts from timestamp columns, ALWAYS cast to timestamp first: EXTRACT(YEAR FROM TRY_CAST(\"col\" AS TIMESTAMP)).\n"
+-                 "14. If the user asks for information or columns that DO NOT EXIST in the schema (e.g. wholesale price, CEO, warehouse, email, warranty), generate: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset.\n"
++                 "14. NO PROXY METRICS: If the user asks for information or columns that DO NOT EXIST in the schema (e.g. 'Age', 'wholesale price', 'CEO'), DO NOT hallucinate or substitute an unrelated column to estimate it (e.g. DO NOT use 'Hire Date' to calculate 'Age'). You MUST generate exactly: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset.\n"
+                  "15. STRING FILTERING & ENTITY MATCHING: When filtering string columns (e.g. employee names, IDs, departments in WHERE clauses), NEVER use exact '=' or 'LOWER(col) = ...' with mismatching case. Instead, ALWAYS use case-insensitive matching using the ILIKE operator (e.g., \"Employee ID\" ILIKE 'EMP1005' or \"Employee Name\" ILIKE '%Matthew%') so that case differences or spacing never cause zero results.\n"
+                  "16. COMPARATIVE & SUPERLATIVE QUERIES: When the user asks to compare two or more entities (e.g. 'who has higher salary', 'compare the salary of both', 'who is better', 'who earns more', 'which has better'):\n"
+                  "   - If the query mentions 'both', 'all', or does not specify explicit employee names, DO NOT filter with WHERE name = 'both'. Instead, select all rows from dataset and ORDER BY the comparison metric DESC (e.g., SELECT * FROM dataset ORDER BY TRY_CAST(\"Salary\" AS DOUBLE) DESC LIMIT 10;).\n"
+@@ -332,7 +332,8 @@ class PandasQueryEngine:
+                          "1. Return ONLY valid JSON with 'sql' and 'explanation'. No markdown, no <think> tags.\n"
+                          "2. ALWAYS enclose column names containing spaces or symbols in DOUBLE QUOTES (e.g. \"Customer ID\").\n"
+                          "3. When searching for strings containing apostrophes or single quotes (e.g. 'Ron''s Gone Wrong'), double the single quotes in SQL ('%ron''s gone wrong%') or use wildcards ('%ron%gone%wrong%').\n"
+-                         "4. The query MUST be a read-only DuckDB SELECT on table 'dataset'."),
++                         "4. NO PROXY METRICS: If the DuckDB Error Message indicates that a column requested by the user does not exist (e.g. 'Referenced column \"Age\" not found'), DO NOT hallucinate or substitute an unrelated column (e.g. DO NOT use 'Hire Date' to estimate 'Age'). You MUST return exactly: SELECT 'not present in dataset' AS info WHERE FALSE;\n"
++                         "5. The query MUST be a read-only DuckDB SELECT on table 'dataset'."),
+                         ("user",
+                          "User Question: {question}\n\nFailed SQL Query:\n{sql}\n\nDuckDB Error Message:\n{error}\n\nProvide the corrected DuckDB SQL query in valid JSON.")
+                     ])
+@@ -394,16 +395,16 @@ class PandasQueryEngine:
+             # Format clean, enterprise-grade response
+             if len(rows) == 1 and len(col_names) == 1:
+                 val = rows[0][0]
+-                formatted += f"**{val}**\n\n_{query_plan.explanation}_"
++                formatted += f"**{val}**"
+             elif len(rows) == 1:
+-                parts = [f"_{query_plan.explanation}_\n"]
++                parts = []
+                 for k, v in zip(col_names, rows[0]):
+                     parts.append(f"- **{k}**: {v if v is not None else 'NULL'}")
+                 formatted += "\n".join(parts)
+             else:
+                 headers = " | ".join(str(c) for c in col_names)
+                 sep = " | ".join("---" for _ in col_names)
+-                formatted += f"_{query_plan.explanation}_\n\n| {headers} |\n| {sep} |\n"
++                formatted += f"| {headers} |\n| {sep} |\n"
+                 for r in rows[:100]:
+                     row_str = " | ".join(str(item) if item is not None else "NULL" for item in r)
+                     formatted += f"| {row_str} |\n"
+diff --git a/app/modules/rag/pipeline.py b/app/modules/rag/pipeline.py
+index 8eca5b5..8fdc219 100644
+--- a/app/modules/rag/pipeline.py
++++ b/app/modules/rag/pipeline.py
+@@ -395,7 +395,7 @@ class RAGPipeline:
+         final_kbs = unbackfilled_kbs.copy()
+             
+         # Gap-based Top-N Selection
+-        GAP_THRESHOLD = 0.05 
++        GAP_THRESHOLD = 0.15 
+         selected_kbs = []
+         
+         for item in kb_scores:
+@@ -438,7 +438,8 @@ class RAGPipeline:
+         max_depth: int = 2,
+         max_tokens: int = 24000,
+         kb_context: str = "",
+-        analysis = None
++        analysis = None,
++        query_embedding_tuple: tuple = None
+     ) -> RAGContext:
+ 
+ 
+@@ -566,7 +567,12 @@ class RAGPipeline:
+         else:
+             async def _return_analysis(): return analysis
+             analyzer_task = asyncio.create_task(_return_analysis())
+-        embedding_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(query))
++            
++        if query_embedding_tuple is None:
++            embedding_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(query))
++        else:
++            async def _return_emb(): return query_embedding_tuple
++            embedding_task = asyncio.create_task(_return_emb())
+         
+         # We can also prefetch KB metadata here
+         kb_metadata_task = None
+@@ -639,11 +645,15 @@ class RAGPipeline:
+             query = corrected
+ 
+         # STAGE 0.5: EARLY EXIT FOR TABLE ANALYTICS (Using new QueryAnalyzer)
+-        if analysis.is_tabular:
++        if analysis.intent.name == "TABLE":
+             logger.info("   -> Intercepting query for SQL Table Analytics engine!")
+             try:
+                 table_results = await self._execute_table_analytics(query, kb_ids)
+-                if table_results and "validation error" not in table_results.lower():
++                
++                if table_results is None:
++                    logger.info("   -> SQL Table Analytics determined no table match. Falling back to standard pipeline.")
++                    pass # allow it to fall through to RRF
++                elif "Error executing SQL" not in table_results and "Error:" not in table_results:
+                     return RAGContext(
+                         query=query,
+                         chunks=[],
+@@ -653,11 +663,32 @@ class RAGPipeline:
+                         search_type="TABLE_ANALYTICS"
+                     )
+                 else:
+-                    logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to RRF vector search.")
++                    error_msg = table_results
++                    if "not present in dataset" in error_msg.lower():
++                        logger.warning(f"   -> SQL Table Analytics returned 'not present in dataset'. Falling back to RRF vector search.")
++                        pass # allow it to fall through to RRF
++                    else:
++                        logger.error(f"   -> SQL Table Analytics completely failed after retries: {error_msg}. STRICT FALLBACK ENFORCEMENT active (blocking vector fallback).")
++                        return RAGContext(
++                            query=query,
++                            chunks=[],
++                            entity_mentions={},
++                            total_tokens=0,
++                            triplet_context=f"I couldn't compute that from the table. {error_msg}",
++                            search_type="TABLE_ANALYTICS_FAILED"
++                        )
+             except Exception as e:
+-                logger.error(f"   -> SQL Table Analytics failed: {e}. Falling back to RRF vector search.", exc_info=True)
++                logger.error(f"   -> SQL Table Analytics completely failed: {e}. STRICT FALLBACK ENFORCEMENT active.", exc_info=True)
+                 if self.db:
+                     await self.db.rollback()
++                return RAGContext(
++                    query=query,
++                    chunks=[],
++                    entity_mentions={},
++                    total_tokens=0,
++                    triplet_context=f"I couldn't compute that from the table. An internal error occurred: {str(e)}",
++                    search_type="TABLE_ANALYTICS_FAILED"
++                )
+ 
+         # Gather structured queries. If none, default to corrected/original query.
+         structured_queries = getattr(analysis.metadata, "structured_queries", [])
+@@ -680,11 +711,9 @@ class RAGPipeline:
+             extractive_context_text = ""
+ 
+             # Ensure embedding is generated ONCE for this structured query
+-            if current_query == original_query:
+-                query_embedding_val, emb_tokens = await embedding_task
+-            else:
+-                from app.core.embeddings import EmbeddingGenerator
+-                query_embedding_val, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(current_query)
++            # Step 1 Latency Fix: Always reuse the original query embedding 
++            # to skip the redundant 2nd embedding call.
++            query_embedding_val, emb_tokens = await embedding_task
+             
+             analysis.metadata.query_embedding = query_embedding_val
+             
+@@ -894,6 +923,66 @@ class RAGPipeline:
+             
+             logger.info(f"[RRF_FLOW_MARKER] Target section IDs from SectionRanker: {section_res}. Boost applied to {boosted_count} chunks.")
+ 
++            # Apply Domain Keyword Boost post-hoc
++            # This ensures that chunks from a KB whose name matches core query entities (like "hike")
++            # forcefully outrank generic chunks that happen to score high in Graph/Vector due to boilerplate text.
++            domain_boosted_count = 0
++            DOMAIN_BOOST_WEIGHT = 0.02  # ~1x single-source RRF top-rank contribution, tie-breaker only
++            
++            import re
++            def basic_stem(word):
++                if len(word) <= 3: return word
++                if word.endswith('ing') and len(word) > 5: return word[:-3]
++                if word.endswith('es') and len(word) > 4: return word[:-2]
++                if word.endswith('ed') and len(word) > 4: return word[:-2]
++                if word.endswith('s') and len(word) > 3 and not word.endswith('ss'): return word[:-1]
++                if word.endswith('e') and len(word) > 4: return word[:-1]
++                return word
++
++            def get_tokens(text):
++                return [t.lower() for t in re.findall(r'[a-zA-Z0-9]+', text)]
++
++            analyzer_keywords = []
++            if isinstance(meta_dict, dict):
++                analyzer_keywords = meta_dict.get("keywords", [])
++            else:
++                analyzer_keywords = getattr(meta_dict, "keywords", [])
++                    
++            exploded_keywords = set()
++            for kw in analyzer_keywords:
++                exploded_keywords.add(kw.lower())
++                for w in kw.split():
++                    clean_w = ''.join(c for c in w if c.isalnum()).lower()
++                    if len(clean_w) > 3:
++                        exploded_keywords.add(clean_w)
++            if not exploded_keywords:
++                exploded_keywords = {w.lower() for w in original_query.split() if len(w) > 4 and w.isalnum()}
++
++            for cid in fused_scores.keys():
++                chunk_obj = vector_chunk_map.get(cid)
++                if chunk_obj:
++                    kb_name = (getattr(chunk_obj, "source", "") or "").lower()
++                    kb_path = (getattr(chunk_obj, "s3_path", "") or "").lower()
++                    
++                    kb_tokens = get_tokens(kb_name) + get_tokens(kb_path)
++                    kb_stemmed_tokens = {basic_stem(t) for t in kb_tokens}
++                    
++                    logger.info(f"[RRF_BOOST_DEBUG] chunk_id={cid} source='{kb_name}' s3_path='{kb_path}'")
++                    for kw in exploded_keywords:
++                        if len(kw) > 3:
++                            stemmed_kw = basic_stem(kw)
++                            if len(stemmed_kw) < 4:
++                                continue
++                            if stemmed_kw in kb_stemmed_tokens or kw in kb_tokens:
++                                fused_scores[cid] += DOMAIN_BOOST_WEIGHT
++                                domain_boosted_count += 1
++                                logger.info(f"[RRF_BOOST_FIRED] chunk_id={cid} matched stemmed_kw='{stemmed_kw}'")
++                                break
++                else:
++                    logger.info(f"[RRF_BOOST_DEBUG] chunk_id={cid} NOT FOUND in vector_chunk_map (Graph/Keyword only chunk)")
++                                
++            logger.info(f"[RRF_FLOW_MARKER] Domain Boost applied to {domain_boosted_count} chunks.")
++
+             # Sort top N chunks
+             sorted_fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[:TOP_N]
+             top_cids = [cid for cid, score in sorted_fused]
+@@ -2323,24 +2412,15 @@ class RAGPipeline:
+         pass
+ 
+     def _disambiguate_tables(self, query: str, candidates: list) -> any:
+-        import re
+-        query_terms = set(re.findall(r'[a-zA-Z0-9]+', query.lower()))
++        from app.modules.rag.schema_utils import calculate_schema_overlap_score
++        
+         scored = []
+         for kb in candidates:
+-            # Extract terms from schema columns
+-            col_terms = set()
+-            schema = kb.dataset_schema or {}
+-            if "columns" in schema:
+-                # If schema has a "columns" list
+-                for c in schema["columns"]:
+-                    col_terms.update(re.findall(r'[a-zA-Z0-9]+', str(c).lower()))
+-            else:
+-                # If schema is a dict of col -> type
+-                for c in schema.keys():
+-                    col_terms.update(re.findall(r'[a-zA-Z0-9]+', str(c).lower()))
+-                    
+-            name_terms = set(re.findall(r'[a-zA-Z0-9]+', str(kb.name or "").lower()))
+-            overlap = len(query_terms & (col_terms | name_terms))
++            dataset_schema = getattr(kb, "dataset_schema", None)
++            categorical_values = getattr(kb, "categorical_values", None)
++            name = getattr(kb, "name", None)
++            
++            overlap = calculate_schema_overlap_score(query, dataset_schema, categorical_values, name)
+             scored.append((overlap, kb))
+             
+         scored.sort(reverse=True, key=lambda x: x[0])
+@@ -2350,7 +2430,7 @@ class RAGPipeline:
+             
+         best_score = scored[0][0]
+         
+-        if best_score == 0:
++        if best_score == (0, 0):
+             logger.warning(f"Disambiguation failed: No query terms overlap with any candidate KBs ({[k.name for k in candidates]})")
+             raise self.AmbiguousTableError(f"No table matches query terms.")
+             
+@@ -2358,7 +2438,8 @@ class RAGPipeline:
+         top_scorers = [item for item in scored if item[0] == best_score]
+         if len(top_scorers) > 1:
+             logger.warning(f"Disambiguation tied between: {[k[1].name for k in top_scorers]} with score {best_score}")
+-            raise self.AmbiguousTableError(f"Ambiguous tables for query.")
++            # If there was no decisive categorical tie-breaker, raise ambiguity
++            raise self.AmbiguousTableError(f"Ambiguous tables for query. Could not decisively pick between {[k[1].name for k in top_scorers]}. Please clarify your query.")
+             
+         return scored[0][1]
+ 
+@@ -2407,7 +2488,7 @@ class RAGPipeline:
+         kb_param_dict = {f"kb_{i}": uuid.UUID(str(k)) for i, k in enumerate(kb_ids)}
+         kb_param_dict["tenant_id"] = uuid.UUID(str(self.tenant_id))
+         kb_in_str = ", ".join([f":kb_{i}" for i in range(len(kb_ids))])
+-        kb_query = f"SELECT id, name, dataset_schema, parsed_path, s3_path, source, description FROM knowledge_bases WHERE id IN ({kb_in_str}) AND tenant_id = :tenant_id;"
++        kb_query = f"SELECT id, name, dataset_schema, categorical_values, parsed_path, s3_path, source, description FROM knowledge_bases WHERE id IN ({kb_in_str}) AND tenant_id = :tenant_id;"
+         result = await self.db.execute(text(kb_query), kb_param_dict)
+         kb_rows = result.all()
+         
+@@ -2415,24 +2496,127 @@ class RAGPipeline:
+             await log_attempt(0)
+             return None
+ 
+-        # --- DEFINITIVE FIX: Filter to Excel KBs BEFORE disambiguation ---
+-        excel_kb_rows = [r for r in kb_rows if getattr(r, 'description', '') == 'excel_parquet']
++        # --- STAGE 1.5: FILE/SCHEMA-LEVEL ROUTING GATE ---
++        def _build_router_prompt(manifest, query_str):
++            return f"""You are a file-routing classifier for a retrieval pipeline. Given a user query and a list of candidate data sources, decide which source(s), if any, the query is actually asking about.
++
++Rules:
++- Match on semantic and lexical overlap between the query's entities/fields (e.g. "SL.NO", "employee ID", "HSN code") and each source's column/header names. Do not assume a match just because a source is the only one of its type.
++- If the query references a field/entity that does not appear in ANY candidate's schema, return "no_match": true for all ΓÇö do not force a guess.
++- If multiple sources plausibly match, rank them by field-name overlap and return the top match(es), not just the first one found.
++- Never silently substitute a different field name (e.g. mapping "SL.NO" to "row_id") unless the source's schema has no closer alternative AND you flag it explicitly in "field_mapping_confidence".
++
++Candidates:
++{json.dumps(manifest, indent=2)}
++
++Query: "{query_str}"
++
++Respond ONLY as JSON:
++{{
++  "matches": [
++    {{
++      "kb_id": "...",
++      "filename": "...",
++      "confidence": 0.9,
++      "matched_field": "the column/header you believe corresponds to the query's target field, or null if none",
++      "field_mapping_confidence": "exact | inferred | none"
++    }}
++  ],
++  "no_match": false
++}}"""
++
++        candidate_manifest = []
++        for r in kb_rows:
++            cols = list(r.dataset_schema.keys()) if getattr(r, 'dataset_schema', None) else []
++            candidate_manifest.append({
++                "kb_id": str(r.id),
++                "filename": r.name,
++                "source_type": getattr(r, 'description', None) or getattr(r, 'source', None),
++                "columns": cols,
++                "schema_known": bool(getattr(r, 'dataset_schema', None))
++            })
++
++        router_prompt = _build_router_prompt(candidate_manifest, query)
++        router_response = await self.llm_client.generate_cloud(
++            prompt=router_prompt,
++            system_prompt="You are a file-routing classifier. Return ONLY JSON.",
++            temperature=0.0,
++            max_tokens=1000,
++            enable_thinking=False
++        )
++
++        try:
++            import re
++            json_match = re.search(r'```json\s*(\{.*?\})\s*```', router_response, re.DOTALL)
++            clean_json = json_match.group(1) if json_match else router_response[router_response.find('{'):router_response.rfind('}')+1]
++            router_result = json.loads(clean_json)
++        except Exception as e:
++            logger.error(f"Failed to parse router JSON: {e}")
++            router_result = {"no_match": True, "matches": []}
++
++        # PASS 2 (Fallback Sampling)
++        if router_result.get("no_match", False) and any(not c["schema_known"] for c in candidate_manifest):
++            logger.info("Router found no match, running Pass 2 schema inference...")
++            unknown_kbs = [c["kb_id"] for c in candidate_manifest if not c["schema_known"]]
++            inferred_schemas = {}
++            for ukb_id in unknown_kbs:
++                kb_param_dict_2 = {"tenant_id": uuid.UUID(str(self.tenant_id)), "kb_0": uuid.UUID(ukb_id)}
++                sample_query = "SELECT row_data FROM document_table_rows WHERE kb_id = :kb_0 AND tenant_id = :tenant_id LIMIT 50;"
++                result_2 = await self.db.execute(text(sample_query), kb_param_dict_2)
++                rows = result_2.scalars().all()
++                if rows:
++                    all_keys = set()
++                    for row in rows:
++                        all_keys.update(row.keys())
++                    inferred_schemas[ukb_id] = list(all_keys)
++                    
++            if inferred_schemas:
++                for c in candidate_manifest:
++                    if c["kb_id"] in inferred_schemas:
++                        c["columns"] = inferred_schemas[c["kb_id"]]
++                        c["schema_known"] = True
++                
++                router_prompt = _build_router_prompt(candidate_manifest, query)
++                router_response = await self.llm_client.generate_cloud(
++                    prompt=router_prompt,
++                    system_prompt="You are a file-routing classifier. Return ONLY JSON.",
++                    temperature=0.0,
++                    max_tokens=1000,
++                    enable_thinking=False
++                )
++                try:
++                    json_match = re.search(r'```json\s*(\{.*?\})\s*```', router_response, re.DOTALL)
++                    clean_json = json_match.group(1) if json_match else router_response[router_response.find('{'):router_response.rfind('}')+1]
++                    router_result = json.loads(clean_json)
++                except Exception as e:
++                    logger.error(f"Failed to parse Pass 2 router JSON: {e}")
++                    router_result = {"no_match": True, "matches": []}
++
++        # Evaluate Router Result
++        if router_result.get("no_match", False) or not router_result.get("matches"):
++            logger.info("Router determined no table match. Falling back to standard pipeline.")
++            await log_attempt(0)
++            return None
++
++        matched_kb_ids = [m["kb_id"] for m in router_result.get("matches", []) if m.get("field_mapping_confidence", "none") != "none"]
+         
+-        if not excel_kb_rows:
+-            logger.warning(f"No excel_parquet KBs found among {len(kb_rows)} total KBs for table analytics.")
++        if not matched_kb_ids:
++            logger.info("Router found matches but field mapping confidence was 'none'. Aborting SQL path.")
+             await log_attempt(0)
+             return None
+ 
+-        # --- STAGE 1.6: DISAMBIGUATION SCOPING GATE (Only for Spreadsheets) ---
+-        if len(excel_kb_rows) > 1:
+-            try:
+-                selected_kb = self._disambiguate_tables(query, excel_kb_rows)
+-                excel_kb_rows = [selected_kb]
+-                logger.info(f" Disambiguated multiple candidate spreadsheets down to {selected_kb.name}")
+-            except self.AmbiguousTableError as e:
+-                logger.warning(f" Ambiguous table routing for '{query}': {e}. Falling back to SEMANTIC.")
+-                await log_attempt(0)
+-                return None
++        # Re-assign kb_rows
++        kb_rows = [r for r in kb_rows if str(r.id) in matched_kb_ids]
++        kb_ids = matched_kb_ids  # Fix: ensure downstream SQL params use the filtered list
++        excel_kb_rows = [r for r in kb_rows if getattr(r, 'description', '') == 'excel_parquet']
++        non_excel_rows = [r for r in kb_rows if getattr(r, 'description', '') != 'excel_parquet']
++        
++        routing_context_list = []
++        for m in router_result.get("matches", []):
++            if m.get("matched_field") and m.get("kb_id") in matched_kb_ids:
++                routing_context_list.append(f"For '{m.get('filename')}', use column '{m.get('matched_field')}'. (confidence: {m.get('field_mapping_confidence')})")
++        
++        routing_context_str = "\n".join(routing_context_list)
+         from app.core.parquet_ingester import ParquetIngester
+         kb_names = {str(r.id): r.name for r in kb_rows}
+ 
+@@ -2601,6 +2785,9 @@ class RAGPipeline:
+ AVAILABLE COLUMNS & TYPES:
+ {json.dumps(dataset_schema, indent=2)}
+ 
++ROUTING CONTEXT:
++{routing_context_str}
++
+ USER QUERY: {query}
+ 
+ INSTRUCTIONS:
+@@ -2859,7 +3046,9 @@ CRITICAL RULES:
+                 explain_filters.append(f"{field} {op} {val}")
+                 
+             if len(group_clauses) > 1:
+-                where_clauses.append("(" + " OR ".join(group_clauses) + ")")
++                has_range = any(str(f.get("operator", "=")).upper() in [">", "<", ">=", "<="] for _, f in group_filters)
++                join_op = " AND " if has_range else " OR "
++                where_clauses.append("(" + join_op.join(group_clauses) + ")")
+             elif len(group_clauses) == 1:
+                 where_clauses.append(group_clauses[0])
+             
+diff --git a/app/modules/rag/service.py b/app/modules/rag/service.py
+index 7022b54..a5b581d 100644
+--- a/app/modules/rag/service.py
++++ b/app/modules/rag/service.py
+@@ -102,6 +102,7 @@ class RAGService:
+         on_usage_callback: Optional[Callable[[dict], None]] = None,
+         chat_history: Optional[str] = None,
+         skip_search: bool = False,
++        memory_task: Optional['asyncio.Task'] = None,
+     ):
+         logger.info(f" RAG Service: Streaming answer for agent={agent_id}, kb={kb_id}")
+         
+@@ -175,16 +176,23 @@ class RAGService:
+ 
+             # ============= EARLY QUERY ANALYSIS (ROUTING) =============
+             from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer
++            from app.core.embeddings import EmbeddingGenerator
+             import time
+             
+             analyzer_start = time.time()
+             analyzer = QueryAnalyzer()
+             
+             logger.info(f"[TRACE_E2E] [ENTRY] QueryAnalyzer.analyze_query - Input: '{short_query}'")
+-            analysis = await analyzer.analyze_query(query, kb_context=kb_context)
++            
++            # Step 2 Latency Fix: Gather QueryAnalyzer and original Query Embedding concurrently
++            analysis_task = asyncio.create_task(analyzer.analyze_query(query, kb_context=kb_context, chat_history=chat_history))
++            embed_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(query))
++            
++            analysis, embed_res = await asyncio.gather(analysis_task, embed_task)
++            
+             analyzer_latency = time.time() - analyzer_start
+-            logger.info(f"[TRACE_E2E] [EXIT] QueryAnalyzer.analyze_query - Output: {getattr(analysis, 'intent', 'Unknown')} - Latency: {analyzer_latency:.2f}s")
+-            logger.info(f"TELEMETRY: QueryAnalyzer completed in {analyzer_latency:.2f}s")
++            logger.info(f"[TRACE_E2E] [EXIT] QueryAnalyzer + Embed (Concurrent) - Output: {getattr(analysis, 'intent', 'Unknown')} - Latency: {analyzer_latency:.2f}s")
++            logger.info(f"TELEMETRY: QueryAnalyzer + Embed completed in {analyzer_latency:.2f}s")
+ 
+             # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
+             hybrid_merge_context = ""
+@@ -224,41 +232,22 @@ class RAGService:
+                     else:
+                         # Tabular Intent Refinement (Stage 1.6)
+                         try:
+-                            schema = pq.read_schema(active_paths[0])
+-                            cols = [str(name).lower() for name in schema.names]
+-                            
+-                            import re
+-                            query_terms = set(re.findall(r'[a-zA-Z0-9]+', query.lower()))
++                            from app.modules.rag.schema_utils import evaluate_schema_overlap
+                             
+-                            for c in cols:
+-                                schema_col_terms.update(re.findall(r'[a-zA-Z0-9]+', c))
+-                            schema_name_terms = set(re.findall(r'[a-zA-Z0-9]+', str(active_paths[0]).lower()))
++                            dataset_schema = getattr(excel_kbs[0], "dataset_schema", None) if excel_kbs else None
++                            categorical_values = getattr(excel_kbs[0], "categorical_values", None) if excel_kbs else None
+                             
+-                            term_overlap = len(query_terms & (schema_col_terms | schema_name_terms))
+-                            
+-                            # ID Regex (e.g., EMP1006, INV2023)
+-                            has_id_regex = bool(re.search(r'[a-zA-Z]{2,5}[0-9]{3,}', query))
+-                            
+-                            # Analytic verbs
+-                            analytic_verbs = {"average", "total", "sum", "count", "list", "how many", "max", "min"}
+-                            has_analytic_verb = bool(query_terms & analytic_verbs)
+-                            
+-                            # Final decision logic
+-                            strict_schema_overlap = (
+-                                has_id_regex or 
+-                                term_overlap >= 2 or 
+-                                (term_overlap == 1 and has_analytic_verb)
++                            strict_schema_overlap, reason, is_tabular = evaluate_schema_overlap(
++                                query, dataset_schema, categorical_values, active_paths
+                             )
+                             
+                             if strict_schema_overlap:
+                                 overlap = True
+-                                reason = f"strict_schema_overlap (score: {term_overlap}, id: {has_id_regex}, verb: {has_analytic_verb})"
+-                                # FORCE tabular intent so pipeline.py intercepts it
++                                if not analysis.is_tabular:
++                                    logger.warning(f"ΓÜá∩╕Å OVERRIDING LLM INTENT ({getattr(analysis, 'intent', 'UNKNOWN')}) TO TABULAR based on: {reason}")
+                                 analysis.is_tabular = True
+-                                logger.info(f"   -> Overriding analysis.is_tabular to True based on {reason}")
+                             else:
+                                 overlap = False
+-                                reason = "weak_or_zero_schema_overlap"
+                                 if analysis.is_tabular or getattr(analysis.metadata, "tabular_subquery", None):
+                                     logger.info("   -> LLM classified as TABULAR, but schema overlap was too weak. Trusting LLM but logging as ambiguous.")
+                         except Exception as e:
+@@ -308,7 +297,8 @@ class RAGService:
+                         top_k=top_k,
+                         max_depth=max_depth,
+                         kb_context=kb_context,
+-                        analysis=vec_analysis
++                        analysis=vec_analysis,
++                        query_embedding_tuple=(embed_res if subq == query else None)
+                     )
+                     logger.info(f"[TRACE_E2E] [EXIT] RAGPipeline.query ({name}) - Latency: {time.time() - vec_start:.2f}s")
+                     return res
+@@ -373,7 +363,8 @@ class RAGService:
+                             top_k=top_k,
+                             max_depth=max_depth,
+                             kb_context=kb_context,
+-                            analysis=analysis
++                            analysis=analysis,
++                            query_embedding_tuple=embed_res
+                         ),
+                         timeout=_RAG_TIMEOUT_SECONDS
+                     )
+@@ -391,6 +382,36 @@ class RAGService:
+                     
+             skip_search = True  # Bypass redundant sequential search below
+     
++            if memory_task:
++                try:
++                    mem_data = await memory_task
++                    is_feedback_only = mem_data.get("is_feedback_only", False)
++                    is_history_query = mem_data.get("is_history_query", False)
++                    episodic_guidance = mem_data.get("guidance_context") or ""
++                    
++                    if is_feedback_only:
++                        ack = "Understood! I've updated your preferences and saved them to my long-term memory."
++                        yield json.dumps({"type": "feedback_bypass", "ack": ack, "router_category": mem_data.get("category")})
++                        return
++                        
++                    if is_history_query:
++                        history_prompt = (
++                            "You are a helpful assistant. The user is asking about past chat history.\n"
++                            "Answer their question using ONLY the provided conversation context and graph facts below.\n\n"
++                            f"{episodic_guidance if episodic_guidance else 'No previous chat history found for this user.'}\n\n"
++                            f"User Question: {query}\n\n"
++                            "Provide a clear, concise summary of what was discussed:"
++                        )
++                        yield json.dumps({"type": "history_bypass", "history_prompt": history_prompt, "episodic_guidance": episodic_guidance})
++                        return
++                    
++                    if episodic_guidance:
++                        guidance_block = f"### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n{episodic_guidance}\n"
++                        chat_history = guidance_block + ("\n" + chat_history if chat_history else "")
++                except Exception as mem_err:
++                    import logging
++                    logger.warning(f"Memory task failed during concurrent execution: {mem_err}")
++
+             if len(kb_ids) > 1:
+                 logger.info(
+                     f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
+@@ -654,7 +675,7 @@ class RAGService:
+                             has_direct_output = True
+                         elif is_table_analytics:
+                             logger.info(f"[TABLE_ANALYTICS] Mapping raw SQL output to hybrid_merge_context for Answer LLM")
+-                            hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{clean_triplet}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
++                            hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{clean_triplet}\nState the numerical/tabular results clearly. DO NOT add any technical explanations about how the data was filtered, derived, or calculated (e.g. do not say 'This information was derived by filtering...').\n"
+                             
+                     if has_direct_output:
+                         # Append source citation for EXTRACTIVE so the frontend source pills appear
+diff --git a/app/modules/rag/websocket_core.py b/app/modules/rag/websocket_core.py
+index 6f6ca96..224a00c 100644
+--- a/app/modules/rag/websocket_core.py
++++ b/app/modules/rag/websocket_core.py
+@@ -162,66 +162,12 @@ async def run_unified_rag_websocket_loop(
+                 return []
+ 
+             import asyncio
+-            mem_data, memory_messages = await asyncio.gather(
+-                _fetch_memory_triage(),
+-                _fetch_chat_history()
+-            )
+-
+-            episodic_guidance = mem_data.get("guidance_context") or ""
+-            is_feedback_only = mem_data.get("is_feedback_only", False)
+-            is_history_query = mem_data.get("is_history_query", False)
+-            router_category = mem_data.get("category")
++            # START MEMORY TASK IN BACKGROUND CONCURRENTLY
++            memory_task = asyncio.create_task(_fetch_memory_triage())
++            
++            # Await ONLY chat history synchronously
++            memory_messages = await _fetch_chat_history()
+ 
+-            if is_feedback_only:
+-                ack = "Understood! I've updated your preferences and saved them to my long-term memory."
+-                async with httpx.AsyncClient() as client:
+-                    try:
+-                        await client.post(
+-                            f"{memory_api_url}/save-turn",
+-                            json={
+-                                "query": request.query,
+-                                "ai_response": ack,
+-                                "session_id": active_session_id,
+-                                "agent_id": agent_id,
+-                                "user_id": user_id,
+-                                "tenant_id": tenant_id,
+-                                "is_feedback_only": True,
+-                                "metadata": {"router_category": router_category},
+-                            },
+-                            timeout=3.0,
+-                        )
+-                    except Exception:
+-                        pass
+-                await chat_service.chat_repo.add_message(
+-                    session_id=active_session_id, role="assistant", content=ack, metadata={"feedback_turn": True}
+-                )
+-                await db.commit()
+-                await adapter.send(websocket, LoopEvent(type="token", text=ack))
+-                await adapter.send(websocket, LoopEvent(type="done"))
+-                continue
+-                
+-            if is_history_query:
+-                # Bypass Document RAG
+-                history_prompt = (
+-                    "You are a helpful assistant. The user is asking about past chat history.\n"
+-                    "Answer their question using ONLY the provided conversation context and graph facts below.\n\n"
+-                    f"{episodic_guidance if episodic_guidance else 'No previous chat history found for this user.'}\n\n"
+-                    f"User Question: {request.query}\n\n"
+-                    "Provide a clear, concise summary of what was discussed:"
+-                )
+-                try:
+-                    full_response_text = await rag_service.llm_client.generate_cloud(prompt=history_prompt)
+-                    await adapter.send(websocket, LoopEvent(type="token", text=full_response_text))
+-                    await adapter.send(websocket, LoopEvent(type="done"))
+-                    await chat_service.chat_repo.add_message(
+-                        session_id=active_session_id, role="assistant", content=full_response_text,
+-                        metadata={"memory_used": True, "direct_history_recall": True}
+-                    )
+-                    await db.commit()
+-                    continue
+-                except Exception as e:
+-                    raise e
+-                    
+             # 2. Chat History for Memory Context (used only as context, never to rewrite the query)
+             history_messages = [m for m in memory_messages if str(m.id) != str(user_msg.id)]
+ 
+@@ -236,12 +182,10 @@ async def run_unified_rag_websocket_loop(
+                     history=history_messages, current_query=original_query
+                 )
+ 
+-            if episodic_guidance:
+-                guidance_block = f"### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n{episodic_guidance}\n"
+-                chat_history_str = guidance_block + ("\n" + chat_history_str if chat_history_str else "")
+ 
+             # 4. RAG Streamer -> internal LoopEvents
+             has_error = False
++            msg_metadata = {"status": "complete"}
+             async for chunk in rag_service.stream_rag_answer(
+                 query=original_query,
+                 agent_id=agent_id,
+@@ -251,8 +195,52 @@ async def run_unified_rag_websocket_loop(
+                 chat_history=chat_history_str,
+                 skip_search=False,
+                 top_k=request.top_k,
+-                max_depth=request.max_depth
++                max_depth=request.max_depth,
++                memory_task=memory_task
+             ):
++                if chunk.startswith("{"):
++                    try:
++                        parsed = json.loads(chunk)
++                        if parsed.get("type") == "feedback_bypass":
++                            ack = parsed["ack"]
++                            router_category = parsed.get("router_category")
++                            async with httpx.AsyncClient() as client:
++                                try:
++                                    await client.post(
++                                        f"{memory_api_url}/save-turn",
++                                        json={
++                                            "query": request.query,
++                                            "ai_response": ack,
++                                            "session_id": active_session_id,
++                                            "agent_id": agent_id,
++                                            "user_id": user_id,
++                                            "tenant_id": tenant_id,
++                                            "is_feedback_only": True,
++                                            "metadata": {"router_category": router_category},
++                                        },
++                                        timeout=3.0,
++                                    )
++                                except Exception:
++                                    pass
++                            response_buffer.append(ack)
++                            msg_metadata["feedback_turn"] = True
++                            await adapter.send(websocket, LoopEvent(type="token", text=ack))
++                            break
++                        elif parsed.get("type") == "history_bypass":
++                            history_prompt = parsed["history_prompt"]
++                            try:
++                                full_response_text = await rag_service.llm_client.generate_cloud(prompt=history_prompt)
++                                response_buffer.append(full_response_text)
++                                msg_metadata.update({"memory_used": True, "direct_history_recall": True})
++                                await adapter.send(websocket, LoopEvent(type="token", text=full_response_text))
++                                break
++                            except Exception as e:
++                                has_error = True
++                                await adapter.send_error(websocket, str(e))
++                                break
++                    except (json.JSONDecodeError, TypeError):
++                        pass
++
+                 event = _rag_chunk_to_loop_event(chunk)
+                 if event.type == "token":
+                     response_buffer.append(event.text)
+@@ -271,11 +259,12 @@ async def run_unified_rag_websocket_loop(
+                 break
+ 
+             # 5. DB Persistence
++            msg_metadata["sources"] = collected_sources
+             await chat_service.chat_repo.add_message(
+                 session_id=active_session_id,
+                 role="assistant",
+                 content=full_response,
+-                metadata={"sources": collected_sources, "status": "complete"},
++                metadata=msg_metadata,
+             )
+             await db.commit()
+ 
+diff --git a/app/modules/tripets/extractor.py b/app/modules/tripets/extractor.py
+index 3c0fedd..157a961 100644
+--- a/app/modules/tripets/extractor.py
++++ b/app/modules/tripets/extractor.py
+@@ -40,6 +40,34 @@ class TripletExtractor:
+         self.llm_client = DeepInfraLLMClient()
+         self.tenant_id = tenant_id
+ 
++    async def _is_no_answer_found(self, text: str) -> bool:
++        if not text:
++            return False
++        # Minimal fast-path heuristic: skip the LLM check on very long responses 
++        # since not-found answers are typically short.
++        words = text.split()
++        if len(words) > 150:
++            return False
++            
++        system_prompt = (
++            "Does this response contain actual substantive information that answers the question, "
++            "or does it indicate that no information/answer was found? "
++            "Reply with exactly one word: FOUND or NOT_FOUND."
++        )
++        try:
++            classifier_resp = await self.llm_client.generate(
++                prompt=text,
++                system_prompt=system_prompt,
++                temperature=0.0,
++                max_tokens=10
++            )
++            if "NOT_FOUND" in classifier_resp.upper():
++                return True
++        except Exception as e:
++            logger.error(f"Semantic classifier failed: {e}")
++            pass
++        return False
++
+     async def extract_from_chunk(
+         self,
+         chunk_id: str,
+@@ -63,6 +91,10 @@ class TripletExtractor:
+         if not TripletExtractor._init_logged:
+             logger.info("Triplet Extraction Engine initialized (LLM-based)")
+             TripletExtractor._init_logged = True
++            
++        if await self._is_no_answer_found(chunk_text):
++            logger.info(f"Skipping triplet extraction for chunk {chunk_id[:8]} because it is classified as a not-found answer.")
++            return TripletExtractionResult(chunk_id=chunk_id, triplets=[])
+ 
+         try:
+             # --- ONTOLOGY GROUNDING INJECTION ---
+diff --git a/app/modules/tripets/prompt.py b/app/modules/tripets/prompt.py
+index dcc8a6d..da4cb98 100644
+--- a/app/modules/tripets/prompt.py
++++ b/app/modules/tripets/prompt.py
+@@ -2,6 +2,8 @@
+ # NOTE: All literal {{ }} are escaped for Python .format()  only {text} is a placeholder
+ TRIPLET_EXTRACTION_PROMPT = """Extract knowledge events and facts from the following text.
+ 
++CRITICAL INSTRUCTION: Before extracting anything, first determine whether the AI's response actually contains retrieved information, or whether it expresses that no information was found / the AI doesn't know / the question is unanswerable from context. If the response expresses absence of information in ANY phrasing (not just specific keywords), output {{"facts": []}} ΓÇö do not create relations like IS_UNKNOWN, LACKS_INFORMATION, HAS_VALUE=no, or any triplet that encodes the absence itself as a fact about the subject.
++
+ For each fact, decide its mode using this rule, in order:
+ 
+ 1. If the fact involves 3 or more distinct participants, OR carries any
+diff --git a/data/parquet/active_datasets.json b/data/parquet/active_datasets.json
+index 1648c86..6339f7a 100644
+--- a/data/parquet/active_datasets.json
++++ b/data/parquet/active_datasets.json
+@@ -10,5 +10,6 @@
+     "mymoviedbt2": "mymoviedbt2_1785250219.parquet",
+     "VENDOR DETAILS_Update": "VENDOR DETAILS_Update_1785250380.parquet",
+     "sales_data": "sales_data_1787554961.parquet",
+-    "dummy_employees_details": "dummy_employees_details_1787651859.parquet"
++    "dummy_employees_details": "dummy_employees_details_1787651859.parquet",
++    "WA_Fn-UseC_-HR-Employee-Attrition": "WA_Fn-UseC_-HR-Employee-Attrition_1787665108.parquet"
+ }
+\ No newline at end of file

@@ -205,6 +205,38 @@ async def lifespan(app: FastAPI):
         logger.info("[STARTUP] MULTI-TENANCY ENFORCED - RLS POLICIES ACTIVE")
 
         logger.info("=" * 80)
+        
+        # --- WARMUP DATA SCIENCE LIBRARIES ---
+        async def warmup_ds_libs():
+            import time
+            logger.info("[STARTUP] Warming up data science libraries in background...")
+            total_start = time.perf_counter()
+            
+            t0 = time.perf_counter()
+            import pandas
+            t_pandas = time.perf_counter() - t0
+            
+            t0 = time.perf_counter()
+            import pyarrow.parquet
+            t_pyarrow = time.perf_counter() - t0
+            
+            t0 = time.perf_counter()
+            import polars
+            t_polars = time.perf_counter() - t0
+            
+            t0 = time.perf_counter()
+            import duckdb
+            t_duckdb = time.perf_counter() - t0
+            
+            t0 = time.perf_counter()
+            from app.modules.rag.pandas_engine import PandasQueryEngine
+            t_engine = time.perf_counter() - t0
+            
+            total_time = time.perf_counter() - total_start
+            logger.info(f"[STARTUP] Warmup completed in {total_time:.2f}s (pandas: {t_pandas:.2f}s, pyarrow: {t_pyarrow:.2f}s, polars: {t_polars:.2f}s, duckdb: {t_duckdb:.2f}s, engine: {t_engine:.2f}s)")
+
+        # Fire and forget warmup
+        asyncio.create_task(warmup_ds_libs())
 
 
 

@@ -395,7 +395,7 @@ class RAGPipeline:
         final_kbs = unbackfilled_kbs.copy()
             
         # Gap-based Top-N Selection
-        GAP_THRESHOLD = 0.05 
+        GAP_THRESHOLD = 0.15 
         selected_kbs = []
         
         for item in kb_scores:
@@ -438,7 +438,8 @@ class RAGPipeline:
         max_depth: int = 2,
         max_tokens: int = 24000,
         kb_context: str = "",
-        analysis = None
+        analysis = None,
+        query_embedding_tuple: tuple = None
     ) -> RAGContext:
 
 
@@ -566,7 +567,12 @@ class RAGPipeline:
         else:
             async def _return_analysis(): return analysis
             analyzer_task = asyncio.create_task(_return_analysis())
-        embedding_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(query))
+            
+        if query_embedding_tuple is None:
+            embedding_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(query))
+        else:
+            async def _return_emb(): return query_embedding_tuple
+            embedding_task = asyncio.create_task(_return_emb())
         
         # We can also prefetch KB metadata here
         kb_metadata_task = None
@@ -639,11 +645,15 @@ class RAGPipeline:
             query = corrected
 
         # STAGE 0.5: EARLY EXIT FOR TABLE ANALYTICS (Using new QueryAnalyzer)
-        if analysis.is_tabular:
+        if analysis.intent.name == "TABLE":
             logger.info("   -> Intercepting query for SQL Table Analytics engine!")
             try:
                 table_results = await self._execute_table_analytics(query, kb_ids)
-                if table_results and "validation error" not in table_results.lower():
+                
+                if table_results is None:
+                    logger.info("   -> SQL Table Analytics determined no table match. Falling back to standard pipeline.")
+                    pass # allow it to fall through to RRF
+                elif "Error executing SQL" not in table_results and "Error:" not in table_results:
                     return RAGContext(
                         query=query,
                         chunks=[],
@@ -653,11 +663,32 @@ class RAGPipeline:
                         search_type="TABLE_ANALYTICS"
                     )
                 else:
-                    logger.warning(f"   -> SQL Table Analytics returned validation error or no results: {table_results}. Falling back to RRF vector search.")
+                    error_msg = table_results
+                    if "not present in dataset" in error_msg.lower():
+                        logger.warning(f"   -> SQL Table Analytics returned 'not present in dataset'. Falling back to RRF vector search.")
+                        pass # allow it to fall through to RRF
+                    else:
+                        logger.error(f"   -> SQL Table Analytics completely failed after retries: {error_msg}. STRICT FALLBACK ENFORCEMENT active (blocking vector fallback).")
+                        return RAGContext(
+                            query=query,
+                            chunks=[],
+                            entity_mentions={},
+                            total_tokens=0,
+                            triplet_context=f"I couldn't compute that from the table. {error_msg}",
+                            search_type="TABLE_ANALYTICS_FAILED"
+                        )
             except Exception as e:
-                logger.error(f"   -> SQL Table Analytics failed: {e}. Falling back to RRF vector search.", exc_info=True)
+                logger.error(f"   -> SQL Table Analytics completely failed: {e}. STRICT FALLBACK ENFORCEMENT active.", exc_info=True)
                 if self.db:
                     await self.db.rollback()
+                return RAGContext(
+                    query=query,
+                    chunks=[],
+                    entity_mentions={},
+                    total_tokens=0,
+                    triplet_context=f"I couldn't compute that from the table. An internal error occurred: {str(e)}",
+                    search_type="TABLE_ANALYTICS_FAILED"
+                )
 
         # Gather structured queries. If none, default to corrected/original query.
         structured_queries = getattr(analysis.metadata, "structured_queries", [])
@@ -680,11 +711,9 @@ class RAGPipeline:
             extractive_context_text = ""
 
             # Ensure embedding is generated ONCE for this structured query
-            if current_query == original_query:
-                query_embedding_val, emb_tokens = await embedding_task
-            else:
-                from app.core.embeddings import EmbeddingGenerator
-                query_embedding_val, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(current_query)
+            # Step 1 Latency Fix: Always reuse the original query embedding 
+            # to skip the redundant 2nd embedding call.
+            query_embedding_val, emb_tokens = await embedding_task
             
             analysis.metadata.query_embedding = query_embedding_val
             
@@ -893,6 +922,66 @@ class RAGPipeline:
                         boosted_count += 1
             
             logger.info(f"[RRF_FLOW_MARKER] Target section IDs from SectionRanker: {section_res}. Boost applied to {boosted_count} chunks.")
+
+            # Apply Domain Keyword Boost post-hoc
+            # This ensures that chunks from a KB whose name matches core query entities (like "hike")
+            # forcefully outrank generic chunks that happen to score high in Graph/Vector due to boilerplate text.
+            domain_boosted_count = 0
+            DOMAIN_BOOST_WEIGHT = 0.02  # ~1x single-source RRF top-rank contribution, tie-breaker only
+            
+            import re
+            def basic_stem(word):
+                if len(word) <= 3: return word
+                if word.endswith('ing') and len(word) > 5: return word[:-3]
+                if word.endswith('es') and len(word) > 4: return word[:-2]
+                if word.endswith('ed') and len(word) > 4: return word[:-2]
+                if word.endswith('s') and len(word) > 3 and not word.endswith('ss'): return word[:-1]
+                if word.endswith('e') and len(word) > 4: return word[:-1]
+                return word
+
+            def get_tokens(text):
+                return [t.lower() for t in re.findall(r'[a-zA-Z0-9]+', text)]
+
+            analyzer_keywords = []
+            if isinstance(meta_dict, dict):
+                analyzer_keywords = meta_dict.get("keywords", [])
+            else:
+                analyzer_keywords = getattr(meta_dict, "keywords", [])
+                    
+            exploded_keywords = set()
+            for kw in analyzer_keywords:
+                exploded_keywords.add(kw.lower())
+                for w in kw.split():
+                    clean_w = ''.join(c for c in w if c.isalnum()).lower()
+                    if len(clean_w) > 3:
+                        exploded_keywords.add(clean_w)
+            if not exploded_keywords:
+                exploded_keywords = {w.lower() for w in original_query.split() if len(w) > 4 and w.isalnum()}
+
+            for cid in fused_scores.keys():
+                chunk_obj = vector_chunk_map.get(cid)
+                if chunk_obj:
+                    kb_name = (getattr(chunk_obj, "source", "") or "").lower()
+                    kb_path = (getattr(chunk_obj, "s3_path", "") or "").lower()
+                    
+                    kb_tokens = get_tokens(kb_name) + get_tokens(kb_path)
+                    kb_stemmed_tokens = {basic_stem(t) for t in kb_tokens}
+                    
+                    logger.info(f"[RRF_BOOST_DEBUG] chunk_id={cid} source='{kb_name}' s3_path='{kb_path}'")
+                    for kw in exploded_keywords:
+                        if len(kw) > 3:
+                            stemmed_kw = basic_stem(kw)
+                            if len(stemmed_kw) < 4:
+                                continue
+                            if stemmed_kw in kb_stemmed_tokens or kw in kb_tokens:
+                                fused_scores[cid] += DOMAIN_BOOST_WEIGHT
+                                domain_boosted_count += 1
+                                logger.info(f"[RRF_BOOST_FIRED] chunk_id={cid} matched stemmed_kw='{stemmed_kw}'")
+                                break
+                else:
+                    logger.info(f"[RRF_BOOST_DEBUG] chunk_id={cid} NOT FOUND in vector_chunk_map (Graph/Keyword only chunk)")
+                                
+            logger.info(f"[RRF_FLOW_MARKER] Domain Boost applied to {domain_boosted_count} chunks.")
 
             # Sort top N chunks
             sorted_fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[:TOP_N]
@@ -2323,24 +2412,15 @@ class RAGPipeline:
         pass
 
     def _disambiguate_tables(self, query: str, candidates: list) -> any:
-        import re
-        query_terms = set(re.findall(r'[a-zA-Z0-9]+', query.lower()))
+        from app.modules.rag.schema_utils import calculate_schema_overlap_score
+        
         scored = []
         for kb in candidates:
-            # Extract terms from schema columns
-            col_terms = set()
-            schema = kb.dataset_schema or {}
-            if "columns" in schema:
-                # If schema has a "columns" list
-                for c in schema["columns"]:
-                    col_terms.update(re.findall(r'[a-zA-Z0-9]+', str(c).lower()))
-            else:
-                # If schema is a dict of col -> type
-                for c in schema.keys():
-                    col_terms.update(re.findall(r'[a-zA-Z0-9]+', str(c).lower()))
-                    
-            name_terms = set(re.findall(r'[a-zA-Z0-9]+', str(kb.name or "").lower()))
-            overlap = len(query_terms & (col_terms | name_terms))
+            dataset_schema = getattr(kb, "dataset_schema", None)
+            categorical_values = getattr(kb, "categorical_values", None)
+            name = getattr(kb, "name", None)
+            
+            overlap = calculate_schema_overlap_score(query, dataset_schema, categorical_values, name)
             scored.append((overlap, kb))
             
         scored.sort(reverse=True, key=lambda x: x[0])
@@ -2350,7 +2430,7 @@ class RAGPipeline:
             
         best_score = scored[0][0]
         
-        if best_score == 0:
+        if best_score == (0, 0):
             logger.warning(f"Disambiguation failed: No query terms overlap with any candidate KBs ({[k.name for k in candidates]})")
             raise self.AmbiguousTableError(f"No table matches query terms.")
             
@@ -2358,7 +2438,8 @@ class RAGPipeline:
         top_scorers = [item for item in scored if item[0] == best_score]
         if len(top_scorers) > 1:
             logger.warning(f"Disambiguation tied between: {[k[1].name for k in top_scorers]} with score {best_score}")
-            raise self.AmbiguousTableError(f"Ambiguous tables for query.")
+            # If there was no decisive categorical tie-breaker, raise ambiguity
+            raise self.AmbiguousTableError(f"Ambiguous tables for query. Could not decisively pick between {[k[1].name for k in top_scorers]}. Please clarify your query.")
             
         return scored[0][1]
 
@@ -2407,7 +2488,7 @@ class RAGPipeline:
         kb_param_dict = {f"kb_{i}": uuid.UUID(str(k)) for i, k in enumerate(kb_ids)}
         kb_param_dict["tenant_id"] = uuid.UUID(str(self.tenant_id))
         kb_in_str = ", ".join([f":kb_{i}" for i in range(len(kb_ids))])
-        kb_query = f"SELECT id, name, dataset_schema, parsed_path, s3_path, source, description FROM knowledge_bases WHERE id IN ({kb_in_str}) AND tenant_id = :tenant_id;"
+        kb_query = f"SELECT id, name, dataset_schema, categorical_values, parsed_path, s3_path, source, description FROM knowledge_bases WHERE id IN ({kb_in_str}) AND tenant_id = :tenant_id;"
         result = await self.db.execute(text(kb_query), kb_param_dict)
         kb_rows = result.all()
         
@@ -2415,24 +2496,127 @@ class RAGPipeline:
             await log_attempt(0)
             return None
 
-        # --- DEFINITIVE FIX: Filter to Excel KBs BEFORE disambiguation ---
-        excel_kb_rows = [r for r in kb_rows if getattr(r, 'description', '') == 'excel_parquet']
-        
-        if not excel_kb_rows:
-            logger.warning(f"No excel_parquet KBs found among {len(kb_rows)} total KBs for table analytics.")
+        # --- STAGE 1.5: FILE/SCHEMA-LEVEL ROUTING GATE ---
+        def _build_router_prompt(manifest, query_str):
+            return f"""You are a file-routing classifier for a retrieval pipeline. Given a user query and a list of candidate data sources, decide which source(s), if any, the query is actually asking about.
+
+Rules:
+- Match on semantic and lexical overlap between the query's entities/fields (e.g. "SL.NO", "employee ID", "HSN code") and each source's column/header names. Do not assume a match just because a source is the only one of its type.
+- If the query references a field/entity that does not appear in ANY candidate's schema, return "no_match": true for all — do not force a guess.
+- If multiple sources plausibly match, rank them by field-name overlap and return the top match(es), not just the first one found.
+- Never silently substitute a different field name (e.g. mapping "SL.NO" to "row_id") unless the source's schema has no closer alternative AND you flag it explicitly in "field_mapping_confidence".
+
+Candidates:
+{json.dumps(manifest, indent=2)}
+
+Query: "{query_str}"
+
+Respond ONLY as JSON:
+{{
+  "matches": [
+    {{
+      "kb_id": "...",
+      "filename": "...",
+      "confidence": 0.9,
+      "matched_field": "the column/header you believe corresponds to the query's target field, or null if none",
+      "field_mapping_confidence": "exact | inferred | none"
+    }}
+  ],
+  "no_match": false
+}}"""
+
+        candidate_manifest = []
+        for r in kb_rows:
+            cols = list(r.dataset_schema.keys()) if getattr(r, 'dataset_schema', None) else []
+            candidate_manifest.append({
+                "kb_id": str(r.id),
+                "filename": r.name,
+                "source_type": getattr(r, 'description', None) or getattr(r, 'source', None),
+                "columns": cols,
+                "schema_known": bool(getattr(r, 'dataset_schema', None))
+            })
+
+        router_prompt = _build_router_prompt(candidate_manifest, query)
+        router_response = await self.llm_client.generate_cloud(
+            prompt=router_prompt,
+            system_prompt="You are a file-routing classifier. Return ONLY JSON.",
+            temperature=0.0,
+            max_tokens=1000,
+            enable_thinking=False
+        )
+
+        try:
+            import re
+            json_match = re.search(r'```json\s*(\{.*?\})\s*```', router_response, re.DOTALL)
+            clean_json = json_match.group(1) if json_match else router_response[router_response.find('{'):router_response.rfind('}')+1]
+            router_result = json.loads(clean_json)
+        except Exception as e:
+            logger.error(f"Failed to parse router JSON: {e}")
+            router_result = {"no_match": True, "matches": []}
+
+        # PASS 2 (Fallback Sampling)
+        if router_result.get("no_match", False) and any(not c["schema_known"] for c in candidate_manifest):
+            logger.info("Router found no match, running Pass 2 schema inference...")
+            unknown_kbs = [c["kb_id"] for c in candidate_manifest if not c["schema_known"]]
+            inferred_schemas = {}
+            for ukb_id in unknown_kbs:
+                kb_param_dict_2 = {"tenant_id": uuid.UUID(str(self.tenant_id)), "kb_0": uuid.UUID(ukb_id)}
+                sample_query = "SELECT row_data FROM document_table_rows WHERE kb_id = :kb_0 AND tenant_id = :tenant_id LIMIT 50;"
+                result_2 = await self.db.execute(text(sample_query), kb_param_dict_2)
+                rows = result_2.scalars().all()
+                if rows:
+                    all_keys = set()
+                    for row in rows:
+                        all_keys.update(row.keys())
+                    inferred_schemas[ukb_id] = list(all_keys)
+                    
+            if inferred_schemas:
+                for c in candidate_manifest:
+                    if c["kb_id"] in inferred_schemas:
+                        c["columns"] = inferred_schemas[c["kb_id"]]
+                        c["schema_known"] = True
+                
+                router_prompt = _build_router_prompt(candidate_manifest, query)
+                router_response = await self.llm_client.generate_cloud(
+                    prompt=router_prompt,
+                    system_prompt="You are a file-routing classifier. Return ONLY JSON.",
+                    temperature=0.0,
+                    max_tokens=1000,
+                    enable_thinking=False
+                )
+                try:
+                    json_match = re.search(r'```json\s*(\{.*?\})\s*```', router_response, re.DOTALL)
+                    clean_json = json_match.group(1) if json_match else router_response[router_response.find('{'):router_response.rfind('}')+1]
+                    router_result = json.loads(clean_json)
+                except Exception as e:
+                    logger.error(f"Failed to parse Pass 2 router JSON: {e}")
+                    router_result = {"no_match": True, "matches": []}
+
+        # Evaluate Router Result
+        if router_result.get("no_match", False) or not router_result.get("matches"):
+            logger.info("Router determined no table match. Falling back to standard pipeline.")
             await log_attempt(0)
             return None
 
-        # --- STAGE 1.6: DISAMBIGUATION SCOPING GATE (Only for Spreadsheets) ---
-        if len(excel_kb_rows) > 1:
-            try:
-                selected_kb = self._disambiguate_tables(query, excel_kb_rows)
-                excel_kb_rows = [selected_kb]
-                logger.info(f" Disambiguated multiple candidate spreadsheets down to {selected_kb.name}")
-            except self.AmbiguousTableError as e:
-                logger.warning(f" Ambiguous table routing for '{query}': {e}. Falling back to SEMANTIC.")
-                await log_attempt(0)
-                return None
+        matched_kb_ids = [m["kb_id"] for m in router_result.get("matches", []) if m.get("field_mapping_confidence", "none") != "none"]
+        
+        if not matched_kb_ids:
+            logger.info("Router found matches but field mapping confidence was 'none'. Aborting SQL path.")
+            await log_attempt(0)
+            return None
+
+        # Re-assign kb_rows
+        kb_rows = [r for r in kb_rows if str(r.id) in matched_kb_ids]
+        kb_ids = matched_kb_ids  # Fix: ensure downstream SQL params use the filtered list
+        excel_kb_rows = [r for r in kb_rows if getattr(r, 'description', '') == 'excel_parquet']
+        non_excel_rows = [r for r in kb_rows if getattr(r, 'description', '') != 'excel_parquet']
+        
+        routing_context_list = []
+        for m in router_result.get("matches", []):
+            if m.get("matched_field") and m.get("kb_id") in matched_kb_ids:
+                routing_context_list.append(f"For '{m.get('filename')}', use column '{m.get('matched_field')}'. (confidence: {m.get('field_mapping_confidence')})")
+        
+        routing_context_str = "\n".join(routing_context_list)
         from app.core.parquet_ingester import ParquetIngester
         kb_names = {str(r.id): r.name for r in kb_rows}
 
@@ -2600,6 +2784,9 @@ class RAGPipeline:
 
 AVAILABLE COLUMNS & TYPES:
 {json.dumps(dataset_schema, indent=2)}
+
+ROUTING CONTEXT:
+{routing_context_str}
 
 USER QUERY: {query}
 
@@ -2859,7 +3046,9 @@ CRITICAL RULES:
                 explain_filters.append(f"{field} {op} {val}")
                 
             if len(group_clauses) > 1:
-                where_clauses.append("(" + " OR ".join(group_clauses) + ")")
+                has_range = any(str(f.get("operator", "=")).upper() in [">", "<", ">=", "<="] for _, f in group_filters)
+                join_op = " AND " if has_range else " OR "
+                where_clauses.append("(" + join_op.join(group_clauses) + ")")
             elif len(group_clauses) == 1:
                 where_clauses.append(group_clauses[0])
             

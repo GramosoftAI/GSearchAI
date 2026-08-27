@@ -155,14 +155,14 @@ class PandasQueryEngine:
                  "4. Respond naturally, concisely, and use bolding formatting for key names, figures, dates, and comparisons.\n"
                  "5. Include the formatted Markdown table below your explanation as supporting evidence.\n"
                  "6. FOR FULL DETAILS OR MOVIE/ENTITY QUERIES: Give the complete details of the movie/entity (Title, Release Date, Overview/Plot, Popularity, Vote Average, Genre, etc.) from the table clearly and accurately. If multiple records are returned, summarize the top items clearly and concisely so the response remains focused and does not exceed token length limits.\n"
-                 "7. IMPORTANT: Do NOT output any <think> tags or internal reasoning. Output ONLY the final answer directly."),
-                ("user", "User Question: {question}\n\nSQL Explanation: {explanation}\n\nRetrieved Database Result Table:\n{table}")
+                 "7. IMPORTANT: Do NOT output any <think> tags or internal reasoning. Output ONLY the final answer directly.\n"
+                 "8. DO NOT include the SQL Explanation in your answer. The SQL Explanation is for your internal context only."),
+                ("user", "User Question: {question}\n\nRetrieved Database Result Table:\n{table}")
             ])
             from langchain_core.output_parsers import StrOutputParser
             synth_chain = synth_prompt | self.llm | StrOutputParser()
             synthesis = await synth_chain.ainvoke({
                 "question": question,
-                "explanation": explanation,
                 "table": table_md
             })
             # Strip any <think> tags the LLM may have injected
@@ -262,7 +262,7 @@ class PandasQueryEngine:
                  "11. Output ONLY valid JSON matching the schema with 'sql' and 'explanation'.\n"
                  "12. In your 'explanation' string, NEVER use the words 'error', 'errors', 'exception', or 'fail' (use 'issues' or 'problems' instead).\n"
                  "13. For extracting YEAR, MONTH, or date parts from timestamp columns, ALWAYS cast to timestamp first: EXTRACT(YEAR FROM TRY_CAST(\"col\" AS TIMESTAMP)).\n"
-                 "14. If the user asks for information or columns that DO NOT EXIST in the schema (e.g. wholesale price, CEO, warehouse, email, warranty), generate: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset.\n"
+                 "14. NO PROXY METRICS: If the user asks for information or columns that DO NOT EXIST in the schema (e.g. 'Age', 'wholesale price', 'CEO'), DO NOT hallucinate or substitute an unrelated column to estimate it (e.g. DO NOT use 'Hire Date' to calculate 'Age'). You MUST generate exactly: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset.\n"
                  "15. STRING FILTERING & ENTITY MATCHING: When filtering string columns (e.g. employee names, IDs, departments in WHERE clauses), NEVER use exact '=' or 'LOWER(col) = ...' with mismatching case. Instead, ALWAYS use case-insensitive matching using the ILIKE operator (e.g., \"Employee ID\" ILIKE 'EMP1005' or \"Employee Name\" ILIKE '%Matthew%') so that case differences or spacing never cause zero results.\n"
                  "16. COMPARATIVE & SUPERLATIVE QUERIES: When the user asks to compare two or more entities (e.g. 'who has higher salary', 'compare the salary of both', 'who is better', 'who earns more', 'which has better'):\n"
                  "   - If the query mentions 'both', 'all', or does not specify explicit employee names, DO NOT filter with WHERE name = 'both'. Instead, select all rows from dataset and ORDER BY the comparison metric DESC (e.g., SELECT * FROM dataset ORDER BY TRY_CAST(\"Salary\" AS DOUBLE) DESC LIMIT 10;).\n"
@@ -332,7 +332,8 @@ class PandasQueryEngine:
                          "1. Return ONLY valid JSON with 'sql' and 'explanation'. No markdown, no <think> tags.\n"
                          "2. ALWAYS enclose column names containing spaces or symbols in DOUBLE QUOTES (e.g. \"Customer ID\").\n"
                          "3. When searching for strings containing apostrophes or single quotes (e.g. 'Ron''s Gone Wrong'), double the single quotes in SQL ('%ron''s gone wrong%') or use wildcards ('%ron%gone%wrong%').\n"
-                         "4. The query MUST be a read-only DuckDB SELECT on table 'dataset'."),
+                         "4. NO PROXY METRICS: If the DuckDB Error Message indicates that a column requested by the user does not exist (e.g. 'Referenced column \"Age\" not found'), DO NOT hallucinate or substitute an unrelated column (e.g. DO NOT use 'Hire Date' to estimate 'Age'). You MUST return exactly: SELECT 'not present in dataset' AS info WHERE FALSE;\n"
+                         "5. The query MUST be a read-only DuckDB SELECT on table 'dataset'."),
                         ("user",
                          "User Question: {question}\n\nFailed SQL Query:\n{sql}\n\nDuckDB Error Message:\n{error}\n\nProvide the corrected DuckDB SQL query in valid JSON.")
                     ])
@@ -394,16 +395,16 @@ class PandasQueryEngine:
             # Format clean, enterprise-grade response
             if len(rows) == 1 and len(col_names) == 1:
                 val = rows[0][0]
-                formatted += f"**{val}**\n\n_{query_plan.explanation}_"
+                formatted += f"**{val}**"
             elif len(rows) == 1:
-                parts = [f"_{query_plan.explanation}_\n"]
+                parts = []
                 for k, v in zip(col_names, rows[0]):
                     parts.append(f"- **{k}**: {v if v is not None else 'NULL'}")
                 formatted += "\n".join(parts)
             else:
                 headers = " | ".join(str(c) for c in col_names)
                 sep = " | ".join("---" for _ in col_names)
-                formatted += f"_{query_plan.explanation}_\n\n| {headers} |\n| {sep} |\n"
+                formatted += f"| {headers} |\n| {sep} |\n"
                 for r in rows[:100]:
                     row_str = " | ".join(str(item) if item is not None else "NULL" for item in r)
                     formatted += f"| {row_str} |\n"

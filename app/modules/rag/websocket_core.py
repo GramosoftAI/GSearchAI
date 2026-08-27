@@ -162,66 +162,12 @@ async def run_unified_rag_websocket_loop(
                 return []
 
             import asyncio
-            mem_data, memory_messages = await asyncio.gather(
-                _fetch_memory_triage(),
-                _fetch_chat_history()
-            )
+            # START MEMORY TASK IN BACKGROUND CONCURRENTLY
+            memory_task = asyncio.create_task(_fetch_memory_triage())
+            
+            # Await ONLY chat history synchronously
+            memory_messages = await _fetch_chat_history()
 
-            episodic_guidance = mem_data.get("guidance_context") or ""
-            is_feedback_only = mem_data.get("is_feedback_only", False)
-            is_history_query = mem_data.get("is_history_query", False)
-            router_category = mem_data.get("category")
-
-            if is_feedback_only:
-                ack = "Understood! I've updated your preferences and saved them to my long-term memory."
-                async with httpx.AsyncClient() as client:
-                    try:
-                        await client.post(
-                            f"{memory_api_url}/save-turn",
-                            json={
-                                "query": request.query,
-                                "ai_response": ack,
-                                "session_id": active_session_id,
-                                "agent_id": agent_id,
-                                "user_id": user_id,
-                                "tenant_id": tenant_id,
-                                "is_feedback_only": True,
-                                "metadata": {"router_category": router_category},
-                            },
-                            timeout=3.0,
-                        )
-                    except Exception:
-                        pass
-                await chat_service.chat_repo.add_message(
-                    session_id=active_session_id, role="assistant", content=ack, metadata={"feedback_turn": True}
-                )
-                await db.commit()
-                await adapter.send(websocket, LoopEvent(type="token", text=ack))
-                await adapter.send(websocket, LoopEvent(type="done"))
-                continue
-                
-            if is_history_query:
-                # Bypass Document RAG
-                history_prompt = (
-                    "You are a helpful assistant. The user is asking about past chat history.\n"
-                    "Answer their question using ONLY the provided conversation context and graph facts below.\n\n"
-                    f"{episodic_guidance if episodic_guidance else 'No previous chat history found for this user.'}\n\n"
-                    f"User Question: {request.query}\n\n"
-                    "Provide a clear, concise summary of what was discussed:"
-                )
-                try:
-                    full_response_text = await rag_service.llm_client.generate_cloud(prompt=history_prompt)
-                    await adapter.send(websocket, LoopEvent(type="token", text=full_response_text))
-                    await adapter.send(websocket, LoopEvent(type="done"))
-                    await chat_service.chat_repo.add_message(
-                        session_id=active_session_id, role="assistant", content=full_response_text,
-                        metadata={"memory_used": True, "direct_history_recall": True}
-                    )
-                    await db.commit()
-                    continue
-                except Exception as e:
-                    raise e
-                    
             # 2. Chat History for Memory Context (used only as context, never to rewrite the query)
             history_messages = [m for m in memory_messages if str(m.id) != str(user_msg.id)]
 
@@ -236,12 +182,10 @@ async def run_unified_rag_websocket_loop(
                     history=history_messages, current_query=original_query
                 )
 
-            if episodic_guidance:
-                guidance_block = f"### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n{episodic_guidance}\n"
-                chat_history_str = guidance_block + ("\n" + chat_history_str if chat_history_str else "")
 
             # 4. RAG Streamer -> internal LoopEvents
             has_error = False
+            msg_metadata = {"status": "complete"}
             async for chunk in rag_service.stream_rag_answer(
                 query=original_query,
                 agent_id=agent_id,
@@ -251,8 +195,52 @@ async def run_unified_rag_websocket_loop(
                 chat_history=chat_history_str,
                 skip_search=False,
                 top_k=request.top_k,
-                max_depth=request.max_depth
+                max_depth=request.max_depth,
+                memory_task=memory_task
             ):
+                if chunk.startswith("{"):
+                    try:
+                        parsed = json.loads(chunk)
+                        if parsed.get("type") == "feedback_bypass":
+                            ack = parsed["ack"]
+                            router_category = parsed.get("router_category")
+                            async with httpx.AsyncClient() as client:
+                                try:
+                                    await client.post(
+                                        f"{memory_api_url}/save-turn",
+                                        json={
+                                            "query": request.query,
+                                            "ai_response": ack,
+                                            "session_id": active_session_id,
+                                            "agent_id": agent_id,
+                                            "user_id": user_id,
+                                            "tenant_id": tenant_id,
+                                            "is_feedback_only": True,
+                                            "metadata": {"router_category": router_category},
+                                        },
+                                        timeout=3.0,
+                                    )
+                                except Exception:
+                                    pass
+                            response_buffer.append(ack)
+                            msg_metadata["feedback_turn"] = True
+                            await adapter.send(websocket, LoopEvent(type="token", text=ack))
+                            break
+                        elif parsed.get("type") == "history_bypass":
+                            history_prompt = parsed["history_prompt"]
+                            try:
+                                full_response_text = await rag_service.llm_client.generate_cloud(prompt=history_prompt)
+                                response_buffer.append(full_response_text)
+                                msg_metadata.update({"memory_used": True, "direct_history_recall": True})
+                                await adapter.send(websocket, LoopEvent(type="token", text=full_response_text))
+                                break
+                            except Exception as e:
+                                has_error = True
+                                await adapter.send_error(websocket, str(e))
+                                break
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
                 event = _rag_chunk_to_loop_event(chunk)
                 if event.type == "token":
                     response_buffer.append(event.text)
@@ -271,11 +259,12 @@ async def run_unified_rag_websocket_loop(
                 break
 
             # 5. DB Persistence
+            msg_metadata["sources"] = collected_sources
             await chat_service.chat_repo.add_message(
                 session_id=active_session_id,
                 role="assistant",
                 content=full_response,
-                metadata={"sources": collected_sources, "status": "complete"},
+                metadata=msg_metadata,
             )
             await db.commit()
 

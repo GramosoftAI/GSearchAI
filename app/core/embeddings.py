@@ -121,8 +121,14 @@ class EmbeddingGenerator:
 
         try:
             if settings.use_real_embeddings:
+                import time
                 client = _get_deepinfra_client()
-                return await client.generate_embedding_with_usage(text)
+                t0 = time.perf_counter()
+                result = await client.generate_embedding_with_usage(text)
+                t1 = time.perf_counter()
+                if t1 - t0 > 10.0:
+                    logger.warning(f"HIGH LATENCY: DeepInfra embedding call took {t1 - t0:.2f}s")
+                return result
             else:
                 logger.debug(
                     f"Embedding source: Hash (Phase 2) for text: {text[:50]}..."
@@ -227,8 +233,14 @@ class EmbeddingGenerator:
 
         try:
             if settings.use_real_embeddings:
+                import time
                 client = _get_deepinfra_client()
-                return await client.generate_embeddings_batch_with_usage(texts)
+                t0 = time.perf_counter()
+                result = await client.generate_embeddings_batch_with_usage(texts)
+                t1 = time.perf_counter()
+                if t1 - t0 > 10.0:
+                    logger.warning(f"HIGH LATENCY: DeepInfra embeddings batch call took {t1 - t0:.2f}s")
+                return result
             else:
                 return [EmbeddingGenerator._hash_to_embedding(text) for text in texts], 0
         except Exception as e:

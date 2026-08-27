@@ -1013,155 +1013,156 @@ class DeepInfraLLMClient:
 
 
 
-                    async with httpx.AsyncClient(timeout=self.timeout) as client:
-                        response = await client.post(
-                            self.deepinfra_base_url, headers=headers, json=payload
-                        )
+                    import time
+                    t0 = time.perf_counter()
+                    client = await self.get_client()
+                    response = await client.post(
+                        self.deepinfra_base_url, headers=headers, json=payload, timeout=self.timeout
+                    )
+                    t_req = time.perf_counter() - t0
+                    logger.info(f"[LLM_TIMING] DeepInfra completions request took {t_req:.4f}s")
+                    # Check for HTTP errors
+
+                    response.raise_for_status()
 
 
 
-                        # Check for HTTP errors
+                    # Parse response
 
-                        response.raise_for_status()
-
-
-
-                        # Parse response
-
-                        data = response.json()
+                    data = response.json()
 
 
 
-                        # Extract answer from response
+                    # Extract answer from response
 
-                        # DeepInfra returns: {"choices": [{"message": {"content": "..."}}]}
+                    # DeepInfra returns: {"choices": [{"message": {"content": "..."}}]}
 
-                        if "choices" not in data or len(data["choices"]) == 0:
+                    if "choices" not in data or len(data["choices"]) == 0:
 
-                            raise ValueError("Invalid API response: missing choices")
-
-
-
-                        answer = data["choices"][0].get("message", {}).get("content")
-
-                        if not answer:
-
-                            raise ValueError("Invalid API response: missing content")
+                        raise ValueError("Invalid API response: missing choices")
 
 
 
-                        # GUARD: Max answer length (prevent very long responses  latency + cost increase)
+                    answer = data["choices"][0].get("message", {}).get("content")
 
-                        if len(answer) > self.max_answer_length:
+                    if not answer:
 
-                            logger.warning(
-
-                                f"  Answer truncated ({len(answer)} > {self.max_answer_length} chars)"
-
-                            )
-
-                            answer = answer[: self.max_answer_length] + "..."
+                        raise ValueError("Invalid API response: missing content")
 
 
 
-                        answer = answer.strip()
-                        # Strip <think>...</think> blocks (Qwen thinking mode leak guard)
-                        import re as _re
-                        answer = _re.sub(r'<think>.*?</think>', '', answer, flags=_re.DOTALL).strip()
-                        if '<think>' in answer:
-                            answer = answer[:answer.index('<think>')].strip()
+                    # GUARD: Max answer length (prevent very long responses  latency + cost increase)
 
+                    if len(answer) > self.max_answer_length:
 
+                        logger.warning(
 
-                        # Extract token usage from response (if available)
-
-                        usage = data.get("usage", {})
-
-                        prompt_tokens = usage.get(
-
-                            "prompt_tokens", estimated_prompt_tokens
+                            f"  Answer truncated ({len(answer)} > {self.max_answer_length} chars)"
 
                         )
 
-                        completion_tokens = usage.get(
-
-                            "completion_tokens", len(answer) // 4
-
-                        )
-
-                        total_tokens = prompt_tokens + completion_tokens
+                        answer = answer[: self.max_answer_length] + "..."
 
 
 
-                        # Calculate cost estimate
-
-                        cost_estimate = (
-
-                            prompt_tokens / 1_000_000
-
-                        ) * PRICE_PER_1M_INPUT_TOKENS + (
-
-                            completion_tokens / 1_000_000
-
-                        ) * PRICE_PER_1M_OUTPUT_TOKENS
+                    answer = answer.strip()
+                    # Strip <think>...</think> blocks (Qwen thinking mode leak guard)
+                    import re as _re
+                    answer = _re.sub(r'<think>.*?</think>', '', answer, flags=_re.DOTALL).strip()
+                    if '<think>' in answer:
+                        answer = answer[:answer.index('<think>')].strip()
 
 
 
-                        # Track global metrics
+                    # Extract token usage from response (if available)
 
-                        _total_prompt_tokens += prompt_tokens
+                    usage = data.get("usage", {})
 
-                        _total_completion_tokens += completion_tokens
+                    prompt_tokens = usage.get(
 
-                        _total_cost_estimate += cost_estimate
+                        "prompt_tokens", estimated_prompt_tokens
 
+                    )
 
+                    completion_tokens = usage.get(
 
-                        # Track per-tenant costs and per-agent usage (if billing enabled)
+                        "completion_tokens", len(answer) // 4
 
-                        self._track_billing(
+                    )
 
-                            tenant_id, agent_id, cost_estimate, total_tokens
-
-                        )
-
-
-
-                        logger.debug(
-
-                            f" Answer generated ({len(answer)} chars, {total_tokens} tokens, ${cost_estimate:.6f})"
-
-                        )
-
-                        logger.info(
-
-                            f"Answer source: DeepInfra (call #{_llm_calls}, tokens={total_tokens}, cost=${cost_estimate:.6f})"
-
-                        )
+                    total_tokens = prompt_tokens + completion_tokens
 
 
 
-                        return LLMResponse(
+                    # Calculate cost estimate
 
-                            answer=answer,
+                    cost_estimate = (
 
-                            prompt_tokens=prompt_tokens,
+                        prompt_tokens / 1_000_000
 
-                            completion_tokens=completion_tokens,
+                    ) * PRICE_PER_1M_INPUT_TOKENS + (
 
-                            total_tokens=total_tokens,
+                        completion_tokens / 1_000_000
 
-                            cost_estimate=cost_estimate,
+                    ) * PRICE_PER_1M_OUTPUT_TOKENS
 
-                            prompt_version=PROMPT_VERSION,
 
-                            source="DeepInfra",
 
-                            tenant_id=tenant_id,
+                    # Track global metrics
 
-                            agent_id=agent_id,
+                    _total_prompt_tokens += prompt_tokens
 
-                        )
+                    _total_completion_tokens += completion_tokens
+
+                    _total_cost_estimate += cost_estimate
+
+
+
+                    # Track per-tenant costs and per-agent usage (if billing enabled)
+
+                    self._track_billing(
+
+                        tenant_id, agent_id, cost_estimate, total_tokens
+
+                    )
+
+
+
+                    logger.debug(
+
+                        f" Answer generated ({len(answer)} chars, {total_tokens} tokens, ${cost_estimate:.6f})"
+
+                    )
+
+                    logger.info(
+
+                        f"Answer source: DeepInfra (call #{_llm_calls}, tokens={total_tokens}, cost=${cost_estimate:.6f})"
+
+                    )
+
+
+
+                    return LLMResponse(
+
+                        answer=answer,
+
+                        prompt_tokens=prompt_tokens,
+
+                        completion_tokens=completion_tokens,
+
+                        total_tokens=total_tokens,
+
+                        cost_estimate=cost_estimate,
+
+                        prompt_version=PROMPT_VERSION,
+
+                        source="DeepInfra",
+
+                        tenant_id=tenant_id,
+
+                        agent_id=agent_id,
+
+                    )
 
 
 

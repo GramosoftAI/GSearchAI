@@ -88,6 +88,7 @@ class KnowledgeBase(Base):
 
     from sqlalchemy.dialects.postgresql import JSONB
     dataset_schema = Column(JSONB, nullable=True)
+    categorical_values = Column(JSONB, nullable=True)
     noisy_words = Column(JSONB, nullable=True)
     noisy_words_generated_at = Column(DateTime(timezone=True), nullable=True)
 

@@ -102,6 +102,7 @@ class RAGService:
         on_usage_callback: Optional[Callable[[dict], None]] = None,
         chat_history: Optional[str] = None,
         skip_search: bool = False,
+        memory_task: Optional['asyncio.Task'] = None,
     ):
         logger.info(f" RAG Service: Streaming answer for agent={agent_id}, kb={kb_id}")
         
@@ -175,16 +176,23 @@ class RAGService:
 
             # ============= EARLY QUERY ANALYSIS (ROUTING) =============
             from app.modules.rag.orchestrator.query_analyzer import QueryAnalyzer
+            from app.core.embeddings import EmbeddingGenerator
             import time
             
             analyzer_start = time.time()
             analyzer = QueryAnalyzer()
             
             logger.info(f"[TRACE_E2E] [ENTRY] QueryAnalyzer.analyze_query - Input: '{short_query}'")
-            analysis = await analyzer.analyze_query(query, kb_context=kb_context)
+            
+            # Step 2 Latency Fix: Gather QueryAnalyzer and original Query Embedding concurrently
+            analysis_task = asyncio.create_task(analyzer.analyze_query(query, kb_context=kb_context, chat_history=chat_history))
+            embed_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(query))
+            
+            analysis, embed_res = await asyncio.gather(analysis_task, embed_task)
+            
             analyzer_latency = time.time() - analyzer_start
-            logger.info(f"[TRACE_E2E] [EXIT] QueryAnalyzer.analyze_query - Output: {getattr(analysis, 'intent', 'Unknown')} - Latency: {analyzer_latency:.2f}s")
-            logger.info(f"TELEMETRY: QueryAnalyzer completed in {analyzer_latency:.2f}s")
+            logger.info(f"[TRACE_E2E] [EXIT] QueryAnalyzer + Embed (Concurrent) - Output: {getattr(analysis, 'intent', 'Unknown')} - Latency: {analyzer_latency:.2f}s")
+            logger.info(f"TELEMETRY: QueryAnalyzer + Embed completed in {analyzer_latency:.2f}s")
 
             # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
             hybrid_merge_context = ""
@@ -224,41 +232,22 @@ class RAGService:
                     else:
                         # Tabular Intent Refinement (Stage 1.6)
                         try:
-                            schema = pq.read_schema(active_paths[0])
-                            cols = [str(name).lower() for name in schema.names]
+                            from app.modules.rag.schema_utils import evaluate_schema_overlap
                             
-                            import re
-                            query_terms = set(re.findall(r'[a-zA-Z0-9]+', query.lower()))
+                            dataset_schema = getattr(excel_kbs[0], "dataset_schema", None) if excel_kbs else None
+                            categorical_values = getattr(excel_kbs[0], "categorical_values", None) if excel_kbs else None
                             
-                            for c in cols:
-                                schema_col_terms.update(re.findall(r'[a-zA-Z0-9]+', c))
-                            schema_name_terms = set(re.findall(r'[a-zA-Z0-9]+', str(active_paths[0]).lower()))
-                            
-                            term_overlap = len(query_terms & (schema_col_terms | schema_name_terms))
-                            
-                            # ID Regex (e.g., EMP1006, INV2023)
-                            has_id_regex = bool(re.search(r'[a-zA-Z]{2,5}[0-9]{3,}', query))
-                            
-                            # Analytic verbs
-                            analytic_verbs = {"average", "total", "sum", "count", "list", "how many", "max", "min"}
-                            has_analytic_verb = bool(query_terms & analytic_verbs)
-                            
-                            # Final decision logic
-                            strict_schema_overlap = (
-                                has_id_regex or 
-                                term_overlap >= 2 or 
-                                (term_overlap == 1 and has_analytic_verb)
+                            strict_schema_overlap, reason, is_tabular = evaluate_schema_overlap(
+                                query, dataset_schema, categorical_values, active_paths
                             )
                             
                             if strict_schema_overlap:
                                 overlap = True
-                                reason = f"strict_schema_overlap (score: {term_overlap}, id: {has_id_regex}, verb: {has_analytic_verb})"
-                                # FORCE tabular intent so pipeline.py intercepts it
+                                if not analysis.is_tabular:
+                                    logger.warning(f"⚠️ OVERRIDING LLM INTENT ({getattr(analysis, 'intent', 'UNKNOWN')}) TO TABULAR based on: {reason}")
                                 analysis.is_tabular = True
-                                logger.info(f"   -> Overriding analysis.is_tabular to True based on {reason}")
                             else:
                                 overlap = False
-                                reason = "weak_or_zero_schema_overlap"
                                 if analysis.is_tabular or getattr(analysis.metadata, "tabular_subquery", None):
                                     logger.info("   -> LLM classified as TABULAR, but schema overlap was too weak. Trusting LLM but logging as ambiguous.")
                         except Exception as e:
@@ -308,7 +297,8 @@ class RAGService:
                         top_k=top_k,
                         max_depth=max_depth,
                         kb_context=kb_context,
-                        analysis=vec_analysis
+                        analysis=vec_analysis,
+                        query_embedding_tuple=(embed_res if subq == query else None)
                     )
                     logger.info(f"[TRACE_E2E] [EXIT] RAGPipeline.query ({name}) - Latency: {time.time() - vec_start:.2f}s")
                     return res
@@ -373,7 +363,8 @@ class RAGService:
                             top_k=top_k,
                             max_depth=max_depth,
                             kb_context=kb_context,
-                            analysis=analysis
+                            analysis=analysis,
+                            query_embedding_tuple=embed_res
                         ),
                         timeout=_RAG_TIMEOUT_SECONDS
                     )
@@ -391,6 +382,36 @@ class RAGService:
                     
             skip_search = True  # Bypass redundant sequential search below
     
+            if memory_task:
+                try:
+                    mem_data = await memory_task
+                    is_feedback_only = mem_data.get("is_feedback_only", False)
+                    is_history_query = mem_data.get("is_history_query", False)
+                    episodic_guidance = mem_data.get("guidance_context") or ""
+                    
+                    if is_feedback_only:
+                        ack = "Understood! I've updated your preferences and saved them to my long-term memory."
+                        yield json.dumps({"type": "feedback_bypass", "ack": ack, "router_category": mem_data.get("category")})
+                        return
+                        
+                    if is_history_query:
+                        history_prompt = (
+                            "You are a helpful assistant. The user is asking about past chat history.\n"
+                            "Answer their question using ONLY the provided conversation context and graph facts below.\n\n"
+                            f"{episodic_guidance if episodic_guidance else 'No previous chat history found for this user.'}\n\n"
+                            f"User Question: {query}\n\n"
+                            "Provide a clear, concise summary of what was discussed:"
+                        )
+                        yield json.dumps({"type": "history_bypass", "history_prompt": history_prompt, "episodic_guidance": episodic_guidance})
+                        return
+                    
+                    if episodic_guidance:
+                        guidance_block = f"### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n{episodic_guidance}\n"
+                        chat_history = guidance_block + ("\n" + chat_history if chat_history else "")
+                except Exception as mem_err:
+                    import logging
+                    logger.warning(f"Memory task failed during concurrent execution: {mem_err}")
+
             if len(kb_ids) > 1:
                 logger.info(
                     f" Querying across {len(kb_ids)} Knowledge Bases for agent {agent_id}"
@@ -654,7 +675,7 @@ class RAGService:
                             has_direct_output = True
                         elif is_table_analytics:
                             logger.info(f"[TABLE_ANALYTICS] Mapping raw SQL output to hybrid_merge_context for Answer LLM")
-                            hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{clean_triplet}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                            hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{clean_triplet}\nState the numerical/tabular results clearly. DO NOT add any technical explanations about how the data was filtered, derived, or calculated (e.g. do not say 'This information was derived by filtering...').\n"
                             
                     if has_direct_output:
                         # Append source citation for EXTRACTIVE so the frontend source pills appear
