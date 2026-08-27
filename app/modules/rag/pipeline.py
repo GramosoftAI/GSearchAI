@@ -364,6 +364,11 @@ class RAGPipeline:
         kb_scores = []
         unbackfilled_kbs = []
         
+        # Small KB count (e.g. <= 3 KBs for agent): pass through directly so queries like 'summarize' or explicit KB selections are never dropped
+        if len(kb_ids) <= 3:
+            logger.info(f"[GATE_FLOW_MARKER] KB count is {len(kb_ids)} (<= 3). Passing through all KBs.")
+            return kb_ids
+
         for kb_id in kb_ids:
             kb_meta = self._kb_metadata.get(str(kb_id), {})
             summary_emb = kb_meta.get("summary_embedding")
@@ -387,10 +392,10 @@ class RAGPipeline:
             
         top_score = kb_scores[0]["score"]
         
-        # Absolute minimum threshold to prevent completely irrelevant files from being routed
-        if top_score < 0.60:
-            logger.info(f"[GATE_FLOW_MARKER] Top score {top_score:.3f} is below minimum threshold of 0.60. Selecting 0 KBs.")
-            return unbackfilled_kbs
+        # Minimum threshold: if below 0.35, fallback to top 3 KBs instead of 0 KBs to prevent starving general queries
+        if top_score < 0.35:
+            logger.info(f"[GATE_FLOW_MARKER] Top score {top_score:.3f} is below 0.35. Returning top 3 candidate KBs as safety fallback.")
+            return [x["kb_id"] for x in kb_scores[:3]] + unbackfilled_kbs
             
         final_kbs = unbackfilled_kbs.copy()
             

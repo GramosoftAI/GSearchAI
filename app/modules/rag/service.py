@@ -133,8 +133,8 @@ class RAGService:
                         "response_status": status,
                         "confidence_score": confidence,
                         "latency_ms": latency_ms,
-                        "session_id": UUID(session_id) if session_id else None,
-                        "user_id": UUID(user_id) if user_id else None,
+                        "session_id": UUID(str(session_id)) if session_id and isinstance(session_id, UUID) or (isinstance(session_id, str) and len(session_id) == 36 and session_id.count('-') == 4) else None,
+                        "user_id": UUID(str(user_id)) if user_id and isinstance(user_id, UUID) or (isinstance(user_id, str) and len(user_id) == 36 and user_id.count('-') == 4) else None,
                         "llm_input_tokens": llm_input_tokens,
                         "llm_output_tokens": llm_output_tokens,
                         "embedding_tokens": embedding_tokens,
@@ -433,7 +433,6 @@ class RAGService:
                     logger.error(f"Vector query failed: {e}")
                     context = None
     
-            context = None
             metadata_yielded = False
             if excel_kbs and sql_task and vector_task:
                 logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
@@ -742,7 +741,8 @@ class RAGService:
             # RELEVANCE FILTER (Context Poisoning Protection)
             # ==================================================
             import os
-            min_score = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.6"))
+            # Note: RRF hybrid scores range from ~0.001 to ~0.033 (1/(60+rank)). Default threshold set to 0.0 to retain valid RRF chunks.
+            min_score = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.0"))
             if context and context.chunks:
                 original_count = len(context.chunks)
                 context.chunks = [c for c in context.chunks if getattr(c, "hybrid_score", 0.0) >= min_score]

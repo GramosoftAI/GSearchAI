@@ -450,6 +450,7 @@ class DeepInfraLLMClient:
         model: Optional[str] = None,
         timeout: Optional[float] = None,
         task: Optional[Any] = None,
+        **kwargs
     ) -> str:
         """
         Equivalent to generate() but explicitly routes to the cloud DeepInfra model 
