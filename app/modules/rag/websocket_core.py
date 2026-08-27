@@ -6,6 +6,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .schemas import UnifiedChatRequest
 from .events import LoopEvent
 from .adapters import ChannelAdapter
+from .escalation import detect_escalation_intent
 
 logger = logging.getLogger(__name__)
 
