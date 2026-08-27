@@ -27,7 +27,8 @@ from .schemas import (
     CostGovernanceResponse,
     CapacityGovernanceResponse,
     AppErrorLogsPaginatedResponse,
-    UserCostItem
+    UserCostItem,
+    TokenConsumptionResponse,
 )
 from .repository import AnalyticsRepository
 from .service import AnalyticsService
@@ -50,10 +51,42 @@ async def get_current_tenant_id(request: Request) -> UUID:
 
 # Dependency to get AnalyticsService
 async def get_analytics_service(
-    tenant_id: UUID = Depends(get_current_tenant_id),
+    request: Request,
 ):
+    current_tenant_id = getattr(request.state, "tenant_id", None)
+    user_id = getattr(request.state, "user_id", None)
+    
+    if not current_tenant_id or not user_id:
+        raise HTTPException(
+            status_code=401, 
+            detail="Unauthorized: Missing user or tenant context"
+        )
+        
     async with AsyncSessionLocal() as db:
-        repo = AnalyticsRepository(db, tenant_id)
+        from sqlalchemy import select
+        from app.modules.auth.models import User
+        from app.modules.chats.repository import safe_uuid
+        
+        user_query = select(User).where(User.id == safe_uuid(user_id))
+        user_res = await db.execute(user_query)
+        db_user = user_res.scalar_one_or_none()
+        
+        is_platform_admin = bool(db_user and (db_user.is_admin or getattr(db_user, "role", "") == "admin"))
+        
+        target_tenant_id = None
+        req_tenant_id = request.query_params.get("tenant_id")
+        if req_tenant_id:
+            if not is_platform_admin and str(req_tenant_id) != str(current_tenant_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You are not authorized to access analytics for other tenants."
+                )
+            target_tenant_id = safe_uuid(req_tenant_id)
+        else:
+            if not is_platform_admin:
+                target_tenant_id = safe_uuid(current_tenant_id)
+                
+        repo = AnalyticsRepository(db, target_tenant_id)
         service = AnalyticsService(repo)
         yield service
         await db.commit()
@@ -145,6 +178,82 @@ async def get_capacity_governance(
 ):
     """Get capacity projections and scaling metrics."""
     return await service.get_capacity_governance()
+
+
+@router.post("/governance/pricing/refresh", summary="Trigger dynamic LiteLLM pricing registry reload")
+async def refresh_pricing_registry(
+    request: Request,
+):
+    """
+    Admin API to reload and synchronize LiteLLM model pricing from the remote master registry.
+    Validates incoming rates before applying and falls back seamlessly to the existing cache if offline.
+    """
+    from sqlalchemy import select
+    from app.modules.auth.models import User
+    from app.modules.chats.repository import safe_uuid
+    from app.core.llm.pricing import reload_litellm_pricing_registry
+
+    current_tenant_id = getattr(request.state, "tenant_id", None)
+    user_id = getattr(request.state, "user_id", None)
+
+    if not current_tenant_id or not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized: Missing user or tenant context"
+        )
+
+    async with AsyncSessionLocal() as db:
+        user_query = select(User).where(User.id == safe_uuid(user_id))
+        user_res = await db.execute(user_query)
+        db_user = user_res.scalar_one_or_none()
+        if not db_user or (not db_user.is_admin and getattr(db_user, "role", "") != "admin"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only administrators can refresh the pricing registry."
+            )
+
+    result = await reload_litellm_pricing_registry()
+    return {
+        "success": result.get("status") == "success",
+        "data": result
+    }
+
+
+# ================= TOKEN CONSUMPTION & USAGE APIs =================
+
+@router.get("/token-usage", response_model=TokenConsumptionResponse)
+@router.get("/tokens/consumption", response_model=TokenConsumptionResponse)
+async def get_token_consumption(
+    user_id: Optional[UUID] = Query(None, description="Filter by User ID"),
+    model_name: Optional[str] = Query(None, description="Filter by LLM model name (e.g. meta-llama/Llama-3.3-70B-Instruct)"),
+    start_date: Optional[str] = Query(None, description="Start date filter (YYYY-MM-DD or ISO datetime)"),
+    end_date: Optional[str] = Query(None, description="End date filter (YYYY-MM-DD or ISO datetime)"),
+    session_id: Optional[UUID] = Query(None, description="Filter by chat session ID"),
+    request_id: Optional[str] = Query(None, description="Filter by LLM request ID"),
+    include_records: bool = Query(False, description="Whether to include granular query log records (default False for ultra-fast response)"),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=500, description="Items per page"),
+    service: AnalyticsService = Depends(get_analytics_service),
+):
+    """
+    Granular Token Consumption API:
+    - Returns total input, output, embedding, and combined token usage
+    - Calculates total costs based on exact per-model pricing
+    - Provides multi-dimensional breakdowns by Model, User, and Daily Time Series
+    - Supports filtering by user, model, date range, session, and request ID
+    - Omits heavy query log records by default (include_records=false) for sub-millisecond fast responses
+    """
+    return await service.get_token_consumption(
+        user_id=user_id,
+        model_name=model_name,
+        start_date=start_date,
+        end_date=end_date,
+        session_id=session_id,
+        request_id=request_id,
+        include_records=include_records,
+        page=page,
+        limit=limit,
+    )
 
 # ================= FEEDBACK ANALYTICS ENDPOINTS =================
 

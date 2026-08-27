@@ -4,8 +4,21 @@ from app.core.database import engine
 
 async def main():
     async with engine.begin() as conn:
+        print("Adding columns to users...")
+        user_columns = [
+            ("preferred_llm_model", "VARCHAR(255)"),
+        ]
+        for col_name, col_type in user_columns:
+            try:
+                await conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+            except Exception as e:
+                print(f"  Note on user.{col_name}: {e}")
+
         print("Adding columns to analytics_query_logs...")
         aql_columns = [
+            ("request_id", "VARCHAR(255)"),
+            ("model_name", "VARCHAR(255)"),
+            ("total_tokens", "INTEGER DEFAULT 0 NOT NULL"),
             ("llm_input_tokens", "INTEGER DEFAULT 0 NOT NULL"),
             ("llm_output_tokens", "INTEGER DEFAULT 0 NOT NULL"),
             ("embedding_tokens", "INTEGER DEFAULT 0 NOT NULL"),

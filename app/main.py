@@ -189,6 +189,14 @@ async def lifespan(app: FastAPI):
 
         logger.info("=" * 80)
         
+        # Start recurring daily LiteLLM remote pricing sync worker (runs on startup + every 24 hours)
+        try:
+            from app.core.llm.pricing import start_daily_pricing_sync_worker
+            start_daily_pricing_sync_worker(interval_seconds=86400)
+            logger.info("[STARTUP] LiteLLM daily pricing sync worker initialized (24h loop).")
+        except Exception as e:
+            logger.warning(f"[STARTUP] Could not initialize pricing sync worker: {e}")
+
         # Trigger background KB Summary backfill for legacy files
         try:
             from scripts.backfill_kb_summaries import main as backfill_kbs

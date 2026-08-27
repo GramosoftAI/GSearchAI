@@ -45,6 +45,9 @@ class User(Base):
 
     hashed_password = Column(String(255), nullable=False)
 
+    # ============= PREFERENCES =============
+    preferred_llm_model = Column(String(255), nullable=True)
+
     # ============= STATUS =============
     is_active = Column(Boolean, default=True, nullable=False, index=True)
     is_admin = Column(Boolean, default=False, nullable=False)

@@ -6,7 +6,7 @@ from ..auth.dependencies import get_current_user
 from ...core.database import get_db
 from . import services, schemas
 
-router = APIRouter(prefix="/tenants", tags=["tenants"])
+router = APIRouter(prefix="/api/v1/tenants", tags=["tenants"])
 
 
 @router.post(

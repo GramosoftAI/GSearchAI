@@ -231,6 +231,13 @@ class Settings(BaseSettings):
     llm_live_concurrency: int = 10
     llm_background_concurrency: int = 5
 
+    # ============= HYBRID SEARCH & RRF CONFIGURATION =============
+    enable_hybrid_search: bool = True
+    rrf_k: int = 60
+    hybrid_vector_top_k: int = 50
+    hybrid_fts_top_k: int = 50
+    hybrid_candidate_pool_size: int = 30
+
     # --- Legacy properties for backwards compatibility ---
     @property
     def embedding_model(self) -> str:

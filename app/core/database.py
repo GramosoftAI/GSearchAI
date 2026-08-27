@@ -339,10 +339,13 @@ async def init_rls_policies():
         "processing_jobs",
         "document_table_rows",
         "analytics_query_log",
+        "analytics_query_logs",
+        "analytics_summaries",
         "document_entities",
         "document_sections",
         "document_ingestion_runs",
         "widget_customizations",
+        "password_reset_tokens",
     ]
 
 
@@ -594,11 +597,14 @@ async def verify_rls_enabled():
         "processing_jobs",
         "document_table_rows",
         "analytics_query_log",
+        "analytics_query_logs",
+        "analytics_summaries",
         "document_entities",
         "document_sections",
         "document_ingestion_runs",
         "widget_customizations",
-     ]
+        "password_reset_tokens",
+    ]
 
 
 
@@ -720,7 +726,7 @@ async def init_db():
 
         from ..models.base import Base
 
-        from ..modules.auth.models import User, Tenant, APIKey, TokenBlacklist
+        from ..modules.auth.models import User, Tenant, APIKey, TokenBlacklist, PasswordResetToken, RegistrationOTP
 
         from ..modules.agents.models import Agent
 
@@ -733,6 +739,7 @@ async def init_db():
         from ..modules.connectors.google.models import GmailMessage, GmailSyncState
         from ..modules.jobs.models import ProcessingJob
         from ..modules.Embed.models import WidgetCustomization
+        from ..modules.analytics.models import AnalyticsSummary, AnalyticsQueryLog as ChatAnalyticsQueryLog, AppErrorLog
         try:
             from ..memory.app.schema.database import EpisodicMemory, UserPreference, init_db as init_memory_db
             await init_memory_db()
@@ -829,13 +836,12 @@ async def init_db():
         logger.debug(f"Registered models: {list(Base.metadata.tables.keys())}")
 
         async with engine.begin() as conn:
-
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-
             # Create tables first if they don't exist
             await conn.run_sync(Base.metadata.create_all)
 
-            # Auto-migrate document_chunks vector column type if dimension changed (e.g., 1024 -> 4096)
+        # Run vector column check in separate transaction
+        async with engine.begin() as conn:
             try:
                 await conn.execute(
                     text(f"ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector({settings.embedding_dimension});")
@@ -843,18 +849,48 @@ async def init_db():
                 logger.info(f" Verified/migrated document_chunks.embedding to vector({settings.embedding_dimension})")
             except Exception as e:
                 logger.warning(
-                    f"Could not directly alter document_chunks.embedding to vector({settings.embedding_dimension}) "
-                    f"(existing incompatible rows): {e}. Clearing old chunks and altering column..."
+                    f"Could not directly alter document_chunks.embedding to vector({settings.embedding_dimension}): {e}. Clearing old chunks..."
                 )
-                await conn.execute(text("DELETE FROM document_chunks;"))
-                await conn.execute(
-                    text(f"ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector({settings.embedding_dimension});")
-                )
-                logger.info(f" Recreated document_chunks.embedding column as vector({settings.embedding_dimension})")
+                async with engine.begin() as clear_conn:
+                    await clear_conn.execute(text("DELETE FROM document_chunks;"))
+                    await clear_conn.execute(
+                        text(f"ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector({settings.embedding_dimension});")
+                    )
 
+        async with engine.begin() as conn:
+            # Auto-migrate document_chunks columns
+            await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS section VARCHAR(255)"))
+            await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS metadata_json JSONB"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chunks_kb_section ON document_chunks(kb_id, section)"))
             # Run migration to add file_hash to knowledge_bases table if not present in older databases
             await conn.execute(text("ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_kbs_file_hash ON knowledge_bases(file_hash)"))
+
+            # Auto-migrate FTS and Hybrid Search columns/indexes
+            await conn.execute(text("ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS language regconfig DEFAULT 'english'::regconfig;"))
+            await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS language regconfig DEFAULT 'english'::regconfig;"))
+            
+            fts_col_check = await conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='document_chunks' AND column_name='search_vector'"))
+            if not fts_col_check.fetchone():
+                await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN search_vector tsvector GENERATED ALWAYS AS (to_tsvector(language, coalesce(text, ''))) STORED;"))
+
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_chunks_search_vector_gin ON document_chunks USING GIN(search_vector);"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_chunks_tenant_kb ON document_chunks (tenant_id, kb_id);"))
+
+        # Run HNSW index creation in its own transaction block
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw ON document_chunks USING hnsw (embedding vector_cosine_ops);"))
+        except Exception as hnsw_err:
+            logger.warning(f"HNSW vector index notice: {hnsw_err}")
+
+        async with engine.begin() as conn:
+            # Auto-migrate users columns
+            user_cols = [
+                ("preferred_llm_model", "VARCHAR(255)"),
+            ]
+            for col_n, col_t in user_cols:
+                await conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col_n} {col_t}"))
 
             # Auto-migrate schema columns for document_ingestion_runs and analytics_query_logs
             dir_cols = [
@@ -898,7 +934,11 @@ async def init_db():
             ]
             for col_n, col_t in dir_cols:
                 await conn.execute(text(f"ALTER TABLE document_ingestion_runs ADD COLUMN IF NOT EXISTS {col_n} {col_t}"))
+
             aql_cols = [
+                ("request_id", "VARCHAR(255)"),
+                ("model_name", "VARCHAR(255)"),
+                ("total_tokens", "INTEGER DEFAULT 0 NOT NULL"),
                 ("llm_input_tokens", "INTEGER DEFAULT 0 NOT NULL"),
                 ("llm_output_tokens", "INTEGER DEFAULT 0 NOT NULL"),
                 ("embedding_tokens", "INTEGER DEFAULT 0 NOT NULL"),

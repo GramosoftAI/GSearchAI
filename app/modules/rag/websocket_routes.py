@@ -37,28 +37,70 @@ def resolve_memory_api_base_url() -> str:
     return "http://127.0.0.1:8001"
 
 
-async def call_memory_api(endpoint: str, json_data: dict, method: str = "POST", timeout: float = 5.0):
+_ws_memory_client: Optional[httpx.AsyncClient] = None
+_resolved_ws_memory_url: Optional[str] = None
+
+
+async def _get_ws_memory_client() -> httpx.AsyncClient:
+    global _ws_memory_client
+    if _ws_memory_client is None or _ws_memory_client.is_closed:
+        _ws_memory_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=0.5, read=2.0, write=1.0, pool=2.0),
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=10),
+        )
+    return _ws_memory_client
+
+
+async def call_memory_api(endpoint: str, json_data: dict, method: str = "POST", timeout: float = 1.0):
+    global _resolved_ws_memory_url
+    client = await _get_ws_memory_client()
+
+    if _resolved_ws_memory_url:
+        try:
+            url = f"{_resolved_ws_memory_url}{endpoint}"
+            resp = await client.request(method, url, json=json_data, timeout=timeout)
+            if resp.status_code == 200:
+                return resp
+        except Exception:
+            _resolved_ws_memory_url = None
+
     MEMORY_API_URL = resolve_memory_api_base_url()
     candidate_urls = [
         f"{MEMORY_API_URL.rstrip('/')}{endpoint}",
         f"http://localhost:4917/api/v1/memory{endpoint}",
         f"http://127.0.0.1:4917/api/v1/memory{endpoint}",
         f"http://localhost:8002/api/v1/memory{endpoint}",
-        f"http://memory-api:8001/api/v1/memory{endpoint}"
+        f"http://memory-api:8001/api/v1/memory{endpoint}",
     ]
-
-
     urls = list(dict.fromkeys(candidate_urls))
-    
-    async with httpx.AsyncClient() as client:
-        for url in urls:
-            try:
-                resp = await client.request(method, url, json=json_data, timeout=timeout)
-                if resp.status_code == 200:
-                    return resp
-                logger.warning(f"Memory API {url} returned status {resp.status_code}: {resp.text}")
-            except Exception as e:
-                logger.debug(f"Memory API {url} unreachable: {e}")
+
+    async def _try_one(url: str):
+        try:
+            resp = await client.request(method, url, json=json_data, timeout=0.5)
+            if resp.status_code == 200:
+                base = url.rsplit(endpoint, 1)[0]
+                return base, resp
+        except Exception:
+            pass
+        return None, None
+
+    try:
+        import asyncio
+        tasks = [_try_one(u) for u in urls]
+        done, pending = await asyncio.wait(
+            [asyncio.create_task(t) for t in tasks],
+            timeout=0.6,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for p in pending:
+            p.cancel()
+        for d in done:
+            base, resp = d.result()
+            if base and resp:
+                _resolved_ws_memory_url = base
+                return resp
+    except Exception as e:
+        logger.debug(f"WS memory api call error: {e}")
     return None
 
 @router.websocket("/{agent_id}")
@@ -70,7 +112,7 @@ async def rag_websocket(
     """
     WebSocket endpoint for real-time RAG chat with standalone memory API integration.
     """
-
+    print("----------------------------------rag websocket called",token,"----------------------------------------------------------------------")
     # 1. ACCEPT HANDSHAKE IMMEDIATELY
     await websocket.accept()
 

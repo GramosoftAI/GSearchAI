@@ -36,10 +36,20 @@ class AnalyticsSummaryResponse(AnalyticsSummaryBase):
 
 class AnalyticsQueryLogBase(BaseModel):
     session_id: Optional[UUID] = None
+    user_id: Optional[UUID] = None
+    request_id: Optional[str] = None
+    model_name: Optional[str] = None
     query: str
     response_status: ResponseStatus = ResponseStatus.SUCCESS
     confidence_score: float = Field(0.0, ge=0.0, le=1.0)
     latency_ms: float = Field(0.0, ge=0.0)
+    llm_input_tokens: int = Field(0, ge=0)
+    llm_output_tokens: int = Field(0, ge=0)
+    embedding_tokens: int = Field(0, ge=0)
+    total_tokens: int = Field(0, ge=0)
+    llm_cost_usd: float = Field(0.0, ge=0.0)
+    embedding_cost_usd: float = Field(0.0, ge=0.0)
+    total_cost_usd: float = Field(0.0, ge=0.0)
 
 class AnalyticsQueryLogCreate(AnalyticsQueryLogBase):
     pass
@@ -51,6 +61,106 @@ class AnalyticsQueryLogResponse(AnalyticsQueryLogBase):
 
     class Config:
         from_attributes = True
+
+# ================= TOKEN CONSUMPTION SCHEMAS =================
+
+class TokenConsumptionItem(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    user_id: Optional[UUID] = None
+    session_id: Optional[UUID] = None
+    request_id: Optional[str] = None
+    model_name: Optional[str] = None
+    query: str
+    response_status: str
+    latency_ms: float
+    llm_input_tokens: int
+    llm_output_tokens: int
+    embedding_tokens: int
+    total_tokens: int
+    input_cost_usd: float = 0.0
+    output_cost_usd: float = 0.0
+    llm_cost_usd: float
+    embedding_cost_usd: float
+    total_cost_usd: float
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class TokenConsumptionSummary(BaseModel):
+    total_input_tokens: int
+    total_output_tokens: int
+    total_embedding_tokens: int
+    total_tokens: int
+    total_input_cost_usd: float = 0.0
+    total_output_cost_usd: float = 0.0
+    total_embedding_cost_usd: float = 0.0
+    total_cost_usd: float
+    total_queries: int
+
+class ModelTokenUsageBreakdown(BaseModel):
+    model_name: str
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    input_cost_usd: float = 0.0
+    output_cost_usd: float = 0.0
+    embedding_cost_usd: float = 0.0
+    total_cost_usd: float
+    request_count: int
+    purpose: Optional[str] = None
+    model_type: Optional[str] = None
+    status: Optional[str] = None
+    provider: Optional[str] = None
+
+class UserModelUsageBreakdown(BaseModel):
+    model_name: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    embedding_tokens: int = 0
+    total_tokens: int = 0
+    input_cost_usd: float = 0.0
+    output_cost_usd: float = 0.0
+    embedding_cost_usd: float = 0.0
+    total_cost_usd: float = 0.0
+    request_count: int = 0
+
+class UserTokenUsageBreakdown(BaseModel):
+    user_id: Optional[UUID] = None
+    user_email: Optional[str] = None
+    input_tokens: int
+    output_tokens: int
+    embedding_tokens: int
+    total_tokens: int
+    input_cost_usd: float = 0.0
+    output_cost_usd: float = 0.0
+    embedding_cost_usd: float = 0.0
+    total_cost_usd: float
+    request_count: int
+    models: List[UserModelUsageBreakdown] = Field(default_factory=list)
+
+class DailyTokenUsageItem(BaseModel):
+    date: str
+    input_tokens: int
+    output_tokens: int
+    embedding_tokens: int
+    total_tokens: int
+    input_cost_usd: float = 0.0
+    output_cost_usd: float = 0.0
+    embedding_cost_usd: float = 0.0
+    total_cost_usd: float
+    query_count: int
+
+class TokenConsumptionResponse(BaseModel):
+    summary: TokenConsumptionSummary
+    by_model: List[ModelTokenUsageBreakdown]
+    by_user: List[UserTokenUsageBreakdown]
+    daily_trends: List[DailyTokenUsageItem]
+    records: List[TokenConsumptionItem]
+    total_records: int
+    page: int
+    limit: int
 
 class DashboardMetrics(BaseModel):
     total_queries: int
@@ -146,5 +256,12 @@ class AppErrorLogsPaginatedResponse(BaseModel):
 class UserCostItem(BaseModel):
     user_id: UUID
     user_email: str
+    input_tokens: Optional[int] = 0
+    output_tokens: Optional[int] = 0
+    embedding_tokens: Optional[int] = 0
     total_tokens: int
+    input_cost_usd: Optional[float] = 0.0
+    output_cost_usd: Optional[float] = 0.0
+    embedding_cost_usd: Optional[float] = 0.0
     total_cost_usd: float
+    models: Optional[List[UserModelUsageBreakdown]] = Field(default_factory=list)

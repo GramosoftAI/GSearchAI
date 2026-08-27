@@ -43,13 +43,12 @@ class TripletRetriever:
         import time
         trace_start = time.time()
         logger.info(f"[TRACE_E2E] [ENTRY] TripletRetriever.search_triplets - Input: KB {kb_ids}")
-        # Get triplets linked to chunks in this KB OR memory-based triplets (not linked to KB)
+        # Fast scoped query: Search triplets directly linked to target KBs
         query = """
-        // Part 1: KB-linked triplets
         MATCH (kb:KnowledgeBase)
         WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
         MATCH (kb)-[:HAS_CHUNK]->(c:Chunk)-[:HAS_TRIPLET]->(t:Triplet {tenant_id: $tenant_id})
-        WHERE t.embedding IS NOT NULL AND size(t.embedding) = $dimension
+        WHERE t.embedding IS NOT NULL
         """
 
         if target_sections:
@@ -70,7 +69,7 @@ class TripletRetriever:
                t.predicate as predicate, t.object as object,
                t.embedding as embedding, t.chunk_id as chunk_id
         
-        LIMIT 500
+        LIMIT 100
         """
 
         try:
@@ -79,7 +78,6 @@ class TripletRetriever:
                 {
                     "kb_ids": kb_ids,
                     "tenant_id": self.tenant_id,
-                    "dimension": EmbeddingGenerator.get_dimension(),
                     "target_sections": target_sections if target_sections else []
                 },
             )
@@ -87,21 +85,35 @@ class TripletRetriever:
             if not results:
                 return []
 
-            # Score by cosine similarity
+            import numpy as np
+            q_vec = np.array(query_embedding, dtype=np.float32)
+            q_norm = np.linalg.norm(q_vec)
+            if q_norm > 0:
+                q_vec = q_vec / q_norm
+
             scored_triplets = []
             for r in results:
-                similarity = EmbeddingGenerator.cosine_similarity(
-                    query_embedding, r["embedding"]
-                )
-                scored_triplets.append({
-                    "id": r["id"],
-                    "text": r["text"],
-                    "subject": r["subject"],
-                    "predicate": r["predicate"],
-                    "object": r["object"],
-                    "chunk_id": r["chunk_id"],
-                    "similarity": similarity,
-                })
+                emb = r.get("embedding")
+                if not emb:
+                    continue
+                try:
+                    e_vec = np.array(emb, dtype=np.float32)
+                    e_norm = np.linalg.norm(e_vec)
+                    if e_norm > 0:
+                        sim = float(np.dot(q_vec, e_vec / e_norm))
+                    else:
+                        sim = 0.0
+                    scored_triplets.append({
+                        "id": r["id"],
+                        "text": r["text"],
+                        "subject": r["subject"],
+                        "predicate": r["predicate"],
+                        "object": r["object"],
+                        "chunk_id": r["chunk_id"],
+                        "similarity": sim,
+                    })
+                except Exception:
+                    continue
 
             # Sort by similarity, return top-k
             scored_triplets.sort(key=lambda x: x["similarity"], reverse=True)

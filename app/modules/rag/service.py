@@ -21,6 +21,7 @@ from .pipeline import RAGPipeline, RAGContext
 from ..knowledge_bases.repository import KnowledgeBaseRepository
 from ..agents.repository import AgentRepository
 from ..personalities.models import Personality
+from ...core.config import get_settings
 from ...core.database import AsyncSessionLocal
 from ...core.embeddings import EmbeddingGenerator
 from ...core.llm.deepinfra_llm import DeepInfraLLMClient, LLMResponse
@@ -495,7 +496,7 @@ class RAGService:
     - Do not combine information from your general knowledge with the retrieved context.
     - Never use outside knowledge.
     - Never invent, infer, estimate, or assume facts.
-    - If the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
+    - If the user is asking a factual/document question and the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
       "I couldn't find it."
     - If only part of the answer exists, answer only that part.
     - Mention the relevant source at the end.
@@ -516,7 +517,7 @@ class RAGService:
     SOURCE CITATION RULES (STRICT)
     ==================================================
     1. GREETINGS & CASUAL CONVERSATION (CRITICAL):
-    - If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, DO NOT output any source citation tag at all.
+    - If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, respond warmly according to your assigned personality without saying "I couldn't find it", and DO NOT output any source citation tag at all.
     - NEVER include [Source: ...] for greetings, introduction messages, or general chitchat.
     
     2. DOCUMENT CONTENT & ACCURATE CITATIONS:
@@ -701,7 +702,8 @@ class RAGService:
     
             has_valid_chunks = context and context.chunks
             has_valid_triplets = context and context.triplets
-            if not has_valid_chunks and not has_valid_triplets and not chat_history and not hybrid_merge_context:
+            has_triplet_context = context and context.triplet_context
+            if not has_valid_chunks and not has_valid_triplets and not has_triplet_context and not chat_history and not hybrid_merge_context:
                 logger.info("Empty context retrieved for stream, returning fallback message.")
                 yield "I'm sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
                 return
@@ -768,6 +770,7 @@ class RAGService:
                         "llm_cost_usd": llm_cost_usd,
                         "embedding_cost_usd": embedding_cost_usd,
                         "total_cost_usd": total_cost_usd,
+                        "model_name": self.llm_client.model_answer,
                     }
                 )
                 await self.db.commit()
@@ -834,6 +837,8 @@ class RAGService:
                 "answer": None,
                 "sources": [],
             }
+
+        kb = doc_kbs[0] if doc_kbs else excel_kbs[0]
 
         # ============= HYBRID RAG: INTERCEPT EXCEL/PARQUET QUERIES =============
         if excel_kbs:
@@ -960,34 +965,11 @@ class RAGService:
             ontology_rules_str = ""
 
         # ============= MEMORY-API: BACKGROUND TURN PROCESSING =============
+        episodic_guidance = ""
         memory_enabled = (
             str(getattr(get_settings(), "memory_enabled", "True")).strip().lower()
             in ("true", "1", "yes")
         )
-        if memory_enabled and user_id:
-            import httpx
-            import uuid
-            MEMORY_API_BASE_URL = os.getenv("MEMORY_API_BASE_URL", "http://memory-api:8001").rstrip("/")
-            MEMORY_API_URL = f"{MEMORY_API_BASE_URL}/api/v1/memory"
-            
-            async def _process_memory_bg():
-                try:
-                    async with httpx.AsyncClient() as client:
-                        await client.post(
-                            f"{MEMORY_API_URL}/process-turn",
-                            json={
-                                "query": query,
-                                "session_id": str(uuid.uuid4()),
-                                "agent_id": agent_id,
-                                "user_id": user_id,
-                                "tenant_id": self.tenant_id
-                            },
-                            timeout=8.0
-                        )
-                except Exception as e:
-                    logger.warning(f"memory-api process-turn background task failed: {e}")
-            
-            memory_task = asyncio.create_task(_process_memory_bg())
 
         injected_system_prompt = f"""
 [PERSONALITY MODE: STRICT]
@@ -1027,7 +1009,7 @@ If retrieved passages conflict, state the conflict. Do not resolve it yourself.
 - Do not combine information from your general knowledge with the retrieved context.
 - Never use outside knowledge.
 - Never invent, infer, estimate, or assume facts.
-- If the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
+- If the user is asking a factual/document question and the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
   "I couldn't find it."
 - If only part of the answer exists, answer only that part.
 - Mention the relevant source at the end.
@@ -1044,13 +1026,10 @@ FORMATTING RULES
 - Use bullet points for lists.
 
 ==================================================
-SOURCE CITATION RULES
-==================================================
-==================================================
 SOURCE CITATION RULES (STRICT)
 ==================================================
 1. GREETINGS & CASUAL CONVERSATION (CRITICAL):
-- If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, DO NOT output any source citation tag at all.
+- If the user's input is a greeting (e.g. "Hello", "Hi", "Good morning", "How are you?"), polite chitchat, or a general conversational response, respond warmly according to your assigned personality without saying "I couldn't find it", and DO NOT output any source citation tag at all.
 - NEVER include [Source: ...] for greetings, introduction messages, or general chitchat.
 
 2. DOCUMENT CONTENT & ACCURATE CITATIONS:
@@ -1294,12 +1273,15 @@ RESPONSE FORMAT
                 "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES\n"
                 f"{episodic_guidance}\n\n"
             ) + formatted_context
+
+        model_to_use = getattr(self.settings, "model_intent", None) if is_social else None
         llm_response = await self._generate_answer_llm(
             query=query,
             context=formatted_context,
             tenant_id=self.tenant_id,
             agent_id=agent_id,
             agent_persona=agent_persona,
+            model=model_to_use,
         )
         answer = llm_response.answer
 
@@ -1388,6 +1370,7 @@ RESPONSE FORMAT
                     "confidence_score": confidence,
                     "latency_ms": (datetime.now() - start_time_total).total_seconds()
                     * 1000,
+                    "model_name": self.llm_client.model_answer,
                 }
             )
         except Exception as ae:
@@ -1437,34 +1420,36 @@ RESPONSE FORMAT
         if hybrid_merge_context:
             context_text += f"{hybrid_merge_context}\n" + "=" * 60 + "\n"
 
-        for i, chunk in enumerate(context.chunks, 1):
+        top_chunks = context.chunks[:3] if context.chunks else []
+        for i, chunk in enumerate(top_chunks, 1):
             s3_path = getattr(chunk, "s3_path", None)
             source_info = s3_path if s3_path else (clean_source_name(chunk.source) if chunk.source else "Unknown Source")
-            context_text += f"\n[Chunk {i}/{len(context.chunks)} - Source: {source_info} - Position {chunk.position}]"
+            raw_text = (chunk.text or "").strip()
+            chunk_display_text = raw_text[:700] + ("..." if len(raw_text) > 700 else "")
+            context_text += f"\n[Chunk {i}/{len(top_chunks)} - Source: {source_info} - Position {chunk.position}]"
             context_text += f"\nScore: {chunk.hybrid_score:.3f} (Semantic: {chunk.embedding_similarity:.3f}, Graph: {chunk.graph_score:.3f})"
-            context_text += f"\n{'-' * 40}\n{chunk.text}\n"
+            context_text += f"\n{'-' * 40}\n{chunk_display_text}\n"
 
         if context.entity_mentions:
             context_text += "\n" + "=" * 60 + "\nENTITIES MENTIONED:\n"
-            for entity, chunk_ids in context.entity_mentions.items():
+            for entity, chunk_ids in list(context.entity_mentions.items())[:6]:
                 context_text += f"- {entity} (mentioned in {len(chunk_ids)} chunks)\n"
 
         if context.triplet_context:
-            context_text += (
-                f"\n[KNOWLEDGE GRAPH RELATIONSHIPS]:\n{context.triplet_context}\n"
-            )
+            triplet_snippet = context.triplet_context[:500].strip()
+            context_text += f"\n[KNOWLEDGE GRAPH RELATIONSHIPS]:\n{triplet_snippet}\n"
         if getattr(context, "authoritative_entities", None):
             context_text += (
                 "\n" + "=" * 60 + "\n[VERIFIED DATA ENTITIES (HIGH TRUST)]\n"
             )
             context_text += "The following entities are verified from the document/database. Use these values to answer the user's query if they are relevant:\n"
-            for ent in context.authoritative_entities:
+            for ent in context.authoritative_entities[:4]:
                 clean_src = clean_source_name(ent.get("source", "document_entities"))
                 context_text += f"- {ent['entity_type']}: {ent['value']} (Page: {ent.get('page', 1)}, Source: {clean_src})\n"
             context_text += "=" * 60 + "\n"
 
         if context.personal_memories:
-            pm_text = "\n".join([f"- {m}" for m in context.personal_memories])
+            pm_text = "\n".join([f"- {m}" for m in context.personal_memories[:4]])
             context_text += f"\n[USER PERSONAL PREFERENCES & HABITS]:\n{pm_text}\n"
 
         return context_text
@@ -1508,6 +1493,7 @@ RESPONSE FORMAT
         tenant_id: str,
         agent_id: str,
         agent_persona: Optional[dict] = None,
+        **kwargs,
     ) -> LLMResponse:
         try:
             llm_response = await self.llm_client.generate_answer(
@@ -1517,6 +1503,7 @@ RESPONSE FORMAT
                 agent_id=agent_id,
                 agent_persona=agent_persona,
                 enable_thinking=False,
+                **kwargs,
             )
             return llm_response
         except Exception as e:

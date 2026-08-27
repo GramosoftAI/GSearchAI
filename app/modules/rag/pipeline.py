@@ -569,7 +569,7 @@ class RAGPipeline:
             analyzer_task = asyncio.create_task(_return_analysis())
             
         if query_embedding_tuple is None:
-            embedding_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(query))
+            embedding_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(focused_query))
         else:
             async def _return_emb(): return query_embedding_tuple
             embedding_task = asyncio.create_task(_return_emb())
@@ -710,10 +710,12 @@ class RAGPipeline:
             # Tabular analysis is now handled concurrently in service.py
             extractive_context_text = ""
 
-            # Ensure embedding is generated ONCE for this structured query
-            # Step 1 Latency Fix: Always reuse the original query embedding 
-            # to skip the redundant 2nd embedding call.
-            query_embedding_val, emb_tokens = await embedding_task
+            # Ensure embedding is generated ONCE for this query (reusing early parallel task when available)
+            if current_query in (original_query, focused_query):
+                query_embedding_val, emb_tokens = await embedding_task
+            else:
+                from app.core.embeddings import EmbeddingGenerator
+                query_embedding_val, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(current_query)
             
             analysis.metadata.query_embedding = query_embedding_val
             
@@ -2788,10 +2790,12 @@ AVAILABLE COLUMNS & TYPES:
 ROUTING CONTEXT:
 {routing_context_str}
 
-USER QUERY: {query}
+<user_query>
+{query}
+</user_query>
 
 INSTRUCTIONS:
-Return ONLY valid JSON matching this schema:
+Return ONLY valid JSON matching this schema with no reasoning or markdown fences:
 {{
   "operation": "string", // MUST be one of: "COUNT", "AVG", "MAX", "MIN", "SUM", "GROUP", "SORT", "FILTER", "ERROR"
   "target_field": "string | null", // The field to aggregate or target, or null
