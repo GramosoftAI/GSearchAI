@@ -432,6 +432,7 @@ class DeepInfraLLMClient:
         timeout: Optional[float] = None,
         task: Optional[Any] = None,
         response_format: Optional[dict] = None,
+        **kwargs
     ) -> str:
         """
         Equivalent to generate() but explicitly routes to the cloud DeepInfra model 
@@ -468,6 +469,27 @@ class DeepInfraLLMClient:
                 response.raise_for_status()
                 data = response.json()
                 content = data["choices"][0]["message"]["content"].strip()
+                
+                usage = data.get("usage", {})
+                in_toks = usage.get("prompt_tokens", 0)
+                out_toks = usage.get("completion_tokens", 0)
+                
+                tenant_id = kwargs.get("tenant_id")
+                if tenant_id:
+                    user_id = kwargs.get("user_id")
+                    task_name = str(task) if task else "generate_cloud"
+                    import asyncio
+                    asyncio.create_task(db_task(
+                        self._log_usage_to_db,
+                        tenant_id,
+                        user_id,
+                        payload["model"],
+                        prompt,
+                        in_toks,
+                        out_toks,
+                        task_name
+                    ))
+                    
                 return strip_think_tags(content)
             except Exception as e:
                 last_error = e
@@ -1185,6 +1207,76 @@ ANSWER:
             _agent_costs[agent_id]["cost"] += cost_estimate
 
             _agent_costs[agent_id]["tokens"] += total_tokens
+
+    async def rerank_documents(
+        self,
+        query: str,
+        documents: list[str],
+        top_n: int = 5,
+        model: str = None,
+        tenant_id: str = None,
+        user_id: str = None
+    ) -> list[dict]:
+        """
+        Calls DeepInfra inference API for cross-encoder reranking.
+        """
+        import time
+        import httpx
+        from app.core.config import get_settings
+        
+        if not model:
+            model = getattr(self, "model_reranker", "Qwen/Qwen3-Reranker-4B")
+            
+        url = f"{self.base_url.replace('/openai', '')}/inference/{model}"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "queries": [query],
+            "documents": documents
+        }
+        
+        client = await self.get_client()
+        try:
+            response = await client.post(url, headers=headers, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+            
+            scores = data.get("scores", [])
+            input_tokens = data.get("input_tokens", 0)
+            
+            results = []
+            for idx, score in enumerate(scores):
+                if idx < len(documents):
+                    results.append({
+                        "text": documents[idx],
+                        "relevance_score": float(score),
+                        "original_index": idx
+                    })
+                    
+            results = sorted(results, key=lambda x: x["relevance_score"], reverse=True)
+            
+            if tenant_id:
+                import asyncio
+                asyncio.create_task(db_task(
+                    self._log_usage_to_db,
+                    tenant_id,
+                    user_id,
+                    model,
+                    query,
+                    input_tokens,
+                    0,
+                    "Document Chunk Reranking"
+                ))
+                
+            return results[:top_n]
+            
+        except httpx.HTTPError as e:
+            return [{"text": doc, "relevance_score": 1.0 / (i + 1), "original_index": i} for i, doc in enumerate(documents[:top_n])]
+        except Exception as e:
+            return [{"text": doc, "relevance_score": 1.0 / (i + 1), "original_index": i} for i, doc in enumerate(documents[:top_n])]
+
 
 
 

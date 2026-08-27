@@ -652,7 +652,8 @@ class RAGService:
     
             has_valid_chunks = context and context.chunks
             has_valid_triplets = context and context.triplets
-            if not has_valid_chunks and not has_valid_triplets and not chat_history and not hybrid_merge_context:
+            has_triplet_context = context and context.triplet_context
+            if not has_valid_chunks and not has_valid_triplets and not has_triplet_context and not chat_history and not hybrid_merge_context:
                 logger.info("Empty context retrieved for stream, returning fallback message.")
                 yield "I'm sorry, but the requested information is not available within my current knowledge base. Please try a related query or provide additional context."
                 return
@@ -719,6 +720,7 @@ class RAGService:
                         "llm_cost_usd": llm_cost_usd,
                         "embedding_cost_usd": embedding_cost_usd,
                         "total_cost_usd": total_cost_usd,
+                        "model_name": self.llm_client.model_answer,
                     }
                 )
                 await self.db.commit()
@@ -1344,6 +1346,7 @@ RESPONSE FORMAT
                     "confidence_score": confidence,
                     "latency_ms": (datetime.now() - start_time_total).total_seconds()
                     * 1000,
+                    "model_name": self.llm_client.model_answer,
                 }
             )
         except Exception as ae:

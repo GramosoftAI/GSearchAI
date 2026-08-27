@@ -71,7 +71,7 @@ class TripletRetriever:
                t.embedding as embedding, t.chunk_id as chunk_id
         
         LIMIT 500
-        """
+        """ 
 
         try:
             results = await self.neo4j_repo.execute_read(

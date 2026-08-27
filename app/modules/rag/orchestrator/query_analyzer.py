@@ -52,7 +52,7 @@ class QueryAnalyzer:
     def __init__(self):
         self.llm_client = DeepInfraLLMClient()
         
-    async def analyze_query(self, query: str, kb_context: str = "") -> AnalysisResult:
+    async def analyze_query(self, query: str, kb_context: str = "", tenant_id: Optional[str] = None, user_id: Optional[str] = None) -> AnalysisResult:
         """
         Uses LLM to extract intent and metadata in a single pass.
         """
@@ -112,6 +112,7 @@ INTENTS:
 - TEMPORAL: Requires time-aware filtering.
 - STRUCTURAL: Asking about document structure.
 - TABLE: Explicitly asking about a table or cell.
+- GRAPH: Asking about entity relationships, connections, pathways, or related entities (e.g., 'who is related to', 'how is X connected to Y').
 - SUMMARY: Needs an overview or tl;dr.
 - WHY: Needs reasoning or explanation.
 - UNKNOWN: Fallback if nothing matches.
@@ -183,7 +184,9 @@ QUERY:
                     enable_thinking=False,
                     model=self.llm_client.model_intent,
                     timeout=15.0, # Increased safety buffer
-                    task=LLMTask.INTENT_DETECTION
+                    task=LLMTask.INTENT_DETECTION,
+                    tenant_id=tenant_id,
+                    user_id=user_id
                 )
                 
                 # Extract JSON block
@@ -220,7 +223,9 @@ QUERY:
                             system_prompt="You are a strict keyword extractor.",
                             temperature=0.0,
                             max_tokens=30,
-                            model=self.llm_client.model_intent
+                            model=self.llm_client.model_intent,
+                            tenant_id=tenant_id,
+                            user_id=user_id
                         )
                         keywords = [k.strip().strip('"\'') for k in fallback_resp.split(",") if k.strip()]
                         logger.info("keyword_extraction_fallback_triggered: nlp_fallback")

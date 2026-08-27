@@ -219,7 +219,7 @@ async def run_unified_rag_websocket_loop(
                     "Provide a clear, concise summary of what was discussed:"
                 )
                 try:
-                    full_response_text = await rag_service.llm_client.generate_cloud(prompt=history_prompt)
+                    full_response_text = await rag_service.llm_client.generate_cloud(prompt=history_prompt, tenant_id=tenant_id, user_id=user_id)
                     is_escalated = detect_escalation_intent(
                         query=request.query,
                         sources=[],

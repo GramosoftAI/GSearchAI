@@ -287,7 +287,7 @@ class QueryRouter:
         # STAGE 4: UNIFIED SINGLE LLM CALL
         logger.info(f"Router Stage 4: Escalating query to LLM: '{query_strip[:50]}'")
         try:
-            route_result = await self._unified_llm_analyze(query_strip)
+            route_result = await self._unified_llm_analyze(query_strip, tenant_id)
             
             # STAGE 5: POST-PROCESSING (Entity Group Expansion)
             if route_result.requested_groups:
@@ -323,7 +323,7 @@ class QueryRouter:
             }
         )
 
-    async def rewrite_query(self, query: str) -> dict:
+    async def rewrite_query(self, query: str, tenant_id: Optional[str] = None) -> dict:
         """
         Extracts keywords, entities, and intent for better downstream retrieval.
         """
@@ -359,7 +359,8 @@ Return ONLY valid JSON in this exact format, with no markdown formatting or back
                 enable_thinking=False,
                 model=self.llm_client.model_intent,
                 task=LLMTask.ROUTER,
-                response_format={"type": "json_object"}
+                response_format={"type": "json_object"},
+                tenant_id=tenant_id
             )
             # Clean up markdown if present
             import re
@@ -470,7 +471,7 @@ Query:
             )
             return fallback_res
 
-    async def _unified_llm_analyze(self, query: str) -> RouteResult:
+    async def _unified_llm_analyze(self, query: str, tenant_id: Optional[str] = None) -> RouteResult:
         """
         Executes a single unified LLM request to classify intent and extract/rewrite query parameters.
         """
@@ -541,7 +542,8 @@ Return ONLY valid JSON matching this schema structure, no markdown fences:
             enable_thinking=False,
             model=self.llm_client.model_intent,
             task=LLMTask.ROUTER,
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            tenant_id=tenant_id
         )
 
         # Parse & sanitize response

@@ -373,7 +373,7 @@ class RAGPipeline:
 
 
         user_id: Optional[str] = None,
-        top_k: int = 3,
+        top_k: int = 15,
         max_depth: int = 2,
         max_tokens: int = 24000,
         kb_context: str = "",
@@ -501,7 +501,7 @@ class RAGPipeline:
         start_time = time.time()
         
         if analysis is None:
-            analyzer_task = asyncio.create_task(QueryAnalyzer().analyze_query(query, kb_context=kb_context))
+            analyzer_task = asyncio.create_task(QueryAnalyzer().analyze_query(query, kb_context=kb_context, tenant_id=self.tenant_id, user_id=user_id))
         else:
             async def _return_analysis(): return analysis
             analyzer_task = asyncio.create_task(_return_analysis())
@@ -581,6 +581,57 @@ class RAGPipeline:
         structured_queries = getattr(analysis.metadata, "structured_queries", [])
         if not structured_queries:
             structured_queries = [query]
+
+        # STAGE 0.6: GRAPH CYPHER GENERATION
+        from app.modules.rag.orchestrator.query_analyzer import QueryIntent
+        if getattr(analysis, "intent", None) == QueryIntent.GRAPH:
+            logger.info("   -> Intercepting query for Graph Cypher Generator!")
+            try:
+                from app.core.llm.cypher_generator import CypherGenerator
+                from app.core.neo4j import get_neo4j_driver
+                driver = await get_neo4j_driver()
+                cypher_gen = CypherGenerator(driver)
+                
+                # Basic graph schema representation
+                schema_str = "Node labels: Chunk, KnowledgeBase, Document, Section. Relationships: HAS_CHUNK, HAS_SECTION, RELATED_TO."
+                few_shot_str = "Q: What is related to revenue?\nA: MATCH (a)-[:RELATED_TO]->(b) WHERE toLower(b.name) CONTAINS 'revenue' AND a.tenant_id = $tenant_id AND b.tenant_id = $tenant_id RETURN a LIMIT 10"
+                
+                cypher_res = await cypher_gen.generate(
+                    question=query, 
+                    schema=schema_str, 
+                    few_shot_examples=few_shot_str,
+                    tenant_id=str(self.tenant_id) if self.tenant_id else None,
+                    user_id=str(self.user_id) if hasattr(self, "user_id") and self.user_id else None
+                )
+                
+                # Execute the Cypher via Neo4jRepository to enforce rules
+                results = await self.neo4j_repo.execute_read(cypher_res.cypher)
+                
+                if results:
+                    formatted_res = str(results)
+                    dummy_chunk = RetrievedChunk(
+                        chunk_id="graph-cypher",
+                        text="Knowledge Graph Relationship Search",
+                        kb_id=kb_ids[0] if isinstance(kb_ids, list) and kb_ids else str(kb_id),
+                        position=0,
+                        embedding_similarity=1.0,
+                        graph_score=1.0,
+                        hybrid_score=1.0,
+                        reason="GRAPH_CYPHER",
+                        source="Graph DB: Cypher Generator"
+                    )
+                    return RAGContext(
+                        query=query,
+                        chunks=[dummy_chunk],
+                        entity_mentions={},
+                        total_tokens=0,
+                        triplet_context=f"### Knowledge Graph Query Results\n\nGenerated Cypher: `{cypher_res.cypher}`\n\nResults:\n{formatted_res}",
+                        search_type="GRAPH_CYPHER"
+                    )
+            except Exception as e:
+                logger.error(f"   -> Graph Cypher Generator failed: {e}. Falling back to RRF vector search.", exc_info=True)
+                if self.db:
+                    await self.db.rollback()
             
         table_analytics_attempted = False
 
@@ -612,9 +663,8 @@ class RAGPipeline:
             # Define RRF parameters
             RRF_K = 60
             WEIGHT_GRAPH = 1.5
-            WEIGHT_KEYWORD = 1.0
             WEIGHT_VECTOR = 1.0
-            TOP_N = 15
+            TOP_N = top_k or 15
 
             # Convert analysis metadata to dictionary for RetrievalTasks
             meta_dict = {}
@@ -689,45 +739,14 @@ class RAGPipeline:
                     return await retriever.search_triplets(
                         query_embedding=query_embedding_val,
                         kb_ids=kb_ids,
-                        top_k=20,
+                        top_k=top_k or 15,
                         target_sections=target_sections,
                     )
                 except Exception as e:
                     logger.warning(f"Triplet retrieval failed (non-blocking): {e}")
                     return []
 
-            # 2. Neo4j Keyword Search
-            async def _run_keyword_search(target_sections=None):
-                try:
-                    keywords = getattr(analysis.metadata, "keywords", [])
-                    if not keywords:
-                        # Extract simple words if no keywords provided
-                        keywords = [w for w in current_query.split() if len(w) > 3]
-                    if not keywords:
-                        return []
-                    
-                    cypher = """
-                    MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk)
-                    WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
-                    """
-                    if target_sections:
-                        cypher += " AND c.section IN $target_sections "
-                    
-                    cypher += """
-                    AND any(word IN $keywords WHERE toLower(c.text) CONTAINS toLower(word))
-                    RETURN DISTINCT c.id as section_id
-                    LIMIT 50
-                    """
-                    
-                    params = {"kb_ids": kb_ids, "tenant_id": self.tenant_id, "keywords": keywords}
-                    if target_sections:
-                        params["target_sections"] = target_sections
-                        
-                    results = await self.neo4j_repo.execute_read(cypher, params)
-                    return [r.get("section_id") for r in results] if results else []
-                except Exception as e:
-                    logger.warning(f"Keyword search failed (non-blocking): {e}")
-                    return []
+
 
             # 3. pgvector Full-KB Semantic Search
             async def _run_vector_search(target_sections=None):
@@ -756,9 +775,8 @@ class RAGPipeline:
             target_sections = section_res if isinstance(section_res, list) else []
             
             # WAVE 2
-            triplet_res, keyword_res, vector_res = await asyncio.gather(
+            triplet_res, vector_res = await asyncio.gather(
                 _run_triplet_search(target_sections),
-                _run_keyword_search(target_sections),
                 _run_vector_search(target_sections),
                 return_exceptions=True
             )
@@ -766,10 +784,9 @@ class RAGPipeline:
 
             # Handle exceptions cleanly
             if isinstance(triplet_res, Exception): triplet_res = []
-            if isinstance(keyword_res, Exception): keyword_res = []
             if isinstance(vector_res, Exception): vector_res = []
 
-            logger.info(f"[RRF_FLOW_MARKER] RRF Sources returned: Graph={len(triplet_res)}, Keyword={len(keyword_res)}, Vector={len(vector_res)}")
+            logger.info(f"[RRF_FLOW_MARKER] RRF Sources returned: Graph={len(triplet_res)}, Vector={len(vector_res)}")
 
             # --- RECIPROCAL RANK FUSION ---
             logger.info("[RRF_FLOW_MARKER] Starting Reciprocal Rank Fusion...")
@@ -782,11 +799,7 @@ class RAGPipeline:
                 score = WEIGHT_GRAPH / (RRF_K + rank + 1)
                 fused_scores[cid] = fused_scores.get(cid, 0.0) + score
 
-            # Keyword scoring
-            for rank, cid in enumerate(keyword_res):
-                if not cid: continue
-                score = WEIGHT_KEYWORD / (RRF_K + rank + 1)
-                fused_scores[cid] = fused_scores.get(cid, 0.0) + score
+
 
             # Vector scoring
             vector_chunk_map = {}
@@ -871,6 +884,41 @@ class RAGPipeline:
                     
             if final_chunks:
                 logger.info(f"RRF successfully aggregated {len(final_chunks)} chunks. Returning early.")
+
+            # === DEEPINFRA RERANKER INTEGRATION ===
+            if final_chunks and getattr(get_settings(), "model_reranker", None):
+                try:
+                    logger.info("[RERANK] Starting DeepInfra LLM Reranking on top RRF chunks...")
+                    from app.core.llm.deepinfra_llm import get_llm_client
+                    llm = await get_llm_client()
+                    
+                    # Extract texts
+                    doc_texts = [c.text for c in final_chunks]
+                    
+                    # Call API
+                    reranked_results = await llm.rerank_documents(
+                        query=original_query,
+                        documents=doc_texts,
+                        top_n=min(len(doc_texts), 10),
+                        model=get_settings().model_reranker,
+                        tenant_id=self.tenant_id,
+                        user_id=self.user_id
+                    )
+                    
+                    # Reorder final_chunks based on reranker results
+                    new_final_chunks = []
+                    for r in reranked_results:
+                        orig_idx = r.get("original_index")
+                        if orig_idx is not None and orig_idx < len(final_chunks):
+                            chunk = final_chunks[orig_idx]
+                            chunk.hybrid_score = r.get("relevance_score", 0.0)
+                            chunk.reason = "LLM_RERANKED"
+                            new_final_chunks.append(chunk)
+                            
+                    final_chunks = new_final_chunks
+                    logger.info(f"[RERANK] Successfully reranked top {len(final_chunks)} chunks using LLM.")
+                except Exception as e:
+                    logger.error(f"[RERANK] LLM Reranking failed, falling back to pure RRF: {e}")
                 
                 triplet_context_str = ""
                 if triplet_res:
@@ -2557,7 +2605,8 @@ CRITICAL RULES:
             system_prompt="You are a Structured Query Planner. Return only JSON.",
             temperature=0.0,
             max_tokens=4000,
-            enable_thinking=False
+            enable_thinking=False,
+            tenant_id=self.tenant_id
         )
         
         import re

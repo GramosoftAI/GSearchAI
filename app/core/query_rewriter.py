@@ -43,7 +43,7 @@ BEHAVIOR CONTRACT:
 """
         )
 
-    async def rewrite_query(self, query: str, history: Optional[list] = None) -> str:
+    async def rewrite_query(self, query: str, history: Optional[list] = None, tenant_id: Optional[str] = None) -> str:
         """
         Takes a user query, enhances it using Qwen-2.5-72B-Instruct,
         and returns the enhanced query. Falls back to the original query on any failure.
@@ -67,6 +67,7 @@ BEHAVIOR CONTRACT:
                 system_prompt=dynamic_system_prompt,
                 temperature=0.1,  # Low temperature for strict adherence
                 max_tokens=256,
+                tenant_id=tenant_id
             )
             print(f"--------------------Original Query: '{query}' -> Enhanced Query: '{enhanced_query}'-------")
             import re
