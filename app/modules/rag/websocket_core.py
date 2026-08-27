@@ -18,7 +18,7 @@ def resolve_memory_api_base_url() -> str:
         return env_host.rstrip("/")
     return "http://127.0.0.1:8001"
 
-async def _persist_partial(db, chat_service, session_id, user_id, query, response_buffer, reason: str) -> None:
+async def _persist_partial(db, chat_service, session_id, user_id, query, response_buffer, reason: str, channel: str = "websocket") -> None:
     try:
         try:
             await db.rollback()
@@ -32,6 +32,7 @@ async def _persist_partial(db, chat_service, session_id, user_id, query, respons
                 "sources": [],
                 "status": "partial_failure",
                 "failure_reason": reason,
+                "channel": channel,
             },
         )
         await db.commit()
@@ -69,6 +70,7 @@ async def run_unified_rag_websocket_loop(
     """
     Channel-agnostic execution core.
     """
+    channel = getattr(adapter, "channel", "websocket")
     memory_api_url = f"{resolve_memory_api_base_url()}/api/v1/memory"
     
     active_session_id = session_id
