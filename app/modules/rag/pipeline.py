@@ -902,7 +902,7 @@ class RAGPipeline:
                         top_n=min(len(doc_texts), 10),
                         model=get_settings().model_reranker,
                         tenant_id=self.tenant_id,
-                        user_id=self.user_id
+                        user_id=user_id
                     )
                     
                     # Reorder final_chunks based on reranker results
@@ -974,7 +974,7 @@ class RAGPipeline:
         # Fallback to standard router using the first structured query or original query if all fail
         fallback_query = structured_queries[0] if structured_queries else original_query
         logger.warning("All structured queries failed. Falling back to standard router with query: %r", fallback_query)
-        route_result = await self.router.route_query(fallback_query, tenant_id=str(self.tenant_id))
+        route_result = await self.router.route_query(fallback_query, tenant_id=str(self.tenant_id), user_id=user_id)
         search_type = route_result.intent
         
         rewritten_data = route_result.rewritten or {}

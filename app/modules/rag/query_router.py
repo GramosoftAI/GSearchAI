@@ -153,7 +153,7 @@ class QueryRouter:
             )
         }
 
-    async def route_query(self, query: str, tenant_id: Optional[str] = None) -> RouteResult:
+    async def route_query(self, query: str, tenant_id: Optional[str] = None, user_id: Optional[str] = None) -> RouteResult:
         """
         Main query routing entry point. Executes a multi-stage routing strategy.
         """
@@ -323,7 +323,7 @@ class QueryRouter:
             }
         )
 
-    async def rewrite_query(self, query: str, tenant_id: Optional[str] = None) -> dict:
+    async def rewrite_query(self, query: str, tenant_id: Optional[str] = None, user_id: Optional[str] = None) -> dict:
         """
         Extracts keywords, entities, and intent for better downstream retrieval.
         """
@@ -362,7 +362,8 @@ Return ONLY valid JSON in this exact format, with no markdown formatting, explan
                 model=self.llm_client.model_intent,
                 task=LLMTask.ROUTER,
                 response_format={"type": "json_object"},
-                tenant_id=tenant_id
+                tenant_id=tenant_id,
+                user_id=user_id
             )
             # Clean up markdown if present
             import re
@@ -381,7 +382,7 @@ Return ONLY valid JSON in this exact format, with no markdown formatting, explan
             logger.warning(f"Failed to rewrite query: {e}")
             return {"keywords": [], "entities": [], "date_filter": "", "intent": ""}
 
-    async def _llm_classify(self, query: str, rewritten: dict) -> RouteResult:
+    async def _llm_classify(self, query: str, rewritten: dict, tenant_id: Optional[str] = None, user_id: Optional[str] = None) -> RouteResult:
         """
         Use LLM to determine the user's intent for complex queries.
         """
@@ -442,7 +443,9 @@ Return ONLY valid JSON in this exact format, with no markdown formatting or back
                 enable_thinking=False,
                 model=self.llm_client.model_intent,
                 task=LLMTask.ROUTER,
-                response_format={"type": "json_object"}
+                response_format={"type": "json_object"},
+                tenant_id=tenant_id,
+                user_id=user_id
             )
             import re
             json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
@@ -475,7 +478,7 @@ Return ONLY valid JSON in this exact format, with no markdown formatting or back
             )
             return fallback_res
 
-    async def _unified_llm_analyze(self, query: str, tenant_id: Optional[str] = None) -> RouteResult:
+    async def _unified_llm_analyze(self, query: str, tenant_id: Optional[str] = None, user_id: Optional[str] = None) -> RouteResult:
         """
         Executes a single unified LLM request to classify intent and extract/rewrite query parameters.
         """
