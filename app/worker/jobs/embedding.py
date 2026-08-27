@@ -31,7 +31,8 @@ async def embedding_job(ctx: Dict[Any, Any], kb_id: str, tenant_id: str, chunks:
                 kb_id=uuid.UUID(kb_id),
                 text=chunk["text"],
                 chunk_index=chunk["chunk_index"],
-                embedding=embeddings[i]
+                embedding=embeddings[i],
+                metadata_json=chunk.get("metadata") or {}
             )
             db.add(pg_chunk)
             

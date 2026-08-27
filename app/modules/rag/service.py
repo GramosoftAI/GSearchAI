@@ -1420,36 +1420,34 @@ RESPONSE FORMAT
         if hybrid_merge_context:
             context_text += f"{hybrid_merge_context}\n" + "=" * 60 + "\n"
 
-        top_chunks = context.chunks[:3] if context.chunks else []
-        for i, chunk in enumerate(top_chunks, 1):
+        for i, chunk in enumerate(context.chunks, 1):
             s3_path = getattr(chunk, "s3_path", None)
             source_info = s3_path if s3_path else (clean_source_name(chunk.source) if chunk.source else "Unknown Source")
-            raw_text = (chunk.text or "").strip()
-            chunk_display_text = raw_text[:700] + ("..." if len(raw_text) > 700 else "")
-            context_text += f"\n[Chunk {i}/{len(top_chunks)} - Source: {source_info} - Position {chunk.position}]"
+            context_text += f"\n[Chunk {i}/{len(context.chunks)} - Source: {source_info} - Position {chunk.position}]"
             context_text += f"\nScore: {chunk.hybrid_score:.3f} (Semantic: {chunk.embedding_similarity:.3f}, Graph: {chunk.graph_score:.3f})"
-            context_text += f"\n{'-' * 40}\n{chunk_display_text}\n"
+            context_text += f"\n{'-' * 40}\n{chunk.text}\n"
 
         if context.entity_mentions:
             context_text += "\n" + "=" * 60 + "\nENTITIES MENTIONED:\n"
-            for entity, chunk_ids in list(context.entity_mentions.items())[:6]:
+            for entity, chunk_ids in context.entity_mentions.items():
                 context_text += f"- {entity} (mentioned in {len(chunk_ids)} chunks)\n"
 
         if context.triplet_context:
-            triplet_snippet = context.triplet_context[:500].strip()
-            context_text += f"\n[KNOWLEDGE GRAPH RELATIONSHIPS]:\n{triplet_snippet}\n"
+            context_text += (
+                f"\n[KNOWLEDGE GRAPH RELATIONSHIPS]:\n{context.triplet_context}\n"
+            )
         if getattr(context, "authoritative_entities", None):
             context_text += (
                 "\n" + "=" * 60 + "\n[VERIFIED DATA ENTITIES (HIGH TRUST)]\n"
             )
             context_text += "The following entities are verified from the document/database. Use these values to answer the user's query if they are relevant:\n"
-            for ent in context.authoritative_entities[:4]:
+            for ent in context.authoritative_entities:
                 clean_src = clean_source_name(ent.get("source", "document_entities"))
                 context_text += f"- {ent['entity_type']}: {ent['value']} (Page: {ent.get('page', 1)}, Source: {clean_src})\n"
             context_text += "=" * 60 + "\n"
 
         if context.personal_memories:
-            pm_text = "\n".join([f"- {m}" for m in context.personal_memories[:4]])
+            pm_text = "\n".join([f"- {m}" for m in context.personal_memories])
             context_text += f"\n[USER PERSONAL PREFERENCES & HABITS]:\n{pm_text}\n"
 
         return context_text

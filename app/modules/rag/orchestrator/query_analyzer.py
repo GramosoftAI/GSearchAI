@@ -195,9 +195,7 @@ QUERY:
                         enable_thinking=False,
                         model=self.llm_client.model_intent,
                         timeout=10.0, # Fast-fail timeout to mitigate provider jitter
-                        task=LLMTask.INTENT_DETECTION,
-                        tenant_id=tenant_id,
-                        user_id=user_id
+                        task=LLMTask.INTENT_DETECTION
                     ),
                     timeout=10.5
                 )

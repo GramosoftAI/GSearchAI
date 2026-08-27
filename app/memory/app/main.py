@@ -230,7 +230,7 @@ async def run_llm_completion(system_prompt: str, user_prompt: str, priority: str
             llm_base = os.getenv("LLM_BASE_URL", os.getenv("DEEPINFRA_API_URL", "https://api.deepinfra.com/v1/openai")).rstrip('/')
             api_key = os.getenv("LLM_GATEWAY_API_KEY", os.getenv("DEEPINFRA_API_KEY", ""))
             chat_model = os.getenv("MEMORY_CHAT_MODEL", os.getenv("MODEL_MEMORY", "meta-llama/Meta-Llama-3.1-8B-Instruct"))
-            max_tokens = int(os.getenv("MAX_TOKENS_MEMORY", "512"))
+            max_tokens = int(os.getenv("MAX_TOKENS_MEMORY", "1024"))
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
             endpoint = f"{llm_base}/chat/completions" if llm_base.endswith("/openai") else f"{llm_base}/v1/chat/completions"
             async with httpx.AsyncClient() as client:

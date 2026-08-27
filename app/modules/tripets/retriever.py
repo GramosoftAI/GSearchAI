@@ -78,7 +78,8 @@ class TripletRetriever:
                 {
                     "kb_ids": kb_ids,
                     "tenant_id": self.tenant_id,
-                    "target_sections": target_sections if target_sections else []
+                    "target_sections": target_sections if target_sections else [],
+                    "dimension": len(query_embedding)
                 },
             )
 

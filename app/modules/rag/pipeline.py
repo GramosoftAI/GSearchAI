@@ -562,8 +562,17 @@ class RAGPipeline:
         import time
         start_time = time.time()
         
+        # Focus on the actual user question if history is attached
+        focused_query = query
+        if "CURRENT QUESTION:" in query:
+            focused_query = query.split("CURRENT QUESTION:", 1)[1].strip()
+        elif "### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES" in query:
+            parts = query.split("### MANDATORY USER PREFERENCES & MEMORY DIRECTIVES", 1)
+            if len(parts) > 1 and "\n\n" in parts[1]:
+                focused_query = parts[1].split("\n\n", 1)[1].strip()
+
         if analysis is None:
-            analyzer_task = asyncio.create_task(QueryAnalyzer().analyze_query(query, kb_context=kb_context))
+            analyzer_task = asyncio.create_task(QueryAnalyzer().analyze_query(focused_query, kb_context=kb_context, tenant_id=self.tenant_id, user_id=user_id))
         else:
             async def _return_analysis(): return analysis
             analyzer_task = asyncio.create_task(_return_analysis())
