@@ -6,6 +6,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .schemas import UnifiedChatRequest
 from .events import LoopEvent
 from .adapters import ChannelAdapter
+from .escalation import detect_escalation_intent
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ async def run_unified_rag_websocket_loop(
     """
     Channel-agnostic execution core.
     """
+    channel = getattr(adapter, "channel", "websocket")
     memory_api_url = f"{resolve_memory_api_base_url()}/api/v1/memory"
     
     active_session_id = session_id
