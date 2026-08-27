@@ -37,6 +37,9 @@ from dataclasses import dataclass, field
 
 import litellm
 
+litellm.suppress_debug_info = True
+litellm.drop_params = True
+
 logger = logging.getLogger(__name__)
 
 # Default model and provider settings
@@ -459,7 +462,8 @@ class GraphMindPricingRegistry:
 
                         for k in keys:
                             self._custom_overrides[k] = entry
-                logger.info(f"[PRICING_REGISTRY] Loaded {len(self._custom_overrides)} model pricing overrides from models.yaml")
+                litellm.model_cost.update(self._custom_overrides)
+                logger.info(f"[PRICING_REGISTRY] Loaded {len(self._custom_overrides)} model pricing overrides from models.yaml into LiteLLM model_cost")
             except Exception as exc:
                 logger.warning(f"[PRICING_REGISTRY] Failed to load models.yaml: {exc}")
 
@@ -473,6 +477,7 @@ class GraphMindPricingRegistry:
     def set_custom_override(self, key: str, pricing_dict: Dict[str, Any]) -> None:
         """Register an application-specific custom model pricing override."""
         self._custom_overrides[key] = pricing_dict
+        litellm.model_cost[key] = pricing_dict
         _RESOLVED_PRICING_CACHE.clear()
 
     def lookup_raw(self, clean_model: str, clean_provider: str) -> Optional[Dict[str, Any]]:
