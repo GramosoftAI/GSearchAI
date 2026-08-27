@@ -654,6 +654,7 @@ class RAGService:
     - Mention the relevant source at the end.
     - Answer ONLY the specific question asked by the user. If the user asks a complex or multi-part question, you MUST address EVERY part of the question in your response. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
     - Be concise. Focus strictly on direct answers and avoid filler.
+    - NEVER include internal relevance scores or confidence numbers (e.g. "(relevance: 0.65)", "(relevance: 0.58)", or "score: 0.61") in your output text. Relevance scores are for internal search ranking only and must never be shown to the user.
     - TRANSACTION CLASSIFICATION: Categorize transactions strictly:
       * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
       * Debit (Withdrawal/Outgoing/Payment): ATM withdrawals, payments to merchants, fees, taxes, outgoing transfers.
