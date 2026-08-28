@@ -618,12 +618,6 @@ class RAGPipeline:
         total_pipeline_start = time.time()
         # Now wait for analysis to finish (needed for routing)
         analysis = await analyzer_task
-        
-        # Fast-Path 2: Deterministic tabular property lookups (Decoupled from LLM fallback)
-        import re
-        tabular_pattern = r'\b(what is|find|get|give me|show)\b.*\b(salary|age|count|employee id|email)\b'
-        if re.search(tabular_pattern, focused_query, re.IGNORECASE):
-            analysis.is_tabular = True
         if kb_metadata_task:
             await kb_metadata_task
 
