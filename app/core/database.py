@@ -867,15 +867,11 @@ async def init_db():
             await conn.execute(text("ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_kbs_file_hash ON knowledge_bases(file_hash)"))
 
-            # Auto-migrate FTS and Hybrid Search columns/indexes
-            await conn.execute(text("ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS language regconfig DEFAULT 'english'::regconfig;"))
-            await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS language regconfig DEFAULT 'english'::regconfig;"))
-            
-            fts_col_check = await conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='document_chunks' AND column_name='search_vector'"))
-            if not fts_col_check.fetchone():
-                await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN search_vector tsvector GENERATED ALWAYS AS (to_tsvector(language, coalesce(text, ''))) STORED;"))
-
-            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_chunks_search_vector_gin ON document_chunks USING GIN(search_vector);"))
+            # Auto-migrate document_chunks indexes
+            await conn.execute(text("DROP INDEX IF EXISTS idx_chunks_search_vector_gin;"))
+            await conn.execute(text("ALTER TABLE document_chunks DROP COLUMN IF EXISTS search_vector;"))
+            await conn.execute(text("ALTER TABLE document_chunks DROP COLUMN IF EXISTS language;"))
+            await conn.execute(text("ALTER TABLE knowledge_bases DROP COLUMN IF EXISTS language;"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_chunks_tenant_kb ON document_chunks (tenant_id, kb_id);"))
 
         # Run HNSW index creation in its own transaction block

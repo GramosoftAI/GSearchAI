@@ -144,6 +144,16 @@ async def main():
             );
         """))
 
+        print("Cleaning up legacy FTS columns and indexes if present...")
+        try:
+            await conn.execute(text("DROP INDEX IF EXISTS idx_chunks_search_vector_gin;"))
+            await conn.execute(text("ALTER TABLE document_chunks DROP COLUMN IF EXISTS search_vector;"))
+            await conn.execute(text("ALTER TABLE document_chunks DROP COLUMN IF EXISTS language;"))
+            await conn.execute(text("ALTER TABLE knowledge_bases DROP COLUMN IF EXISTS language;"))
+            print("Legacy FTS cleanup complete.")
+        except Exception as e:
+            print(f"Legacy FTS cleanup notice: {e}")
+
         print("Successfully updated database schema!")
 
 if __name__ == "__main__":
