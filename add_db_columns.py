@@ -4,6 +4,12 @@ from app.core.database import engine
 
 async def main():
     async with engine.begin() as conn:
+        try:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+            print("pgvector extension verified.")
+        except Exception as e:
+            print(f"pgvector extension notice: {e}")
+
         print("Adding columns to users...")
         user_columns = [
             ("preferred_llm_model", "VARCHAR(255)"),
