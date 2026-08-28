@@ -916,7 +916,7 @@ export default function EmbedScriptSection() {
           
           <div className="lg:col-span-6 flex flex-col gap-4">
             <Tabs
-              defaultActiveKey="header"
+              defaultActiveKey="button"
               type="card"
               className="custom-widget-tabs"
               items={[
