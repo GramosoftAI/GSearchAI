@@ -397,6 +397,9 @@ class RAGPipeline:
             logger.info(f"[GATE_FLOW_MARKER] Top score {top_score:.3f} is below 0.35. Returning top 3 candidate KBs as safety fallback.")
             return [x["kb_id"] for x in kb_scores[:3]] + unbackfilled_kbs
             
+        if 0.55 <= top_score < 0.60:
+            logger.info(f"[GATE_WARNING] Top score {top_score:.3f} is in the 0.55-0.60 band. Check if this is a tabular KB or if semantic matching needs calibration.")
+            
         final_kbs = unbackfilled_kbs.copy()
             
         # Gap-based Top-N Selection
@@ -620,6 +623,12 @@ class RAGPipeline:
         total_pipeline_start = time.time()
         # Now wait for analysis to finish (needed for routing)
         analysis = await analyzer_task
+        
+        # Fast-Path 2: Deterministic tabular property lookups (Decoupled from LLM fallback)
+        import re
+        tabular_pattern = r'\b(what is|find|get|give me|show)\b.*\b(salary|age|count|employee id|email)\b'
+        if re.search(tabular_pattern, focused_query, re.IGNORECASE):
+            analysis.is_tabular = True
         if kb_metadata_task:
             await kb_metadata_task
 
@@ -659,10 +668,11 @@ class RAGPipeline:
             query = corrected
 
         # STAGE 0.5: EARLY EXIT FOR TABLE ANALYTICS (Using new QueryAnalyzer)
-        if analysis.intent.name == "TABLE":
-            logger.info("   -> Intercepting query for SQL Table Analytics engine!")
+        if getattr(analysis, "is_tabular", False):
+            logger.info(f"   -> Intercepting query for SQL Table Analytics engine! (intent={analysis.intent.name}, is_tabular=True)")
             try:
-                table_results = await self._execute_table_analytics(query, kb_ids)
+                target_kb_id = getattr(analysis.metadata, "target_kb_id", None) if analysis and getattr(analysis, "metadata", None) else None
+                table_results = await self._execute_table_analytics(query, kb_ids, target_kb_id=target_kb_id)
                 
                 if table_results is None:
                     logger.info("   -> SQL Table Analytics determined no table match. Falling back to standard pipeline.")
@@ -814,6 +824,9 @@ class RAGPipeline:
 
             # 0. Section Ranking
             async def _run_section_ranking():
+                if meta_dict.get("is_tabular") or getattr(analysis, "is_tabular", False):
+                    logger.info("Skipping SectionRanker for tabular query.")
+                    return []
                 try:
                     from app.modules.rag.engines.vector_engine import VectorEngine
                     from app.modules.rag.orchestrator.section_ranker import SectionRanker
@@ -1058,39 +1071,8 @@ class RAGPipeline:
             if not exploded_keywords:
                 exploded_keywords = {w.lower() for w in original_query.split() if len(w) > 4 and w.isalnum()}
 
-            for cid in fused_scores.keys():
-                chunk_obj = vector_chunk_map.get(cid)
-                if chunk_obj:
-                    kb_name = (getattr(chunk_obj, "source", "") or "").lower()
-                    kb_path = (getattr(chunk_obj, "s3_path", "") or "").lower()
-                    
-                    kb_tokens = get_tokens(kb_name) + get_tokens(kb_path)
-                    kb_stemmed_tokens = {basic_stem(t) for t in kb_tokens}
-                    
-                    logger.info(f"[RRF_BOOST_DEBUG] chunk_id={cid} source='{kb_name}' s3_path='{kb_path}'")
-                    for kw in exploded_keywords:
-                        if len(kw) > 3:
-                            stemmed_kw = basic_stem(kw)
-                            if len(stemmed_kw) < 4:
-                                continue
-                            if stemmed_kw in kb_stemmed_tokens or kw in kb_tokens:
-                                fused_scores[cid] += DOMAIN_BOOST_WEIGHT
-                                domain_boosted_count += 1
-                                logger.info(f"[RRF_BOOST_FIRED] chunk_id={cid} matched stemmed_kw='{stemmed_kw}'")
-                                break
-                else:
-                    logger.info(f"[RRF_BOOST_DEBUG] chunk_id={cid} NOT FOUND in vector_chunk_map (Graph/Keyword only chunk)")
-                                
-            logger.info(f"[RRF_FLOW_MARKER] Domain Boost applied to {domain_boosted_count} chunks.")
-
-            # Sort top N chunks
-            sorted_fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[:TOP_N]
-            top_cids = [cid for cid, score in sorted_fused]
-            logger.info(f"[RRF_FLOW_MARKER] Fusion complete. Top {len(top_cids)} chunk IDs selected.")
-            
-            # Fetch missing chunks from postgres
-            final_chunks = []
-            missing_cids = [cid for cid in top_cids if cid not in vector_chunk_map]
+            # 4a. Fetch missing chunks from postgres *BEFORE* Domain Boost
+            missing_cids = [cid for cid in fused_scores.keys() if cid not in vector_chunk_map]
             
             if missing_cids and getattr(self, "db", None):
                 from app.modules.knowledge_bases.models import DocumentChunk
@@ -1130,8 +1112,60 @@ class RAGPipeline:
                             )
                             vector_chunk_map[c_id] = rc
                 except Exception as e:
-                    logger.error(f"Failed to fetch missing chunks: {e}")
+                    logger.warning(f"Failed to fetch missing postgres chunks before boost: {e}")
 
+            # 4b. Apply Domain Boost
+            STOP_WORDS = {"south", "north", "east", "west", "total", "amount", "count", "sum", "average", "max", "min", "data", "report"}
+            
+            for cid in fused_scores.keys():
+                chunk_obj = vector_chunk_map.get(cid)
+                if chunk_obj:
+                    kb_name = (getattr(chunk_obj, "source", "") or "").lower()
+                    kb_path = (getattr(chunk_obj, "s3_path", "") or "").lower()
+                    
+                    kb_tokens = get_tokens(kb_name) + get_tokens(kb_path)
+                    kb_stemmed_tokens = {basic_stem(t) for t in kb_tokens}
+                    
+                    logger.info(f"[RRF_BOOST_DEBUG] chunk_id={cid} source='{kb_name}' s3_path='{kb_path}'")
+                    
+                    match_found = False
+                    matched_word = None
+                    for kw in exploded_keywords:
+                        if len(kw) > 3:
+                            stemmed_kw = basic_stem(kw)
+                            if len(stemmed_kw) < 4:
+                                continue
+                            
+                            if stemmed_kw in kb_stemmed_tokens or kw in kb_tokens:
+                                # Stop word logic: require multi-word or non-stopword
+                                is_stopword = kw in STOP_WORDS or stemmed_kw in STOP_WORDS
+                                is_multiword = " " in kw
+                                
+                                if is_stopword and not is_multiword:
+                                    logger.info(f"[RRF_BOOST_SKIP] Skipped stop-word match '{kw}' for chunk {cid}")
+                                    continue
+                                
+                                match_found = True
+                                matched_word = stemmed_kw
+                                break
+                    
+                    if match_found:
+                        fused_scores[cid] += DOMAIN_BOOST_WEIGHT
+                        domain_boosted_count += 1
+                        logger.info(f"[RRF_BOOST_FIRED] chunk_id={cid} matched stemmed_kw='{matched_word}'")
+                else:
+                    logger.info(f"[RRF_BOOST_DEBUG] chunk_id={cid} NOT FOUND in vector_chunk_map (Graph/Keyword only chunk)")
+                                
+            logger.info(f"[RRF_FLOW_MARKER] Domain Boost applied to {domain_boosted_count} chunks.")
+
+            # Sort top N chunks
+            sorted_fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[:TOP_N]
+            top_cids = [cid for cid, score in sorted_fused]
+            logger.info(f"[RRF_FLOW_MARKER] Fusion complete. Top {len(top_cids)} chunk IDs selected.")
+            
+            # Fetch missing chunks from postgres (if any left over)
+            final_chunks = []
+            
             # Build final chunk list and assign hybrid_score
             for rank, (cid, score) in enumerate(sorted_fused):
                 if cid in vector_chunk_map:
@@ -2586,7 +2620,7 @@ class RAGPipeline:
             
         return scored[0][1]
 
-    async def _execute_table_analytics(self, query: str, kb_ids: list[str]) -> Optional[str]:
+    async def _execute_table_analytics(self, query: str, kb_ids: list[str], target_kb_id: Optional[str] = None) -> Optional[str]:
         """
         Text-to-JSON Structured Query Planner.
         Uses LLM to convert natural language query into a JSON AST, executes it securely, and returns results.
@@ -2638,14 +2672,24 @@ class RAGPipeline:
         if not kb_rows:
             await log_attempt(0)
             return None
+            
+        if target_kb_id:
+            logger.info(f"Using pre-pinned target_kb_id: {target_kb_id}")
+            kb_rows = [r for r in kb_rows if str(r.id) == target_kb_id]
+            kb_ids = [target_kb_id]
+            
+            if not kb_rows:
+                logger.warning(f"Target KB {target_kb_id} not found in database. Aborting.")
+                await log_attempt(0)
+                return None
 
         # --- STAGE 1.5: FILE/SCHEMA-LEVEL ROUTING GATE ---
         def _build_router_prompt(manifest, query_str):
             return f"""You are a file-routing classifier for a retrieval pipeline. Given a user query and a list of candidate data sources, decide which source(s), if any, the query is actually asking about.
 
 Rules:
-- Match on semantic and lexical overlap between the query's entities/fields (e.g. "SL.NO", "employee ID", "HSN code") and each source's column/header names. Do not assume a match just because a source is the only one of its type.
-- If the query references a field/entity that does not appear in ANY candidate's schema, return "no_match": true for all — do not force a guess.
+- Match on semantic and lexical overlap between the query's entities/fields (e.g. "SL.NO", "employee ID", "HSN code") and each source's column/header names AND sampled_values. If the query asks for a specific value (e.g. 'South' or 'Alice') and it appears in a source's sampled_values, that is a strong indicator of a match. Do not assume a match just because a source is the only one of its type.
+- If the query references a field/entity that does not appear in ANY candidate's schema or sampled_values, return "no_match": true for all — do not force a guess.
 - If multiple sources plausibly match, rank them by field-name overlap and return the top match(es), not just the first one found.
 - Never silently substitute a different field name (e.g. mapping "SL.NO" to "row_id") unless the source's schema has no closer alternative AND you flag it explicitly in "field_mapping_confidence".
 
@@ -2668,15 +2712,22 @@ Respond ONLY as JSON:
   "no_match": false
 }}"""
 
+        from app.modules.rag.schema_utils import get_schema_columns
         candidate_manifest = []
         for r in kb_rows:
-            cols = list(r.dataset_schema.keys()) if getattr(r, 'dataset_schema', None) else []
+            ds = getattr(r, 'dataset_schema', None)
+            cv = getattr(r, 'categorical_values', None)
+            cols = get_schema_columns(ds, cv)
+                
+            sampled_vals = cv or {}
+            
             candidate_manifest.append({
                 "kb_id": str(r.id),
                 "filename": r.name,
                 "source_type": getattr(r, 'description', None) or getattr(r, 'source', None),
                 "columns": cols,
-                "schema_known": bool(getattr(r, 'dataset_schema', None))
+                "sampled_values": sampled_vals,
+                "schema_known": bool(cols)
             })
 
         router_prompt = _build_router_prompt(candidate_manifest, query)

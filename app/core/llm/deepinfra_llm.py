@@ -665,6 +665,9 @@ class DeepInfraLLMClient:
                     payload["enable_thinking"] = True
                     payload["reasoning_effort"] = "medium"
 
+                logger.info(f"[RAW_PROMPT_DUMP] =========================\n{json.dumps(payload['messages'], indent=2)}\n=========================")
+
+
                 think_state = 0
                 think_buf = ""
                 full_text = ""

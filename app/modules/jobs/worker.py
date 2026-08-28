@@ -401,7 +401,7 @@ async def run_excel_ingestion_job(
                 with os.fdopen(temp_fd, 'wb') as f:
                     f.write(content)
                 dataset_name = os.path.splitext(filename)[0]
-                output_path, categorical_registry = ParquetIngester.ingest_to_parquet(temp_path, dataset_name=dataset_name)
+                output_path, categorical_registry, schema_registry = ParquetIngester.ingest_to_parquet(temp_path, dataset_name=dataset_name)
             finally:
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
@@ -409,7 +409,7 @@ async def run_excel_ingestion_job(
             await db.execute(
                 update(KnowledgeBase)
                 .where(KnowledgeBase.id == uuid.UUID(kb_id))
-                .values(parsed_path=dataset_name, description="excel_parquet", categorical_values=categorical_registry)
+                .values(parsed_path=dataset_name, description="excel_parquet", categorical_values=categorical_registry, dataset_schema=schema_registry)
             )
             
             # Update Neo4j KB if needed

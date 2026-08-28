@@ -272,10 +272,16 @@ class VectorEngine(BaseEngine):
                                 return word[:-len(suffix)]
                         return word
 
+                    STOP_WORDS = {"south", "north", "east", "west", "total", "amount", "count", "sum", "average", "max", "min", "data", "report"}
                     for kw in exploded_keywords:
                         if len(kw) > 3:
                             stemmed_kw = basic_stem(kw)
                             if re.search(rf"\b{re.escape(stemmed_kw)}", kb_name) or re.search(rf"\b{re.escape(stemmed_kw)}", kb_path):
+                                is_stopword = kw in STOP_WORDS or stemmed_kw in STOP_WORDS
+                                is_multiword = " " in kw
+                                if is_stopword and not is_multiword:
+                                    continue
+                                
                                 weight *= 1.40
                                 if row.kb_id not in matched_kbs:
                                     logger.info(f"[BOOST_CHECK] Domain Match: stemmed keyword '{stemmed_kw}' (from '{kw}') matched kb_name '{kb_name}' or path '{kb_path}'")

@@ -14,7 +14,7 @@ class ParquetIngester:
     and writes them out as chunked, compressed Parquet files for DuckDB querying.
     """
     @staticmethod
-    def ingest_to_parquet(file_path: str, output_dir: str = "data/parquet", dataset_name: Optional[str] = None) -> tuple[Optional[str], dict]:
+    def ingest_to_parquet(file_path: str, output_dir: str = "data/parquet", dataset_name: Optional[str] = None) -> tuple[Optional[str], dict, dict]:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File {file_path} not found.")
             
@@ -56,12 +56,34 @@ class ParquetIngester:
                 logger.info(f"Successfully streamed CSV to {output_path}")
                 
             elif file_path.lower().endswith(('.xlsx', '.xls')):
+                from app.core.excel_extractor import ExcelExtractor
                 # Excel: Use the fastexcel (calamine) engine which avoids loading XML trees into RAM
-                df = pl.read_excel(file_path, engine="calamine")
+                # Read without assuming header to prevent title rows from becoming the schema
+                df = pl.read_excel(file_path, engine="calamine", has_header=False)
+                
+                # Run the robust pandas header heuristic on the first 30 rows
+                df_head = df.head(30).to_pandas()
+                header_idx = ExcelExtractor._detect_header_row(df_head)
+                
+                # Extract headers and slice the polars dataframe
+                raw_headers = df.row(header_idx)
+                df = df.slice(header_idx + 1)
+                
+                # Normalize headers and apply to columns
+                norm_cols = []
+                seen = set()
+                for i, h in enumerate(raw_headers):
+                    norm = ExcelExtractor._normalize_header(str(h)) or f"unnamed_{i}"
+                    while norm in seen:
+                        norm = f"{norm}_{i}"
+                    seen.add(norm)
+                    norm_cols.append(norm)
+                
+                df.columns = norm_cols
                 # Cast all columns to String to prevent mixed-type schema panics on write
                 df = df.cast(pl.String)
                 df.write_parquet(output_path, row_group_size=100_000)
-                logger.info(f"Successfully converted Excel to {output_path}")
+                logger.info(f"Successfully converted Excel to {output_path} (header row {header_idx})")
                 
             else:
                 raise ValueError("Unsupported format. Must be CSV or XLSX.")
@@ -77,19 +99,21 @@ class ParquetIngester:
             with open(registry_path, 'w') as f:
                 json.dump(registry, f, indent=4)
                 
-            # Extract categorical registry
+            # Extract schema and categorical registry
             categorical_registry = {}
+            schema_registry = {}
             try:
                 df = pl.read_parquet(output_path)
                 for col in df.columns:
+                    schema_registry[col] = str(df[col].dtype)
                     if df[col].dtype == pl.String or df[col].dtype == pl.Utf8:
                         unique_vals = df[col].drop_nulls().unique().to_list()
                         if len(unique_vals) < 50:
                             categorical_registry[col] = unique_vals
             except Exception as e:
-                logger.warning(f"Failed to extract categorical values: {e}")
+                logger.warning(f"Failed to extract schema and categorical values: {e}")
                 
-            return output_path, categorical_registry
+            return output_path, categorical_registry, schema_registry
             
         except Exception as e:
             logger.error(f"Failed to ingest file to Parquet: {e}")
