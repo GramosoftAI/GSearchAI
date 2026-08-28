@@ -227,35 +227,63 @@ class RAGService:
                     overlap = False
                     reason = "not_tabular"
                     
-                    if not doc_kbs:
-                        overlap = True
-                        reason = "only_kb_available"
-                    else:
-                        # Tabular Intent Refinement (Stage 1.6)
-                        try:
-                            from app.modules.rag.schema_utils import evaluate_schema_overlap
+                    # Tabular Intent Refinement (Stage 1.6)
+                    try:
+                        from app.modules.rag.schema_utils import evaluate_schema_overlap, calculate_schema_overlap_score
+                        
+                        best_score = -1
+                        best_kb = None
+                        
+                        for kb in excel_kbs:
+                            ds = getattr(kb, "dataset_schema", None)
+                            cv = getattr(kb, "categorical_values", None)
+                            name = getattr(kb, "parsed_path", None) or getattr(kb, "name", None)
                             
-                            dataset_schema = getattr(excel_kbs[0], "dataset_schema", None) if excel_kbs else None
-                            categorical_values = getattr(excel_kbs[0], "categorical_values", None) if excel_kbs else None
+                            cat_score, gen_score = calculate_schema_overlap_score(query, ds, cv, name)
+                            total_score = cat_score * 2 + gen_score  # weight categorical matches higher
                             
+                            logger.info(f"[SCHEMA_SCORING] KB: {name} | cat_score: {cat_score} | gen_score: {gen_score} | total_score: {total_score}")
+                            
+                            if total_score > best_score:
+                                best_score = total_score
+                                best_kb = kb
+                        
+                        strict_schema_overlap = False
+                        reason = "weak_or_zero_schema_overlap"
+                        if best_kb:
+                            ds = getattr(best_kb, "dataset_schema", None)
+                            cv = getattr(best_kb, "categorical_values", None)
+                            paths = [best_kb.parsed_path] if getattr(best_kb, "parsed_path", None) else []
                             strict_schema_overlap, reason, is_tabular = evaluate_schema_overlap(
-                                query, dataset_schema, categorical_values, active_paths
+                                query, ds, cv, paths
                             )
-                            
-                            if strict_schema_overlap:
+                        
+                        if strict_schema_overlap:
+                            overlap = True
+                            if best_kb:
+                                # Ensure downstream pipeline queries only this specific KB
+                                analysis.metadata.target_kb_id = str(best_kb.id)
+                                logger.info(f"Fast routing pinned exact KB: {getattr(best_kb, 'name', 'Unknown')} ({best_kb.id})")
+                            if not analysis.is_tabular:
+                                logger.warning(f"⚠️ OVERRIDING LLM INTENT ({getattr(analysis, 'intent', 'UNKNOWN')}) TO TABULAR based on: {reason}")
+                            analysis.is_tabular = True
+                        else:
+                            overlap = False
+                            if not doc_kbs:
+                                # Fallback: if no PDFs exist, we MUST treat it as tabular anyway so it doesn't fail silently
                                 overlap = True
-                                if not analysis.is_tabular:
-                                    logger.warning(f"⚠️ OVERRIDING LLM INTENT ({getattr(analysis, 'intent', 'UNKNOWN')}) TO TABULAR based on: {reason}")
+                                reason = "only_kb_available"
                                 analysis.is_tabular = True
-                            else:
-                                overlap = False
-                                if analysis.is_tabular or getattr(analysis.metadata, "tabular_subquery", None):
-                                    logger.info("   -> LLM classified as TABULAR, but schema overlap was too weak. Trusting LLM but logging as ambiguous.")
-                        except Exception as e:
-                            logger.error(f"Fast schema check failed: {e}")
-                            if analysis.is_tabular or getattr(analysis.metadata, "tabular_subquery", None):
-                                overlap = True # fallback
-                                reason = "schema_check_failed_but_tabular"
+                                if best_kb:
+                                    analysis.metadata.target_kb_id = str(best_kb.id)
+                                logger.info("   -> No schema overlap, but only CSVs are available. Forcing tabular.")
+                            elif analysis.is_tabular or getattr(analysis.metadata, "tabular_subquery", None):
+                                logger.info("   -> LLM classified as TABULAR, but schema overlap was too weak. Trusting LLM but logging as ambiguous.")
+                    except Exception as e:
+                        logger.error(f"Fast schema check failed: {e}", exc_info=True)
+                        if analysis.is_tabular or getattr(analysis.metadata, "tabular_subquery", None):
+                            overlap = True # fallback
+                            reason = f"schema_check_failed_but_tabular (Error: {e})"
                             
                     # We no longer execute PandasQueryEngine here! We leave it to pipeline.py.
                     logger.info(f"TELEMETRY: schema_overlap_evaluated, result={overlap}, reason={reason}")

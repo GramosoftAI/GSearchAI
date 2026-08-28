@@ -4,16 +4,22 @@ from typing import Dict, Any, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
+def get_schema_columns(dataset_schema: Optional[Dict[str, Any]], categorical_values: Optional[Dict[str, list]]) -> list[str]:
+    cols = []
+    if dataset_schema and "columns" in dataset_schema:
+        cols = list(dataset_schema["columns"].keys())
+    elif isinstance(dataset_schema, dict) and dataset_schema:
+        cols = list(dataset_schema.keys())
+    elif categorical_values:
+        cols = list(categorical_values.keys())
+    return cols
+
 def calculate_schema_overlap_score(query: str, dataset_schema: Optional[Dict[str, Any]], categorical_values: Optional[Dict[str, list]], name: Optional[str]) -> Tuple[int, int]:
     query_lower = query.lower()
     query_terms = set(re.findall(r'[a-zA-Z0-9]+', query_lower))
     
     schema_col_terms = set()
-    cols = []
-    if dataset_schema and "columns" in dataset_schema:
-        cols = list(dataset_schema["columns"].keys())
-    elif isinstance(dataset_schema, dict):
-        cols = list(dataset_schema.keys())
+    cols = get_schema_columns(dataset_schema, categorical_values)
         
     for c in cols:
         schema_col_terms.update(re.findall(r'[a-zA-Z0-9]+', str(c).lower()))
@@ -30,6 +36,11 @@ def calculate_schema_overlap_score(query: str, dataset_schema: Optional[Dict[str
                     v_lower = v.lower().strip()
                     if not v_lower:
                         continue
+                        
+                    # Prevent short numbers (like "5") from matching dozens of numeric columns
+                    if v_lower.isdigit() and len(v_lower) < 4:
+                        continue
+                        
                     v_terms = set(re.findall(r'[a-zA-Z0-9]+', v_lower))
                     # Exact subset match of words
                     if v_terms and v_terms.issubset(query_terms):

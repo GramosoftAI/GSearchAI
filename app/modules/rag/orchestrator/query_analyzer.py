@@ -34,6 +34,7 @@ class QueryMetadata(BaseModel):
     vector_subquery: Optional[str] = Field(None, description="Extracted sub-query meant for unstructured document/text data with pronouns resolved.")
     query_embedding: Optional[List[float]] = Field(None, description="Cached embedding of the query")
     structured_queries: List[str] = Field(default_factory=list, description="A list of structured/rephrased queries to try in order.")
+    target_kb_id: Optional[str] = Field(None, description="Explicitly targeted Knowledge Base ID from fast-routing gate")
 
 
 class AnalysisResult(BaseModel):
@@ -66,12 +67,6 @@ class QueryAnalyzer:
                 confidence=1.0,
                 reasoning="Fast-path greeting regex match"
             )
-
-        # Fast-Path 2: Deterministic tabular property lookups
-        is_tabular_override = False
-        tabular_pattern = r'\b(what is|find|get|give me|show)\b.*\b(salary|age|count|employee id|email)\b'
-        if re.search(tabular_pattern, q_strip, re.IGNORECASE):
-            is_tabular_override = True
 
         kb_context_section = f"\n[ACTIVE KNOWLEDGE BASES CONTEXT]\nThe user is searching across these knowledge bases. Use this context to deduce the meaning of ambiguous terms:\n{kb_context}\n" if kb_context else ""
         
@@ -182,8 +177,8 @@ QUERY:
         from app.core.llm.routing import LLMTask
         
         import asyncio
-        # We will try up to 2 times (1 initial + 1 retry)
-        max_attempts = 2
+        # We will try up to 1 times (no retries to bound latency)
+        max_attempts = 1
         for attempt in range(max_attempts):
             try:
                 response = await asyncio.wait_for(
@@ -194,7 +189,7 @@ QUERY:
                         max_tokens=1024,
                         enable_thinking=False,
                         model=self.llm_client.model_intent,
-                        timeout=10.0, # Fast-fail timeout to mitigate provider jitter
+                        timeout=15.0, # Fast-fail timeout to mitigate provider jitter
                         task=LLMTask.INTENT_DETECTION
                     ),
                     timeout=10.5
@@ -263,7 +258,7 @@ QUERY:
                     structured_queries=metadata_dict.get("structured_queries", [])
                 )
 
-                is_tabular = bool(data.get("is_tabular", False)) or is_tabular_override
+                is_tabular = bool(data.get("is_tabular", False))
                 
                 return AnalysisResult(
                     intent=intent,
@@ -289,7 +284,7 @@ QUERY:
                             keywords=[q_strip],
                             corrected_query=q_strip
                         ),
-                        is_tabular=is_tabular_override,
+                        is_tabular=False,
                         confidence=0.5,
                         reasoning=f"Provider timeout/error fallback. Original error: {e}"
                     )
