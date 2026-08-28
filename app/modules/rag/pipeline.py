@@ -364,9 +364,9 @@ class RAGPipeline:
         kb_scores = []
         unbackfilled_kbs = []
         
-        # Small KB count (e.g. <= 3 KBs for agent): pass through directly so queries like 'summarize' or explicit KB selections are never dropped
-        if len(kb_ids) <= 3:
-            logger.info(f"[GATE_FLOW_MARKER] KB count is {len(kb_ids)} (<= 3). Passing through all KBs.")
+        # Pass through all KBs if count is reasonable (<= 10 KBs) to guarantee zero retrieval suppression
+        if len(kb_ids) <= 10:
+            logger.info(f"[GATE_FLOW_MARKER] KB count is {len(kb_ids)} (<= 10). Passing through all KBs.")
             return kb_ids
 
         for kb_id in kb_ids:
@@ -873,35 +873,69 @@ class RAGPipeline:
                     logger.warning(f"Triplet retrieval failed (non-blocking): {e}")
                     return []
 
-            # 2. Neo4j Keyword Search
+            # 2. Hybrid (Postgres + Neo4j) Keyword Search
             async def _run_keyword_search(target_sections=None):
+                results_cids = []
                 try:
                     keywords = getattr(analysis.metadata, "keywords", [])
                     if not keywords:
-                        # Extract simple words if no keywords provided
                         keywords = [w for w in current_query.split() if len(w) > 3]
                     if not keywords:
                         return []
-                    
-                    cypher = """
-                    MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk)
-                    WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
-                    """
-                    if target_sections:
-                        cypher += " AND c.section IN $target_sections "
-                    
-                    cypher += """
-                    AND any(word IN $keywords WHERE toLower(c.text) CONTAINS toLower(word))
-                    RETURN DISTINCT c.id as section_id
-                    LIMIT 50
-                    """
-                    
-                    params = {"kb_ids": kb_ids, "tenant_id": self.tenant_id, "keywords": keywords}
-                    if target_sections:
-                        params["target_sections"] = target_sections
-                        
-                    results = await self.neo4j_repo.execute_read(cypher, params)
-                    return [r.get("section_id") for r in results] if results else []
+
+                    # 2a. Postgres ILIKE / Keyword Search on DocumentChunk
+                    if getattr(self, "db", None):
+                        try:
+                            from app.modules.knowledge_bases.models import DocumentChunk
+                            from sqlalchemy import select, or_, and_
+                            from uuid import UUID
+                            kw_conditions = [
+                                DocumentChunk.tenant_id == UUID(str(self.tenant_id)),
+                                DocumentChunk.kb_id.in_([UUID(str(k)) for k in kb_ids])
+                            ]
+                            kw_clauses = [DocumentChunk.text.ilike(f"%{kw}%") for kw in keywords if len(kw) > 2]
+                            if kw_clauses:
+                                kw_conditions.append(or_(*kw_clauses))
+                                stmt = select(DocumentChunk.id).where(and_(*kw_conditions)).limit(50)
+                                res = await self.db.execute(stmt)
+                                pg_ids = [str(r[0]) for r in res.fetchall()]
+                                results_cids.extend(pg_ids)
+                        except Exception as pg_err:
+                            logger.warning(f"Postgres keyword search warning: {pg_err}")
+
+                    # 2b. Neo4j Cypher Keyword Search
+                    if getattr(self, "neo4j_repo", None):
+                        try:
+                            cypher = """
+                            MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk)
+                            WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
+                            """
+                            if target_sections:
+                                cypher += " AND c.section IN $target_sections "
+                            
+                            cypher += """
+                            AND any(word IN $keywords WHERE toLower(c.text) CONTAINS toLower(word))
+                            RETURN DISTINCT c.id as section_id
+                            LIMIT 50
+                            """
+                            params = {"kb_ids": kb_ids, "tenant_id": self.tenant_id, "keywords": keywords}
+                            if target_sections:
+                                params["target_sections"] = target_sections
+                                
+                            results = await self.neo4j_repo.execute_read(cypher, params)
+                            if results:
+                                results_cids.extend([r.get("section_id") for r in results if r.get("section_id")])
+                        except Exception as neo_err:
+                            logger.warning(f"Neo4j keyword search warning: {neo_err}")
+
+                    # Deduplicate preserving order
+                    seen = set()
+                    final_kw_cids = []
+                    for cid in results_cids:
+                        if cid and cid not in seen:
+                            seen.add(cid)
+                            final_kw_cids.append(cid)
+                    return final_kw_cids
                 except Exception as e:
                     logger.warning(f"Keyword search failed (non-blocking): {e}")
                     return []
@@ -1129,12 +1163,21 @@ class RAGPipeline:
                     )
                     
                     # Reorder final_chunks based on reranker results
+                    import math
                     new_final_chunks = []
-                    for r in reranked_results:
+                    for rank, r in enumerate(reranked_results):
                         orig_idx = r.get("original_index")
                         if orig_idx is not None and orig_idx < len(final_chunks):
                             chunk = final_chunks[orig_idx]
-                            chunk.hybrid_score = r.get("relevance_score", 0.0)
+                            raw_score = r.get("relevance_score", 0.0)
+                            if isinstance(raw_score, (int, float)):
+                                if raw_score > 1.0 or raw_score < 0.0:
+                                    prob = 1.0 / (1.0 + math.exp(-max(-20.0, min(20.0, raw_score))))
+                                else:
+                                    prob = raw_score
+                            else:
+                                prob = 0.95 - (rank * 0.01)
+                            chunk.hybrid_score = max(0.50, prob)
                             chunk.reason = "LLM_RERANKED"
                             new_final_chunks.append(chunk)
                             

@@ -149,12 +149,9 @@ class VectorEngine(BaseEngine):
                 candidate_limit = max(top_k, 15)
 
                 vector_score = (1.0 - DocumentChunk.embedding.cosine_distance(query_embedding))
-                position_boost = case((DocumentChunk.chunk_index < 3, 1.0), else_=0.0).cast(Float)
+                position_boost = case((DocumentChunk.chunk_index < 3, 0.01), else_=0.0).cast(Float)
 
                 # Build the WHERE conditions.
-                # When target_section_ids is populated, restrict the candidate
-                # set to those specific chunk UUIDs so vector ranking operates
-                # within the permitted section scope, not across the entire KB.
                 base_conditions = [
                     DocumentChunk.tenant_id == UUID(str(self.tenant_id)),
                     DocumentChunk.kb_id.in_([UUID(str(kb_id)) for kb_id in kb_ids]),
@@ -185,6 +182,7 @@ class VectorEngine(BaseEngine):
                         DocumentChunk.text,
                         DocumentChunk.chunk_index,
                         DocumentChunk.kb_id,
+                        DocumentChunk.section,
                         DocumentChunk.metadata_json,
                         KnowledgeBase.name,
                         KnowledgeBase.s3_path,
@@ -197,6 +195,35 @@ class VectorEngine(BaseEngine):
                 )
 
                 res = await self.db.execute(stmt)
+                all_rows = res.fetchall()
+
+                # Fallback: If section-restricted search returned 0 results, fall back to broad search
+                if not all_rows and target_sections:
+                    logger.info(f"VectorEngine task={task.task_id}: 0 results with target_sections filter. Retrying with broad KB search fallback.")
+                    fallback_conditions = [
+                        DocumentChunk.tenant_id == UUID(str(self.tenant_id)),
+                        DocumentChunk.kb_id.in_([UUID(str(kb_id)) for kb_id in kb_ids]),
+                    ]
+                    stmt_fallback = (
+                        select(
+                            DocumentChunk.id,
+                            DocumentChunk.text,
+                            DocumentChunk.chunk_index,
+                            DocumentChunk.kb_id,
+                            DocumentChunk.section,
+                            DocumentChunk.metadata_json,
+                            KnowledgeBase.name,
+                            KnowledgeBase.s3_path,
+                            vector_score.label("similarity"),
+                        )
+                        .join(KnowledgeBase, DocumentChunk.kb_id == KnowledgeBase.id)
+                        .where(and_(*fallback_conditions))
+                        .order_by((vector_score + position_boost).desc())
+                        .limit(200)
+                    )
+                    res_fb = await self.db.execute(stmt_fallback)
+                    all_rows = res_fb.fetchall()
+
                 chunks = []
 
                 # Get intelligent keywords from QueryAnalyzer
@@ -220,8 +247,6 @@ class VectorEngine(BaseEngine):
                     exploded_keywords = {w.lower() for w in task.query.split() if len(w) > 4 and w.isalnum()}
                     
                 logger.info(f"[BOOST_CHECK] task_id={task.task_id} analyzer_keywords={analyzer_keywords} exploded_keywords={exploded_keywords}")
-
-                all_rows = res.fetchall()
                 
                 # To prevent log spam, we only log the match once per kb
                 matched_kbs = set()
@@ -234,8 +259,11 @@ class VectorEngine(BaseEngine):
 
                     weight = 1.0
                     
+                    # Section Match Boost
+                    if target_sections and row.section in target_sections:
+                        weight *= 1.25
+
                     # 1. Source Identity Anchoring (Domain Match)
-                    # If the KB filename/name explicitly contains our query's core entities, massively boost it
                     import re
                     def basic_stem(word):
                         if len(word) <= 3: return word
@@ -246,7 +274,6 @@ class VectorEngine(BaseEngine):
 
                     for kw in exploded_keywords:
                         if len(kw) > 3:
-                            # Use basic stemming to allow 'hike' to match 'hiking' (stem 'hik')
                             stemmed_kw = basic_stem(kw)
                             if re.search(rf"\b{re.escape(stemmed_kw)}", kb_name) or re.search(rf"\b{re.escape(stemmed_kw)}", kb_path):
                                 weight *= 1.40
@@ -260,10 +287,8 @@ class VectorEngine(BaseEngine):
                             weight *= 1.05
 
                     base_weighted = similarity * weight
-                    if row.chunk_index < 3:
-                        final_score = base_weighted + 1.0
-                    else:
-                        final_score = min(base_weighted, 2.0)
+                    pos_boost = 0.005 if row.chunk_index < 3 else 0.0
+                    final_score = base_weighted + pos_boost
 
                     chunks.append(RetrievedChunk(
                         chunk_id=str(row.id),
@@ -277,11 +302,7 @@ class VectorEngine(BaseEngine):
                         source=row.s3_path or row.name or f"DocumentChunk {row.chunk_index}",
                         s3_path=row.s3_path,
                         engine_name="vector",
-                        section="Unknown",
-                        # ontology_node is intentionally None: pgvector retrieves
-                        # by embedding proximity, not by explicit ontology
-                        # membership.  Assigning task.target_section here would
-                        # fabricate coverage-validation evidence.
+                        section=row.section or "Unknown",
                         ontology_node=None,
                         retrieval_path=retrieval_path,
                     ))
