@@ -89,6 +89,23 @@ async def main():
             except Exception as e:
                 print(f"  Note on {col_name}: {e}")
         
+        print("Adding columns to knowledge_bases...")
+        kb_columns = [
+            ("dataset_schema", "JSONB"),
+            ("categorical_values", "JSONB"),
+            ("noisy_words", "JSONB"),
+            ("noisy_words_generated_at", "TIMESTAMP WITH TIME ZONE"),
+            ("summary_embedding", "vector(4096)"),
+            ("s3_path", "VARCHAR(1024)"),
+            ("parsed_path", "VARCHAR(1024)"),
+            ("file_hash", "VARCHAR(64)")
+        ]
+        for col_name, col_type in kb_columns:
+            try:
+                await conn.execute(text(f"ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+            except Exception as e:
+                print(f"  Note on knowledge_bases.{col_name}: {e}")
+
         print("Successfully updated database schema!")
 
 if __name__ == "__main__":
