@@ -681,31 +681,6 @@ export default function EmbedScriptSection() {
   const scriptCode = `<script src='${process.env.NEXT_PUBLIC_API_BASES_URL || "http://grag.gramopro.ai"}/chat.js'
   data-agent-id="${agent?.id || "YOUR_AGENT_ID"}"
   data-tenant-id="${agentresp?.[0]?.tenant_id || "YOUR_TENANT_ID"}"
-  data-chat-type="${chatType}"${chatType === "search" ? `\n  data-position="${position}"\n  data-placeholder="${placeholderText}"` : ""}
-  data-theme-color="${themeColor}"
-  data-theme-text-color="${themeTextColor}"
-  data-btn-bg-color="${btnBgColor}"
-  data-btn-border-color="${btnBorderColor}"
-  data-header-logo="${headerLogo}"
-  data-header-align="${headerAlignment}"
-  data-header-name="${headerName}"
-  data-header-subtext="${headerSubtext}"
-  data-agent-label="${agentLabel}"
-  data-bot-avatar="${botAvatar}"
-  data-button-icon="${buttonIcon}"
-  data-button-align="${buttonAlignment}"
-  data-show-button-text="${showButtonText}"
-  data-button-text="${buttonText}"${initialMessage ? `\n  data-initial-message="${initialMessage}"` : ""}
-  data-display-sources="${displaySources}"
-  data-allow-downloads="${allowDownloads}"
-  data-display-copy="${displayCopyBtn}"
-  data-display-feedback="${displayFeedback}"
-  data-link-safety="${linkSafety}"
-  data-lead-collection="${leadCollection}"
-  data-lead-fields='${JSON.stringify(leadFields.split(",").map(f => f.trim()))}'
-  data-lead-timing="${leadTiming}"
-  data-escalation-enabled="${escalationEnabled}"
-  data-escalation-link="${escalationLink}"
 >
 </script>`;
 
@@ -882,98 +857,7 @@ export default function EmbedScriptSection() {
                 {"\n  "}
                 <span className="text-[#3b82f6]">data-tenant-id=</span>
                 <span className="text-emerald-500">{`"${agentresp?.[0]?.tenant_id || "YOUR_TENANT_ID"}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-chat-type=</span>
-                <span className="text-emerald-500">{`"${chatType}"`}</span>
-                {chatType === "search" && (
-                  <>
-                    {"\n  "}
-                    <span className="text-[#3b82f6]">data-position=</span>
-                    <span className="text-emerald-500">{`"${position}"`}</span>
-                    {"\n  "}
-                    <span className="text-[#3b82f6]">data-placeholder=</span>
-                    <span className="text-emerald-500">{`"${placeholderText}"`}</span>
-                  </>
-                )}
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-theme-color=</span>
-                <span className="text-emerald-500">{`"${themeColor}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-theme-text-color=</span>
-                <span className="text-emerald-500">{`"${themeTextColor}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-btn-bg-color=</span>
-                <span className="text-emerald-500">{`"${btnBgColor}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-btn-border-color=</span>
-                <span className="text-emerald-500">{`"${btnBorderColor}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-header-logo=</span>
-                <span className="text-emerald-500">{`"${headerLogo}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-header-align=</span>
-                <span className="text-emerald-500">{`"${headerAlignment}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-header-name=</span>
-                <span className="text-emerald-500">{`"${headerName}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-header-subtext=</span>
-                <span className="text-emerald-500">{`"${headerSubtext}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-agent-label=</span>
-                <span className="text-emerald-500">{`"${agentLabel}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-bot-avatar=</span>
-                <span className="text-emerald-500">{`"${botAvatar}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-button-icon=</span>
-                <span className="text-emerald-500">{`"${buttonIcon}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-button-align=</span>
-                <span className="text-emerald-500">{`"${buttonAlignment}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-show-button-text=</span>
-                <span className="text-emerald-500">{`"${showButtonText}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-button-text=</span>
-                <span className="text-emerald-500">{`"${buttonText}"`}</span>
-                {initialMessage && (
-                  <>
-                    {"\n  "}
-                    <span className="text-[#3b82f6]">data-initial-message=</span>
-                    <span className="text-emerald-500">{`"${initialMessage}"`}</span>
-                  </>
-                )}
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-display-sources=</span>
-                <span className="text-emerald-500">{`"${displaySources}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-allow-downloads=</span>
-                <span className="text-emerald-500">{`"${allowDownloads}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-display-copy=</span>
-                <span className="text-emerald-500">{`"${displayCopyBtn}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-display-feedback=</span>
-                <span className="text-emerald-500">{`"${displayFeedback}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-link-safety=</span>
-                <span className="text-emerald-500">{`"${linkSafety}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-lead-collection=</span>
-                <span className="text-emerald-500">{`"${leadCollection}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-lead-fields=</span>
-                <span className="text-emerald-500">{`'${JSON.stringify(leadFields.split(",").map(f => f.trim()))}'`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-lead-timing=</span>
-                <span className="text-emerald-500">{`"${leadTiming}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-escalation-enabled=</span>
-                <span className="text-emerald-500">{`"${escalationEnabled}"`}</span>
-                {"\n  "}
-                <span className="text-[#3b82f6]">data-escalation-link=</span>
-                <span className="text-emerald-500">{`"${escalationLink}"`}</span>
+                {"\n"}
                 <span className="text-[#0fb5a1] opacity-80">{">"}</span>
                 <span className="text-[#0fb5a1] opacity-80">{"</script>"}</span>
               </code>
@@ -1014,355 +898,6 @@ export default function EmbedScriptSection() {
               type="card"
               className="custom-widget-tabs"
               items={[
-                {
-                  key: "header",
-                  label: (
-                    <span className="flex items-center gap-1.5 font-bold text-xs">
-                      <SettingOutlined /> Header Styles
-                    </span>
-                  ),
-                  children: (
-                    <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-4 min-h-[350px]">
-                      <div>
-                        <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200 m-0">Header Styles</h4>
-                        <p className="text-[11px] text-slate-400 m-0">Personalize the look of your widget header.</p>
-                      </div>
-
-                      {/* Preset Header Logos */}
-                      {/* <div>
-                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Preset Logos:</label>
-                        <div className="flex items-center gap-3">
-                          {[LOGO_PRESET_DARK, LOGO_PRESET_LIGHT, LOGO_PRESET_MINI].map((presetUrl, idx) => (
-                            <div
-                              key={idx}
-                              onClick={() => setDraftHeaderLogo(presetUrl)}
-                              className={`w-14 h-14 rounded-xl border-2 cursor-pointer p-1.5 flex items-center justify-center bg-white dark:bg-slate-950 transition-all ${draftHeaderLogo === presetUrl
-                                  ? "border-[#0fb5a1] ring-2 ring-[#0fb5a1]/20 scale-105"
-                                  : "border-slate-200 dark:border-slate-800 hover:border-slate-300"
-                                }`}
-                            >
-                              <img src={presetUrl} alt={`Preset ${idx + 1}`} className="max-h-full max-w-full object-contain rounded-md" />
-                            </div>
-                          ))}
-                        </div>
-                      </div> */}
-
-                      <div>
-                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Selected Logo:</label>
-                        <div className="flex items-center gap-3">
-                          <div className="relative w-28 h-14 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-1 flex items-center justify-center shadow-sm">
-                            {draftHeaderLogo ? (
-                              <>
-                                <img src={draftHeaderLogo} alt="Selected Logo" className="max-h-full max-w-full object-contain" />
-                                <button
-                                  type="button"
-                                  onClick={() => setDraftHeaderLogo("")}
-                                  className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center text-xs hover:bg-red-600 transition-colors shadow-md border-none cursor-pointer"
-                                  title="Remove logo"
-                                >
-                                  ✕
-                                </button>
-                              </>
-                            ) : (
-                              <span className="text-[10px] text-slate-400 italic">No logo selected</span>
-                            )}
-                          </div>
-
-                         
-                          <label className="w-14 h-14 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-[#0fb5a1] cursor-pointer flex items-center justify-center bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:text-[#0fb5a1] transition-all shadow-sm">
-                            {uploadingHeaderLogo ? (
-                              <Spin size="small" />
-                            ) : (
-                              <CloudUploadOutlined className="text-xl" />
-                            )}
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) handleFileUpload(file, "headerLogo");
-                              }}
-                            />
-                          </label>
-                        </div>
-                        <p className="text-[10px] text-slate-400 mt-1.5 mb-0">Recommended size: 120 × 40 px or 3:1 aspect ratio (PNG, SVG, JPG, max 2MB)</p>
-                      </div>
-
-                     
-                      <div>
-                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Header Title</label>
-                        <Input
-                          value={draftHeaderName}
-                          onChange={(e) => setDraftHeaderName(e.target.value)}
-                          placeholder="Gsearch AI"
-                          className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
-                        />
-                      </div>
-
-                      
-                      <div>
-                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Header Subtext</label>
-                        <Input
-                          value={draftHeaderSubtext}
-                          onChange={(e) => setDraftHeaderSubtext(e.target.value)}
-                          placeholder="The team can also help"
-                          className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
-                        />
-                      </div>
-
-                      
-                      <div>
-                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Alignment</label>
-                        <Radio.Group
-                          value={draftHeaderAlignment}
-                          onChange={(e) => setDraftHeaderAlignment(e.target.value)}
-                          size="middle"
-                        >
-                          <Radio value="left">Left</Radio>
-                          <Radio value="center">Center</Radio>
-                        </Radio.Group>
-                      </div>
-                    </div>
-                  ),
-                },
-                {
-                  key: "content",
-                  label: (
-                    <span className="flex items-center gap-1.5 font-bold text-xs">
-                      <FileTextOutlined /> Content
-                    </span>
-                  ),
-                  children: (
-                    <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-3.5 min-h-[350px] max-h-[450px] overflow-y-auto custom-scrollbar">
-                     
-                      <div>
-                        <label className="font-bold text-xs text-slate-800 dark:text-slate-200 block mb-0.5">
-                          Agent Chat Label
-                        </label>
-                        <p className="text-[10px] text-slate-400 m-0 mb-1.5 leading-normal">
-                          This label will appear above all responses sent by the agent in the chat feed.
-                        </p>
-                        <Input
-                          value={draftAgentLabel}
-                          onChange={(e) => setDraftAgentLabel(e.target.value)}
-                          placeholder="Agent"
-                          className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
-                        />
-                      </div>
-
-                      
-                      <div>
-                        <label className="font-bold text-xs text-slate-800 dark:text-slate-200 block mb-0.5">
-                          Initial Message
-                        </label>
-                        <p className="text-[10px] text-slate-400 m-0 mb-1.5 leading-normal">
-                          This text will appear as the first message from the bot displayed to the user. Supports Markdown. Optional, leave blank to disable.
-                        </p>
-                        <Input.TextArea
-                          rows={2}
-                          value={draftInitialMessage}
-                          onChange={(e) => setDraftInitialMessage(e.target.value)}
-                          placeholder="Hi! I'm your AI Support Agent. How can I help you today?"
-                          className="rounded-xl border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1] text-xs p-2.5"
-                        />
-                      </div>
-
-                      
-                      <div className="space-y-2 pt-1">
-                        
-                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
-                          <div className="flex items-start gap-2.5">
-                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
-                              <UnorderedListOutlined className="text-xs" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Display Sources</div>
-                              <div className="text-[10px] text-slate-400 leading-tight">Show sources titles and links after answers.</div>
-                            </div>
-                          </div>
-                          <Switch
-                            checked={draftDisplaySources}
-                            onChange={(checked) => setDraftDisplaySources(checked)}
-                            style={{ backgroundColor: draftDisplaySources ? draftThemeColor : undefined }}
-                          />
-                        </div>
-
-                        
-                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
-                          <div className="flex items-start gap-2.5">
-                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
-                              <DownloadOutlined className="text-xs" />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Allow Source Downloads</span>
-                                {/* <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-[#00a3c4] text-white leading-none">New!</span> */}
-                              </div>
-                              <div className="text-[10px] text-slate-400 leading-tight">Lets visitors download original document/media files from cited sources via securely signed urls.</div>
-                            </div>
-                          </div>
-                          <Switch
-                            checked={draftAllowDownloads}
-                            onChange={(checked) => setDraftAllowDownloads(checked)}
-                            style={{ backgroundColor: draftAllowDownloads ? draftThemeColor : undefined }}
-                          />
-                        </div>
-
-                        
-                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
-                          <div className="flex items-start gap-2.5">
-                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
-                              <CopyOutlined className="text-xs" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Display Copy Button</div>
-                              <div className="text-[10px] text-slate-400 leading-tight">Shows a copy-to-clipboard button after answer.</div>
-                            </div>
-                          </div>
-                          <Switch
-                            checked={draftDisplayCopyBtn}
-                            onChange={(checked) => setDraftDisplayCopyBtn(checked)}
-                            style={{ backgroundColor: draftDisplayCopyBtn ? draftThemeColor : undefined }}
-                          />
-                        </div>
-
-                        
-                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
-                          <div className="flex items-start gap-2.5">
-                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
-                              <LikeOutlined className="text-xs" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Display Feedback Buttons</div>
-                              <div className="text-[10px] text-slate-400 leading-tight">Shows thumbs up and thumbs down feedback buttons under AI responses.</div>
-                            </div>
-                          </div>
-                          <Switch
-                            checked={draftDisplayFeedback}
-                            onChange={(checked) => setDraftDisplayFeedback(checked)}
-                            style={{ backgroundColor: draftDisplayFeedback ? draftThemeColor : undefined }}
-                          />
-                        </div>
-
-                        
-                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
-                          <div className="flex items-start gap-2.5">
-                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
-                              <LinkOutlined className="text-xs" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Link Safety</div>
-                              <div className="text-[10px] text-slate-400 leading-tight">When enabled, clicking links inside the chat widget outside the current site or allowed domains will show a confirmation modal.</div>
-                            </div>
-                          </div>
-                          <Switch
-                            checked={draftLinkSafety}
-                            onChange={(checked) => setDraftLinkSafety(checked)}
-                            style={{ backgroundColor: draftLinkSafety ? draftThemeColor : undefined }}
-                          />
-                        </div>
-                      </div>
-
-                      
-                      <div className="border-t border-slate-200 dark:border-slate-800 my-4" />
-
-                     
-                      <div className="space-y-3.5 pb-2">
-                        {/* <div>
-                          <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 m-0">Lead & Support Escalation</h4>
-                          <p className="text-[10px] text-slate-400 m-0">Configure lead collection forms and support escalation links.</p>
-                        </div> */}
-
-                        {/* Lead Collection Toggle */}
-                        {/* <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
-                          <div className="flex items-start gap-2.5">
-                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
-                              <UserOutlined className="text-xs" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Lead Collection Form</div>
-                              <div className="text-[10px] text-slate-400 leading-tight">Display a form to collect information from visitors.</div>
-                            </div>
-                          </div>
-                          <Switch
-                            checked={draftLeadCollection}
-                            onChange={(checked) => {
-                              setDraftLeadCollection(checked);
-                              setPreviewLeadFormSubmitted(false);
-                            }}
-                            style={{ backgroundColor: draftLeadCollection ? draftThemeColor : undefined }}
-                          />
-                        </div> */}
-
-                        {/* {draftLeadCollection && (
-                          <div className="space-y-3 pl-2.5 border-l-2 border-slate-200 dark:border-slate-800 ml-3.5 animate-in fade-in slide-in-from-left duration-200">
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                                Required Fields (Comma Separated)
-                              </label>
-                              <Input
-                                value={draftLeadFields}
-                                onChange={(e) => setDraftLeadFields(e.target.value)}
-                                placeholder="name, email"
-                                className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
-                              />
-                            </div>
-
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                                Lead Capture Timing
-                              </label>
-                              <Select
-                                value={draftLeadTiming}
-                                onChange={(val) => setDraftLeadTiming(val)}
-                                className="w-full text-xs"
-                                size="middle"
-                                options={[
-                                  { value: "pre-chat", label: "Pre-Chat (Form shows before chatting starts)" }
-                                ]}
-                              />
-                            </div>
-                          </div>
-                        )} */}
-
-                        
-                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
-                          <div className="flex items-start gap-2.5">
-                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
-                              <CustomerServiceOutlined className="text-xs" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Human Support Escalation</div>
-                              <div className="text-[10px] text-slate-400 leading-tight">Prompt a "Talk to Human Agent" redirection link.</div>
-                            </div>
-                          </div>
-                          <Switch
-                            checked={draftEscalationEnabled}
-                            onChange={(checked) => setDraftEscalationEnabled(checked)}
-                            style={{ backgroundColor: draftEscalationEnabled ? draftThemeColor : undefined }}
-                          />
-                        </div>
-
-                        {draftEscalationEnabled && (
-                          <div className="space-y-3 pl-2.5 border-l-2 border-slate-200 dark:border-slate-800 ml-3.5 animate-in fade-in slide-in-from-left duration-200">
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                                Support Escalation Link URL
-                              </label>
-                              <Input
-                                value={draftEscalationLink}
-                                onChange={(e) => setDraftEscalationLink(e.target.value)}
-                                placeholder="e.g. https://example.ai/"
-                                className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ),
-                },
                 {
                   key: "button",
                   label: (
@@ -1734,7 +1269,358 @@ export default function EmbedScriptSection() {
                       </div>
                     </div>
                   ),
+                },        
+                {
+                  key: "content",
+                  label: (
+                    <span className="flex items-center gap-1.5 font-bold text-xs">
+                      <FileTextOutlined /> Content
+                    </span>
+                  ),
+                  children: (
+                    <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-3.5 min-h-[350px] max-h-[450px] overflow-y-auto custom-scrollbar">
+                     
+                      <div>
+                        <label className="font-bold text-xs text-slate-800 dark:text-slate-200 block mb-0.5">
+                          Agent Chat Label
+                        </label>
+                        <p className="text-[10px] text-slate-400 m-0 mb-1.5 leading-normal">
+                          This label will appear above all responses sent by the agent in the chat feed.
+                        </p>
+                        <Input
+                          value={draftAgentLabel}
+                          onChange={(e) => setDraftAgentLabel(e.target.value)}
+                          placeholder="Agent"
+                          className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
+                        />
+                      </div>
+
+                      
+                      <div>
+                        <label className="font-bold text-xs text-slate-800 dark:text-slate-200 block mb-0.5">
+                          Initial Message
+                        </label>
+                        <p className="text-[10px] text-slate-400 m-0 mb-1.5 leading-normal">
+                          This text will appear as the first message from the bot displayed to the user. Supports Markdown. Optional, leave blank to disable.
+                        </p>
+                        <Input.TextArea
+                          rows={2}
+                          value={draftInitialMessage}
+                          onChange={(e) => setDraftInitialMessage(e.target.value)}
+                          placeholder="Hi! I'm your AI Support Agent. How can I help you today?"
+                          className="rounded-xl border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1] text-xs p-2.5"
+                        />
+                      </div>
+
+                      
+                      <div className="space-y-2 pt-1">
+                        
+                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
+                          <div className="flex items-start gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
+                              <UnorderedListOutlined className="text-xs" />
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Display Sources</div>
+                              <div className="text-[10px] text-slate-400 leading-tight">Show sources titles and links after answers.</div>
+                            </div>
+                          </div>
+                          <Switch
+                            checked={draftDisplaySources}
+                            onChange={(checked) => setDraftDisplaySources(checked)}
+                            style={{ backgroundColor: draftDisplaySources ? draftThemeColor : undefined }}
+                          />
+                        </div>
+
+                        
+                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
+                          <div className="flex items-start gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
+                              <DownloadOutlined className="text-xs" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Allow Source Downloads</span>
+                                {/* <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-[#00a3c4] text-white leading-none">New!</span> */}
+                              </div>
+                              <div className="text-[10px] text-slate-400 leading-tight">Lets visitors download original document/media files from cited sources via securely signed urls.</div>
+                            </div>
+                          </div>
+                          <Switch
+                            checked={draftAllowDownloads}
+                            onChange={(checked) => setDraftAllowDownloads(checked)}
+                            style={{ backgroundColor: draftAllowDownloads ? draftThemeColor : undefined }}
+                          />
+                        </div>
+
+                        
+                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
+                          <div className="flex items-start gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
+                              <CopyOutlined className="text-xs" />
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Display Copy Button</div>
+                              <div className="text-[10px] text-slate-400 leading-tight">Shows a copy-to-clipboard button after answer.</div>
+                            </div>
+                          </div>
+                          <Switch
+                            checked={draftDisplayCopyBtn}
+                            onChange={(checked) => setDraftDisplayCopyBtn(checked)}
+                            style={{ backgroundColor: draftDisplayCopyBtn ? draftThemeColor : undefined }}
+                          />
+                        </div>
+
+                        
+                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
+                          <div className="flex items-start gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
+                              <LikeOutlined className="text-xs" />
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Display Feedback Buttons</div>
+                              <div className="text-[10px] text-slate-400 leading-tight">Shows thumbs up and thumbs down feedback buttons under AI responses.</div>
+                            </div>
+                          </div>
+                          <Switch
+                            checked={draftDisplayFeedback}
+                            onChange={(checked) => setDraftDisplayFeedback(checked)}
+                            style={{ backgroundColor: draftDisplayFeedback ? draftThemeColor : undefined }}
+                          />
+                        </div>
+
+                        
+                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
+                          <div className="flex items-start gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
+                              <LinkOutlined className="text-xs" />
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Link Safety</div>
+                              <div className="text-[10px] text-slate-400 leading-tight">When enabled, clicking links inside the chat widget outside the current site or allowed domains will show a confirmation modal.</div>
+                            </div>
+                          </div>
+                          <Switch
+                            checked={draftLinkSafety}
+                            onChange={(checked) => setDraftLinkSafety(checked)}
+                            style={{ backgroundColor: draftLinkSafety ? draftThemeColor : undefined }}
+                          />
+                        </div>
+                      </div>
+
+                      
+                      <div className="border-t border-slate-200 dark:border-slate-800 my-4" />
+
+                     
+                      <div className="space-y-3.5 pb-2">
+                        {/* <div>
+                          <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 m-0">Lead & Support Escalation</h4>
+                          <p className="text-[10px] text-slate-400 m-0">Configure lead collection forms and support escalation links.</p>
+                        </div> */}
+
+                        {/* Lead Collection Toggle */}
+                        {/* <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
+                          <div className="flex items-start gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
+                              <UserOutlined className="text-xs" />
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Lead Collection Form</div>
+                              <div className="text-[10px] text-slate-400 leading-tight">Display a form to collect information from visitors.</div>
+                            </div>
+                          </div>
+                          <Switch
+                            checked={draftLeadCollection}
+                            onChange={(checked) => {
+                              setDraftLeadCollection(checked);
+                              setPreviewLeadFormSubmitted(false);
+                            }}
+                            style={{ backgroundColor: draftLeadCollection ? draftThemeColor : undefined }}
+                          />
+                        </div> */}
+
+                        {/* {draftLeadCollection && (
+                          <div className="space-y-3 pl-2.5 border-l-2 border-slate-200 dark:border-slate-800 ml-3.5 animate-in fade-in slide-in-from-left duration-200">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                                Required Fields (Comma Separated)
+                              </label>
+                              <Input
+                                value={draftLeadFields}
+                                onChange={(e) => setDraftLeadFields(e.target.value)}
+                                placeholder="name, email"
+                                className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                                Lead Capture Timing
+                              </label>
+                              <Select
+                                value={draftLeadTiming}
+                                onChange={(val) => setDraftLeadTiming(val)}
+                                className="w-full text-xs"
+                                size="middle"
+                                options={[
+                                  { value: "pre-chat", label: "Pre-Chat (Form shows before chatting starts)" }
+                                ]}
+                              />
+                            </div>
+                          </div>
+                        )} */}
+
+                        
+                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
+                          <div className="flex items-start gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
+                              <CustomerServiceOutlined className="text-xs" />
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Human Support Escalation</div>
+                              <div className="text-[10px] text-slate-400 leading-tight">Prompt a "Talk to Human Agent" redirection link.</div>
+                            </div>
+                          </div>
+                          <Switch
+                            checked={draftEscalationEnabled}
+                            onChange={(checked) => setDraftEscalationEnabled(checked)}
+                            style={{ backgroundColor: draftEscalationEnabled ? draftThemeColor : undefined }}
+                          />
+                        </div>
+
+                        {draftEscalationEnabled && (
+                          <div className="space-y-3 pl-2.5 border-l-2 border-slate-200 dark:border-slate-800 ml-3.5 animate-in fade-in slide-in-from-left duration-200">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                                Support Escalation Link URL
+                              </label>
+                              <Input
+                                value={draftEscalationLink}
+                                onChange={(e) => setDraftEscalationLink(e.target.value)}
+                                placeholder="e.g. https://example.ai/"
+                                className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ),
                 },
+                 {
+                  key: "header",
+                  label: (
+                    <span className="flex items-center gap-1.5 font-bold text-xs">
+                      <SettingOutlined /> Header Styles
+                    </span>
+                  ),
+                  children: (
+                    <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-4 min-h-[350px]">
+                      <div>
+                        <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200 m-0">Header Styles</h4>
+                        <p className="text-[11px] text-slate-400 m-0">Personalize the look of your widget header.</p>
+                      </div>
+
+                      {/* Preset Header Logos */}
+                      {/* <div>
+                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Preset Logos:</label>
+                        <div className="flex items-center gap-3">
+                          {[LOGO_PRESET_DARK, LOGO_PRESET_LIGHT, LOGO_PRESET_MINI].map((presetUrl, idx) => (
+                            <div
+                              key={idx}
+                              onClick={() => setDraftHeaderLogo(presetUrl)}
+                              className={`w-14 h-14 rounded-xl border-2 cursor-pointer p-1.5 flex items-center justify-center bg-white dark:bg-slate-950 transition-all ${draftHeaderLogo === presetUrl
+                                  ? "border-[#0fb5a1] ring-2 ring-[#0fb5a1]/20 scale-105"
+                                  : "border-slate-200 dark:border-slate-800 hover:border-slate-300"
+                                }`}
+                            >
+                              <img src={presetUrl} alt={`Preset ${idx + 1}`} className="max-h-full max-w-full object-contain rounded-md" />
+                            </div>
+                          ))}
+                        </div>
+                      </div> */}
+
+                      <div>
+                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Selected Logo:</label>
+                        <div className="flex items-center gap-3">
+                          <div className="relative w-28 h-14 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-1 flex items-center justify-center shadow-sm">
+                            {draftHeaderLogo ? (
+                              <>
+                                <img src={draftHeaderLogo} alt="Selected Logo" className="max-h-full max-w-full object-contain" />
+                                <button
+                                  type="button"
+                                  onClick={() => setDraftHeaderLogo("")}
+                                  className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center text-xs hover:bg-red-600 transition-colors shadow-md border-none cursor-pointer"
+                                  title="Remove logo"
+                                >
+                                  ✕
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 italic">No logo selected</span>
+                            )}
+                          </div>
+
+                         
+                          <label className="w-14 h-14 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-[#0fb5a1] cursor-pointer flex items-center justify-center bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:text-[#0fb5a1] transition-all shadow-sm">
+                            {uploadingHeaderLogo ? (
+                              <Spin size="small" />
+                            ) : (
+                              <CloudUploadOutlined className="text-xl" />
+                            )}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleFileUpload(file, "headerLogo");
+                              }}
+                            />
+                          </label>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1.5 mb-0">Recommended size: 120 × 40 px or 3:1 aspect ratio (PNG, SVG, JPG, max 2MB)</p>
+                      </div>
+
+                     
+                      <div>
+                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Header Title</label>
+                        <Input
+                          value={draftHeaderName}
+                          onChange={(e) => setDraftHeaderName(e.target.value)}
+                          placeholder="Gsearch AI"
+                          className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
+                        />
+                      </div>
+
+                      
+                      <div>
+                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Header Subtext</label>
+                        <Input
+                          value={draftHeaderSubtext}
+                          onChange={(e) => setDraftHeaderSubtext(e.target.value)}
+                          placeholder="The team can also help"
+                          className="rounded-lg h-9 text-xs border-slate-300 dark:border-slate-700 dark:bg-slate-950 focus:border-[#0fb5a1]"
+                        />
+                      </div>
+
+                      
+                      <div>
+                        <label className="text-xs font-semibold text-slate-500 block mb-1.5">Alignment</label>
+                        <Radio.Group
+                          value={draftHeaderAlignment}
+                          onChange={(e) => setDraftHeaderAlignment(e.target.value)}
+                          size="middle"
+                        >
+                          <Radio value="left">Left</Radio>
+                          <Radio value="center">Center</Radio>
+                        </Radio.Group>
+                      </div>
+                    </div>
+                  ),
+                },
+                
+                
               ]}
             />
           </div>

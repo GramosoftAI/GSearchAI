@@ -6,7 +6,8 @@ import { inc, dec } from "../../config/loader";
 
 const getBaseUrl = () => {
   const envUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "";
-  return envUrl.replace(/\/api\/v1\/?$/, "").replace(/\/+$/, "");
+  // return envUrl.replace(/\/api\/v1\/?$/, "").replace(/\/+$/, "");
+  return envUrl;
 };
 
 export function useGetUsersApi() {
