@@ -4,6 +4,12 @@ from app.core.database import engine
 
 async def main():
     async with engine.begin() as conn:
+        try:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+            print("pgvector extension verified.")
+        except Exception as e:
+            print(f"pgvector extension notice: {e}")
+
         print("Adding columns to users...")
         user_columns = [
             ("preferred_llm_model", "VARCHAR(255)"),
@@ -89,6 +95,66 @@ async def main():
             except Exception as e:
                 print(f"  Note on {col_name}: {e}")
         
+        print("Adding columns to knowledge_bases...")
+        kb_columns = [
+            ("dataset_schema", "JSONB"),
+            ("categorical_values", "JSONB"),
+            ("noisy_words", "JSONB"),
+            ("noisy_words_generated_at", "TIMESTAMP WITH TIME ZONE"),
+            ("summary_embedding", "vector(4096)"),
+            ("s3_path", "VARCHAR(1024)"),
+            ("parsed_path", "VARCHAR(1024)"),
+            ("file_hash", "VARCHAR(64)")
+        ]
+        for col_name, col_type in kb_columns:
+            try:
+                await conn.execute(text(f"ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+                print(f"  Verified knowledge_bases.{col_name} ({col_type})")
+            except Exception as e:
+                print(f"  Note on knowledge_bases.{col_name}: {e}")
+
+        print("Ensuring llm_stage_usage_logs table exists...")
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS llm_stage_usage_logs (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                model_name VARCHAR(100) NOT NULL,
+                task_type VARCHAR(100) NOT NULL,
+                input_tokens INTEGER DEFAULT 0 NOT NULL,
+                output_tokens INTEGER DEFAULT 0 NOT NULL,
+                cost_usd DOUBLE PRECISION DEFAULT 0.0 NOT NULL,
+                query_preview VARCHAR(500),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+            );
+        """))
+
+        print("Ensuring app_error_logs table exists...")
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS app_error_logs (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL,
+                user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                module VARCHAR(100) NOT NULL,
+                endpoint VARCHAR(255),
+                error_type VARCHAR(100) NOT NULL,
+                message TEXT NOT NULL,
+                stack_trace TEXT,
+                request_metadata JSONB,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+            );
+        """))
+
+        print("Cleaning up legacy FTS columns and indexes if present...")
+        try:
+            await conn.execute(text("DROP INDEX IF EXISTS idx_chunks_search_vector_gin;"))
+            await conn.execute(text("ALTER TABLE document_chunks DROP COLUMN IF EXISTS search_vector;"))
+            await conn.execute(text("ALTER TABLE document_chunks DROP COLUMN IF EXISTS language;"))
+            await conn.execute(text("ALTER TABLE knowledge_bases DROP COLUMN IF EXISTS language;"))
+            print("Legacy FTS cleanup complete.")
+        except Exception as e:
+            print(f"Legacy FTS cleanup notice: {e}")
+
         print("Successfully updated database schema!")
 
 if __name__ == "__main__":
