@@ -840,22 +840,23 @@ async def init_db():
             # Create tables first if they don't exist
             await conn.run_sync(Base.metadata.create_all)
 
-        # Run vector column check in separate transaction
+        # Run vector column check in separate transaction (only if needed to avoid startup delays/locks)
         async with engine.begin() as conn:
             try:
-                await conn.execute(
-                    text(f"ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector({settings.embedding_dimension});")
+                check_type = await conn.execute(
+                    text("SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid = 'document_chunks'::regclass AND attname = 'embedding';")
                 )
-                logger.info(f" Verified/migrated document_chunks.embedding to vector({settings.embedding_dimension})")
-            except Exception as e:
-                logger.warning(
-                    f"Could not directly alter document_chunks.embedding to vector({settings.embedding_dimension}): {e}. Clearing old chunks..."
-                )
-                async with engine.begin() as clear_conn:
-                    await clear_conn.execute(text("DELETE FROM document_chunks;"))
-                    await clear_conn.execute(
-                        text(f"ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector({settings.embedding_dimension});")
+                curr_type = check_type.scalar()
+                target_type = f"vector({settings.embedding_dimension})"
+                if curr_type != target_type:
+                    logger.info(f"Migrating document_chunks.embedding from {curr_type} to {target_type}...")
+                    await conn.execute(
+                        text(f"ALTER TABLE document_chunks ALTER COLUMN embedding TYPE {target_type};")
                     )
+                else:
+                    logger.debug(f"document_chunks.embedding verified as {target_type}")
+            except Exception as e:
+                logger.warning(f"Vector column type check notice: {e}")
 
         async with engine.begin() as conn:
             # Auto-migrate document_chunks columns
