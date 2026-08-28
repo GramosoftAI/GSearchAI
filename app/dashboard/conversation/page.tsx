@@ -1058,6 +1058,8 @@ export default function ChatPlaygroundPage() {
     setActiveSources([]);
     setSelectedSourceForPreview(null);
     activeQuerySessionIdRef.current = null;
+    queryStartTimeRef.current = null;
+    lastResponseTimeSecRef.current = null;
   };
 
   useEffect(() => {
@@ -1240,6 +1242,13 @@ export default function ChatPlaygroundPage() {
       if (activeQuerySessionIdRef.current !== currentSessionIdRef.current) return;
       const rawData = String(event.data);
       console.log("onmessage");
+      
+      if (queryStartTimeRef.current && lastResponseTimeSecRef.current === null) {
+        const latency = (Date.now() - queryStartTimeRef.current) / 1000;
+        lastResponseTimeSecRef.current = Math.round(latency * 10) / 10;
+        queryStartTimeRef.current = null;
+      }
+
       if (!rawData.startsWith("{")) { //&& !rawData.startsWith("[")) rawData.length === 1 || (
         streamingTextRef.current += rawData;
         setStreamingText(streamingTextRef.current);
@@ -1305,14 +1314,6 @@ export default function ChatPlaygroundPage() {
             } as SourceMetadata));
           }
 
-          let duration: number | undefined = undefined;
-          if (queryStartTimeRef.current) {
-            duration = (Date.now() - queryStartTimeRef.current) / 1000;
-            duration = Math.round(duration * 10) / 10;
-            queryStartTimeRef.current = null;
-            lastResponseTimeSecRef.current = duration;
-          }
-
           if (accumulated) {
             setMessages((prev: any) => [
               ...prev,
@@ -1325,7 +1326,7 @@ export default function ChatPlaygroundPage() {
                   hour: "2-digit",
                   minute: "2-digit",
                 }),
-                responseTime: duration
+                responseTime: lastResponseTimeSecRef.current || undefined
               },
             ]);
           }
@@ -1612,6 +1613,7 @@ export default function ChatPlaygroundPage() {
     setMessages(updatedMessages);
 
     queryStartTimeRef.current = Date.now();
+    lastResponseTimeSecRef.current = null;
     ws.current?.send(JSON.stringify({
       query: userMsg.content,
       file: userMsg.file ? { name: userMsg.file.name, type: userMsg.file.type } : null,
@@ -1717,6 +1719,7 @@ export default function ChatPlaygroundPage() {
     }
 
     queryStartTimeRef.current = Date.now();
+    lastResponseTimeSecRef.current = null;
     setMessages((prev: any) => [...prev, {
       role: "user",
       content: trimmed,
@@ -2145,6 +2148,7 @@ export default function ChatPlaygroundPage() {
 
     
     queryStartTimeRef.current = Date.now();
+    lastResponseTimeSecRef.current = null;
     ws.current?.send(JSON.stringify({
       query: tempEditText.trim(),
       file: null,

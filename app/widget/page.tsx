@@ -800,6 +800,7 @@ function WidgetContent() {
   const progressLabel = useProgressLabel(isTyping);
   const isTypingRef = useRef(false);
   const queryStartTimeRef = useRef<number | null>(null);
+  const currentResponseTimeRef = useRef<number | null>(null);
 
   // Lead Collection State
   const [leadSubmitted, setLeadSubmitted] = useState<boolean>(false);
@@ -1392,6 +1393,7 @@ function WidgetContent() {
     currentMsgIdRef.current = null;
     currentSourcesRef.current = [];
     currentEscalationRef.current = false;
+    currentResponseTimeRef.current = null;
   }, []);
 
   const processIncomingChunk = useCallback((chunk: string, isDone: boolean = false, responseTime?: number) => {
@@ -1507,6 +1509,7 @@ function WidgetContent() {
         if (query) {
           bufferRef.current = "";
           queryStartTimeRef.current = Date.now();
+          currentResponseTimeRef.current = null;
           setMessages((prev) => [...prev, { role: "user", content: query, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }]);
           setIsTyping(true);
           startTypingTimeout();
@@ -1618,6 +1621,8 @@ function WidgetContent() {
       const initialQuery = searchParams.get("q");
       if (initialQuery && !initialQuerySentRef.current) {
         initialQuerySentRef.current = true;
+        queryStartTimeRef.current = Date.now();
+        currentResponseTimeRef.current = null;
         setMessages((prev) => [...prev, { role: "user", content: initialQuery, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }]);
         setIsTyping(true);
         startTypingTimeout();
@@ -1627,6 +1632,11 @@ function WidgetContent() {
 
     socket.onmessage = (event) => {
       console.log("WebSocket Raw Message:", event.data);
+      if (queryStartTimeRef.current && currentResponseTimeRef.current === null) {
+        const latency = (Date.now() - queryStartTimeRef.current) / 1000;
+        currentResponseTimeRef.current = Math.round(latency * 10) / 10;
+        queryStartTimeRef.current = null;
+      }
       try {
         const data = JSON.parse(event.data);
 
@@ -1695,7 +1705,7 @@ function WidgetContent() {
           }
 
           setIsTyping(true);
-          processIncomingChunk(data.delta);
+          processIncomingChunk(data.delta, false, currentResponseTimeRef.current || undefined);
         }
 
         if (data.type === "done" || data.type === "end") {
@@ -1703,14 +1713,7 @@ function WidgetContent() {
           if (data.message_id) currentMsgIdRef.current = data.message_id;
           if (data.escalation_detected === true) currentEscalationRef.current = true;
           
-          let duration: number | undefined = undefined;
-          if (queryStartTimeRef.current) {
-            duration = (Date.now() - queryStartTimeRef.current) / 1000;
-            duration = Math.round(duration * 10) / 10;
-            queryStartTimeRef.current = null;
-          }
-          
-          processIncomingChunk("", true, duration);
+          processIncomingChunk("", true, currentResponseTimeRef.current || undefined);
         }
       } catch (err) {
         setIsTyping(false);
@@ -1770,6 +1773,7 @@ function WidgetContent() {
     resetStreaming();
     bufferRef.current = ""; // reset old response
     queryStartTimeRef.current = Date.now();
+    currentResponseTimeRef.current = null;
     setMessages((prev) => [...prev, { role: "user", content: message, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }]);
     setIsTyping(true);
     startTypingTimeout();
