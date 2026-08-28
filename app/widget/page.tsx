@@ -29,6 +29,7 @@ type Message = {
   feedback?: "thumbs_up" | "thumbs_down";
   escalation_detected?: boolean;
   timestamp?: string;
+  responseTime?: number;
 };
 
 function stripThinking(content: string): string {
@@ -680,7 +681,8 @@ function WidgetContent() {
   const chatType = searchParams.get("chatType") || "icon";
   const themeColor = searchParams.get("themeColor") || "#0fb5a1";
   const placeholder = searchParams.get("placeholder") || "Ask a question...";
-  const headerLogo = searchParams.get("headerLogo") || "";
+  const headerLogoParam = searchParams.get("headerLogo");
+  const headerLogo = headerLogoParam !== null ? headerLogoParam : "/512_512.png";
   const headerAlign = searchParams.get("headerAlign") || "center";
   const headerNameParam = searchParams.get("headerName");
   const headerName = headerNameParam !== null ? headerNameParam : "Gsearch AI";
@@ -797,6 +799,7 @@ function WidgetContent() {
   const [answeredEscalations, setAnsweredEscalations] = useState<number[]>([]);
   const progressLabel = useProgressLabel(isTyping);
   const isTypingRef = useRef(false);
+  const queryStartTimeRef = useRef<number | null>(null);
 
   // Lead Collection State
   const [leadSubmitted, setLeadSubmitted] = useState<boolean>(false);
@@ -1391,7 +1394,7 @@ function WidgetContent() {
     currentEscalationRef.current = false;
   }, []);
 
-  const processIncomingChunk = useCallback((chunk: string, isDone: boolean = false) => {
+  const processIncomingChunk = useCallback((chunk: string, isDone: boolean = false, responseTime?: number) => {
     if (chunk) {
       bufferRef.current += chunk;
     }
@@ -1449,11 +1452,20 @@ function WidgetContent() {
               id: lastMsg.id || currentMsgIdRef.current || undefined,
               sources: finalSources,
               escalation_detected: lastMsg.escalation_detected || currentEscalationRef.current === true,
-              timestamp: lastMsg.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+              timestamp: lastMsg.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+              responseTime: responseTime !== undefined ? responseTime : lastMsg.responseTime
             },
           ];
         } else {
-          return [...prev, { role: "assistant", content: cleanedText, id: currentMsgIdRef.current || undefined, sources: finalSources, escalation_detected: currentEscalationRef.current === true, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }];
+          return [...prev, { 
+            role: "assistant", 
+            content: cleanedText, 
+            id: currentMsgIdRef.current || undefined, 
+            sources: finalSources, 
+            escalation_detected: currentEscalationRef.current === true, 
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+            responseTime: responseTime
+          }];
         }
       });
     });
@@ -1494,6 +1506,7 @@ function WidgetContent() {
         const query = event.data.query;
         if (query) {
           bufferRef.current = "";
+          queryStartTimeRef.current = Date.now();
           setMessages((prev) => [...prev, { role: "user", content: query, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }]);
           setIsTyping(true);
           startTypingTimeout();
@@ -1689,7 +1702,15 @@ function WidgetContent() {
           wsDoneRef.current = true;
           if (data.message_id) currentMsgIdRef.current = data.message_id;
           if (data.escalation_detected === true) currentEscalationRef.current = true;
-          processIncomingChunk("", true);
+          
+          let duration: number | undefined = undefined;
+          if (queryStartTimeRef.current) {
+            duration = (Date.now() - queryStartTimeRef.current) / 1000;
+            duration = Math.round(duration * 10) / 10;
+            queryStartTimeRef.current = null;
+          }
+          
+          processIncomingChunk("", true, duration);
         }
       } catch (err) {
         setIsTyping(false);
@@ -1748,6 +1769,7 @@ function WidgetContent() {
     if (!message) return;
     resetStreaming();
     bufferRef.current = ""; // reset old response
+    queryStartTimeRef.current = Date.now();
     setMessages((prev) => [...prev, { role: "user", content: message, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }]);
     setIsTyping(true);
     startTypingTimeout();
@@ -1934,18 +1956,11 @@ function WidgetContent() {
             width: "100%",
             justifyContent: headerAlign === "center" ? "center" : "flex-start"
           }}>
-            {(showInHeader || resolvedHeaderLogo) && (resolvedHeaderLogo || customizationLogoUrl) ? (
+            {resolvedHeaderLogo !== "" && (resolvedHeaderLogo || customizationLogoUrl) ? (
               <div style={{ height: "36px", display: "flex", alignItems: "center" }}>
                 <img src={resolvedHeaderLogo || customizationLogoUrl} alt="Header Logo" style={{ maxHeight: "36px", maxWidth: "120px", objectFit: "contain" }} />
               </div>
-            ) : (
-              <div style={{
-                width: "36px", height: "36px", borderRadius: "10px",
-                display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden"
-              }}>
-                <img src="/512_512.png" alt="Gsearch Logo" style={{ width: "36px", height: "36px", objectFit: "contain" }} />
-              </div>
-            )}
+            ) : null}
 
             <div>
               <div style={{ fontWeight: 600, fontSize: "15px", color: "#171717", display: "flex", alignItems: "center", gap: "6px" }}>
@@ -2280,21 +2295,30 @@ function WidgetContent() {
                       )}
                     </div>
 
-                    {msg.timestamp && (
-                      <div
-                        style={{
-                          fontSize: "10px",
-                          color: "#a3a3a3",
-                          marginTop: "4px",
-                          marginBottom: "2px",
-                          alignSelf: isUser ? "flex-end" : "flex-start",
-                          padding: isUser ? "0 4px 0 0" : "0 0 0 4px",
-                          userSelect: "none"
-                        }}
-                      >
-                        {msg.timestamp}
-                      </div>
-                    )}
+                    <div
+                      style={{
+                        fontSize: "10px",
+                        color: "#a3a3a3",
+                        marginTop: "4px",
+                        marginBottom: "2px",
+                        alignSelf: isUser ? "flex-end" : "flex-start",
+                        padding: isUser ? "0 4px 0 0" : "0 0 0 4px",
+                        userSelect: "none",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px"
+                      }}
+                    >
+                      {msg.timestamp && <span>{msg.timestamp}</span>}
+                      {!isUser && msg.responseTime !== undefined && (
+                        <>
+                          {msg.timestamp && <span>•</span>}
+                          <span style={{ color: "#a3a3a3" }}>
+                            Answered in {msg.responseTime}s
+                          </span>
+                        </>
+                      )}
+                    </div>
 
                     {/* Action Toolbar: Copy, Thumbs Up, Thumbs Down, Regenerate, Source (Far Right) */}
                     {!isUser && (!isTyping || index < messages.length - 1) && index !== 0 && (

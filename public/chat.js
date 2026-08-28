@@ -43,7 +43,8 @@
     const themeColor = config.theme_color || script.getAttribute("data-theme-color") || "#0fb5a1";
 
     // Custom design & branding attributes
-    const headerLogo = config.header_logo || script.getAttribute("data-header-logo") || "";
+    const headerLogoAttr = config.header_logo !== undefined ? config.header_logo : script.getAttribute("data-header-logo");
+    const headerLogo = headerLogoAttr !== null && headerLogoAttr !== undefined ? headerLogoAttr : "/512_512.png";
     const headerAlign = config.header_align || script.getAttribute("data-header-align") || "center";
     const headerNameAttr = config.header_name !== undefined ? config.header_name : script.getAttribute("data-header-name");
     const headerName = headerNameAttr !== null ? headerNameAttr : "Gsearch AI";

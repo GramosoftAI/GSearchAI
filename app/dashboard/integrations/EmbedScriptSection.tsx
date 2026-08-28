@@ -96,6 +96,14 @@ const toProxyLogoUrl = (url: string): string => {
   return url;
 };
 
+const CustomRobotIcon = ({ size = 18, color = "currentColor" }: { size?: number; color?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: "block" }}>
+    <rect x="3" y="11" width="18" height="10" rx="2" fill="none" />
+    <circle cx="8.5" cy="15.5" r="1.5" fill={color} />
+    <circle cx="15.5" cy="15.5" r="1.5" fill={color} />
+    <path d="M12 2v6M9 5h6" />
+  </svg>
+);
 
 export default function EmbedScriptSection() {
   const { notification } = App.useApp();
@@ -120,7 +128,7 @@ export default function EmbedScriptSection() {
   const [btnBorderColor, setBtnBorderColor] = useState<string>("#0fb5a1");
 
   
-  const [headerLogo, setHeaderLogo] = useState<string>(LOGO_PRESET_DARK);
+  const [headerLogo, setHeaderLogo] = useState<string>("/512_512.png");
   const [headerAlignment, setHeaderAlignment] = useState<"left" | "center">("center");
   const [headerName, setHeaderName] = useState<string>("Gsearch AI");
   const [headerSubtext, setHeaderSubtext] = useState<string>("The team can also help");
@@ -222,7 +230,7 @@ export default function EmbedScriptSection() {
     setThemeTextColor("#ffffff");
     setBtnBgColor("#0fb5a1");
     setBtnBorderColor("#0fb5a1");
-    setHeaderLogo(LOGO_PRESET_DARK);
+    setHeaderLogo("/512_512.png");
     setHeaderAlignment("center");
     setHeaderName("Gsearch AI");
     setHeaderSubtext("The team can also help");
@@ -255,7 +263,7 @@ export default function EmbedScriptSection() {
     setDraftThemeTextColor("#ffffff");
     setDraftBtnBgColor("#0fb5a1");
     setDraftBtnBorderColor("#0fb5a1");
-    setDraftHeaderLogo(LOGO_PRESET_DARK);
+    setDraftHeaderLogo("/512_512.png");
     setDraftHeaderAlignment("center");
     setDraftHeaderName("Gsearch AI");
     setDraftHeaderSubtext("The team can also help");
@@ -291,7 +299,13 @@ export default function EmbedScriptSection() {
         if (data.theme_text_color) { setThemeTextColor(data.theme_text_color); setDraftThemeTextColor(data.theme_text_color); }
         if (data.btn_bg_color) { setBtnBgColor(data.btn_bg_color); setDraftBtnBgColor(data.btn_bg_color); }
         if (data.btn_border_color) { setBtnBorderColor(data.btn_border_color); setDraftBtnBorderColor(data.btn_border_color); }
-        if (data.header_logo) { setHeaderLogo(data.header_logo); setDraftHeaderLogo(data.header_logo); }
+        if (data.header_logo !== undefined && data.header_logo !== null) {
+          setHeaderLogo(data.header_logo);
+          setDraftHeaderLogo(data.header_logo);
+        } else {
+          setHeaderLogo("/512_512.png");
+          setDraftHeaderLogo("/512_512.png");
+        }
         if (data.header_align) { setHeaderAlignment(data.header_align); setDraftHeaderAlignment(data.header_align); }
         if (data.header_name) { setHeaderName(data.header_name); setDraftHeaderName(data.header_name); }
         if (data.header_subtext) { setHeaderSubtext(data.header_subtext); setDraftHeaderSubtext(data.header_subtext); }
@@ -755,7 +769,7 @@ export default function EmbedScriptSection() {
   
   const botAvatarPresets = [
     { id: "chat", icon: <MessageOutlined className="text-lg text-slate-500" /> },
-    { id: "robot", icon: <RobotOutlined className="text-lg text-slate-500" /> },
+    { id: "robot", icon: <CustomRobotIcon size={18} color="#64748b" /> },
     { id: "setting", icon: <SettingOutlined className="text-lg text-slate-500" /> },
     { id: "info", icon: <InfoCircleOutlined className="text-lg text-slate-500" /> },
     { id: "book", icon: <BookOutlined className="text-lg text-slate-500" /> },
@@ -763,7 +777,7 @@ export default function EmbedScriptSection() {
 
   const buttonIconPresets = [
     { id: "chat", icon: <MessageOutlined className="text-lg text-slate-500" /> },
-    { id: "robot", icon: <RobotOutlined className="text-lg text-slate-500" /> },
+    { id: "robot", icon: <CustomRobotIcon size={18} color="#64748b" /> },
     { id: "setting", icon: <SettingOutlined className="text-lg text-slate-500" /> },
     { id: "question", icon: <QuestionCircleOutlined className="text-lg text-slate-500" /> },
     { id: "book", icon: <BookOutlined className="text-lg text-slate-500" /> },
@@ -1720,7 +1734,7 @@ export default function EmbedScriptSection() {
                     {draftButtonIcon.startsWith("http") || draftButtonIcon.startsWith("blob:") || draftButtonIcon.startsWith("data:") ? (
                       <img src={draftButtonIcon} alt="Icon" className="w-5 h-5 rounded-full object-contain" />
                     ) : draftButtonIcon === "robot" ? (
-                      <RobotOutlined className="text-lg" style={{ color: draftThemeTextColor }} />
+                      <CustomRobotIcon size={18} color={draftThemeTextColor} />
                     ) : draftButtonIcon === "setting" ? (
                       <SettingOutlined className="text-lg" style={{ color: draftThemeTextColor }} />
                     ) : draftButtonIcon === "question" ? (
@@ -1820,7 +1834,7 @@ export default function EmbedScriptSection() {
                       <div className={`flex items-center gap-2 w-full ${draftHeaderAlignment === "center" ? "justify-center" : "justify-start"}`}>
                         {draftHeaderLogo && (
                           <div className="h-6 max-w-[100px] flex items-center">
-                            {draftHeaderLogo.startsWith("http") || draftHeaderLogo.startsWith("blob:") || draftHeaderLogo.startsWith("data:") ? (
+                            {draftHeaderLogo.startsWith("http") || draftHeaderLogo.startsWith("blob:") || draftHeaderLogo.startsWith("data:") || draftHeaderLogo.startsWith("/") ? (
                               <img src={draftHeaderLogo} alt="Header Logo" className="max-h-full max-w-full object-contain" />
                             ) : (
                               <span className="text-xs font-extrabold text-[#0fb5a1]">{draftHeaderLogo}</span>
@@ -1903,7 +1917,7 @@ export default function EmbedScriptSection() {
                                           {draftBotAvatar.startsWith("http") || draftBotAvatar.startsWith("blob:") || draftBotAvatar.startsWith("data:") ? (
                                             <img src={draftBotAvatar} alt="Bot" className="w-full h-full object-cover" />
                                           ) : draftBotAvatar === "robot" ? (
-                                            <RobotOutlined className="text-xs text-white" />
+                                            <CustomRobotIcon size={14} color="#fff" />
                                           ) : draftBotAvatar === "setting" ? (
                                             <SettingOutlined className="text-xs text-white" />
                                           ) : draftBotAvatar === "info" ? (

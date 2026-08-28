@@ -1011,6 +1011,8 @@ export default function ChatPlaygroundPage() {
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [shouldLoadLatestOnFetch, setShouldLoadLatestOnFetch] = useState(false);
 
+  const queryStartTimeRef = useRef<number | null>(null);
+  const lastResponseTimeSecRef = useRef<number | null>(null);
   const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null);
   const [tempEditText, setTempEditText] = useState("");
   const [attachedFile, setAttachedFile] = useState<UploadFile | null>(null);
@@ -1303,6 +1305,14 @@ export default function ChatPlaygroundPage() {
             } as SourceMetadata));
           }
 
+          let duration: number | undefined = undefined;
+          if (queryStartTimeRef.current) {
+            duration = (Date.now() - queryStartTimeRef.current) / 1000;
+            duration = Math.round(duration * 10) / 10;
+            queryStartTimeRef.current = null;
+            lastResponseTimeSecRef.current = duration;
+          }
+
           if (accumulated) {
             setMessages((prev: any) => [
               ...prev,
@@ -1315,6 +1325,7 @@ export default function ChatPlaygroundPage() {
                   hour: "2-digit",
                   minute: "2-digit",
                 }),
+                responseTime: duration
               },
             ]);
           }
@@ -1355,8 +1366,9 @@ export default function ChatPlaygroundPage() {
               }
 
               if (rawMsgs.length > 0) {
-                const mappedMessages = rawMsgs.map((msg: any) => {
+                const mappedMessages = rawMsgs.map((msg: any, idx: number) => {
                   const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
+                  const isLastAssistant = msg.role === "assistant" && idx === rawMsgs.length - 1;
                   return {
                     id: msg.id || msg.message_id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
                     role: msg.role,
@@ -1367,9 +1379,11 @@ export default function ChatPlaygroundPage() {
                     timestamp: msg.created_at
                       ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
                       : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                    responseTime: (isLastAssistant && lastResponseTimeSecRef.current !== null) ? lastResponseTimeSecRef.current : undefined
                   };
                 });
                 setMessages(deduplicateMessages(mappedMessages));
+                lastResponseTimeSecRef.current = null;
               }
             })();
           }
@@ -1597,6 +1611,7 @@ export default function ChatPlaygroundPage() {
     const updatedMessages = messages.slice(0, userMessageIndex + 1);
     setMessages(updatedMessages);
 
+    queryStartTimeRef.current = Date.now();
     ws.current?.send(JSON.stringify({
       query: userMsg.content,
       file: userMsg.file ? { name: userMsg.file.name, type: userMsg.file.type } : null,
@@ -1701,6 +1716,7 @@ export default function ChatPlaygroundPage() {
       };
     }
 
+    queryStartTimeRef.current = Date.now();
     setMessages((prev: any) => [...prev, {
       role: "user",
       content: trimmed,
@@ -2128,6 +2144,7 @@ export default function ChatPlaygroundPage() {
     setEditingMessageIndex(null);
 
     
+    queryStartTimeRef.current = Date.now();
     ws.current?.send(JSON.stringify({
       query: tempEditText.trim(),
       file: null,
@@ -2700,8 +2717,14 @@ export default function ChatPlaygroundPage() {
                   )}
 
                   <div className="flex flex-col space-y-1 min-w-0 flex-1">
-                    <span className={`text-[9px] font-bold text-[var(--app-text-soft)] px-1 ${isUser ? "text-right" : "text-left"}`}>
-                      {msg.timestamp}
+                    <span className={`text-[9px] font-bold text-[var(--app-text-soft)] px-1 ${isUser ? "text-right" : "text-left"} flex items-center gap-1.5 ${isUser ? "justify-end" : "justify-start"}`}>
+                      <span>{msg.timestamp}</span>
+                      {!isUser && msg.responseTime !== undefined && (
+                        <>
+                          <span>•</span>
+                          <span>Answered in {msg.responseTime}s</span>
+                        </>
+                      )}
                     </span>
 
                     <div
