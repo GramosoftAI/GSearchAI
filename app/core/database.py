@@ -739,7 +739,7 @@ async def init_db():
         from ..modules.connectors.google.models import GmailMessage, GmailSyncState
         from ..modules.jobs.models import ProcessingJob
         from ..modules.Embed.models import WidgetCustomization
-        from ..modules.analytics.models import AnalyticsSummary, AnalyticsQueryLog as ChatAnalyticsQueryLog, AppErrorLog
+        from ..modules.analytics.models import AnalyticsSummary, AnalyticsQueryLog as ChatAnalyticsQueryLog, AppErrorLog, LLMStageUsageLog
         try:
             from ..memory.app.schema.database import EpisodicMemory, UserPreference, init_db as init_memory_db
             await init_memory_db()

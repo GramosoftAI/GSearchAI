@@ -112,6 +112,38 @@ async def main():
             except Exception as e:
                 print(f"  Note on knowledge_bases.{col_name}: {e}")
 
+        print("Ensuring llm_stage_usage_logs table exists...")
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS llm_stage_usage_logs (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                model_name VARCHAR(100) NOT NULL,
+                task_type VARCHAR(100) NOT NULL,
+                input_tokens INTEGER DEFAULT 0 NOT NULL,
+                output_tokens INTEGER DEFAULT 0 NOT NULL,
+                cost_usd DOUBLE PRECISION DEFAULT 0.0 NOT NULL,
+                query_preview VARCHAR(500),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+            );
+        """))
+
+        print("Ensuring app_error_logs table exists...")
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS app_error_logs (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL,
+                user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                module VARCHAR(100) NOT NULL,
+                endpoint VARCHAR(255),
+                error_type VARCHAR(100) NOT NULL,
+                message TEXT NOT NULL,
+                stack_trace TEXT,
+                request_metadata JSONB,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+            );
+        """))
+
         print("Successfully updated database schema!")
 
 if __name__ == "__main__":
