@@ -109,6 +109,7 @@ async def main():
         for col_name, col_type in kb_columns:
             try:
                 await conn.execute(text(f"ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+                print(f"  Verified knowledge_bases.{col_name} ({col_type})")
             except Exception as e:
                 print(f"  Note on knowledge_bases.{col_name}: {e}")
 
