@@ -670,9 +670,27 @@ class PDFStructureParser:
                                 "EXPERIENCE", "WORK EXPERIENCE", "WORK HISTORY", "PROJECTS", 
                                 "PROJECT DETAILS", "SKILLS", "TECHNICAL SKILLS", "ADDITIONAL SKILLS", 
                                 "CERTIFICATIONS", "LANGUAGES", "AWARDS", "INTERESTS", "PUBLICATIONS", 
-                                "ABOUT ME", "CONTACT", "CONTACT INFO", "PERSONAL DETAILS", "DECLARATION"
+                                "ABOUT ME", "CONTACT", "CONTACT INFO", "PERSONAL DETAILS", "DECLARATION",
+                                # NTSB & Incident Report specific
+                                "ANALYSIS", "PROBABLE CAUSE", "PROBABLE CAUSE AND FINDINGS", 
+                                "FINDINGS", "HISTORY OF FLIGHT", "METEOROLOGICAL INFORMATION", 
+                                "AIRCRAFT INFORMATION", "WRECKAGE AND IMPACT INFORMATION",
+                                "MEDICAL AND PATHOLOGICAL INFORMATION", "TESTS AND RESEARCH",
+                                "ADDITIONAL INFORMATION", "FLIGHT RECORDERS", "SURVIVAL ASPECTS"
                             }
-                            if is_all_caps or text.upper() in common_keywords:
+                            
+                            words = text.split()
+                            is_title_case = False
+                            if len(words) <= 6:
+                                connectors = {"and", "or", "of", "the", "in", "to", "for", "with", "on", "at", "by"}
+                                is_title_case = all(
+                                    w.isupper() or (w and w[0].isupper()) or (w.lower() in connectors)
+                                    for w in words if w and w[0].isalpha()
+                                )
+                                if is_title_case and not any(w[0].isupper() for w in words if w and w[0].isalpha()):
+                                    is_title_case = False
+                            
+                            if is_all_caps or text.upper() in common_keywords or is_title_case:
                                 is_h = True
                                 
                     if is_h:
@@ -776,10 +794,30 @@ class PDFStructureParser:
                             "EXPERIENCE", "WORK EXPERIENCE", "WORK HISTORY", "PROJECTS", 
                             "PROJECT DETAILS", "SKILLS", "TECHNICAL SKILLS", "ADDITIONAL SKILLS", 
                             "CERTIFICATIONS", "LANGUAGES", "AWARDS", "INTERESTS", "PUBLICATIONS", 
-                            "ABOUT ME", "CONTACT", "CONTACT INFO", "PERSONAL DETAILS", "DECLARATION"
+                            "ABOUT ME", "CONTACT", "CONTACT INFO", "PERSONAL DETAILS", "DECLARATION",
+                            # NTSB & Incident Report specific
+                            "ANALYSIS", "PROBABLE CAUSE", "PROBABLE CAUSE AND FINDINGS", 
+                            "FINDINGS", "HISTORY OF FLIGHT", "METEOROLOGICAL INFORMATION", 
+                            "AIRCRAFT INFORMATION", "WRECKAGE AND IMPACT INFORMATION",
+                            "MEDICAL AND PATHOLOGICAL INFORMATION", "TESTS AND RESEARCH",
+                            "ADDITIONAL INFORMATION", "FLIGHT RECORDERS", "SURVIVAL ASPECTS"
                         }
                         
-                        if is_all_caps or stripped.upper() in common_keywords:
+                        # Check for Title Case short lines (e.g., "Probable Cause and Findings")
+                        words = stripped.split()
+                        is_title_case = False
+                        if len(words) <= 6:
+                            # Allow small connector words like 'and', 'of', 'the' to be lowercase
+                            connectors = {"and", "or", "of", "the", "in", "to", "for", "with", "on", "at", "by"}
+                            is_title_case = all(
+                                w.isupper() or (w and w[0].isupper()) or (w.lower() in connectors)
+                                for w in words if w and w[0].isalpha()
+                            )
+                            # Must have at least one capitalized word
+                            if is_title_case and not any(w[0].isupper() for w in words if w and w[0].isalpha()):
+                                is_title_case = False
+
+                        if is_all_caps or stripped.upper() in common_keywords or is_title_case:
                             is_heuristic_heading = True
                             heading_text = stripped
                             level = 2
@@ -984,7 +1022,8 @@ class PDFChunker:
                 current_combined_metadata = None
 
         for sec in sections:
-            sec_name = sec["name"]
+            # Truncate section name to 250 chars to fit safely within DB's VARCHAR(255)
+            sec_name = sec["name"][:250] if isinstance(sec.get("name"), str) else sec.get("name")
             sec_project = sec.get("project_name")
             sec_level = sec["level"]
             sec_text = sec["text"]
@@ -1035,7 +1074,17 @@ class PDFChunker:
                     })
                     position += 1
             else:
-                # Accumulate small sections
+                # Accumulate small sections — but flush when section name changes
+                # to preserve section identity for retrieval (SectionRanker needs
+                # distinct section labels to scope queries correctly).
+                section_changed = (
+                    current_combined_metadata is not None and
+                    current_combined_metadata.get("section") != sec_name and
+                    sec_name and sec_name != "Introduction"
+                )
+                if section_changed:
+                    flush_accumulator()
+                
                 if len(current_combined_text) + len(chunk_text) > max_chunk_size and current_combined_text:
                     flush_accumulator()
                     

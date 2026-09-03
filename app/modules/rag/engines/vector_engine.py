@@ -5,8 +5,15 @@ from app.modules.rag.pipeline import RetrievedChunk
 from app.modules.rag.schemas import RetrievalTask
 from app.modules.rag.orchestrator.query_analyzer import QueryIntent
 from app.modules.rag.engines.registry import BaseEngine, CapabilityRegistry
+from cachetools import TTLCache
+import asyncio
 
 logger = logging.getLogger(__name__)
+
+# Cache for section snippets to avoid per-query STRING_AGG DB hits
+# Key: f"{kb_id}_{tenant_id}", Value: Dict[str, str] mapping section -> snippet
+_KB_SECTION_SNIPPETS_CACHE = TTLCache(maxsize=100, ttl=3600)
+_KB_SECTION_SNIPPETS_LOCK = asyncio.Lock()
 
 @CapabilityRegistry.register("vector")
 class VectorEngine(BaseEngine):
@@ -35,6 +42,51 @@ class VectorEngine(BaseEngine):
         self.tenant_id = tenant_id
         self.neo4j_repo = neo4j_repo
         self.db = db
+
+    async def _get_or_load_kb_snippets(self, kb_id: str) -> Dict[str, str]:
+        """Lazy loads and caches the first ~600 chars of content for each section in a KB."""
+        cache_key = f"{kb_id}_{self.tenant_id}"
+        
+        # Fast path
+        if cache_key in _KB_SECTION_SNIPPETS_CACHE:
+            return _KB_SECTION_SNIPPETS_CACHE[cache_key]
+            
+        # Slow path with lock to prevent dogpiling
+        async with _KB_SECTION_SNIPPETS_LOCK:
+            if cache_key in _KB_SECTION_SNIPPETS_CACHE:
+                return _KB_SECTION_SNIPPETS_CACHE[cache_key]
+                
+            snippets = {}
+            if self.db:
+                try:
+                    import time
+                    from sqlalchemy import text
+                    t0 = time.time()
+                    
+                    sql = """
+                    WITH RankedChunks AS (
+                        SELECT kb_id, section, chunk_index, text,
+                               ROW_NUMBER() OVER(PARTITION BY kb_id, section ORDER BY chunk_index) as rn
+                        FROM document_chunks
+                        WHERE kb_id = :kb_id AND tenant_id = :tenant_id AND section IS NOT NULL
+                    )
+                    SELECT section, STRING_AGG(SUBSTRING(text, 1, 200), ' ' ORDER BY rn) as snippet
+                    FROM RankedChunks
+                    WHERE rn <= 3
+                    GROUP BY kb_id, section
+                    """
+                    res = await self.db.execute(text(sql), {'kb_id': kb_id, 'tenant_id': str(self.tenant_id)})
+                    for row in res.all():
+                        snippets[row.section] = row.snippet
+                        
+                    t1 = time.time()
+                    logger.info(f"[CACHE_WARM] Loaded {len(snippets)} section snippets for KB {kb_id} in {t1-t0:.3f}s")
+                except Exception as e:
+                    logger.error(f"Failed to load section snippets for KB {kb_id}: {e}")
+            
+            _KB_SECTION_SNIPPETS_CACHE[cache_key] = snippets
+            return snippets
+
     async def get_candidate_sections(self, task: RetrievalTask, kb_ids: List[str]) -> List[Dict[str, Any]]:
         import time
         trace_start = time.time()
@@ -55,35 +107,76 @@ class VectorEngine(BaseEngine):
         if not broad_keywords:
             logger.warning("VectorEngine received empty keywords from task metadata. Candidate section search may return 0 results.")
 
-        cypher = """
-        MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk)
-        WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
-        AND c.section IS NOT NULL
-        AND any(word IN $keywords WHERE toLower(c.text) CONTAINS toLower(word))
-        RETURN DISTINCT c.section as title, c.source_type as doc_type
-        LIMIT 50
-        """
-        try:
-            results = await self.neo4j_repo.execute_read(
-                cypher,
-                {"kb_ids": kb_ids, "tenant_id": self.tenant_id, "keywords": broad_keywords}
+        # Prefetch snippets for all candidate KBs concurrently
+        kb_snippets = {}
+        if self.db:
+            snippet_results = await asyncio.gather(
+                *[self._get_or_load_kb_snippets(str(k)) for k in kb_ids],
+                return_exceptions=True
             )
-            sections = []
-            if results:
-                for r in results:
-                    sections.append({
-                        "section_id": r.get("title", ""),
-                        "title": r.get("title", ""),
-                        "doc_type": r.get("doc_type", "unknown"),
-                        "task_id": getattr(task, "task_id", "")
-                    })
-            latency = time.time() - trace_start
-            logger.info(f"[TRACE_E2E] [EXIT] VectorEngine.get_candidate_sections - Output: {len(sections)} sections - Latency: {latency:.2f}s")
-            return sections
-        except Exception as e:
-            latency = time.time() - trace_start
-            logger.error(f"[TRACE_E2E] [EXIT] VectorEngine.get_candidate_sections - Output: ERROR - Latency: {latency:.2f}s - {e}")
-            return []
+            for k, res in zip(kb_ids, snippet_results):
+                if isinstance(res, dict):
+                    kb_snippets.update(res)
+
+        sections = []
+        if self.db:
+            try:
+                from sqlalchemy import select, or_, text
+                from app.modules.knowledge_bases.models import DocumentChunk
+                from uuid import UUID
+                
+                stmt = select(DocumentChunk.section).where(
+                    DocumentChunk.kb_id.in_([UUID(str(k)) for k in kb_ids]),
+                    DocumentChunk.tenant_id == UUID(str(self.tenant_id)),
+                    DocumentChunk.section.is_not(None)
+                ).group_by(DocumentChunk.section)
+                
+                if broad_keywords:
+                    # Use ILIKE for partial word matches without raw string interpolation
+                    ilike_conditions = [DocumentChunk.text.ilike(f"%{kw}%") for kw in broad_keywords]
+                    stmt = stmt.where(or_(*ilike_conditions))
+                    
+                    from sqlalchemy import case
+                    relevance_exprs = [
+                        case((DocumentChunk.section.ilike(f"%{kw}%"), 1), else_=0)
+                        for kw in broad_keywords
+                    ]
+                    relevance_score = sum(relevance_exprs)
+                    stmt = stmt.order_by(relevance_score.desc(), DocumentChunk.section.asc())
+                else:
+                    stmt = stmt.order_by(DocumentChunk.section.asc())
+                    
+                stmt = stmt.limit(1000)
+                
+                logger.info(f"[VECTOR_ENGINE_DEBUG] get_candidate_sections broad_keywords={broad_keywords}")
+                
+                res = await self.db.execute(stmt)
+                rows = res.all()
+                if len(rows) >= 1000:
+                    logger.warning(f"Candidate section truncation triggered: >= 1000 sections found, truncated to 1000.")
+                
+                for row in rows:
+                    sec = row.section
+                    if sec:
+                        sections.append({
+                            "section_id": sec,
+                            "title": sec,
+                            "snippet": kb_snippets.get(sec, ""),
+                            "doc_type": "document",
+                            "task_id": getattr(task, "task_id", "")
+                        })
+            except Exception as e:
+                logger.error(f"Postgres candidate section search failed: {e}")
+                if hasattr(self.db, "rollback"):
+                    import asyncio
+                    if asyncio.iscoroutinefunction(self.db.rollback):
+                        await self.db.rollback()
+                    else:
+                        self.db.rollback()
+                
+        latency = time.time() - trace_start
+        logger.info(f"[TRACE_E2E] [EXIT] VectorEngine.get_candidate_sections - Output: {len(sections)} sections - Latency: {latency:.2f}s")
+        return sections
 
     async def retrieve(self, task: RetrievalTask, kb_ids: List[str]) -> List[RetrievedChunk]:
         """
@@ -124,7 +217,7 @@ class VectorEngine(BaseEngine):
         # in which case we isolate to synthetic table chunks only.
         # ------------------------------------------------------------------
         if not target_sections:
-            retrieval_path = "table_fallback" if is_tabular else "full_kb_fallback"
+            retrieval_path = "full_kb_fallback"
         else:
             retrieval_path = "targeted_section"
         logger.info(f"zero_section_guard_path: {retrieval_path}")
@@ -171,13 +264,7 @@ class VectorEngine(BaseEngine):
                         task.task_id,
                         len(target_sections),
                     )
-                elif is_tabular:
-                    base_conditions.append(DocumentChunk.chunk_index >= 90000)
-                    logger.info(
-                        "VectorEngine task=%s: restricting pgvector search "
-                        "to synthetic table chunks ONLY (table_fallback).",
-                        task.task_id,
-                    )
+
 
                 stmt = (
                     select(
@@ -268,6 +355,11 @@ class VectorEngine(BaseEngine):
                     base_weighted = similarity * weight
                     if row.chunk_index < 3:
                         final_score = base_weighted + 1.0
+                    elif row.chunk_index >= 90000 and not is_tabular:
+                        # Synthetic table chunks are short, keyword-dense fragments
+                        # that artificially inflate similarity for narrative queries.
+                        # Penalize them so narrative chunks can surface.
+                        final_score = min(base_weighted * 0.85, 2.0)
                     else:
                         final_score = min(base_weighted, 2.0)
 
@@ -286,10 +378,10 @@ class VectorEngine(BaseEngine):
                         section="Unknown",
                         # ontology_node is intentionally None: pgvector retrieves
                         # by embedding proximity, not by explicit ontology
-                        # membership.  Assigning task.target_section here would
                         # fabricate coverage-validation evidence.
                         ontology_node=None,
                         retrieval_path=retrieval_path,
+                        domain_matched=(row.kb_id in matched_kbs),
                     ))
 
                 # Rerank in python
@@ -297,9 +389,16 @@ class VectorEngine(BaseEngine):
                 final_chunks = chunks[:candidate_limit]
                 latency = time.time() - trace_start
                 logger.info(f"[TRACE_E2E] [EXIT] VectorEngine.retrieve - Output: {len(final_chunks)} chunks (pgvector) - Latency: {latency:.2f}s")
+                logger.info(f"[BOOST_CHECK] returning matched_kb_ids={matched_kbs} type={type(matched_kbs)} to caller")
                 return final_chunks
             except Exception as e:
                 logger.error(f"VectorEngine pgvector retrieval failed: {e}. Falling back to Cypher.")
+                if hasattr(self.db, "rollback"):
+                    import asyncio
+                    if asyncio.iscoroutinefunction(self.db.rollback):
+                        await self.db.rollback()
+                    else:
+                        self.db.rollback()
 
         # ------------------------------------------------------------------
         # Cypher fallback (no db session available)

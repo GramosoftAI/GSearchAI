@@ -4,6 +4,8 @@ from typing import Dict, Any, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
+ID_REGEX_PATTERN = r'(?=.*\d)[a-zA-Z0-9-]{5,}'
+
 def get_schema_columns(dataset_schema: Optional[Dict[str, Any]], categorical_values: Optional[Dict[str, list]]) -> list[str]:
     cols = []
     if dataset_schema and "columns" in dataset_schema:
@@ -70,8 +72,8 @@ def evaluate_schema_overlap(
         total_term_overlap = term_overlap[0] + term_overlap[1]
         query_terms = set(re.findall(r'[a-zA-Z0-9]+', query.lower()))
         
-        # ID Regex (e.g., EMP1006, INV2023)
-        has_id_regex = bool(re.search(r'[a-zA-Z]{2,5}[0-9]{3,}', query))
+        # ID Regex (e.g., EMP1006, INV2023, or purely numeric 26080231)
+        has_id_regex = bool(re.search(ID_REGEX_PATTERN, query))
         
         # Analytic verbs
         analytic_verbs = {"average", "total", "sum", "count", "list", "how many", "max", "min", "which", "what"}

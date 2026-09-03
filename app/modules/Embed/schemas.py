@@ -94,6 +94,7 @@ class WidgetEmbedConfigCreate(BaseModel):
     button_text: str = Field("Help", max_length=100)
 
     # Content & Behavior
+    search_mobile_icon: bool = Field(False)
     initial_message: Optional[str] = Field(
         "Hi! I'm your AI Support Agent. How can I help you today?",
         max_length=2000,
@@ -237,6 +238,7 @@ class WidgetEmbedConfigResponse(BaseModel):
     button_text: str
 
     # Content
+    search_mobile_icon: bool
     initial_message: Optional[str]
     display_sources: bool
     allow_downloads: bool
@@ -292,6 +294,7 @@ class WidgetEmbedConfigPublicResponse(BaseModel):
     button_align: str
     show_button_text: bool
     button_text: str
+    search_mobile_icon: bool
     initial_message: Optional[str]
     display_sources: bool
     allow_downloads: bool

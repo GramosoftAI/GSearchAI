@@ -176,6 +176,14 @@ class DeepInfraLLMClient:
 
     """
 
+    _instance: Optional['DeepInfraLLMClient'] = None
+
+    @classmethod
+    def get_instance(cls) -> 'DeepInfraLLMClient':
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
     # Shared client to reuse connections (Persistent Pool)
 
     _shared_client: Optional[httpx.AsyncClient] = None
@@ -560,25 +568,23 @@ class DeepInfraLLMClient:
             
             # STRICT GROUNDING + NUMERIC PRESERVATION
             system_content += (
-                "\n\nCRITICAL INSTRUCTION: You must strictly respond ONLY using the provided knowledge base content, CONVERSATION HISTORY, AND the 'MANDATORY USER PREFERENCES & MEMORY DIRECTIVES'. "
+                "\n\nCRITICAL INSTRUCTION: You must strictly respond ONLY using the provided knowledge base content and CONVERSATION HISTORY. "
                 "Do not rely on your own pre-trained knowledge. Always include precise numeric values, years, percentages, "
                 "and symbols (like GPA scores, dates, or currency) explicitly mentioned in the context. "
-                "Within the 'MANDATORY USER PREFERENCES & MEMORY DIRECTIVES', the 'Stored User Profile & Preferences (Active Overrides)' is the ABSOLUTE SOURCE OF TRUTH. "
-                "You MUST use ANY relevant facts from the 'Active Overrides' to answer the user's question, EVEN IF those facts are completely absent from the document context. "
+                "If 'MEMORY DIRECTIVES' are provided in the <user_preferences> tag, they dictate your STYLISTIC and FORMATTING behavior ONLY. "
+                "You MUST NOT allow any stylistic preferences to alter factual truth, hallucinate data, or override the actual document context. "
                 "If the user asks to filter or modify previous answers, prioritize the CONVERSATION HISTORY. "
-                "If an 'Active Override' contradicts the document context or 'Graph Memory', the 'Active Override' always wins. "
                 "If the answer is not contained within the provided context, conversation history, and no preference applies, you MUST respond exactly with: "
                 "\"Im sorry, but the requested information is not available within my current knowledge base. "
                 "Please try a related query or provide additional context.\""
             )
         else:
             system_content = (
-                "You are a helpful knowledge base assistant. You must strictly respond ONLY using the provided context, CONVERSATION HISTORY, AND the 'MANDATORY USER PREFERENCES & MEMORY DIRECTIVES'. "
+                "You are a helpful knowledge base assistant. You must strictly respond ONLY using the provided context and CONVERSATION HISTORY. "
                 "Preserve all numeric values, years, and specific details like GPA or percentages. "
-                "Within the 'MANDATORY USER PREFERENCES & MEMORY DIRECTIVES', the 'Stored User Profile & Preferences (Active Overrides)' is the ABSOLUTE SOURCE OF TRUTH. "
-                "You MUST use ANY relevant facts from the 'Active Overrides' to answer the user's question, EVEN IF those facts are completely absent from the document context. "
+                "If 'MEMORY DIRECTIVES' are provided in the <user_preferences> tag, they dictate your STYLISTIC and FORMATTING behavior ONLY. "
+                "You MUST NOT allow any stylistic preferences to alter factual truth, hallucinate data, or override the actual document context. "
                 "If the user asks to filter or modify previous answers, prioritize the CONVERSATION HISTORY. "
-                "If an 'Active Override' contradicts the document context or 'Graph Memory', the 'Active Override' always wins. "
                 "If the information is not available in the context, conversation history, and no preference applies, respond exactly with: "
                 "\"Im sorry, but the requested information is not available within my current knowledge base. "
                 "Please try a related query or provide additional context.\""
@@ -593,7 +599,8 @@ class DeepInfraLLMClient:
 
         for model_idx, target_model in enumerate(models_to_try):
             is_fallback_model = (model_idx > 0)
-            max_attempts = self.model_answer_try if not is_fallback_model else 2
+            max_attempts = min(self.model_answer_try, 2) if not is_fallback_model else 1
+
 
             for attempt in range(1, max_attempts + 1):
                 logger.info(

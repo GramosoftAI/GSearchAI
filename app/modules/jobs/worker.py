@@ -182,7 +182,7 @@ async def run_pdf_ingestion_job(
             if not filename.lower().endswith(('.csv', '.xls', '.xlsx')):
                 logger.info(f"Job {job_id}: Extracting structured tables")
                 raw_markdown = getattr(document_text, "raw_html", None)
-                table_rows = await PDFExtractor.extract_tables_to_json(pdf_bytes=content, raw_markdown=raw_markdown)
+                table_rows = await PDFExtractor.extract_tables_to_json(pdf_bytes=content, raw_markdown=raw_markdown, filename=filename)
             
             await job_service.update_job_progress(job_id, status="processing", progress=40, current_step="Creating Knowledge Base Entry")
 
@@ -220,9 +220,36 @@ async def run_pdf_ingestion_job(
             kb_id = str(kb_result["data"]["kb"].id)
             await job_service.update_job_progress(job_id, status="processing", progress=45, current_step="Knowledge Base Created", kb_id=kb_id)
             
+            # Tier 2 Heuristic: Extract Global Identifiers from Tables
+            global_identifiers = {}
+            if table_rows:
+                import re
+                id_pattern = re.compile(r'\b(number|no\.?|id|code|reg(istration)?|ref)\b', re.IGNORECASE)
+                for row in table_rows:
+                    for k, v in row.get("row_data", {}).items():
+                        if k and id_pattern.search(str(k)) and v:
+                            clean_k = str(k).strip()
+                            clean_v = str(v).strip()
+                            # Keep it reasonably short to avoid pulling in entire sentences
+                            if clean_k not in global_identifiers and clean_v and len(clean_v) < 50:
+                                global_identifiers[clean_k] = clean_v
+
+            # Save global identifiers to KnowledgeBase.metadata_json
+            if global_identifiers:
+                formatted_ids = [f"{k} {v}" for k, v in global_identifiers.items()]
+                async with AsyncSessionLocal() as db:
+                    from sqlalchemy import update
+                    from app.modules.knowledge_bases.models import KnowledgeBase
+                    await db.execute(
+                        update(KnowledgeBase)
+                        .where(KnowledgeBase.id == uuid.UUID(kb_id))
+                        .values(metadata_json={"global_identifiers": formatted_ids})
+                    )
+                    await db.commit()
+
             # Step 2.5: Save Table Rows
             if table_rows:
-                await kb_service.save_table_rows(kb_id, table_rows)
+                await kb_service.save_table_rows(kb_id, table_rows, filename=filename, global_identifiers=global_identifiers)
             
             # Store parsed content in S3
             parsed_url = None
@@ -294,6 +321,15 @@ async def run_pdf_ingestion_job(
                     await db.commit()
                 except Exception as meta_err:
                     logger.error(f"Job {job_id}: Failed to persist extraction incomplete metadata: {meta_err}")
+
+            # Step 4: Generate Semantic Summary
+            await job_service.update_job_progress(job_id, status="processing", progress=90, current_step="Generating semantic summary")
+            try:
+                from app.modules.knowledge_bases.kb_summary import generate_kb_summary_embedding
+                await generate_kb_summary_embedding(kb_id, db)
+            except Exception as summary_err:
+                logger.error(f"Job {job_id}: Failed to generate semantic summary for KB {kb_id}: {summary_err}")
+                # Intentional non-blocking behavior: A KB left with summary_embedding=None will still work via FileRouter's exact-identifier fallback tier.
 
             # Success!
             await job_service.update_job_progress(job_id, status="completed", progress=100, current_step="Complete")
@@ -449,6 +485,15 @@ async def run_excel_ingestion_job(
 
             asyncio.create_task(run_cleanup_async(str(tenant_id), kb_id))
 
+            # Step 3: Generate Semantic Summary
+            await job_service.update_job_progress(job_id, status="processing", progress=90, current_step="Generating semantic summary")
+            try:
+                from app.modules.knowledge_bases.kb_summary import generate_kb_summary_embedding
+                await generate_kb_summary_embedding(kb_id, db)
+            except Exception as summary_err:
+                logger.error(f"Job {job_id}: Failed to generate semantic summary for KB {kb_id}: {summary_err}")
+                # Intentional non-blocking behavior: A KB left with summary_embedding=None will still work via FileRouter's exact-identifier fallback tier.
+
             await job_service.update_job_progress(job_id, status="completed", progress=100, current_step="Complete")
             logger.info(f"Job {job_id}: Parquet hybrid ingestion successfully completed!")
 
@@ -553,6 +598,15 @@ async def run_url_ingestion_job(
                     logger.error(f"Job {job_id}: Failed to clean up KnowledgeBase {kb_id} after ingestion failure: {cleanup_err}")
                 return
                 
+            # Step 4: Generate Semantic Summary
+            await job_service.update_job_progress(job_id, status="processing", progress=90, current_step="Generating semantic summary")
+            try:
+                from app.modules.knowledge_bases.kb_summary import generate_kb_summary_embedding
+                await generate_kb_summary_embedding(kb_id, db)
+            except Exception as summary_err:
+                logger.error(f"Job {job_id}: Failed to generate semantic summary for KB {kb_id}: {summary_err}")
+                # Intentional non-blocking behavior: A KB left with summary_embedding=None will still work via FileRouter's exact-identifier fallback tier.
+
             # Success!
             await job_service.update_job_progress(job_id, status="completed", progress=100, current_step="Complete")
             logger.info(f"Job {job_id}: URL ingestion successfully completed!")

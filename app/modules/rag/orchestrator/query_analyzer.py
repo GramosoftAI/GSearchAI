@@ -24,7 +24,7 @@ class QueryIntent(Enum):
 class QueryMetadata(BaseModel):
     query_embedding: Optional[List[float]] = None
     quarter: Optional[str] = Field(None, description="E.g., Q1, Q2, Q3, Q4")
-    year: Optional[str] = Field(None, description="E.g., 2023, 2024, FY23")
+    year: Optional[Any] = Field(None, description="E.g., 2023, 2024, FY23")
     company: Optional[str] = Field(None, description="Company name mentioned in query")
     document_type: Optional[str] = Field(None, description="E.g., 10-Q, 10-K, Earnings Call")
     primary_topic: Optional[str] = Field(None, description="Primary domain topic (e.g., Accounting, Revenue, Tax)")
@@ -51,9 +51,9 @@ class QueryAnalyzer:
     """
     
     def __init__(self):
-        self.llm_client = DeepInfraLLMClient()
+        self.llm_client = DeepInfraLLMClient.get_instance()
         
-    async def analyze_query(self, query: str, kb_context: str = "", chat_history: Optional[str] = None, tenant_id: Optional[str] = None, user_id: Optional[str] = None) -> AnalysisResult:
+    async def analyze_query(self, query: str, kb_context: str = "", chat_history: Optional[str] = None, tenant_id: Optional[str] = None, user_id: Optional[str] = None, session_id: Optional[str] = None) -> AnalysisResult:
         """
         Uses LLM to extract intent and metadata in a single pass.
         """
@@ -189,10 +189,10 @@ QUERY:
                         max_tokens=1024,
                         enable_thinking=False,
                         model=self.llm_client.model_intent,
-                        timeout=15.0, # Fast-fail timeout to mitigate provider jitter
+                        timeout=20.0, # Increased timeout for complex schema reasoning and slow providerder jitter
                         task=LLMTask.INTENT_DETECTION
                     ),
-                    timeout=10.5
+                    timeout=25.0
                 )
                 
                 # Extract JSON block
@@ -213,31 +213,36 @@ QUERY:
                 metadata_dict = data.get("metadata", {})
                 keywords = metadata_dict.get("keywords", [])
                 
-                # If keywords are empty and we have a retry left, modify prompt and retry
-                if not keywords and attempt < max_attempts - 1:
-                    logger.warning("QueryAnalyzer returned empty keywords. Retrying with explicit repair instruction.")
-                    prompt += "\n\nCRITICAL REPAIR INSTRUCTION: You previously returned an empty keywords list. You MUST extract the key entities/nouns from this query into the `keywords` array."
-                    continue
-                    
-                # Final fallback NLP extraction (using LLM as requested, since spaCy is missing)
-                if not keywords and attempt == max_attempts - 1:
-                    logger.warning("QueryAnalyzer LLM retry failed to produce keywords. Running fast NLP fallback extraction.")
-                    fallback_prompt = f"Extract the most important nouns or proper nouns from this query. Output ONLY a comma-separated list of words. Query: {query}"
-                    try:
-                        fallback_resp = await self.llm_client.generate_cloud(
-                            prompt=fallback_prompt, 
-                            system_prompt="You are a strict keyword extractor.",
-                            temperature=0.0,
-                            max_tokens=30,
-                            model=self.llm_client.model_intent
-                        )
-                        keywords = [k.strip().strip('"\'') for k in fallback_resp.split(",") if k.strip()]
-                        logger.info("keyword_extraction_fallback_triggered: nlp_fallback")
-                    except Exception as fallback_err:
-                        logger.error(f"NLP fallback keyword extraction failed: {fallback_err}")
-                elif keywords:
-                    tier = "llm_initial" if attempt == 0 else "llm_retry"
-                    logger.info(f"keyword_extraction_fallback_triggered: {tier}")
+                # Skip fallback if it's a tabular query, since keywords are only for vector search
+                is_tabular = data.get("is_tabular", False)
+                if not keywords and is_tabular:
+                    logger.info("Skipping keyword extraction fallback for tabular query.")
+                else:
+                    # If keywords are empty and we have a retry left, modify prompt and retry
+                    if not keywords and attempt < max_attempts - 1:
+                        logger.warning("QueryAnalyzer returned empty keywords. Retrying with explicit repair instruction.")
+                        prompt += "\n\nCRITICAL REPAIR INSTRUCTION: You previously returned an empty keywords list. You MUST extract the key entities/nouns from this query into the `keywords` array."
+                        continue
+                        
+                    # Final fallback NLP extraction (using LLM as requested, since spaCy is missing)
+                    if not keywords and attempt == max_attempts - 1:
+                        logger.warning("QueryAnalyzer LLM retry failed to produce keywords. Running fast NLP fallback extraction.")
+                        fallback_prompt = f"Extract the most important nouns or proper nouns from this query. Output ONLY a comma-separated list of words. Query: {query}"
+                        try:
+                            fallback_resp = await self.llm_client.generate_cloud(
+                                prompt=fallback_prompt, 
+                                system_prompt="You are a strict keyword extractor.",
+                                temperature=0.0,
+                                max_tokens=30,
+                                model=self.llm_client.model_intent
+                            )
+                            keywords = [k.strip().strip('"\'') for k in fallback_resp.split(",") if k.strip()]
+                            logger.info("keyword_extraction_fallback_triggered: nlp_fallback")
+                        except Exception as fallback_err:
+                            logger.error(f"NLP fallback keyword extraction failed: {fallback_err}")
+                    elif keywords:
+                        tier = "llm_initial" if attempt == 0 else "llm_retry"
+                        logger.info(f"keyword_extraction_fallback_triggered: {tier}")
                     
                 intent_str = data.get("intent", "UNKNOWN").upper()
                 try:
@@ -277,12 +282,23 @@ QUERY:
                     
                 if attempt == max_attempts - 1:
                     logger.warning("QueryAnalyzer exhausted retries. Falling back to heuristic defaults.")
+                    
+                    # Heuristic Fallback Rewrite: check for pinned KB
+                    fallback_query = q_strip
+                    if session_id:
+                        from app.modules.rag.file_router.router import _SESSION_PINNED_KBS
+                        pinned = _SESSION_PINNED_KBS.get(session_id)
+                        if pinned:
+                            pinned_name = pinned.get("name")
+                            fallback_query = f"{q_strip} {pinned_name}"
+                            logger.info(f"QueryAnalyzer timeout: Appended pinned KB '{pinned_name}' to fallback query.")
+                    
                     # Fallback path: treat as SUMMARY/FACT heuristically so request isn't blocked
                     return AnalysisResult(
                         intent=QueryIntent.SUMMARY,
                         metadata=QueryMetadata(
-                            keywords=[q_strip],
-                            corrected_query=q_strip
+                            keywords=[fallback_query],
+                            corrected_query=fallback_query
                         ),
                         is_tabular=False,
                         confidence=0.5,

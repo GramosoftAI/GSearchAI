@@ -36,16 +36,42 @@ class TableEngine(BaseEngine):
         self.session_factory = session_factory
         
     async def get_candidate_sections(self, task: Any, kb_ids: List[str]) -> List[Dict[str, Any]]:
+        keywords = task.metadata_filters.get("keywords", []) if isinstance(task.metadata_filters, dict) else (task.metadata_filters.keywords if getattr(task, "metadata_filters", None) else [])
+        broad_keywords = []
+        stopwords = {"what", "when", "this", "that", "code", "data", "info", "find", "how", "why", "where", "which", "with", "does", "then", "from", "they"}
+        for kw in keywords:
+            for word in kw.split():
+                word = word.strip()
+                if len(word) > 3 and word.lower() not in stopwords:
+                    broad_keywords.append(word.lower())
+                    
         cypher = """
         MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(t:Table)
         WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
-        RETURN DISTINCT sec.id as section_id, sec.title as title, doc.type as doc_type, t.name as table_name
-        LIMIT 50
+        WITH DISTINCT sec.id as section_id, sec.title as title, doc.type as doc_type, t.name as table_name
         """
+        params = {"kb_ids": kb_ids, "tenant_id": self.tenant_id}
+        
+        if broad_keywords:
+            cypher += """
+            WITH section_id, title, doc_type, table_name,
+                 REDUCE(s = 0, kw IN $broad_keywords | s + CASE WHEN toLower(title) CONTAINS kw THEN 1 ELSE 0 END) AS score
+            ORDER BY score DESC, title ASC
+            """
+            params["broad_keywords"] = broad_keywords
+        else:
+            cypher += " ORDER BY title ASC "
+            
+        cypher += " RETURN section_id, title, doc_type, table_name LIMIT 1000 "
+        
+        logger.info(f"[TABLE_ENGINE_DEBUG] get_candidate_sections broad_keywords={broad_keywords}")
+        
         try:
-            results = await self.neo4j_repo.execute_read(cypher, {"kb_ids": kb_ids, "tenant_id": self.tenant_id})
+            results = await self.neo4j_repo.execute_read(cypher, params)
             sections = []
             if results:
+                if len(results) >= 1000:
+                    logger.warning("Candidate section truncation triggered in table_engine: >= 1000 sections found, truncated to 1000.")
                 for r in results:
                     sections.append({
                         "section_id": r.get("section_id"),

@@ -92,7 +92,7 @@ class PDFExtractor:
     """
 
     @staticmethod
-    async def extract_tables_to_json(pdf_bytes: bytes, raw_markdown: str = None) -> list:
+    async def extract_tables_to_json(pdf_bytes: bytes, raw_markdown: str = None, filename: str = None) -> list:
         """
         Extract structured tables from PDF. 
         Prioritizes extracting from raw_markdown if provided, otherwise falls back to pdfplumber.
@@ -115,10 +115,18 @@ class PDFExtractor:
             # Find Markdown tables: consecutive lines starting with | or tab-separated lines
             # First, look for standard Markdown tables
             md_table_pattern = re.compile(r'((?:^[ \t]*\|.*?\|[ \t]*(?:\n|$))+)', re.MULTILINE)
-            md_tables = md_table_pattern.findall(raw_markdown)
+            md_tables = list(md_table_pattern.finditer(raw_markdown))
             
             if md_tables:
-                for t_idx, table_str in enumerate(md_tables):
+                for t_idx, match in enumerate(md_tables):
+                    table_str = match.group(1)
+                    
+                    section_heading = None
+                    text_before = raw_markdown[:match.start()]
+                    heading_matches = list(re.finditer(r'^#{1,6}\s+(.*)$', text_before, re.MULTILINE))
+                    if heading_matches:
+                        section_heading = heading_matches[-1].group(1).strip()
+                        
                     lines = [line.strip() for line in table_str.strip().split('\n')]
                     if len(lines) < 2:
                         continue
@@ -158,6 +166,8 @@ class PDFExtractor:
                                 "page_number": 1, # Markdown loses page numbers, default to 1
                                 "table_index": t_idx,
                                 "row_index": row_idx,
+                                "filename": filename,
+                                "section_heading": section_heading,
                                 "row_data": row_data
                             })
                             row_idx += 1
@@ -168,9 +178,17 @@ class PDFExtractor:
             
             # Fallback for tab-separated tables in markdown
             ts_table_pattern = re.compile(r'((?:^[^\n\t]*(?:\t[^\n\t]*)+(?:\n|$)){2,})', re.MULTILINE)
-            ts_tables = ts_table_pattern.findall(raw_markdown)
+            ts_tables = list(ts_table_pattern.finditer(raw_markdown))
             if ts_tables:
-                for t_idx, table_str in enumerate(ts_tables):
+                for t_idx, match in enumerate(ts_tables):
+                    table_str = match.group(1)
+                    
+                    section_heading = None
+                    text_before = raw_markdown[:match.start()]
+                    heading_matches = list(re.finditer(r'^#{1,6}\s+(.*)$', text_before, re.MULTILINE))
+                    if heading_matches:
+                        section_heading = heading_matches[-1].group(1).strip()
+                        
                     lines = [line.strip() for line in table_str.strip().split('\n')]
                     if len(lines) < 2:
                         continue
@@ -202,6 +220,8 @@ class PDFExtractor:
                                 "page_number": 1,
                                 "table_index": t_idx,
                                 "row_index": row_idx,
+                                "filename": filename,
+                                "section_heading": section_heading,
                                 "row_data": row_data
                             })
                             row_idx += 1
@@ -250,6 +270,8 @@ class PDFExtractor:
                                         "page_number": page_idx + 1,
                                         "table_index": table_idx,
                                         "row_index": row_idx,
+                                        "filename": filename,
+                                        "section_heading": None,
                                         "row_data": row_data
                                     })
                 return results

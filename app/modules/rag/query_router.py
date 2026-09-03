@@ -92,7 +92,7 @@ class QueryRouter:
     6. Robust JSON Parsing & Schema Validation
     """
     def __init__(self, cache_capacity: int = 500):
-        self.llm_client = DeepInfraLLMClient()
+        self.llm_client = DeepInfraLLMClient.get_instance()
         self.cache = SimpleLRUCache(capacity=cache_capacity)
         
         # Pre-compile business object patterns

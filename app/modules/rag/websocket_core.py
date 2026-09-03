@@ -146,12 +146,12 @@ async def run_unified_rag_websocket_loop(
                                     "user_id": user_id,
                                     "tenant_id": tenant_id,
                                 },
-                                timeout=8.0,
+                                timeout=2.0,
                             )
                             if resp.status_code == 200:
                                 return resp.json()
                         except Exception as e:
-                            logger.warning(f"memory-api process-turn unreachable: {e}")
+                            logger.warning(f"memory-api process-turn unreachable/slow: {e}")
                 return {}
 
             async def _fetch_chat_history():

@@ -367,7 +367,12 @@ class PandasQueryEngine:
                          "CRITICAL RECOVERY RULES:\n"
                          "1. Rewrite the DuckDB SELECT query on table 'dataset' using case-insensitive partial string matching (ILIKE or LOWER(\"col\") LIKE '%val%') so matching rows are found.\n"
                          "2. If searching for an entity or movie title, check across candidate text columns using OR (e.g., LOWER(\"Title\") LIKE '%val%' OR LOWER(\"Overview\") LIKE '%val%').\n"
-                         "3. Omit apostrophes and punctuation by inserting wildcards between words (e.g. '%ron%gone%wrong%').\n\n"
+                         "3. Omit apostrophes and punctuation by inserting wildcards between words (e.g. '%ron%gone%wrong%').\n"
+                         "4. PARENTHESES RULE: Any OR-grouped conditions combined with a shared AND filter\n"
+                         "   MUST be explicitly parenthesized. SQL evaluates AND before OR, so\n"
+                         "   \"A OR B AND C\" silently becomes \"A OR (B AND C)\" — almost never what's intended.\n"
+                         "   WRONG:  WHERE col1 LIKE '%x%' OR col2 LIKE '%x%' AND col3 LIKE '%y%'\n"
+                         "   RIGHT:  WHERE (col1 LIKE '%x%' OR col2 LIKE '%x%') AND col3 LIKE '%y%'\n\n"
                          "Available columns in 'dataset':\n{columns}\n\n"
                          "Return ONLY valid JSON with 'sql' and 'explanation' without markdown fences."),
                         ("user",
@@ -381,6 +386,25 @@ class PandasQueryEngine:
                     })
                     fuzzy_plan = DuckDBSemanticQuery(**fuzzy_dict)
                     sql_query = fuzzy_plan.sql.strip().rstrip(";") + ";"
+                    
+                    def _has_unparenthesized_or_and(sql: str) -> bool:
+                        where_clause = sql.split("WHERE", 1)[-1] if "WHERE" in sql.upper() else sql
+                        return bool(re.search(r"\bOR\b(?!.*\)).*\bAND\b", where_clause, re.IGNORECASE)) \
+                            and "(" not in where_clause
+                            
+                    if _has_unparenthesized_or_and(sql_query):
+                        logger.warning(f"Unparenthesized OR...AND detected in generated SQL: {sql_query}. Auto-wrapping OR conditions in parentheses.")
+                        if " WHERE " in sql_query.upper():
+                            # Crude but effective programmatic wrap
+                            parts = re.split(r'\bWHERE\b', sql_query, maxsplit=1, flags=re.IGNORECASE)
+                            where_part = parts[1]
+                            # Split by AND, wrap any part containing OR
+                            and_parts = re.split(r'\bAND\b', where_part, flags=re.IGNORECASE)
+                            for i, part in enumerate(and_parts):
+                                if re.search(r'\bOR\b', part, re.IGNORECASE) and "(" not in part:
+                                    and_parts[i] = f" ({part.strip()}) "
+                            sql_query = f"{parts[0]} WHERE {' AND '.join(and_parts)}"
+                            
                     logger.info(f"Layer 3 Healed DuckDB SQL: {sql_query} | Explanation: {fuzzy_plan.explanation}")
                     
                     rows, col_names = await asyncio.to_thread(_execute_sql, sql_query)
@@ -389,7 +413,7 @@ class PandasQueryEngine:
                     logger.warning(f"Fuzzy retry failed: {fuzzy_err}")
 
             if not rows:
-                return f"{query_plan.explanation}\nNo records matched your query."
+                return f"Error: {query_plan.explanation}\nNo records matched your query. Not present in dataset."
                 
             formatted = ""
             # Format clean, enterprise-grade response

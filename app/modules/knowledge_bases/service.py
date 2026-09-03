@@ -3734,7 +3734,7 @@ class KnowledgeBaseService:
             from app.utils.formatters import format_error
             return format_error(f'Failed to sync Outlook: {e}')
 
-    async def save_table_rows(self, kb_id: str, table_rows: list):
+    async def save_table_rows(self, kb_id: str, table_rows: list, filename: str = None, global_identifiers: dict = None):
         """
         Saves extracted structured tables directly to PostgreSQL (no Neo4j syncing required for tables).
         """
@@ -3822,6 +3822,15 @@ class KnowledgeBaseService:
                 # Every column with a non-empty value is included to ensure
                 # nothing is lost (UOS, GST%, SL.NO, custom columns, etc.).
                 chunk_parts = []
+                if filename:
+                    chunk_parts.append(f"Source File: {filename}")
+                section_heading = row.get("section_heading")
+                if section_heading:
+                    chunk_parts.append(f"Section: {section_heading}")
+                if global_identifiers:
+                    for k, v in global_identifiers.items():
+                        chunk_parts.append(f"Document {k.title()}: {v}")
+                    
                 for col_name, col_value in row_data.items():
                     val = str(col_value).strip() if col_value else ""
                     if not val:
@@ -3836,6 +3845,9 @@ class KnowledgeBaseService:
                         "page_number": row.get("page_number", 1),
                         "table_index": row.get("table_index", 0),
                         "row_index": row.get("row_index", 0),
+                        "filename": filename,
+                        "section_heading": section_heading,
+                        "global_identifiers": global_identifiers,
                         "row_data": row_data
                     })
                 

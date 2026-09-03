@@ -1070,6 +1070,7 @@ async def get_embed_config(
     agent_id: str,
     request: Request,
     tenant_id: Optional[str] = Query(None, description="Tenant UUID — required for public widget access (no JWT)"),
+    device: Optional[str] = Query(None, description="Device type (lap or mobile)"),
 ):
     """
     Get widget embed configuration for a specific agent.
@@ -1105,6 +1106,12 @@ async def get_embed_config(
         service = WidgetEmbedConfigService(db, str(resolved_tenant_id))
         config = await service.get_config(agent_id)
 
+    if config.get("search_mobile_icon"):
+        if device == "mobile":
+            config["button_icon"] = "icon"
+        elif device == "lap":
+            config["button_icon"] = "chat"
+
     if is_public_access:
         # Return sanitized public response — excludes internal metadata
         PUBLIC_FIELDS = {
@@ -1112,7 +1119,7 @@ async def get_embed_config(
             "header_logo", "header_align", "header_name", "header_subtext",
             "agent_label", "bot_avatar", "chat_type", "position", "placeholder_text",
             "button_icon", "button_align", "show_button_text", "button_text",
-            "initial_message", "display_sources", "allow_downloads", "display_copy",
+            "search_mobile_icon", "initial_message", "display_sources", "allow_downloads", "display_copy",
             "display_feedback", "link_safety", "lead_collection", "lead_fields",
             "lead_timing", "escalation_enabled", "escalation_link",
         }

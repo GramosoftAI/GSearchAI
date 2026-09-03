@@ -37,8 +37,9 @@ class SectionRanker:
             doc_type = section.get("doc_type", "unknown").lower()
             
             # 1. Temporal Relevance
+            snippet = section.get("snippet", "").lower()
             for tk in self.temporal_keywords:
-                if tk in query_lower and tk in title:
+                if tk in query_lower and (tk in title or tk in snippet):
                     score += 5.0
                     
             # 2. Document Type Authority
@@ -50,8 +51,12 @@ class SectionRanker:
             # 3. Keyword Coverage (Basic token overlap without stopwords)
             stopwords = {"what", "when", "this", "that", "code", "data", "info", "find", "how", "why", "where", "which", "with", "does", "then", "from", "they", "i", "to", "for", "the", "a", "an", "and", "or", "but", "in", "on", "at", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "did", "of", "by", "if", "my", "your", "our", "their", "it", "he", "she", "we", "you", "me", "him", "her", "us", "them", "can", "would", "could", "should"}
             query_tokens = {t for t in re.findall(r'\b\w+\b', query_lower) if t not in stopwords and len(t) > 2}
+            
             title_tokens = {t for t in re.findall(r'\b\w+\b', title) if t not in stopwords and len(t) > 2}
-            overlap = len(query_tokens.intersection(title_tokens))
+            snippet_tokens = {t for t in re.findall(r'\b\w+\b', snippet) if t not in stopwords and len(t) > 2}
+            combined_tokens = title_tokens.union(snippet_tokens)
+            
+            overlap = len(query_tokens.intersection(combined_tokens))
             score += (overlap * 2.0)
             
             # 4. Exact Ontology Match (if passed down in candidate generator, not used yet)
@@ -76,6 +81,14 @@ class SectionRanker:
                 unique_ranked.append(s)
                 
         final_sections = unique_ranked[:top_k]
+        
+        # [DIAGNOSTIC] Log every candidate section's score, not just the winners
+        logger.info(f"[SECTION_RANK_DEBUG] Dumping all {len(unique_ranked)} candidate sections for diagnostic:")
+        for i, s in enumerate(unique_ranked):
+            s_title = s.get("title", "UNKNOWN_SECTION")
+            s_score = s.get("rank_score", 0.0)
+            logger.info(f"[SECTION_RANK_DEBUG] Rank {i+1}: score={s_score:.2f} | section='{s_title}'")
+            
         latency = time.time() - trace_start
         logger.info(f"[TRACE_E2E] [EXIT] SectionRanker.rank_sections - Output: {len(final_sections)} sections - Latency: {latency:.2f}s")
         return final_sections

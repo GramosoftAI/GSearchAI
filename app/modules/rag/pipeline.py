@@ -126,6 +126,7 @@ class RetrievedChunk:
 
     reason: str = ""  # Why this chunk was retrieved (SIMILAR, ENTITY, NEXT, Seed)
 
+    domain_matched: bool = False  # Set by vector_engine if KB matches query
 
 
     source: Optional[str] = None  # Source of the chunk (e.g., filename, URL, database table)
@@ -344,7 +345,7 @@ class RAGPipeline:
         self.router = QueryRouter()
 
         from app.core.llm.deepinfra_llm import DeepInfraLLMClient
-        self.llm_client = DeepInfraLLMClient()
+        self.llm_client = DeepInfraLLMClient.get_instance()
 
 
 
@@ -417,26 +418,12 @@ class RAGPipeline:
         return final_kbs
 
     async def query(
-
-
-
         self,
-
-
-
         query: str,
-
-
-
         agent_id: str,
-
-
-
         kb_id: str | list[str],
-
-
-
         user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         top_k: int = 3,
         max_depth: int = 2,
         max_tokens: int = 24000,
@@ -594,7 +581,7 @@ class RAGPipeline:
                     from app.modules.knowledge_bases.models import KnowledgeBase
                     from sqlalchemy import select
                     from uuid import UUID
-                    stmt = select(KnowledgeBase.id, KnowledgeBase.name, KnowledgeBase.total_chunks, KnowledgeBase.summary_embedding).where(
+                    stmt = select(KnowledgeBase.id, KnowledgeBase.name, KnowledgeBase.total_chunks, KnowledgeBase.summary_embedding, KnowledgeBase.description).where(
                         KnowledgeBase.id.in_([UUID(kbid) if isinstance(kbid, str) else kbid for kbid in kb_ids])
                     )
                     res = await self.db.execute(stmt)
@@ -602,10 +589,11 @@ class RAGPipeline:
                         self._kb_metadata[str(row.id)] = {
                             "name": row.name,
                             "total_chunks": row.total_chunks,
-                            "summary_embedding": row.summary_embedding
+                            "summary_embedding": row.summary_embedding,
+                            "description": getattr(row, "description", None)
                         }
                 except Exception as e:
-                    logger.error(f"Error prefetching KB metadata: {e}")
+                    logger.error(f"CRITICAL ERROR prefetching KB metadata! This will degrade routing and cascade functionality: {e}", exc_info=True)
             kb_metadata_task = asyncio.create_task(_fetch_metadata())
 
         # Ensure engines are loaded to register them
@@ -626,7 +614,19 @@ class RAGPipeline:
         original_query_embedding, _ = await embedding_task
         
         # Execute Semantic File Routing Gate
-        filtered_kb_ids = await self._execute_semantic_file_gate(original_query_embedding, kb_ids)
+        from app.modules.rag.file_router.router import FileRouter
+        router = FileRouter(self.tenant_id, self.db)
+        routing_result = await router.route_query(
+            query=query,
+            query_embedding=original_query_embedding,
+            candidate_kb_ids=kb_ids,
+            kb_metadata=self._kb_metadata
+        )
+        filtered_kb_ids = routing_result.matched_kb_ids
+        
+        if not routing_result.is_confident_match:
+            logger.info(f"FileRouter not confident. Reason: {routing_result.reason}. Falling back to all candidate KBs.")
+            filtered_kb_ids = kb_ids
         
         if not filtered_kb_ids:
             logger.info("File Routing Gate determined no relevant files. Fast failing to insufficient knowledge.")
@@ -638,6 +638,8 @@ class RAGPipeline:
                 search_type="INSUFFICIENT_KNOWLEDGE"
             )
             
+        # Save original kb_ids before semantic filtering so we can fall back to ALL KBs if SQL fails
+        original_kb_ids = list(kb_ids)
         # Overwrite the pipeline's kb_ids with the filtered list
         kb_ids = filtered_kb_ids
 
@@ -657,51 +659,61 @@ class RAGPipeline:
             query = corrected
 
         # STAGE 0.5: EARLY EXIT FOR TABLE ANALYTICS (Using new QueryAnalyzer)
+        sql_cascade_fell_through = False
         if getattr(analysis, "is_tabular", False):
             logger.info(f"   -> Intercepting query for SQL Table Analytics engine! (intent={analysis.intent.name}, is_tabular=True)")
             try:
                 target_kb_id = getattr(analysis.metadata, "target_kb_id", None) if analysis and getattr(analysis, "metadata", None) else None
-                table_results = await self._execute_table_analytics(query, kb_ids, target_kb_id=target_kb_id)
                 
-                if table_results is None:
-                    logger.info("   -> SQL Table Analytics determined no table match. Falling back to standard pipeline.")
-                    pass # allow it to fall through to RRF
-                elif "Error executing SQL" not in table_results and "Error:" not in table_results:
-                    return RAGContext(
-                        query=query,
-                        chunks=[],
-                        entity_mentions={},
-                        total_tokens=0,
-                        triplet_context=f"### Table Analytics Results\n\n{table_results}",
-                        search_type="TABLE_ANALYTICS"
-                    )
-                else:
-                    error_msg = table_results
-                    if "not present in dataset" in error_msg.lower():
-                        logger.warning(f"   -> SQL Table Analytics returned 'not present in dataset'. Falling back to RRF vector search.")
-                        pass # allow it to fall through to RRF
-                    else:
-                        logger.error(f"   -> SQL Table Analytics completely failed after retries: {error_msg}. STRICT FALLBACK ENFORCEMENT active (blocking vector fallback).")
+                # Identify tabular candidates to cascade through using the pre-fetched _kb_metadata
+                candidate_kbs = [kbid for kbid, meta in self._kb_metadata.items() if kbid in original_kb_ids and meta.get("description") == "excel_parquet"]
+                cascade_kb_ids = []
+                if target_kb_id:
+                    cascade_kb_ids.append(target_kb_id)
+                for k in candidate_kbs:
+                    if str(k) != target_kb_id and str(k) not in cascade_kb_ids:
+                        cascade_kb_ids.append(str(k))
+                cascade_kb_ids = cascade_kb_ids[:3] # Cap at 3 to prevent latency bloat
+                
+                table_results = None
+                for i, kbid in enumerate(cascade_kb_ids):
+                    logger.info(f"   -> [SQL Cascade {i+1}/{len(cascade_kb_ids)}] Executing Table Analytics for KB: {kbid}")
+                    table_results = await self._execute_table_analytics(query, kb_ids, target_kb_id=kbid)
+                    
+                    if table_results is None or (isinstance(table_results, str) and "not present in dataset" in table_results.lower()):
+                        logger.info(f"   -> [SQL Cascade {i+1}/{len(cascade_kb_ids)}] returned 0 rows or not present.")
+                        continue
+                    elif "Error executing SQL" not in table_results and "Error:" not in table_results:
                         return RAGContext(
                             query=query,
                             chunks=[],
                             entity_mentions={},
                             total_tokens=0,
-                            triplet_context=f"I couldn't compute that from the table. {error_msg}",
-                            search_type="TABLE_ANALYTICS_FAILED"
+                            triplet_context=f"### Table Analytics Results\n\n{table_results}",
+                            search_type="TABLE_ANALYTICS"
                         )
+                    else:
+                        logger.error(f"   -> [SQL Cascade {i+1}/{len(cascade_kb_ids)}] completely failed: {table_results}")
+                        continue
+                        
+                # If we exhausted the cascade or hit consistent errors
+                if table_results is None or (isinstance(table_results, str) and "not present in dataset" in table_results.lower()):
+                    logger.warning(f"   -> SQL Table Analytics cascade exhausted (0 rows). Falling back to RRF vector search.")
+                else:
+                    logger.error(f"   -> SQL Table Analytics cascade failed with persistent errors. Falling back to RRF vector search.")
+                
+                # Preserve FileRouter's scoped KB list instead of restoring ALL KBs.
+                # FileRouter already ran and confidently matched the correct KB(s).
+                kb_ids = filtered_kb_ids if filtered_kb_ids else original_kb_ids
+                sql_cascade_fell_through = True
+                pass # allow it to fall through to RRF
             except Exception as e:
-                logger.error(f"   -> SQL Table Analytics completely failed: {e}. STRICT FALLBACK ENFORCEMENT active.", exc_info=True)
+                logger.error(f"   -> SQL Table Analytics completely failed: {e}. Falling back to RRF vector search.", exc_info=True)
                 if self.db:
                     await self.db.rollback()
-                return RAGContext(
-                    query=query,
-                    chunks=[],
-                    entity_mentions={},
-                    total_tokens=0,
-                    triplet_context=f"I couldn't compute that from the table. An internal error occurred: {str(e)}",
-                    search_type="TABLE_ANALYTICS_FAILED"
-                )
+                kb_ids = filtered_kb_ids if filtered_kb_ids else original_kb_ids
+                sql_cascade_fell_through = True
+                pass # allow it to fall through to RRF
 
         # Gather structured queries. If none, default to corrected/original query.
         structured_queries = getattr(analysis.metadata, "structured_queries", [])
@@ -740,6 +752,7 @@ class RAGPipeline:
             WEIGHT_GRAPH = 1.5
             WEIGHT_KEYWORD = 1.0
             WEIGHT_VECTOR = 1.0
+            WEIGHT_EXACT_MATCH = 3.0
             TOP_N = 15
 
             # Convert analysis metadata to dictionary for RetrievalTasks
@@ -760,12 +773,17 @@ class RAGPipeline:
                 meta_dict["intent"] = getattr(analysis, "intent", None)
                 meta_dict["confidence"] = getattr(analysis, "confidence", 0.0)
                 meta_dict["reasoning"] = getattr(analysis, "reasoning", "")
+                meta_dict["_sql_cascade_fell_through"] = sql_cascade_fell_through
 
             # 0. Section Ranking
             async def _run_section_ranking():
-                if meta_dict.get("is_tabular") or getattr(analysis, "is_tabular", False):
-                    logger.info("Skipping SectionRanker for tabular query.")
+                is_tabular = meta_dict.get("is_tabular") or getattr(analysis, "is_tabular", False)
+                sql_fell_through = meta_dict.get("_sql_cascade_fell_through", False)
+                if is_tabular and not sql_fell_through:
+                    logger.info("Skipping SectionRanker for tabular query (SQL path active).")
                     return []
+                if sql_fell_through:
+                    logger.info("SQL cascade fell through to RRF. Re-enabling SectionRanker.")
                 try:
                     from app.modules.rag.engines.vector_engine import VectorEngine
                     from app.modules.rag.orchestrator.section_ranker import SectionRanker
@@ -789,12 +807,23 @@ class RAGPipeline:
                     
                     # Implement fallback logic:
                     if not ranked_sections:
-                        return []
+                        # SectionRanker returned nothing, but get_candidate_sections found
+                        # keyword-matched sections via Postgres ILIKE. Trust the Postgres results.
+                        logger.info(f"[SECTION_TRUST] SectionRanker returned 0 ranked sections, "
+                                    f"but Postgres ILIKE found {len(candidate_sections)} candidates. "
+                                    f"Using ILIKE candidates as section scope.")
+                        return [s.get("section_id") for s in candidate_sections if s.get("section_id")]
                         
                     top_score = ranked_sections[0].get("rank_score", 0.0)
                     if top_score < 2.0:
-                        logger.info(f"[FALLBACK] SectionRanker top score ({top_score}) < 2.0. Falling back to full-KB search.")
-                        return []
+                        # SectionRanker can't score the title well (e.g., generic names like "Page 1"),
+                        # but get_candidate_sections already filtered by keyword ILIKE — those sections
+                        # ARE keyword-relevant even if the title doesn't overlap with the query.
+                        # Trust the Postgres ILIKE results instead of falling back to full-KB.
+                        logger.info(f"[SECTION_TRUST] SectionRanker top score ({top_score}) < 2.0, "
+                                    f"but {len(candidate_sections)} sections were found via keyword ILIKE. "
+                                    f"Using ILIKE candidates instead of full-KB fallback.")
+                        return [s.get("section_id") for s in candidate_sections if s.get("section_id")]
                         
                     if len(ranked_sections) > 1:
                         second_score = ranked_sections[1].get("rank_score", 0.0)
@@ -877,6 +906,65 @@ class RAGPipeline:
                     logger.warning(f"Vector search failed (non-blocking): {e}")
                     return []
 
+            # 4. Postgres Exact-Match Layer
+            async def _run_postgres_exact_match(target_sections=None):
+                try:
+                    import re
+                    from app.modules.rag.schema_utils import ID_REGEX_PATTERN
+                    
+                    # Extract potential part numbers/IDs from the query
+                    potential_ids = re.findall(ID_REGEX_PATTERN, current_query)
+                    
+                    keywords = getattr(analysis.metadata, "keywords", []) if analysis and getattr(analysis, "metadata", None) else []
+                    
+                    if not potential_ids and not keywords:
+                        return []
+                    
+                    # Dedup and escape characters for safe regex execution
+                    safe_ids = list(set([str(pid).replace("'", "''").replace("\\", "\\\\") for pid in potential_ids]))
+                    safe_kws = list(set([str(kw).replace("'", "''").replace("\\", "\\\\") for kw in keywords if len(str(kw)) > 3]))
+                    
+                    if not safe_ids and not safe_kws:
+                        return []
+                    
+                    from sqlalchemy import select, text
+                    from app.modules.knowledge_bases.models import DocumentChunk
+                    from uuid import UUID
+                    
+                    chunk_query = select(DocumentChunk.id, DocumentChunk.kb_id).where(
+                        DocumentChunk.tenant_id == self.tenant_id,
+                        DocumentChunk.kb_id.in_([UUID(k) if isinstance(k, str) else k for k in kb_ids])
+                    )
+                    
+                    if target_sections:
+                        chunk_query = chunk_query.where(DocumentChunk.section.in_(target_sections))
+                        
+                    # Use Postgres POSIX regex boundary matching for exact substring matches without partial overlap 
+                    # \m matches start of word, \M matches end of word. ~* is case-insensitive match
+                    regex_conditions = [DocumentChunk.text.op('~*')(f"\\m{pid}\\M") for pid in safe_ids]
+                    
+                    # For keywords, use simple ILIKE to find partial matches for long phrases
+                    ilike_conditions = [DocumentChunk.text.ilike(f"%{kw}%") for kw in safe_kws]
+                    
+                    from sqlalchemy import or_
+                    all_conditions = regex_conditions + ilike_conditions
+                    chunk_query = chunk_query.where(or_(*all_conditions)).limit(20)
+                    
+                    res = await self.db.execute(chunk_query)
+                    exact_chunks = []
+                    for row in res.all():
+                        exact_chunks.append({"chunk_id": str(row.id), "source_kb_id": str(row.kb_id)})
+                    return exact_chunks
+                except Exception as e:
+                    logger.warning(f"Exact match search failed (non-blocking): {e}")
+                    if hasattr(self.db, "rollback"):
+                        import asyncio
+                        if asyncio.iscoroutinefunction(self.db.rollback):
+                            await self.db.rollback()
+                        else:
+                            self.db.rollback()
+                    return []
+
             # Launch sequentially then concurrently (2-wave design)
             engine_start = time.time()
             
@@ -885,10 +973,11 @@ class RAGPipeline:
             target_sections = section_res if isinstance(section_res, list) else []
             
             # WAVE 2
-            triplet_res, keyword_res, vector_res = await asyncio.gather(
+            triplet_res, keyword_res, vector_res, exact_match_res = await asyncio.gather(
                 _run_triplet_search(target_sections),
                 _run_keyword_search(target_sections),
                 _run_vector_search(target_sections),
+                _run_postgres_exact_match(target_sections),
                 return_exceptions=True
             )
             engine_time = time.time() - engine_start
@@ -897,8 +986,9 @@ class RAGPipeline:
             if isinstance(triplet_res, Exception): triplet_res = []
             if isinstance(keyword_res, Exception): keyword_res = []
             if isinstance(vector_res, Exception): vector_res = []
+            if isinstance(exact_match_res, Exception): exact_match_res = []
 
-            logger.info(f"[RRF_FLOW_MARKER] RRF Sources returned: Graph={len(triplet_res)}, Keyword={len(keyword_res)}, Vector={len(vector_res)}")
+            logger.info(f"[RRF_FLOW_MARKER] RRF Sources returned: Graph={len(triplet_res)}, Keyword={len(keyword_res)}, Vector={len(vector_res)}, ExactMatch={len(exact_match_res)}")
 
             # --- RECIPROCAL RANK FUSION ---
             logger.info("[RRF_FLOW_MARKER] Starting Reciprocal Rank Fusion...")
@@ -923,6 +1013,13 @@ class RAGPipeline:
                 cid = chunk.chunk_id
                 vector_chunk_map[cid] = chunk
                 score = WEIGHT_VECTOR / (RRF_K + rank + 1)
+                fused_scores[cid] = fused_scores.get(cid, 0.0) + score
+                
+            # Exact Match scoring
+            for rank, c in enumerate(exact_match_res):
+                cid = c.get("chunk_id")
+                if not cid: continue
+                score = WEIGHT_EXACT_MATCH / (RRF_K + rank + 1)
                 fused_scores[cid] = fused_scores.get(cid, 0.0) + score
 
             # Apply SectionRanker boost post-hoc
@@ -1018,46 +1115,45 @@ class RAGPipeline:
                             vector_chunk_map[c_id] = rc
                 except Exception as e:
                     logger.warning(f"Failed to fetch missing postgres chunks before boost: {e}")
+                    if hasattr(self.db, "rollback"):
+                        import asyncio
+                        if asyncio.iscoroutinefunction(self.db.rollback):
+                            await self.db.rollback()
+                        else:
+                            self.db.rollback()
 
             # 4b. Apply Domain Boost
-            STOP_WORDS = {"south", "north", "east", "west", "total", "amount", "count", "sum", "average", "max", "min", "data", "report"}
+            logger.info(f"[RRF_BOOST_DEBUG] boost loop starting. NOTE: It receives NO matched_kb_ids from vector_engine because the signature drops them.")
+            from app.modules.rag.scoring.term_frequency import get_kb_doc_frequency, idf_discount
+            import re
             
             for cid in fused_scores.keys():
                 chunk_obj = vector_chunk_map.get(cid)
                 if chunk_obj:
-                    kb_name = (getattr(chunk_obj, "source", "") or "").lower()
-                    kb_path = (getattr(chunk_obj, "s3_path", "") or "").lower()
+                    kb_level_match = getattr(chunk_obj, "domain_matched", False)
+                    chunk_text = getattr(chunk_obj, "text", "").lower()
+                    chunk_tokens = set(re.findall(r"[a-z0-9]+", chunk_text))
+                    term_matches = exploded_keywords & chunk_tokens
                     
-                    kb_tokens = get_tokens(kb_name) + get_tokens(kb_path)
-                    kb_stemmed_tokens = {basic_stem(t) for t in kb_tokens}
+                    if not term_matches and not kb_level_match:
+                        continue
+                        
+                    kb_id = getattr(chunk_obj, "kb_id", None)
+                    doc_freq = {}
+                    if kb_id and getattr(self, "db", None):
+                        doc_freq = await get_kb_doc_frequency(kb_id, self.db)
+                        
+                    idf_boost = sum(idf_discount(t, doc_freq) for t in term_matches) if term_matches else 0.0
+                    kb_boost = DOMAIN_BOOST_WEIGHT if kb_level_match else 0.0
                     
-                    logger.info(f"[RRF_BOOST_DEBUG] chunk_id={cid} source='{kb_name}' s3_path='{kb_path}'")
-                    
-                    match_found = False
-                    matched_word = None
-                    for kw in exploded_keywords:
-                        if len(kw) > 3:
-                            stemmed_kw = basic_stem(kw)
-                            if len(stemmed_kw) < 4:
-                                continue
-                            
-                            if stemmed_kw in kb_stemmed_tokens or kw in kb_tokens:
-                                # Stop word logic: require multi-word or non-stopword
-                                is_stopword = kw in STOP_WORDS or stemmed_kw in STOP_WORDS
-                                is_multiword = " " in kw
-                                
-                                if is_stopword and not is_multiword:
-                                    logger.info(f"[RRF_BOOST_SKIP] Skipped stop-word match '{kw}' for chunk {cid}")
-                                    continue
-                                
-                                match_found = True
-                                matched_word = stemmed_kw
-                                break
-                    
-                    if match_found:
-                        fused_scores[cid] += DOMAIN_BOOST_WEIGHT
+                    total_boost = idf_boost + kb_boost
+                    if total_boost > 0:
+                        fused_scores[cid] += total_boost
                         domain_boosted_count += 1
-                        logger.info(f"[RRF_BOOST_FIRED] chunk_id={cid} matched stemmed_kw='{matched_word}'")
+                        logger.info(
+                            f"[RRF_BOOST_DEBUG] chunk_id={cid} term_matches={term_matches} "
+                            f"idf_boost={idf_boost:.3f} kb_level_match={kb_level_match} final_boost={total_boost:.3f}"
+                        )
                 else:
                     logger.info(f"[RRF_BOOST_DEBUG] chunk_id={cid} NOT FOUND in vector_chunk_map (Graph/Keyword only chunk)")
                                 
@@ -2545,9 +2641,22 @@ class RAGPipeline:
                 await log_attempt(0)
                 return None
 
+        t_kb_check_start = time.time()
+
         # --- STAGE 1.5: FILE/SCHEMA-LEVEL ROUTING GATE ---
-        def _build_router_prompt(manifest, query_str):
-            return f"""You are a file-routing classifier for a retrieval pipeline. Given a user query and a list of candidate data sources, decide which source(s), if any, the query is actually asking about.
+        if target_kb_id or len(kb_rows) == 1:
+            logger.info("Bypassing file routing LLM call because target_kb_id is pinned or only one KB candidate exists.")
+            target = target_kb_id if target_kb_id else str(kb_rows[0].id)
+            router_result = {
+                "matches": [
+                    {"kb_id": str(kb.id), "filename": kb.name, "field_mapping_confidence": "inferred"}
+                    for kb in kb_rows if str(kb.id) == target
+                ],
+                "no_match": False
+            }
+        else:
+            def _build_router_prompt(manifest, query_str):
+                return f"""You are a file-routing classifier for a retrieval pipeline. Given a user query and a list of candidate data sources, decide which source(s), if any, the query is actually asking about.
 
 Rules:
 - Match on semantic and lexical overlap between the query's entities/fields (e.g. "SL.NO", "employee ID", "HSN code") and each source's column/header names AND sampled_values. If the query asks for a specific value (e.g. 'South' or 'Alice') and it appears in a source's sampled_values, that is a strong indicator of a match. Do not assume a match just because a source is the only one of its type.
@@ -2592,23 +2701,50 @@ Respond ONLY as JSON:
                 "schema_known": bool(cols)
             })
 
-        router_prompt = _build_router_prompt(candidate_manifest, query)
-        router_response = await self.llm_client.generate_cloud(
-            prompt=router_prompt,
-            system_prompt="You are a file-routing classifier. Return ONLY JSON.",
-            temperature=0.0,
-            max_tokens=1000,
-            enable_thinking=False
-        )
-
-        try:
-            import re
-            json_match = re.search(r'```json\s*(\{.*?\})\s*```', router_response, re.DOTALL)
-            clean_json = json_match.group(1) if json_match else router_response[router_response.find('{'):router_response.rfind('}')+1]
-            router_result = json.loads(clean_json)
-        except Exception as e:
-            logger.error(f"Failed to parse router JSON: {e}")
-            router_result = {"no_match": True, "matches": []}
+        if target_kb_id or len(kb_rows) == 1:
+            logger.info("Bypassing file routing LLM call because target_kb_id is pinned or only one KB candidate exists.")
+            target = target_kb_id if target_kb_id else str(kb_rows[0].id)
+            router_result = {
+                "matches": [
+                    {"kb_id": str(kb.id), "filename": kb.name, "field_mapping_confidence": "inferred"}
+                    for kb in kb_rows if str(kb.id) == target
+                ],
+                "no_match": False
+            }
+        else:
+            router_prompt = _build_router_prompt(candidate_manifest, query)
+            router_response = await self.llm_client.generate_cloud(
+                prompt=router_prompt,
+                system_prompt="You are a file-routing classifier. Return ONLY JSON.",
+                temperature=0.0,
+                max_tokens=1000,
+                enable_thinking=False,
+                model=self.llm_client.model_intent
+            )
+            
+            try:
+                import re
+                json_match = re.search(r'```json\s*(\{.*?\})\s*```', router_response, re.DOTALL)
+                if json_match:
+                    cleaned = json_match.group(1)
+                else:
+                    start_idx = router_response.find('{')
+                    end_idx = router_response.rfind('}')
+                    if start_idx != -1 and end_idx != -1:
+                        cleaned = router_response[start_idx:end_idx+1]
+                    else:
+                        cleaned = router_response.strip()
+                router_result = json.loads(cleaned)
+                logger.info(f"Router Result: {router_result}")
+            except Exception as e:
+                logger.error(f"Router failed to parse response: {e}. Falling back to all valid candidates.")
+                router_result = {
+                    "matches": [
+                        {"kb_id": str(kb.id), "filename": kb.name, "field_mapping_confidence": "inferred"}
+                        for kb in kb_rows
+                    ],
+                    "no_match": False
+                }
 
         # PASS 2 (Fallback Sampling)
         if router_result.get("no_match", False) and any(not c["schema_known"] for c in candidate_manifest):
@@ -2677,6 +2813,11 @@ Respond ONLY as JSON:
         kb_names = {str(r.id): r.name for r in kb_rows}
 
         # 1.5. HYBRID PANDAS ENGINE ROUTING FOR SPREADSHEET (PARQUET) FILES
+        logger.info(
+            f"KB-type resolution took {time.time() - t_kb_check_start:.3f}s "
+            f"before parquet detection (target_kb_id={target_kb_id if 'target_kb_id' in locals() else None})"
+        )
+        
         if excel_kb_rows:
             logger.info(f" {len(excel_kb_rows)} excel_parquet KB(s) detected! Resolving local parquet via ParquetIngester.")
             from .pandas_engine import PandasQueryEngine

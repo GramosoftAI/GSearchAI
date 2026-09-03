@@ -40,7 +40,15 @@ class FinancialEngine(BaseEngine):
         section_filter = getattr(task, "target_section", None)
         if not section_filter and task.metadata_filters and hasattr(task.metadata_filters, 'primary_topic'):
             section_filter = task.metadata_filters.primary_topic
-            
+        keywords = task.metadata_filters.get("keywords", []) if isinstance(task.metadata_filters, dict) else (task.metadata_filters.keywords if getattr(task, "metadata_filters", None) else [])
+        broad_keywords = []
+        stopwords = {"what", "when", "this", "that", "code", "data", "info", "find", "how", "why", "where", "which", "with", "does", "then", "from", "they"}
+        for kw in keywords:
+            for word in kw.split():
+                word = word.strip()
+                if len(word) > 3 and word.lower() not in stopwords:
+                    broad_keywords.append(word.lower())
+                    
         cypher = """
         MATCH (kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk)
         WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
@@ -51,12 +59,28 @@ class FinancialEngine(BaseEngine):
             cypher += " AND toLower(c.section) CONTAINS toLower($section_filter) "
             params["section_filter"] = section_filter
             
-        cypher += " RETURN c.id as section_id, c.section as title, c.source_type as doc_type LIMIT 50 "
+        cypher += " WITH DISTINCT c.section AS title, head(collect(c.source_type)) AS doc_type "
+        
+        if broad_keywords:
+            cypher += """
+            WITH title, doc_type,
+                 REDUCE(s = 0, kw IN $broad_keywords | s + CASE WHEN toLower(title) CONTAINS kw THEN 1 ELSE 0 END) AS score
+            ORDER BY score DESC, title ASC
+            """
+            params["broad_keywords"] = broad_keywords
+        else:
+            cypher += " ORDER BY title ASC "
+            
+        cypher += " RETURN title AS section_id, title, doc_type LIMIT 1000 "
+        
+        logger.info(f"[FINANCIAL_ENGINE_DEBUG] get_candidate_sections broad_keywords={broad_keywords}")
         
         try:
             results = await self.neo4j_repo.execute_read(cypher, params)
             sections = []
             if results:
+                if len(results) >= 1000:
+                    logger.warning("Candidate section truncation triggered in financial_engine: >= 1000 sections found, truncated to 1000.")
                 for r in results:
                     sections.append({
                         "section_id": r.get("section_id"),

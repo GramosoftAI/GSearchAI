@@ -3,6 +3,7 @@ import os
 import logging
 import time
 import json
+import duckdb
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,39 @@ class ParquetIngester:
                             categorical_registry[col] = unique_vals
             except Exception as e:
                 logger.warning(f"Failed to extract schema and categorical values: {e}")
+                df = None
+                            
+            # Build ID index using duckdb to ensure we don't miss numeric IDs
+            id_index = {}
+            id_index_path = os.path.join(output_dir, f"{name_without_ext}_idindex.json")
+            if df is not None:
+                try:
+                    t0 = time.time()
+                    con = duckdb.connect()
+                    # We consider any column a potential ID column if it's not a tiny categorical
+                    for col in df.columns:
+                        if col in categorical_registry:
+                            continue
+                        
+                        # Read unique values cast to string, upper-cased and trimmed
+                        query = f"""
+                            SELECT DISTINCT UPPER(TRIM(CAST("{col}" AS VARCHAR))) 
+                            FROM read_parquet(?)
+                            WHERE "{col}" IS NOT NULL
+                        """
+                        values = con.execute(query, [output_path]).fetchall()
+                        
+                        # Filter out purely short noise, keep if reasonable cardinality
+                        vals = [v[0] for v in values if v[0] and len(v[0]) > 2]
+                        if 0 < len(vals) < 100000:
+                            id_index[col] = vals
+                    
+                    with open(id_index_path, 'w') as f:
+                        json.dump(id_index, f)
+                    
+                    logger.info(f"Built ID index for {name_without_ext} in {time.time()-t0:.2f}s: {len(id_index)} columns, {sum(len(v) for v in id_index.values())} total values")
+                except Exception as e:
+                    logger.warning(f"Failed to build ID index: {e}")
                 
             return output_path, categorical_registry, schema_registry
             

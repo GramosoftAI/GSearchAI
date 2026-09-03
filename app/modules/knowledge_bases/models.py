@@ -91,6 +91,7 @@ class KnowledgeBase(Base):
     categorical_values = Column(JSONB, nullable=True)
     noisy_words = Column(JSONB, nullable=True)
     noisy_words_generated_at = Column(DateTime(timezone=True), nullable=True)
+    metadata_json = Column(JSONB, nullable=True)
 
     # ============= CONTENT TRACKING =============
     total_chunks = Column(

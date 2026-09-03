@@ -47,6 +47,7 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     "button_align": "right",
     "show_button_text": True,
     "button_text": "Help",
+    "search_mobile_icon": False,
     "initial_message": "Hi! I'm your AI Support Agent. How can I help you today?",
     "display_sources": True,
     "allow_downloads": False,
@@ -221,6 +222,7 @@ class WidgetEmbedConfigService:
             "button_align": config.button_align,
             "show_button_text": config.show_button_text,
             "button_text": config.button_text,
+            "search_mobile_icon": config.search_mobile_icon,
             # Content
             "initial_message": config.initial_message,
             "display_sources": config.display_sources,

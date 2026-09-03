@@ -125,6 +125,7 @@ class WidgetEmbedConfig(BaseModel):
     button_text = Column(String(100), nullable=False, default="Help")
 
     # -- Content & Behavior Flags ------------------------------------------
+    search_mobile_icon = Column(Boolean, nullable=False, default=False)
     initial_message = Column(
         Text,
         nullable=True,

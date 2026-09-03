@@ -72,7 +72,7 @@ class CrawlContext:
     tenant_id: Optional[str] = None
     kb_id: Optional[str] = None
     crawl_id: Optional[str] = None
-    gsearch_id: Optional[str] = None
+    scrape_crawl_id: Optional[str] = None
     start_time: float = field(default_factory=time.time)
     # Timing metrics (in seconds)
     discovery_time: float = 0.0
@@ -95,8 +95,8 @@ class CrawlContext:
             parts.append(f"kb={self.kb_id}")
         if self.crawl_id:
             parts.append(f"crawl_id={self.crawl_id}")
-        if self.gsearch_id:
-            parts.append(f"gsearch_id={self.gsearch_id}")
+        if self.scrape_crawl_id:
+            parts.append(f"scrape_crawl_id={self.scrape_crawl_id}")
         return " ".join(parts)
 
 
@@ -133,7 +133,7 @@ class LinkDiscoveryResponse(BaseModel):
 
 
 class ScrapeSubmissionResponse(BaseModel):
-    gsearch_id: str
+    crawl_id: str
     urls_submitted: Optional[int] = 0
     status: Optional[str] = None
 
@@ -364,17 +364,24 @@ class GCrawlClient:
         return await self._request("GET", f"/crawler/results/{crawl_id}", timeout=15)
 
     async def submit_scrape(self, urls: List[str]) -> ScrapeSubmissionResponse:
-        """Step 3: POST /api/v1/grag/scrape-links to submit bulk scrape job."""
-        payload = {"urls": urls}
-        data = await self._request("POST", "/api/v1/grag/scrape-links", json_data=payload, timeout=30)
+        """Step 3: POST /api/v1/batch to submit bulk scrape job."""
+        payload = {
+            "urls": urls,
+            "geo": "IN",
+            "markdown": {
+                "enabled": True,
+                "clean": False
+            }
+        }
+        data = await self._request("POST", "/api/v1/batch", json_data=payload, timeout=30)
         try:
             return ScrapeSubmissionResponse(**data)
         except Exception as e:
             raise ScrapeSubmissionFailed(f"Invalid scrape submission response: {e}, payload={data}")
 
-    async def get_scrape_results(self, gsearch_id: str) -> Dict[str, Any]:
-        """Step 4: GET /api/v1/grag/scrape-links/results/{gsearch_id} to poll scraped contents."""
-        return await self._request("GET", f"/api/v1/grag/scrape-links/results/{gsearch_id}", timeout=15)
+    async def get_scrape_results(self, crawl_id: str) -> Dict[str, Any]:
+        """Step 4: GET /crawler/results/{crawl_id} to poll scraped contents."""
+        return await self._request("GET", f"/crawler/results/{crawl_id}", timeout=15)
 
 
 # =====================================================================
@@ -459,40 +466,40 @@ class WebsiteCrawler:
     async def scrape(self, urls: List[str], context: CrawlContext) -> str:
         self.progress_cb("Submitting bulk scraping", 60)
         res = await self.client.submit_scrape(urls)
-        if not res.gsearch_id:
-            raise ScrapeSubmissionFailed("No gsearch_id returned from scrape submission endpoint")
-        context.gsearch_id = res.gsearch_id
+        if not res.crawl_id:
+            raise ScrapeSubmissionFailed("No crawl_id returned from scrape submission endpoint")
+        context.scrape_crawl_id = res.crawl_id
         logger.info(
-            f"[{context.format_log_prefix()}] Submitted bulk scrape for {len(urls)} URLs, gsearch_id={res.gsearch_id}"
+            f"[{context.format_log_prefix()}] Submitted bulk scrape for {len(urls)} URLs, crawl_id={res.crawl_id}"
         )
-        return res.gsearch_id
+        return res.crawl_id
 
-    async def poll_scraping(self, gsearch_id: str, context: CrawlContext) -> List[Dict[str, Any]]:
+    async def poll_scraping(self, crawl_id: str, context: CrawlContext) -> List[Dict[str, Any]]:
         self.progress_cb("Downloading markdown", 80)
         t0 = time.time()
         step = max(1, self.config.POLL_INTERVAL)
         max_attempts = max(1, self.config.SCRAPE_TIMEOUT // step)
 
         for attempt in range(max_attempts):
-            res_data = await self.client.get_scrape_results(gsearch_id)
+            res_data = await self.client.get_scrape_results(crawl_id)
             status = (res_data.get("status") or "").lower()
 
             if status in ["completed", "success", "finished"]:
                 data_list = res_data.get("data", [])
                 context.scraping_time = time.time() - t0
                 logger.info(
-                    f"[{context.format_log_prefix()}] Bulk scrape task {gsearch_id} completed successfully"
+                    f"[{context.format_log_prefix()}] Bulk scrape task {crawl_id} completed successfully"
                 )
                 return data_list
             elif status in ["failed", "error", "cancelled"]:
                 raise ScrapeSubmissionFailed(
-                    f"Bulk scrape task {gsearch_id} failed with status '{status}'"
+                    f"Bulk scrape task {crawl_id} failed with status '{status}'"
                 )
 
             await asyncio.sleep(self.config.POLL_INTERVAL)
 
         raise ScrapeTimeout(
-            f"Bulk scrape timed out after {self.config.SCRAPE_TIMEOUT} seconds for gsearch_id {gsearch_id}"
+            f"Bulk scrape timed out after {self.config.SCRAPE_TIMEOUT} seconds for crawl_id {crawl_id}"
         )
 
     def convert(self, scraped_data: List[Dict[str, Any]], root_url: str, context: CrawlContext) -> List[WebsiteDocument]:
@@ -526,8 +533,8 @@ class WebsiteCrawler:
             }
             if context.crawl_id:
                 meta["crawl_id"] = context.crawl_id
-            if context.gsearch_id:
-                meta["gsearch_id"] = context.gsearch_id
+            if context.scrape_crawl_id:
+                meta["crawl_id"] = context.scrape_crawl_id
 
             doc = WebsiteDocument(
                 url=url,
