@@ -118,9 +118,9 @@ services:
       context: ./app/memory/app   
       dockerfile: Dockerfile
     container_name: graphmind-memory-api
-    command: python -m uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+    command: python -m uvicorn main:app --host 0.0.0.0 --port 4917 --reload
     ports:
-      - "4917:8001"
+      - "4917:4917"
     volumes:
       - ./app/memory/app:/app    
       - hf_model_cache:/root/.cache/huggingface

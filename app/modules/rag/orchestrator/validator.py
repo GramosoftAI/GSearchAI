@@ -44,6 +44,12 @@ class NumericValidator:
                 pass
                 
             if num not in context_numbers:
+                # Normalization check: handle space-separated vs comma-separated numbers (e.g., "3 000" vs "3,000")
+                num_digits_only = re.sub(r'[\s,]', '', num)
+                context_digits_only = re.sub(r'(\d)[\s,](\d)', r'\1\2', context_text)
+                if num_digits_only and num_digits_only in context_digits_only:
+                    continue
+
                 logger.warning(f"Hallucination detected! Number '{num}' not found in context.")
                 return False
                 

@@ -147,77 +147,63 @@ async def resolve_or_issue_visitor_id(websocket: WebSocket, tenant_id: str) -> s
     # If no valid token, issue a new one
     new_token = issue_signed_visitor_token(tenant_id)
     # The client must receive this, but since we are handling this before entering the main loop,
-    # we will send it immediately to the client.
     await websocket.send_json({"type": "session", "vtoken": new_token})
-    
     return verify_visitor_token_signature(new_token, tenant_id)
 
 
 async def get_or_create_widget_user(db, tenant_id: str, visitor_id: str = None) -> User:
     """
-    Retrieve or create a unique system-designated user for this specific widget visitor
-    to own their specific conversation histories.
+    Retrieve the primary tenant admin/owner account for widget requests so that ALL token
+    telemetry (Dashboard + Embed Widget) rolls up under a single unified user account.
     """
-    tenant_uuid = uuid.UUID(tenant_id)
-    # Make email unique to visitor_id if provided, else fallback to tenant_id for legacy HTTP
-    if visitor_id:
-        widget_email = f"widget_{visitor_id[:8]}@graphmind.local"
-    else:
-        widget_email = f"widget_user_{tenant_id[:8]}@graphmind.local"
+    tenant_uuid = uuid.UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id
 
-    
-
-    # Check if user already exists (scoped by RLS to the set tenant_id)
-
+    # 1. First attempt: Find the primary tenant admin/owner account
     result = await db.execute(
-
-        select(User).where(User.email == widget_email)
-
+        select(User)
+        .where(User.tenant_id == tenant_uuid, User.is_admin == True)
+        .order_by(User.created_at.asc())
     )
+    admin_user = result.scalars().first()
+    if admin_user:
+        return admin_user
 
+    # 2. Fallback: Any existing tenant user
+    result = await db.execute(
+        select(User)
+        .where(User.tenant_id == tenant_uuid)
+        .order_by(User.created_at.asc())
+    )
+    tenant_user = result.scalars().first()
+    if tenant_user:
+        return tenant_user
+
+    # 3. Fallback: Create shared widget user if tenant has no user records yet
+    widget_email = f"widget_user_{str(tenant_id)[:8]}@graphmind.local"
+    result = await db.execute(
+        select(User).where(User.email == widget_email)
+    )
     widget_user = result.scalar_one_or_none()
 
-    
-
     if not widget_user:
-
-        logger.info(f"Creating new anonymous widget user for tenant {tenant_id}")
-
+        logger.info(f"Creating shared anonymous widget user for tenant {tenant_id}")
         widget_user = User(
-
             id=uuid.uuid4(),
-
             tenant_id=tenant_uuid,
-
             email=widget_email,
-
             first_name="Anonymous",
-
             last_name="Visitor",
-
             hashed_password="WIDGET_DUMMY_PASSWORD_NOT_AUTHENTICATABLE",
-
             is_active=True,
-
             is_admin=False
-
         )
-
         db.add(widget_user)
-
         await db.flush()
-
-        
 
     return widget_user
 
 
 
-
-
-# ============================================================================
-
-# PUBLIC ENDPOINTS
 
 # ============================================================================
 

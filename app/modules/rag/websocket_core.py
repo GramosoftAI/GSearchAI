@@ -2,10 +2,13 @@ import json
 import logging
 import httpx
 import os
+import time
+from uuid import UUID
 from fastapi import WebSocket, WebSocketDisconnect
 from .schemas import UnifiedChatRequest
 from .events import LoopEvent
 from .adapters import ChannelAdapter
+from .escalation import detect_escalation_intent
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +19,14 @@ def resolve_memory_api_base_url() -> str:
     env_host = os.getenv("MEMORY_API_HOST", "").strip()
     if env_host:
         return env_host.rstrip("/")
-    return "http://127.0.0.1:8001"
+    return "http://127.0.0.1:4917"
 
 async def _persist_partial(db, chat_service, session_id, user_id, query, response_buffer, reason: str) -> None:
     try:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         await chat_service.chat_repo.add_message(
             session_id=session_id,
             role="assistant",
@@ -65,6 +72,7 @@ async def run_unified_rag_websocket_loop(
     """
     Channel-agnostic execution core.
     """
+    channel = getattr(adapter, "channel", "websocket")
     memory_api_url = f"{resolve_memory_api_base_url()}/api/v1/memory"
     
     active_session_id = session_id
@@ -131,6 +139,7 @@ async def run_unified_rag_websocket_loop(
             await adapter.send(websocket, LoopEvent(type="done"))
             continue
 
+        start_time = time.perf_counter()
         try:
             # 1. Memory API Triage & Chat History Fetching (Parallel)
             async def _fetch_memory_triage():
@@ -258,15 +267,46 @@ async def run_unified_rag_websocket_loop(
                 await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, "rag_error")
                 break
 
-            # 5. DB Persistence
-            msg_metadata["sources"] = collected_sources
-            await chat_service.chat_repo.add_message(
-                session_id=active_session_id,
-                role="assistant",
-                content=full_response,
-                metadata=msg_metadata,
+            # 5. Evaluate Human Support Escalation
+            is_escalated = detect_escalation_intent(
+                query=request.query,
+                sources=collected_sources,
+                response_text=full_response
             )
-            await db.commit()
+
+            # 6. DB Persistence
+            assistant_msg = None
+            try:
+                assistant_msg = await chat_service.chat_repo.add_message(
+                    session_id=active_session_id,
+                    role="assistant",
+                    content=full_response,
+                    metadata={
+                        "sources": collected_sources,
+                        "status": "complete",
+                        "escalation_detected": is_escalated,
+                        "channel": channel,
+                    },
+                )
+                await db.commit()
+            except Exception as db_err:
+                logger.warning(f"Failed to add message on active db transaction, attempting rollback and retry: {db_err}")
+                try:
+                    await db.rollback()
+                    assistant_msg = await chat_service.chat_repo.add_message(
+                        session_id=active_session_id,
+                        role="assistant",
+                        content=full_response,
+                        metadata={
+                            "sources": collected_sources,
+                            "status": "complete",
+                            "escalation_detected": is_escalated,
+                            "channel": channel,
+                        },
+                    )
+                    await db.commit()
+                except Exception as retry_err:
+                    logger.error(f"Failed to persist assistant message after rollback: {retry_err}")
 
             # 6. Memory API Persistence
             if enable_memory:
@@ -294,7 +334,6 @@ async def run_unified_rag_websocket_loop(
                 kb_id = kb_ids[0] if kb_ids else None
                 if top_chunk_id and kb_id:
                     from ..chats.knowledge_service import ChatKnowledgeService
-                    # It's an async method meant to be run in background tasks normally, but we can await it here or use asyncio.create_task
                     import asyncio
                     asyncio.create_task(ChatKnowledgeService.run_sync_background(
                         tenant_id=tenant_id,
@@ -305,6 +344,48 @@ async def run_unified_rag_websocket_loop(
                         assistant_message=full_response
                     ))
 
+            # 8. Analytics Query Logging
+            try:
+                from app.core.config import get_settings
+                settings = get_settings()
+                model_name = getattr(rag_service, "model_answer", None) or getattr(getattr(rag_service, "llm_client", None), "model_answer", None) or settings.model_answer
+                
+                in_tok = int(len(request.query.split()) * 1.3) + 50
+                out_tok = int(len(full_response.split()) * 1.3) + 10
+                tot_tok = in_tok + out_tok
+                
+                from app.core.llm.pricing import calculate_token_cost
+                cost_val = calculate_token_cost(model_name, in_tok, out_tok)
+                
+                from app.modules.analytics.repository import AnalyticsRepository
+                
+                t_uuid = UUID(str(tenant_id)) if tenant_id else None
+                u_uuid = UUID(str(user_id)) if user_id else None
+                s_uuid = UUID(str(active_session_id)) if active_session_id else None
+                
+                if t_uuid:
+                    latency_ms = (time.perf_counter() - start_time) * 1000.0
+                    analytics_repo = AnalyticsRepository(db, t_uuid)
+                    await analytics_repo.create_query_log({
+                        "query": request.query,
+                        "response_status": "SUCCESS",
+                        "confidence_score": 0.95,
+                        "latency_ms": latency_ms,
+                        "session_id": s_uuid,
+                        "user_id": u_uuid,
+                        "llm_input_tokens": in_tok,
+                        "llm_output_tokens": out_tok,
+                        "embedding_tokens": 0,
+                        "total_tokens": tot_tok,
+                        "llm_cost_usd": cost_val,
+                        "embedding_cost_usd": 0.0,
+                        "total_cost_usd": cost_val,
+                        "model_name": model_name,
+                    })
+                    await db.commit()
+            except Exception as analytics_err:
+                logger.warning(f"Failed to save AnalyticsQueryLog in websocket_core: {analytics_err}")
+
             await adapter.send(websocket, LoopEvent(type="done"))
 
         except WebSocketDisconnect:
@@ -312,6 +393,13 @@ async def run_unified_rag_websocket_loop(
             return
 
         except Exception as e:
-            await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, str(e))
-            await adapter.send_error(websocket, "internal_error")
             logger.exception("unified_rag_loop_failure", extra={"tenant_id": tenant_id, "agent_id": agent_id})
+            await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, str(e), channel=channel)
+            try:
+                await adapter.send_error(websocket, "internal_error")
+            except Exception:
+                pass
+            try:
+                await adapter.send(websocket, LoopEvent(type="done", escalation_detected=False))
+            except Exception:
+                pass

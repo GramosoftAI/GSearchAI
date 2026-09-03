@@ -7,7 +7,7 @@ from uuid import UUID
 from datetime import datetime
 from sqlalchemy import select, func, update, delete, case
 from sqlalchemy.ext.asyncio import AsyncSession
-from .models import AnalyticsSummary, AnalyticsQueryLog, ResponseStatus
+from .models import AnalyticsSummary, AnalyticsQueryLog, LLMStageUsageLog, ResponseStatus
 from ..knowledge_bases.models import DocumentIngestionRun, KnowledgeBase
 from ..auth.models import User
 from decimal import Decimal
@@ -159,6 +159,50 @@ class AnalyticsRepository:
     def __init__(self, db: AsyncSession, tenant_id: Optional[UUID] = None):
         self.db = db
         self.tenant_id = tenant_id
+
+    async def log_usage(
+        self,
+        tenant_id: str,
+        user_id: str,
+        model_name: str,
+        query_text: str,
+        input_tokens: int,
+        output_tokens: int,
+        task_name: str
+    ) -> Optional[LLMStageUsageLog]:
+        from app.core.llm.pricing import calculate_token_cost
+        from app.modules.chats.repository import safe_uuid
+        from sqlalchemy.exc import IntegrityError
+        import logging
+        
+        cost_usd = calculate_token_cost(model_name, input_tokens, output_tokens)
+        
+        t_uuid = safe_uuid(tenant_id) or self.tenant_id
+        u_uuid = safe_uuid(user_id)
+        if not t_uuid:
+            return None
+            
+        log = LLMStageUsageLog(
+            tenant_id=t_uuid,
+            user_id=u_uuid,
+            model_name=model_name,
+            task_type=task_name,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost_usd,
+            query_preview=query_text[:500] if query_text else ""
+        )
+        try:
+            self.db.add(log)
+            await self.db.flush()
+            return log
+        except IntegrityError as e:
+            try:
+                await self.db.rollback()
+            except Exception:
+                pass
+            logging.getLogger(__name__).warning(f"Skipping log_usage due to constraint failure: {e}")
+            return None
 
     async def create_summary(self, summary_data: dict) -> AnalyticsSummary:
         summary = AnalyticsSummary(**summary_data, tenant_id=self.tenant_id)
@@ -689,6 +733,60 @@ class AnalyticsRepository:
             m_entry["total_cost_usd"] += chat_cost_val
             m_entry["request_count"] += 1
                                        
+
+        # Merge background LLM stages into Breakdown By User
+        if not (session_id or request_id):
+            try:
+                stage_user_stmt = select(
+                    LLMStageUsageLog.user_id,
+                    User.email.label("user_email"),
+                    LLMStageUsageLog.model_name,
+                    func.sum(LLMStageUsageLog.input_tokens).label("inp"),
+                    func.sum(LLMStageUsageLog.output_tokens).label("out"),
+                    func.sum(LLMStageUsageLog.cost_usd).label("cost"),
+                    func.count(LLMStageUsageLog.id).label("cnt"),
+                ).select_from(LLMStageUsageLog).outerjoin(
+                    User, LLMStageUsageLog.user_id == User.id
+                ).where(*stage_conditions).group_by(LLMStageUsageLog.user_id, User.email, LLMStageUsageLog.model_name)
+                
+                stage_user_res = await self.db.execute(stage_user_stmt)
+                for row in stage_user_res.all():
+                    if not row.user_id:
+                        continue
+                    entry = get_user_entry(row.user_id, _safe_str(row.user_email))
+                    u_inp = _safe_int(row.inp)
+                    u_out = _safe_int(row.out)
+                    m_name = _safe_str(getattr(row, "model_name", None)) or 'unknown'
+
+                    p_inp, p_out = get_model_pricing(m_name)
+                    u_inp_cost = (u_inp / 1_000_000.0) * p_inp
+                    u_out_cost = (u_out / 1_000_000.0) * p_out
+                    u_tot_cost = u_inp_cost + u_out_cost
+                    req_cnt = _safe_int(row.cnt)
+                    
+                    entry["input_tokens"] += u_inp
+                    entry["output_tokens"] += u_out
+                    entry["total_tokens"] += (u_inp + u_out)
+                    entry["input_cost_usd"] += u_inp_cost
+                    entry["output_cost_usd"] += u_out_cost
+                    entry["total_cost_usd"] += u_tot_cost
+                    
+                    m_entry = get_user_model_entry(entry, m_name)
+                    m_entry["input_tokens"] += u_inp
+                    m_entry["output_tokens"] += u_out
+                    m_entry["total_tokens"] += (u_inp + u_out)
+                    m_entry["input_cost_usd"] += u_inp_cost
+                    m_entry["output_cost_usd"] += u_out_cost
+                    m_entry["total_cost_usd"] += u_tot_cost
+                    m_entry["request_count"] += req_cnt
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to query LLMStageUsageLog for user stats: {e}")
+                try:
+                    await self.db.rollback()
+                except:
+                    pass
+
         for entry in user_costs.values():
             entry["input_cost_usd"] = round(entry["input_cost_usd"], 6)
             entry["output_cost_usd"] = round(entry["output_cost_usd"], 6)
@@ -982,6 +1080,105 @@ class AnalyticsRepository:
                         "pricing_notice": p_info.pricing_notice,
                     }
 
+
+        # Merge background LLM stages from LLMStageUsageLog
+        # We only aggregate these into the by_model breakdown, NOT total_queries or chat history
+        if not (session_id or request_id):
+            stage_conditions = []
+            if self.tenant_id is not None:
+                stage_conditions.append(LLMStageUsageLog.tenant_id == self.tenant_id)
+            if user_id:
+                stage_conditions.append(LLMStageUsageLog.user_id == user_id)
+            if model_name and model_name.strip():
+                stage_conditions.append(LLMStageUsageLog.model_name == model_name.strip())
+            if start_date:
+                stage_conditions.append(LLMStageUsageLog.created_at >= start_date)
+            if end_date:
+                stage_conditions.append(LLMStageUsageLog.created_at <= end_date)
+
+            stage_stmt = select(
+                LLMStageUsageLog.model_name,
+                func.sum(LLMStageUsageLog.input_tokens).label('inp'),
+                func.sum(LLMStageUsageLog.output_tokens).label('out'),
+                func.sum(LLMStageUsageLog.cost_usd).label('cost'),
+                func.count(LLMStageUsageLog.id).label('cnt'),
+            ).where(*stage_conditions).group_by(LLMStageUsageLog.model_name)
+            try:
+                stage_res = await self.db.execute(stage_stmt)
+                stage_rows = stage_res.all()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to query LLMStageUsageLog (migration pending?): {e}")
+                try:
+                    await self.db.rollback()
+                except Exception as rollback_err:
+                    logging.getLogger(__name__).error(f"Failed to rollback session after LLMStageUsageLog query failure: {rollback_err}")
+                stage_rows = []
+
+            for s_row in stage_rows:
+                m_name = _safe_str(s_row.model_name) or 'unknown'
+                s_inp = _safe_int(s_row.inp)
+                s_out = _safe_int(s_row.out)
+                s_tok = s_inp + s_out
+                s_cost = _safe_float(getattr(s_row, 'cost', None), default=0.0)
+                s_cnt = _safe_int(s_row.cnt)
+
+                
+                p_info = get_model_pricing(m_name)
+                p_inp, p_out = p_info
+                s_inp_cost = (s_inp / 1_000_000.0) * p_inp
+                s_out_cost = (s_out / 1_000_000.0) * p_out
+                
+                if m_name in active_models_map:
+                    active_models_map[m_name]['input_tokens'] += s_inp
+                    active_models_map[m_name]['output_tokens'] += s_out
+                    active_models_map[m_name]['total_tokens'] += s_tok
+                    active_models_map[m_name]['input_cost_usd'] = round(active_models_map[m_name]['input_cost_usd'] + s_inp_cost, 6)
+                    active_models_map[m_name]['output_cost_usd'] = round(active_models_map[m_name]['output_cost_usd'] + s_out_cost, 6)
+                    active_models_map[m_name]['total_cost_usd'] = round(active_models_map[m_name]['total_cost_usd'] + s_cost, 6)
+                    active_models_map[m_name]['request_count'] += s_cnt
+                    if s_tok > 0 or s_cnt > 0:
+                        active_models_map[m_name]['status'] = 'active'
+                else:
+                    cat_info = catalog_map.get(m_name, {})
+                    provider = cat_info.get('provider') or getattr(p_info, 'provider', 'deepinfra') or 'deepinfra'
+                    
+                    purpose = cat_info.get('purpose')
+                    if not purpose:
+                        if 'llama-3.3-70b' in m_name.lower():
+                            purpose = 'Conversational Answer Generation'
+                        elif 'rerank' in m_name.lower():
+                            purpose = 'Document Chunk Reranking'
+                        elif 'embed' in m_name.lower():
+                            purpose = 'Vector Embeddings'
+                        elif 'deepseek-v4' in m_name.lower() or 'llama-3-8b' in m_name.lower() or 'deepseek' in m_name.lower():
+                            purpose = 'Entity & Triplet Extraction'
+                        elif 'cypher' in m_name.lower() or 'gpt-oss' in m_name.lower():
+                            purpose = 'Natural Language to Cypher'
+                        elif 'gemma' in m_name.lower():
+                            purpose = 'User Intent Classification & Routing'
+                        else:
+                            purpose = 'General LLM Completion'
+                            
+                    active_models_map[m_name] = {
+                        'model_name': m_name,
+                        'input_tokens': s_inp,
+                        'output_tokens': s_out,
+                        'total_tokens': s_tok,
+                        'input_cost_usd': round(s_inp_cost, 6),
+                        'output_cost_usd': round(s_out_cost, 6),
+                        'embedding_cost_usd': 0.0,
+                        'total_cost_usd': round(s_cost, 6),
+                        'request_count': s_cnt,
+                        'purpose': purpose,
+                        'model_type': cat_info.get('model_type', 'primary'),
+                        'status': 'active' if (s_tok > 0 or s_cnt > 0) else cat_info.get('default_status', 'configured'),
+                        'provider': provider,
+                        'pricing_status': p_info.pricing_status,
+                        'is_pricing_available': p_info.is_pricing_available,
+                        'pricing_notice': p_info.pricing_notice,
+                    }
+
         # Also populate embedding model usage if embedding tokens were used (across chats and ingestion)
         embed_model_name = settings.model_embedding
         if (not model_name or model_name.strip() == embed_model_name) and tot_emb > 0:
@@ -1177,13 +1374,20 @@ class AnalyticsRepository:
             m_entry = get_user_model_entry(entry, m_name)
             m_entry["input_tokens"] += u_inp
             m_entry["output_tokens"] += u_out
-            m_entry["embedding_tokens"] += u_emb
-            m_entry["total_tokens"] += (u_inp + u_out + u_emb)
+            m_entry["total_tokens"] += (u_inp + u_out)
             m_entry["input_cost_usd"] += u_inp_cost
             m_entry["output_cost_usd"] += u_out_cost
-            m_entry["embedding_cost_usd"] += u_emb_cost
-            m_entry["total_cost_usd"] += u_tot_cost
+            m_entry["total_cost_usd"] += (u_inp_cost + u_out_cost)
             m_entry["request_count"] += req_cnt
+
+            if u_emb > 0:
+                emb_model_name = settings.model_embedding
+                emb_entry = get_user_model_entry(entry, emb_model_name)
+                emb_entry["embedding_tokens"] += u_emb
+                emb_entry["total_tokens"] += u_emb
+                emb_entry["embedding_cost_usd"] += u_emb_cost
+                emb_entry["total_cost_usd"] += u_emb_cost
+                emb_entry["request_count"] += req_cnt
 
         if include_ingestion:
             ingest_user_stmt = select(
@@ -1244,13 +1448,78 @@ class AnalyticsRepository:
                 m_entry = get_user_model_entry(entry, m_name)
                 m_entry["input_tokens"] += i_inp
                 m_entry["output_tokens"] += i_out
-                m_entry["embedding_tokens"] += i_emb
-                m_entry["total_tokens"] += (i_inp + i_out + i_emb)
+                m_entry["total_tokens"] += (i_inp + i_out)
                 m_entry["input_cost_usd"] += i_inp_cost
                 m_entry["output_cost_usd"] += i_out_cost
-                m_entry["embedding_cost_usd"] += i_emb_cost
-                m_entry["total_cost_usd"] += (i_inp_cost + i_out_cost + i_emb_cost)
+                m_entry["total_cost_usd"] += (i_inp_cost + i_out_cost)
                 m_entry["request_count"] += req_cnt
+
+                if i_emb > 0:
+                    emb_model_name = settings.model_embedding
+                    emb_entry = get_user_model_entry(entry, emb_model_name)
+                    emb_entry["embedding_tokens"] += i_emb
+                    emb_entry["total_tokens"] += i_emb
+                    emb_entry["embedding_cost_usd"] += i_emb_cost
+                    emb_entry["total_cost_usd"] += i_emb_cost
+                    emb_entry["request_count"] += req_cnt
+
+        # Merge background LLM stages into Breakdown By User
+        if not (session_id or request_id):
+            try:
+                stage_user_stmt = select(
+                    LLMStageUsageLog.user_id,
+                    User.email.label("user_email"),
+                    LLMStageUsageLog.model_name,
+                    func.sum(LLMStageUsageLog.input_tokens).label("inp"),
+                    func.sum(LLMStageUsageLog.output_tokens).label("out"),
+                    func.sum(LLMStageUsageLog.cost_usd).label("cost"),
+                    func.count(LLMStageUsageLog.id).label("cnt"),
+                ).select_from(LLMStageUsageLog).outerjoin(
+                    User, LLMStageUsageLog.user_id == User.id
+                ).where(*stage_conditions).group_by(
+                    LLMStageUsageLog.user_id, User.email, LLMStageUsageLog.model_name
+                )
+
+                stage_user_res = await self.db.execute(stage_user_stmt)
+                for row in stage_user_res.all():
+                    if not row.user_id:
+                        continue
+                    entry = get_user_entry(row.user_id, _safe_str(row.user_email))
+                    u_inp = _safe_int(row.inp)
+                    u_out = _safe_int(row.out)
+                    m_name = _safe_str(getattr(row, "model_name", None)) or "unknown"
+
+                    p_inp, p_out = get_model_pricing(m_name)
+                    u_inp_cost = (u_inp / 1_000_000.0) * p_inp
+                    u_out_cost = (u_out / 1_000_000.0) * p_out
+                    u_tot_cost = u_inp_cost + u_out_cost
+                    req_cnt = _safe_int(row.cnt)
+
+                    entry["input_tokens"] += u_inp
+                    entry["output_tokens"] += u_out
+                    entry["total_tokens"] += (u_inp + u_out)
+                    entry["input_cost_usd"] += u_inp_cost
+                    entry["output_cost_usd"] += u_out_cost
+                    entry["total_cost_usd"] += u_tot_cost
+                    entry["request_count"] += req_cnt
+
+                    m_entry = get_user_model_entry(entry, m_name)
+                    m_entry["input_tokens"] += u_inp
+                    m_entry["output_tokens"] += u_out
+                    m_entry["total_tokens"] += (u_inp + u_out)
+                    m_entry["input_cost_usd"] += u_inp_cost
+                    m_entry["output_cost_usd"] += u_out_cost
+                    m_entry["total_cost_usd"] += u_tot_cost
+                    m_entry["request_count"] += req_cnt
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"Failed to query LLMStageUsageLog for user stats: {e}"
+                )
+                try:
+                    await self.db.rollback()
+                except Exception:
+                    pass
 
         for entry in user_costs.values():
             entry["input_cost_usd"] = round(entry["input_cost_usd"], 6)
@@ -1405,6 +1674,59 @@ class AnalyticsRepository:
                 d_entry["embedding_cost_usd"] += i_emb_cost
                 d_entry["total_cost_usd"] += (i_inp_cost + i_out_cost + i_emb_cost)
                 d_entry["query_count"] += _safe_int(row.cnt)
+
+
+        # Merge background LLM stages into Daily Trends
+        if not (session_id or request_id):
+            try:
+                stage_daily_stmt = select(
+                    func.date(LLMStageUsageLog.created_at).label("date"),
+                    LLMStageUsageLog.model_name,
+                    func.sum(LLMStageUsageLog.input_tokens).label("inp"),
+                    func.sum(LLMStageUsageLog.output_tokens).label("out"),
+                    func.sum(LLMStageUsageLog.cost_usd).label("cost"),
+                    func.count(LLMStageUsageLog.id).label("cnt"),
+                ).where(*stage_conditions).group_by(func.date(LLMStageUsageLog.created_at), LLMStageUsageLog.model_name)
+                
+                stage_daily_res = await self.db.execute(stage_daily_stmt)
+                for row in stage_daily_res.all():
+                    d_date = str(row.date)
+                    d_inp = _safe_int(row.inp)
+                    d_out = _safe_int(row.out)
+                    m_name = _safe_str(getattr(row, "model_name", None)) or 'unknown'
+
+                    p_inp, p_out = get_model_pricing(m_name)
+                    d_inp_cost = (d_inp / 1_000_000.0) * p_inp
+                    d_out_cost = (d_out / 1_000_000.0) * p_out
+                    d_tot_cost = d_inp_cost + d_out_cost
+                    
+                    if d_date not in daily_map:
+                        daily_map[d_date] = {
+                            "date": d_date,
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "embedding_tokens": 0,
+                            "total_tokens": 0,
+                            "input_cost_usd": 0.0,
+                            "output_cost_usd": 0.0,
+                            "embedding_cost_usd": 0.0,
+                            "total_cost_usd": 0.0,
+                            "query_count": 0,
+                        }
+                    d_entry = daily_map[d_date]
+                    d_entry["input_tokens"] += d_inp
+                    d_entry["output_tokens"] += d_out
+                    d_entry["total_tokens"] += (d_inp + d_out)
+                    d_entry["input_cost_usd"] += d_inp_cost
+                    d_entry["output_cost_usd"] += d_out_cost
+                    d_entry["total_cost_usd"] += d_tot_cost
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to query LLMStageUsageLog for daily stats: {e}")
+                try:
+                    await self.db.rollback()
+                except:
+                    pass
 
         for d_entry in daily_map.values():
             d_entry["input_cost_usd"] = round(d_entry["input_cost_usd"], 6)

@@ -165,3 +165,22 @@ class AppErrorLog(Base):
         Index("ix_app_error_logs_tenant_id", "tenant_id"),
         Index("ix_app_error_logs_created_at", "created_at"),
     )
+
+class LLMStageUsageLog(Base):
+    __tablename__ = 'llm_stage_usage_logs'
+
+    id = Column(SQLAlchemyUUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    tenant_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey('tenants.id', ondelete='CASCADE'), nullable=False, index=True)
+    user_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    
+    model_name = Column(String(100), nullable=False, index=True)
+    task_type = Column(String(100), nullable=False, index=True)
+    
+    input_tokens = Column(Integer, default=0, nullable=False)
+    output_tokens = Column(Integer, default=0, nullable=False)
+    cost_usd = Column(Float, default=0.0, nullable=False)
+    
+    query_preview = Column(String(500), nullable=True)
+    
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+

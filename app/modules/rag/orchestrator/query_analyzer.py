@@ -1,6 +1,7 @@
 import re
 import json
 import logging
+import asyncio
 from enum import Enum
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
@@ -68,7 +69,7 @@ class QueryAnalyzer:
                 reasoning="Fast-path greeting regex match"
             )
 
-        kb_context_section = f"\n[ACTIVE KNOWLEDGE BASES CONTEXT]\nThe user is searching across these knowledge bases. Use this context to deduce the meaning of ambiguous terms:\n{kb_context}\n" if kb_context else ""
+        kb_context_section = f"\n[ACTIVE KNOWLEDGE BASES CONTEXT & SCHEMA VOCABULARY]\nThe user is searching across these knowledge bases. Use the provided column names and sample categorical values to resolve ambiguous terms and identify structured tabular queries:\n{kb_context}\n" if kb_context else ""
         
         chat_history_section = ""
         if chat_history:
@@ -84,7 +85,7 @@ TASKS:
 2. KEYWORDS: Extract key search terms/entities in `keywords` list.
 3. TABULAR: Set `is_tabular` to true if query asks for numbers, sums, counts, prices, salary, HSN, table records; false otherwise.
 4. COMPOSITE: If query asks both tabular and text questions, split into `tabular_subquery` and `vector_subquery` (resolving pronouns). Otherwise null.
-5. INTENT: One of FACT, CALCULATION, COMPARISON, TEMPORAL, STRUCTURAL, TABLE, SUMMARY, WHY, UNKNOWN.
+5. INTENT: One of FACT, CALCULATION, COMPARISON, TEMPORAL, STRUCTURAL, TABLE, SUMMARY, WHY, GRAPH, UNKNOWN.
 
 CRITICAL TASK: STRUCTURED QUERY REPHRASING
 You must generate an array of 3 optimized retrieval queries based on the user's input in the `structured_queries` field inside the `metadata` object. 
@@ -119,6 +120,7 @@ INTENTS:
 - TABLE: Explicitly asking about a table or cell.
 - SUMMARY: Needs an overview or tl;dr.
 - WHY: Needs reasoning or explanation.
+- GRAPH: Requires relationship/connected-entity reasoning, graph traversal, or knowledge-graph-based retrieval.
 - UNKNOWN: Fallback if nothing matches.
 
 Return ONLY valid JSON:
@@ -176,7 +178,6 @@ QUERY:
 """
         from app.core.llm.routing import LLMTask
         
-        import asyncio
         # We will try up to 1 times (no retries to bound latency)
         max_attempts = 1
         for attempt in range(max_attempts):
@@ -189,10 +190,12 @@ QUERY:
                         max_tokens=1024,
                         enable_thinking=False,
                         model=self.llm_client.model_intent,
-                        timeout=20.0, # Increased timeout for complex schema reasoning and slow providerder jitter
-                        task=LLMTask.INTENT_DETECTION
+                        timeout=4.5, # Tighter timeout for fast-fail when provider is degraded
+                        task=LLMTask.INTENT_DETECTION,
+                        tenant_id=tenant_id,
+                        user_id=user_id
                     ),
-                    timeout=25.0
+                    timeout=5.0
                 )
                 
                 # Extract JSON block
@@ -274,7 +277,6 @@ QUERY:
                 )
                 
             except Exception as e:
-                import asyncio
                 if isinstance(e, asyncio.TimeoutError):
                     logger.error(f"QueryAnalyzer LLM request timed out on attempt {attempt + 1}")
                 else:

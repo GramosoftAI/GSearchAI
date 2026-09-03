@@ -168,7 +168,6 @@ class VectorEngine(BaseEngine):
             except Exception as e:
                 logger.error(f"Postgres candidate section search failed: {e}")
                 if hasattr(self.db, "rollback"):
-                    import asyncio
                     if asyncio.iscoroutinefunction(self.db.rollback):
                         await self.db.rollback()
                     else:
@@ -242,12 +241,9 @@ class VectorEngine(BaseEngine):
                 candidate_limit = max(top_k, 15)
 
                 vector_score = (1.0 - DocumentChunk.embedding.cosine_distance(query_embedding))
-                position_boost = case((DocumentChunk.chunk_index < 3, 1.0), else_=0.0).cast(Float)
+                position_boost = case((DocumentChunk.chunk_index < 3, 0.01), else_=0.0).cast(Float)
 
                 # Build the WHERE conditions.
-                # When target_section_ids is populated, restrict the candidate
-                # set to those specific chunk UUIDs so vector ranking operates
-                # within the permitted section scope, not across the entire KB.
                 base_conditions = [
                     DocumentChunk.tenant_id == UUID(str(self.tenant_id)),
                     DocumentChunk.kb_id.in_([UUID(str(kb_id)) for kb_id in kb_ids]),
@@ -264,7 +260,21 @@ class VectorEngine(BaseEngine):
                         task.task_id,
                         len(target_sections),
                     )
-
+                elif is_tabular:
+                    narrative_keywords = ["cause", "event", "phase", "why", "how", "reason", "accident", "analysis", "report", "statement", "damage", "led to", "happen", "occur", "defining"]
+                    has_narrative_intent = any(nk in task.query.lower() for nk in narrative_keywords)
+                    if not has_narrative_intent:
+                        base_conditions.append(DocumentChunk.chunk_index >= 90000)
+                        logger.info(
+                            "VectorEngine task=%s: restricting pgvector search "
+                            "to synthetic table chunks ONLY (table_fallback).",
+                            task.task_id,
+                        )
+                    else:
+                        logger.info(
+                            "VectorEngine task=%s: query is tabular BUT contains narrative intent terms. Allowing both narrative and table chunks.",
+                            task.task_id,
+                        )
 
                 stmt = (
                     select(
@@ -272,6 +282,7 @@ class VectorEngine(BaseEngine):
                         DocumentChunk.text,
                         DocumentChunk.chunk_index,
                         DocumentChunk.kb_id,
+                        DocumentChunk.section,
                         DocumentChunk.metadata_json,
                         KnowledgeBase.name,
                         KnowledgeBase.s3_path,
@@ -284,6 +295,35 @@ class VectorEngine(BaseEngine):
                 )
 
                 res = await self.db.execute(stmt)
+                all_rows = res.fetchall()
+
+                # Fallback: If section-restricted search returned 0 results, fall back to broad search
+                if not all_rows and target_sections:
+                    logger.info(f"VectorEngine task={task.task_id}: 0 results with target_sections filter. Retrying with broad KB search fallback.")
+                    fallback_conditions = [
+                        DocumentChunk.tenant_id == UUID(str(self.tenant_id)),
+                        DocumentChunk.kb_id.in_([UUID(str(kb_id)) for kb_id in kb_ids]),
+                    ]
+                    stmt_fallback = (
+                        select(
+                            DocumentChunk.id,
+                            DocumentChunk.text,
+                            DocumentChunk.chunk_index,
+                            DocumentChunk.kb_id,
+                            DocumentChunk.section,
+                            DocumentChunk.metadata_json,
+                            KnowledgeBase.name,
+                            KnowledgeBase.s3_path,
+                            vector_score.label("similarity"),
+                        )
+                        .join(KnowledgeBase, DocumentChunk.kb_id == KnowledgeBase.id)
+                        .where(and_(*fallback_conditions))
+                        .order_by((vector_score + position_boost).desc())
+                        .limit(200)
+                    )
+                    res_fb = await self.db.execute(stmt_fallback)
+                    all_rows = res_fb.fetchall()
+
                 chunks = []
 
                 # Get intelligent keywords from QueryAnalyzer
@@ -307,8 +347,6 @@ class VectorEngine(BaseEngine):
                     exploded_keywords = {w.lower() for w in task.query.split() if len(w) > 4 and w.isalnum()}
                     
                 logger.info(f"[BOOST_CHECK] task_id={task.task_id} analyzer_keywords={analyzer_keywords} exploded_keywords={exploded_keywords}")
-
-                all_rows = res.fetchall()
                 
                 # To prevent log spam, we only log the match once per kb
                 matched_kbs = set()
@@ -321,8 +359,11 @@ class VectorEngine(BaseEngine):
 
                     weight = 1.0
                     
+                    # Section Match Boost
+                    if target_sections and row.section in target_sections:
+                        weight *= 1.25
+
                     # 1. Source Identity Anchoring (Domain Match)
-                    # If the KB filename/name explicitly contains our query's core entities, massively boost it
                     import re
                     def basic_stem(word):
                         if len(word) <= 3: return word
@@ -334,7 +375,6 @@ class VectorEngine(BaseEngine):
                     STOP_WORDS = {"south", "north", "east", "west", "total", "amount", "count", "sum", "average", "max", "min", "data", "report"}
                     for kw in exploded_keywords:
                         if len(kw) > 3:
-                            # Use basic stemming to allow 'hike' to match 'hiking' (stem 'hik')
                             stemmed_kw = basic_stem(kw)
                             if re.search(rf"\b{re.escape(stemmed_kw)}", kb_name) or re.search(rf"\b{re.escape(stemmed_kw)}", kb_path):
                                 is_stopword = kw in STOP_WORDS or stemmed_kw in STOP_WORDS
@@ -352,6 +392,12 @@ class VectorEngine(BaseEngine):
                         if len(kw) > 3 and kw in chunk_text.lower():
                             weight *= 1.05
 
+                    # 3. Narrative Intent Boost (Boost original narrative sections when query asks for cause, phase, event, etc.)
+                    narrative_keywords = ["cause", "event", "phase", "why", "how", "reason", "accident", "analysis", "report", "statement", "damage", "led to", "happen", "occur", "defining"]
+                    has_narrative_query = any(nk in task.query.lower() for nk in narrative_keywords)
+                    if has_narrative_query and row.chunk_index < 90000:
+                        weight *= 1.35
+
                     base_weighted = similarity * weight
                     if row.chunk_index < 3:
                         final_score = base_weighted + 1.0
@@ -367,7 +413,7 @@ class VectorEngine(BaseEngine):
                         chunk_id=str(row.id),
                         text=chunk_text,
                         kb_id=str(row.kb_id),
-                        position=idx,
+                        position=row.chunk_index,
                         embedding_similarity=similarity,
                         graph_score=0.0,
                         hybrid_score=final_score,
@@ -375,10 +421,7 @@ class VectorEngine(BaseEngine):
                         source=row.s3_path or row.name or f"DocumentChunk {row.chunk_index}",
                         s3_path=row.s3_path,
                         engine_name="vector",
-                        section="Unknown",
-                        # ontology_node is intentionally None: pgvector retrieves
-                        # by embedding proximity, not by explicit ontology
-                        # fabricate coverage-validation evidence.
+                        section=row.section or "Unknown",
                         ontology_node=None,
                         retrieval_path=retrieval_path,
                         domain_matched=(row.kb_id in matched_kbs),
@@ -394,7 +437,6 @@ class VectorEngine(BaseEngine):
             except Exception as e:
                 logger.error(f"VectorEngine pgvector retrieval failed: {e}. Falling back to Cypher.")
                 if hasattr(self.db, "rollback"):
-                    import asyncio
                     if asyncio.iscoroutinefunction(self.db.rollback):
                         await self.db.rollback()
                     else:

@@ -562,6 +562,8 @@ class GraphMindPricingRegistry:
                 info = dict(self._custom_overrides[candidate])
                 info["matched_key"] = candidate
                 info["pricing_source"] = "graphmind_models_yaml_fallback"
+                if candidate not in litellm.model_cost:
+                    litellm.model_cost[candidate] = info
                 return info
 
         return None

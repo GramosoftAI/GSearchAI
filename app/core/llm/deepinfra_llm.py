@@ -54,6 +54,7 @@ from ..config import get_settings
 
 import re
 from ..billing.utils import is_billing_enabled
+from app.core.llm.routing import LLMTask
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,13 @@ def strip_think_tags(text: str) -> str:
     if not text:
         return ""
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+
+def _task_label(task) -> str:
+    """Normalize a task identifier (enum, string, or None) to a
+    clean human-readable label for storage/logging."""
+    if task is None:
+        return "unknown"
+    return task.value if hasattr(task, "value") else str(task)
 
 # Prompt versioning (for A/B testing and rollout tracking)
 PROMPT_VERSION = "v1"
@@ -97,6 +105,17 @@ _total_prompt_tokens = 0
 _total_completion_tokens = 0
 
 _total_cost_estimate = 0.0
+
+# Keep strong references to fire-and-forget background tasks so they
+# aren't garbage collected mid-flight (see asyncio docs on
+# create_task: "the event loop only keeps weak references to tasks").
+_background_tasks: set = set()
+
+def _fire_and_forget(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 
 
 
@@ -352,29 +371,20 @@ class DeepInfraLLMClient:
 
 
     async def generate(
-
         self,
-
         prompt: str,
-
         system_prompt: str = "You are a helpful assistant.",
-
         max_tokens: Optional[int] = None,
-
         temperature: Optional[float] = None,
-
         enable_thinking: bool = False,
-
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        task: Optional[LLMTask] = None,
     ) -> str:
-
         """
-
         Generic prompt generation (for entity extraction, triplet extraction, etc.)
-
         Includes retry logic and extended timeout for extraction tasks.
-
         """
-
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -405,6 +415,21 @@ class DeepInfraLLMClient:
                 data = response.json()
 
                 content = data["choices"][0]["message"]["content"].strip()
+                
+                if tenant_id:
+                    usage = data.get("usage", {})
+                    _fire_and_forget(
+                        self._log_usage_to_db(
+                            tenant_id=tenant_id,
+                            user_id=user_id,
+                            model_name=self.model_extraction,
+                            input_tokens=usage.get("prompt_tokens", 0),
+                            output_tokens=usage.get("completion_tokens", 0),
+                            task_type=_task_label(task) if task else "entity_extraction",
+                            query=prompt[:500]
+                        )
+                    )
+                    
                 return strip_think_tags(content)
 
             except Exception as e:
@@ -433,12 +458,17 @@ class DeepInfraLLMClient:
         model: Optional[str] = None,
         timeout: Optional[float] = None,
         task: Optional[Any] = None,
+        **kwargs
     ) -> str:
         """
         Equivalent to generate() but explicitly routes to the cloud DeepInfra model 
         (qwen3.5-9B) for faster processing (e.g. query routing, planning, answer generation).
         Thinking is disabled by default to save tokens.
         """
+        tenant_id = kwargs.get("tenant_id")
+        if not tenant_id:
+            logger.warning(f"generate_cloud() called without tenant_id for task {getattr(task, 'value', task)}! Token usage will NOT be logged.")
+
         headers = {
             "Content-Type": "application/json",
         }
@@ -458,24 +488,56 @@ class DeepInfraLLMClient:
             "reasoning_effort": "none"
         }
         
+        req_timeout = timeout if timeout is not None else self.timeout
+        import time
         last_error = None
         for attempt in range(3):
             try:
                 client = await self.get_client()
+                t0 = time.monotonic()
                 async with _llm_semaphore:
-                    response = await client.post(self.deepinfra_base_url, headers=headers, json=payload, timeout=self.timeout)
+                    t1 = time.monotonic()
+                    sem_wait = t1 - t0
+                    response = await client.post(self.deepinfra_base_url, headers=headers, json=payload, timeout=req_timeout)
+                    t2 = time.monotonic()
+                    gen_time = t2 - t1
+                    logger.info(f"[QA_TIMING] task={getattr(task, 'value', task)} model={payload['model']} sem_wait={sem_wait:.2f}s gen_time={gen_time:.2f}s attempt={attempt+1}")
                 response.raise_for_status()
                 data = response.json()
                 content = data["choices"][0]["message"]["content"].strip()
+                usage = data.get("usage", {})
+                in_toks = usage.get("prompt_tokens", 0)
+                out_toks = usage.get("completion_tokens", 0)
+                
+                tenant_id = kwargs.get("tenant_id")
+                if tenant_id:
+                    user_id = kwargs.get("user_id")
+                    task_name = _task_label(task) if task else "generate_cloud"
+                    _fire_and_forget(
+                        self._log_usage_to_db(
+                            tenant_id=tenant_id,
+                            user_id=user_id,
+                            model_name=payload["model"],
+                            query=prompt,
+                            input_tokens=in_toks,
+                            output_tokens=out_toks,
+                            task_type=task_name
+                        )
+                    )
                 return strip_think_tags(content)
             except Exception as e:
                 last_error = e
                 logger.warning(f"generate_cloud() attempt {attempt+1}/3 failed: {e}")
                 if attempt < 2:
+                    # If this is a fast-fail request (e.g. timeout < 10s), don't waste time retrying if the request timed out.
+                    # Or check if we have enough budget remaining.
+                    if req_timeout < 10.0 and ("timeout" in str(e).lower() or isinstance(e, asyncio.TimeoutError)):
+                        logger.warning("generate_cloud() aborting retries due to strict timeout bounds on this task.")
+                        break
                     import asyncio
                     await asyncio.sleep(2 ** attempt)
         
-        logger.error(f"generate_cloud() all 3 attempts failed. Last error: {last_error}")
+        logger.error(f"generate_cloud() all attempts failed. Last error: {last_error}")
         raise last_error
 
     async def generate_with_usage(
@@ -574,6 +636,9 @@ class DeepInfraLLMClient:
                 "If 'MEMORY DIRECTIVES' are provided in the <user_preferences> tag, they dictate your STYLISTIC and FORMATTING behavior ONLY. "
                 "You MUST NOT allow any stylistic preferences to alter factual truth, hallucinate data, or override the actual document context. "
                 "If the user asks to filter or modify previous answers, prioritize the CONVERSATION HISTORY. "
+                "If an 'Active Override' contradicts the document context or 'Graph Memory', the 'Active Override' always wins. "
+                "For multi-part or compound questions, evaluate each part independently: answer every part that has grounded information in the context, and for any part whose information is missing or unstated (e.g. blank fields), explicitly note that specific part is not specified in the document rather than refusing the entire answer. "
+                "If the requested information is ENTIRELY missing for ALL parts of the query from BOTH the document context AND conversation history/memory, reply exactly with: "
                 "If the answer is not contained within the provided context, conversation history, and no preference applies, you MUST respond exactly with: "
                 "\"Im sorry, but the requested information is not available within my current knowledge base. "
                 "Please try a related query or provide additional context.\""
@@ -585,6 +650,9 @@ class DeepInfraLLMClient:
                 "If 'MEMORY DIRECTIVES' are provided in the <user_preferences> tag, they dictate your STYLISTIC and FORMATTING behavior ONLY. "
                 "You MUST NOT allow any stylistic preferences to alter factual truth, hallucinate data, or override the actual document context. "
                 "If the user asks to filter or modify previous answers, prioritize the CONVERSATION HISTORY. "
+                "If an 'Active Override' contradicts the document context or 'Graph Memory', the 'Active Override' always wins. "
+                "For multi-part or compound questions, evaluate each part independently: answer every part that has grounded information in the context, and for any part whose information is missing or unstated (e.g. blank fields), explicitly note that specific part is not specified in the document rather than refusing the entire answer. "
+                "If the information is ENTIRELY missing for ALL parts of the query in the context, conversation history, and user preferences, respond exactly with: "
                 "If the information is not available in the context, conversation history, and no preference applies, respond exactly with: "
                 "\"Im sorry, but the requested information is not available within my current knowledge base. "
                 "Please try a related query or provide additional context.\""
@@ -618,9 +686,10 @@ class DeepInfraLLMClient:
                     "max_tokens": self.max_tokens_answer,
                     "stream": True,
                     "stream_options": {"include_usage": True},
-                    "enable_thinking": False,
-                    "reasoning_effort": "none",
                 }
+                if enable_thinking:
+                    payload["enable_thinking"] = True
+                    payload["reasoning_effort"] = "medium"
 
                 logger.info(f"[RAW_PROMPT_DUMP] =========================\n{json.dumps(payload['messages'], indent=2)}\n=========================")
 
@@ -634,8 +703,10 @@ class DeepInfraLLMClient:
                 try:
                     async with client.stream("POST", self.deepinfra_base_url, headers=headers, json=payload, timeout=stream_timeout) as response:
                         if response.status_code != 200:
-                            logger.warning(
-                                f"LLM API Error {response.status_code} for model '{target_model}' (Attempt {attempt}/{max_attempts})"
+                            err_body = await response.aread()
+                            err_msg = err_body.decode("utf-8", errors="ignore")
+                            logger.error(
+                                f"LLM API Error {response.status_code} for model '{target_model}' (Attempt {attempt}/{max_attempts}): {err_msg}"
                             )
                             if attempt < max_attempts:
                                 await asyncio.sleep(1.0 * attempt)
@@ -1332,6 +1403,59 @@ ANSWER:
 
 
 
+    async def _log_usage_to_db(
+        self,
+        tenant_id: Optional[str],
+        user_id: Optional[str],
+        model_name: str,
+        query: str,
+        input_tokens: int,
+        output_tokens: int,
+        task_type: str,
+    ) -> None:
+        """
+        Persist usage for a non-answer-generation LLM stage (rerank, intent,
+        nl_to_cypher, extraction, etc.) directly to AnalyticsQueryLog.
+
+        Writes its own short-lived DB session rather than reusing the request's
+        session, since this always runs as a detached asyncio.create_task()
+        fire-and-forget call, after the original request's session may already
+        be closed/committed.
+        """
+        if not tenant_id:
+            return
+
+        try:
+            from uuid import UUID
+            from app.core.database import AsyncSessionLocal
+            from app.modules.analytics.models import LLMStageUsageLog
+            from app.core.llm.pricing import calculate_token_cost
+
+            cost = calculate_token_cost(
+                model_name=model_name,
+                input_tokens=input_tokens or 0,
+                output_tokens=output_tokens or 0,
+            )
+
+            async with AsyncSessionLocal() as db:
+                log = LLMStageUsageLog(
+                    tenant_id=UUID(str(tenant_id)),
+                    user_id=UUID(str(user_id)) if user_id else None,
+                    model_name=model_name,
+                    task_type=task_type,
+                    input_tokens=input_tokens or 0,
+                    output_tokens=output_tokens or 0,
+                    cost_usd=cost,
+                    query_preview=(query or '')[:400],
+                )
+                db.add(log)
+                await db.commit()
+        except Exception as e:
+            logger.error(
+                f"_log_usage_to_db failed for task={task_type}, model={model_name}, tenant={tenant_id}: {e}",
+                exc_info=True,
+            )
+
     def _track_billing(
 
         self,
@@ -1424,6 +1548,82 @@ ANSWER:
 
             _agent_costs[agent_id]["tokens"] += total_tokens
 
+    async def rerank_documents(
+        self,
+        query: str,
+        documents: list[str],
+        top_n: int = 5,
+        model: str = None,
+        tenant_id: str = None,
+        user_id: str = None
+    ) -> list[dict]:
+        """
+        Calls DeepInfra inference API for cross-encoder reranking.
+        """
+        import time
+        import httpx
+        from app.core.config import get_settings
+        
+        if not model:
+            model = getattr(self, "model_reranker", "Qwen/Qwen3-Reranker-4B")
+            
+        url = f"{self.base_url.replace('/openai', '')}/inference/{model}"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "queries": [query],
+            "documents": documents
+        }
+        
+        client = await self.get_client()
+        try:
+            response = await client.post(url, headers=headers, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+            
+            scores = data.get("scores", [])
+            input_tokens = data.get("input_tokens", 0)
+            
+            results = []
+            for idx, score in enumerate(scores):
+                if idx < len(documents):
+                    results.append({
+                        "text": documents[idx],
+                        "relevance_score": float(score),
+                        "original_index": idx
+                    })
+                    
+            results = sorted(results, key=lambda x: x["relevance_score"], reverse=True)
+            
+            if tenant_id:
+                _fire_and_forget(
+                    self._log_usage_to_db(
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        model_name=model,
+                        query=query,
+                        input_tokens=input_tokens,
+                        output_tokens=0,
+                        task_type="Document Chunk Reranking"
+                    )
+                )
+                
+            return results[:top_n]
+            
+        except httpx.HTTPError as e:
+            if tenant_id:
+                _fire_and_forget(
+                    self._log_usage_to_db(tenant_id=tenant_id, user_id=user_id, model_name=model, query=query, input_tokens=0, output_tokens=0, task_type="Document Chunk Reranking")
+                )
+            return [{"text": doc, "relevance_score": 1.0 / (i + 1), "original_index": i} for i, doc in enumerate(documents[:top_n])]
+        except Exception as e:
+            if tenant_id:
+                _fire_and_forget(
+                    self._log_usage_to_db(tenant_id=tenant_id, user_id=user_id, model_name=model, query=query, input_tokens=0, output_tokens=0, task_type="Document Chunk Reranking")
+                )
+            return [{"text": doc, "relevance_score": 1.0 / (i + 1), "original_index": i} for i, doc in enumerate(documents[:top_n])]
 
 
 

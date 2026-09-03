@@ -24,11 +24,22 @@ def calculate_schema_overlap_score(query: str, dataset_schema: Optional[Dict[str
     cols = get_schema_columns(dataset_schema, categorical_values)
         
     for c in cols:
-        schema_col_terms.update(re.findall(r'[a-zA-Z0-9]+', str(c).lower()))
+        col_str = str(c).lower()
+        terms = re.findall(r'[a-zA-Z0-9]+', col_str)
+        schema_col_terms.update(terms)
+        
+        # Domain synonym expansions
+        if "mrp" in col_str or "price" in col_str:
+            schema_col_terms.update(["mrp", "price", "pricing", "cost", "rate", "dlp"])
+        if "part" in col_str or "description" in col_str or "item" in col_str:
+            schema_col_terms.update(["part", "item", "sku", "code", "repair", "kit", "product"])
         
     schema_name_terms = set()
     if name:
-        schema_name_terms = set(re.findall(r'[a-zA-Z0-9]+', str(name).lower()))
+        name_str = str(name).lower()
+        schema_name_terms.update(re.findall(r'[a-zA-Z0-9]+', name_str))
+        if "mrp" in name_str or "price" in name_str or "pricelist" in name_str:
+            schema_name_terms.update(["mrp", "price", "pricing", "cost", "rate", "list", "edition"])
         
     categorical_match_count = 0
     if categorical_values:
@@ -72,17 +83,22 @@ def evaluate_schema_overlap(
         total_term_overlap = term_overlap[0] + term_overlap[1]
         query_terms = set(re.findall(r'[a-zA-Z0-9]+', query.lower()))
         
-        # ID Regex (e.g., EMP1006, INV2023, or purely numeric 26080231)
-        has_id_regex = bool(re.search(ID_REGEX_PATTERN, query))
+        # Expanded Part No / Alphanumeric ID Regex (e.g. 29019292JA, EMP1006, APDA-102, MSS013002)
+        has_id_regex = bool(re.search(r'\b[a-zA-Z0-9_-]{5,}\b', query)) and (bool(re.search(r'\d', query)) and bool(re.search(r'[a-zA-Z]', query)))
+        
+        # Domain keywords indicating spreadsheet/tabular entity queries
+        tabular_domain_kws = {"mrp", "part", "price", "hsn", "sku", "item", "kit", "repair", "cost", "details", "list", "edition", "oem", "model"}
+        has_domain_kw = bool(query_terms & tabular_domain_kws)
         
         # Analytic verbs
-        analytic_verbs = {"average", "total", "sum", "count", "list", "how many", "max", "min", "which", "what"}
+        analytic_verbs = {"average", "total", "sum", "count", "list", "how many", "max", "min", "which", "what", "find", "get", "show"}
         has_analytic_verb = bool(query_terms & analytic_verbs)
         
         # Final decision logic
         strict_schema_overlap = (
             term_overlap[0] > 0 or # Explicit categorical match is an instant win
-            (term_overlap[1] >= 1 and has_id_regex) or # Looking up specific row by ID
+            (term_overlap[1] >= 1 and has_id_regex) or # Looking up specific row by Part No / ID
+            (term_overlap[1] >= 1 and has_domain_kw) or # Specific tabular domain inquiry (e.g. MRP, part, price)
             (term_overlap[1] >= 2 and has_analytic_verb) # Multiple column matches with analytical intent
         )
         

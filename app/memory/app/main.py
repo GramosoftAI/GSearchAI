@@ -1,3 +1,34 @@
+
+async def log_telemetry_to_backend(tenant_id, user_id, usage, task_name, query_text):
+    if not usage: return
+    base_url = os.getenv("BACKEND_API_BASE_URL", "http://127.0.0.1:4915").rstrip("/")
+    candidate_urls = [
+        f"{base_url}/api/v1/analytics/internal/log-tokens",
+        "http://127.0.0.1:4915/api/v1/analytics/internal/log-tokens",
+        "http://host.docker.internal:4915/api/v1/analytics/internal/log-tokens",
+    ]
+    urls = list(dict.fromkeys(candidate_urls))
+    payload = {
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "model_name": usage.get("model_name", "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
+        "query_text": query_text[:200],
+        "input_tokens": usage.get("prompt_tokens", 0),
+        "output_tokens": usage.get("completion_tokens", 0),
+        "task_name": task_name
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            for url in urls:
+                try:
+                    resp = await client.post(url, json=payload, timeout=3.0)
+                    if resp.status_code == 200:
+                        return
+                except Exception:
+                    continue
+    except Exception as e:
+        logger.error(f"Failed to log tokens to backend: {e}")
+
 import os
 import re
 import json
@@ -223,7 +254,7 @@ async def get_embedding(text: str, priority: str = "live") -> List[float]:
     return [0.0] * EMBED_DIM
 
 
-async def run_llm_completion(system_prompt: str, user_prompt: str, priority: str = "live") -> str:
+async def run_llm_completion(system_prompt: str, user_prompt: str, priority: str = "live") -> tuple[str, dict]:
     semaphore = LIVE_SEMAPHORE if priority == "live" else BACKGROUND_SEMAPHORE
     async with semaphore:
         try:
@@ -254,11 +285,13 @@ async def run_llm_completion(system_prompt: str, user_prompt: str, priority: str
                 if resp.status_code == 200:
                     data = resp.json()
                     content = data["choices"][0]["message"]["content"].strip()
-                    return strip_think_tags(content)
+                    usage = data.get("usage", {})
+                    usage["model_name"] = chat_model
+                    return strip_think_tags(content), usage
                 logger.error(f"LLM chat error ({resp.status_code}): {resp.text}")
         except Exception as e:
             logger.error(f"LLM failure: {type(e).__name__}: {e}")
-    return ""
+    return "", {}
 
 
 # ============================================================================
@@ -356,7 +389,7 @@ async def map_to_ontology(raw_triplets: List[dict]) -> List[dict]:
         f"Raw Triplets to map:\n{json.dumps(raw_triplets, indent=2)}\n"
     )
     
-    raw_response = await run_llm_completion(
+    raw_response, u1 = await run_llm_completion(
         "You are a strict data normalizer. Output ONLY a valid JSON object.",
         prompt,
         priority="background"
@@ -509,7 +542,7 @@ async def handle_memory_deletion(payload: MemorySaveRequest) -> str:
         return f"Successfully deleted chat session {payload.session_id}."
 
     # CASE B: Targeted Fact / Preference Deletion (Agent-scoped)
-    extracted_raw = await run_llm_completion(
+    extracted_raw, u2 = await run_llm_completion(
         "Extract the exact concept, entity, or preference key to delete. Return JSON: {\"key\": \"concept_name\"}", 
         payload.query, 
         priority="background"
@@ -567,7 +600,7 @@ async def save_user_preference(payload: MemorySaveRequest):
         logger.info(f"Memory Deletion completed: {msg}")
         return
 
-    extracted_raw = await run_llm_completion(
+    extracted_raw, u2 = await run_llm_completion(
         PREFERENCE_EXTRACTION_PROMPT, payload.query, priority="background"
     )
     data = _extract_json_block(extracted_raw) or {}
@@ -847,8 +880,9 @@ async def process_turn(payload: MemoryProcessRequest):
                 "CRITICAL: If the message is a question, search query, serial number, ID, code, or generic keyword (even if it is extremely short or lacks grammar/question words), you MUST output 'NORMAL_QUERY'.\n"
                 "Output ONLY the category name ('FEEDBACK_ONLY' or 'NORMAL_QUERY') with no other text, explanation, or quotes."
             )
-            triage_decision = await run_llm_completion(triage_prompt, payload.query, priority="live")
+            triage_decision, usage_triage = await run_llm_completion(triage_prompt, f"<user_message>\n{payload.query}\n</user_message>", priority="live")
             is_feedback_only = "FEEDBACK_ONLY" in triage_decision
+            asyncio.create_task(log_telemetry_to_backend(payload.tenant_id, payload.user_id, usage_triage, "Episodic Triage", payload.query))
 
     if is_feedback_only:
         return {
@@ -905,8 +939,9 @@ async def process_turn(payload: MemoryProcessRequest):
             "Return ONLY a JSON object: {\"entities\": [\"entity1\", \"entity2\"]}\n"
             "Example Query: 'what is my 10th grade mark?' -> JSON: {\"entities\": [\"10th grade mark\", \"10th grade\", \"mark\"]}"
         )
-        entities_raw = await run_llm_completion(entity_extraction_prompt, payload.query, priority="live")
+        entities_raw, usage_entities = await run_llm_completion(entity_extraction_prompt, f"<user_query>\n{payload.query}\n</user_query>", priority="live")
         entity_names = _extract_entity_names(entities_raw)
+        asyncio.create_task(log_telemetry_to_backend(payload.tenant_id, payload.user_id, usage_entities, "Episodic Entity Extraction", payload.query))
 
         if entity_names:
             graph_context_elements = await _query_graph_relations(
@@ -1009,7 +1044,7 @@ async def async_ingest_turn(payload: MemorySaveRequest):
         '"triplets": [{"subject": "10th grade mark", "relation": "HAS_VALUE", "object": "90%"}]}\n\n'
         f"CONVERSATION:\n{user_interaction}"
     )
-    combined_raw = await run_llm_completion(
+    combined_raw, usage_ingest = await run_llm_completion(
         "You are a strict extraction system. Return ONLY valid JSON.",
         combined_prompt,
         priority="background",

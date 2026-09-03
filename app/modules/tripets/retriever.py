@@ -208,7 +208,7 @@ class TripletRetriever:
         if hubs:
             lines.append("   Grouped Events:")
             for hub_name, info in hubs.items():
-                lines.append(f"     * Event: {hub_name} (relevance: {info['max_score']:.2f})")
+                lines.append(f"     * Event: {hub_name}")
                 if info["participants"]:
                     parts_str = ", ".join([f"{entity} ({role.lower()})" for entity, role in info["participants"]])
                     lines.append(f"       - Participants: {parts_str}")
@@ -222,8 +222,7 @@ class TripletRetriever:
                 lines.append("   Direct Relationships:")
             for t in simple_relations:
                 lines.append(
-                    f"     - {t['subject']} [{t['predicate']}] {t['object']} "
-                    f"(relevance: {t.get('similarity', 0):.2f})"
+                    f"     - {t['subject']} [{t['predicate']}] {t['object']}"
                 )
 
         return "\n".join(lines)

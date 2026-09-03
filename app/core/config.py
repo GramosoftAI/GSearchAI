@@ -197,13 +197,13 @@ class Settings(BaseSettings):
     model_embedding: str = "Qwen/Qwen3-Embedding-8B"
     embedding_dimension: int = 4096
 
-    model_intent: str = "google/gemma-4-E4B-it"
-    max_tokens_intent: int = 64
+    model_intent: str = "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
+    max_tokens_intent: int = 512
 
     model_extraction: str = "deepseek-ai/DeepSeek-V4-Flash"
     max_tokens_extraction: int = 512
 
-    model_nl_to_cypher: str = "deepinfra/gpt-oss-120b"
+    model_nl_to_cypher: str = "openai/gpt-oss-120b"
     max_tokens_nl_to_cypher: int = 256
 
     model_reranker: str = "Qwen/Qwen3-Reranker-4B"
@@ -223,7 +223,7 @@ class Settings(BaseSettings):
     # --- Budget Fallbacks ---
     fallback_mode: bool = False
     model_extraction_fallback: str = "meta-llama/Llama-3.1-8B-Instruct-Turbo"
-    model_nl_to_cypher_fallback: str = "deepinfra/gpt-oss-20b"
+    model_nl_to_cypher_fallback: str = "openai/gpt-oss-20b"
     model_reranker_fallback: str = "Qwen/Qwen3-Reranker-0.6B"
     model_answer_fallback: str = "deepseek-ai/DeepSeek-V3"
 

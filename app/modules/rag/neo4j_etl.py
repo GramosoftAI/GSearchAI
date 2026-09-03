@@ -1,6 +1,7 @@
 import logging
 import os
 import tempfile
+import uuid
 from sqlalchemy import create_engine, text
 from typing import List, Dict
 
@@ -25,31 +26,36 @@ class GraphETLPipeline:
         if not os.path.exists(parquet_path):
             raise FileNotFoundError(f"Parquet file {parquet_path} not found.")
             
-        temp_db_path = os.path.join(tempfile.gettempdir(), f"duckdb_etl_{id(self)}.db")
-        engine = create_engine(f"duckdb:///{temp_db_path}")
-        
+        engine = None
         extracted_data = {}
-        
-        with engine.connect() as conn:
-            safe_path = str(parquet_path).replace('\\', '/')
-            conn.execute(text("DROP VIEW IF EXISTS etl_dataset;"))
-            conn.execute(text(f"CREATE VIEW etl_dataset AS SELECT * FROM read_parquet('{safe_path}');"))
-            
-            for col in target_columns:
-                # 1. Safely check cardinality
-                count_res = conn.execute(text(f"SELECT COUNT(DISTINCT {col}) FROM etl_dataset"))
-                unique_count = count_res.scalar()
+        try:
+            engine = create_engine("duckdb:///:memory:")
+            with engine.connect() as conn:
+                safe_path = str(parquet_path).replace('\\', '/')
+                conn.execute(text("DROP VIEW IF EXISTS etl_dataset;"))
+                conn.execute(text(f"CREATE VIEW etl_dataset AS SELECT * FROM read_parquet('{safe_path}');"))
                 
-                if unique_count > self.cardinality_limit:
-                    logger.warning(f"Skipping column '{col}': High Cardinality ({unique_count} > {self.cardinality_limit})")
-                    continue
+                for col in target_columns:
+                    # 1. Safely check cardinality
+                    count_res = conn.execute(text(f"SELECT COUNT(DISTINCT {col}) FROM etl_dataset"))
+                    unique_count = count_res.scalar()
                     
-                # 2. Extract valid entities
-                val_res = conn.execute(text(f"SELECT DISTINCT {col} FROM etl_dataset WHERE {col} IS NOT NULL"))
-                extracted_data[col] = [str(row[0]) for row in val_res.fetchall()]
-                logger.info(f"Extracted {len(extracted_data[col])} unique entities for '{col}'")
-                
-        return extracted_data
+                    if unique_count > self.cardinality_limit:
+                        logger.warning(f"Skipping column '{col}': High Cardinality ({unique_count} > {self.cardinality_limit})")
+                        continue
+                        
+                    # 2. Extract valid entities
+                    val_res = conn.execute(text(f"SELECT DISTINCT {col} FROM etl_dataset WHERE {col} IS NOT NULL"))
+                    extracted_data[col] = [str(row[0]) for row in val_res.fetchall()]
+                    logger.info(f"Extracted {len(extracted_data[col])} unique entities for '{col}'")
+                    
+            return extracted_data
+        finally:
+            if engine:
+                try:
+                    engine.dispose()
+                except Exception:
+                    pass
         
     def load_to_neo4j(self, entities: Dict[str, List[str]]):
         """

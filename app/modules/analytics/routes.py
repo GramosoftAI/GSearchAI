@@ -1083,6 +1083,28 @@ async def log_query_analytics(
     """Log an individual query's analytics."""
     return await service.log_query(data)
 
+from pydantic import BaseModel
+class TokenLogInternal(BaseModel):
+    tenant_id: str
+    user_id: str
+    model_name: str
+    query_text: str
+    input_tokens: int
+    output_tokens: int
+    task_name: str
 
-
-
+@router.post("/internal/log-tokens")
+async def log_internal_tokens(data: TokenLogInternal):
+    async with AsyncSessionLocal() as db:
+        repo = AnalyticsRepository(db)
+        await repo.log_usage(
+            tenant_id=data.tenant_id,
+            user_id=data.user_id,
+            model_name=data.model_name,
+            query_text=data.query_text,
+            input_tokens=data.input_tokens,
+            output_tokens=data.output_tokens,
+            task_name=data.task_name
+        )
+        await db.commit()
+    return {"status": "success"}
