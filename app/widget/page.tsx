@@ -678,6 +678,7 @@ function WidgetContent() {
   const searchParams = useSearchParams();
   const agentId = searchParams.get("agentId");
   const tenantId = searchParams.get("tenantId");
+  const deviceParam = searchParams.get("device") || (typeof window !== "undefined" && (window.innerWidth <= 640 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) ? "mobile" : "lap");
   const chatType = searchParams.get("chatType") || "icon";
   const themeColor = searchParams.get("themeColor") || "#0fb5a1";
   const placeholder = searchParams.get("placeholder") || "Ask a question...";
@@ -919,7 +920,7 @@ function WidgetContent() {
       }
     };
     fetchEmbedCustomization();
-  }, [tenantId]);
+  }, [tenantId, deviceParam]);
 
   useEffect(() => {
     if (!agentId) return;
@@ -1768,6 +1769,28 @@ function WidgetContent() {
     };
   }, [connectWs]);
 
+  const handleNewChat = useCallback(() => {
+    resetStreaming();
+    bufferRef.current = "";
+    setIsTyping(false);
+    resetTypingTimeout();
+    setInput("");
+    setAnsweredEscalations([]);
+    setFeedbackMap({});
+    setActiveSourceMenuIndex(null);
+    setCopiedIndex(null);
+    initialQuerySentRef.current = false;
+    pendingQueryRef.current = "";
+    queryStartTimeRef.current = null;
+    currentResponseTimeRef.current = null;
+    setMessages(
+      initialMessageParam
+        ? [{ role: "assistant", content: initialMessageParam, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }]
+        : []
+    );
+    connectWs();
+  }, [initialMessageParam, resetStreaming, resetTypingTimeout, connectWs]);
+
   const handleSend = () => {
     const message = input.trim();
     if (!message) return;
@@ -1978,7 +2001,36 @@ function WidgetContent() {
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", paddingRight: "4px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", paddingRight: "4px" }}>
+            <button
+              onClick={handleNewChat}
+              title="New Chat"
+              style={{
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                padding: "4px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#71717a",
+                borderRadius: "6px",
+                transition: "all 0.2s ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = themeColor;
+                e.currentTarget.style.background = "#f4f4f5";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "#71717a";
+                e.currentTarget.style.background = "transparent";
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+            </button>
             <div className="close-btn" onClick={handleClose} title="Close chat" />
           </div>
         </div>

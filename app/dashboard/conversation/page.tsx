@@ -1367,23 +1367,35 @@ export default function ChatPlaygroundPage() {
               }
 
               if (rawMsgs.length > 0) {
-                const mappedMessages = rawMsgs.map((msg: any, idx: number) => {
-                  const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
-                  const isLastAssistant = msg.role === "assistant" && idx === rawMsgs.length - 1;
-                  return {
-                    id: msg.id || msg.message_id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
-                    role: msg.role,
-                    content: cleanedContent,
-                    file: msg.file,
-                    sources: sources.length > 0 ? sources : undefined,
-                    feedback: msg.feedback_type || msg.feedback,
-                    timestamp: msg.created_at
-                      ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                      : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-                    responseTime: (isLastAssistant && lastResponseTimeSecRef.current !== null) ? lastResponseTimeSecRef.current : undefined
-                  };
+                setMessages((prevMessages: any[]) => {
+                  const mappedMessages = rawMsgs.map((msg: any, idx: number) => {
+                    const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
+                    const msgId = msg.id || msg.message_id || msg.messageId || msg.msg_id || msg._id || msg.msgId;
+                    const existingMsg = prevMessages.find((pm: any) => pm.id === msgId || (pm.role === msg.role && pm.content === cleanedContent));
+                    const isLastAssistant = msg.role === "assistant" && idx === rawMsgs.length - 1;
+                    const responseTimeVal =
+                      msg.response_time ??
+                      msg.response_time_sec ??
+                      msg.responseTime ??
+                      msg.latency ??
+                      existingMsg?.responseTime ??
+                      ((isLastAssistant && lastResponseTimeSecRef.current !== null) ? lastResponseTimeSecRef.current : undefined);
+
+                    return {
+                      id: msgId,
+                      role: msg.role,
+                      content: cleanedContent,
+                      file: msg.file,
+                      sources: sources.length > 0 ? sources : undefined,
+                      feedback: msg.feedback_type || msg.feedback,
+                      timestamp: msg.created_at
+                        ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                        : (existingMsg?.timestamp || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })),
+                      responseTime: responseTimeVal
+                    };
+                  });
+                  return deduplicateMessages(mappedMessages);
                 });
-                setMessages(deduplicateMessages(mappedMessages));
                 lastResponseTimeSecRef.current = null;
               }
             })();
@@ -1510,6 +1522,7 @@ export default function ChatPlaygroundPage() {
 
     const mappedMessages = rawMessages.map((msg: any) => {
       const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
+      const responseTimeVal = msg.response_time ?? msg.response_time_sec ?? msg.responseTime ?? msg.latency ?? undefined;
       return {
         id: msg.message_id || msg.id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
         role: msg.role,
@@ -1520,6 +1533,7 @@ export default function ChatPlaygroundPage() {
         timestamp: msg.created_at
           ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
           : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        responseTime: responseTimeVal
       };
     });
 

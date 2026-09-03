@@ -12,6 +12,7 @@ import {
   BookOutlined,
   QuestionCircleOutlined,
   PlusOutlined,
+  EditOutlined,
   CommentOutlined,
   FileTextOutlined,
   UnorderedListOutlined,
@@ -20,6 +21,7 @@ import {
   LikeOutlined,
   DislikeOutlined,
   CustomerServiceOutlined,
+  MobileOutlined,
 } from "@ant-design/icons";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { SiCrowdsource } from "react-icons/si";
@@ -120,6 +122,7 @@ export default function EmbedScriptSection() {
 
   
   const [chatType, setChatType] = useState<"icon" | "search">("icon");
+  const [searchMobileIcon, setSearchMobileIcon] = useState<boolean>(false);
   const [position, setPosition] = useState<"center" | "right">("center");
   const [placeholderText, setPlaceholderText] = useState("Ask about web scraping, Zyte API, anything data extraction...");
   const [themeColor, setThemeColor] = useState("#0fb5a1");
@@ -166,6 +169,7 @@ export default function EmbedScriptSection() {
 
   const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
   const [draftChatType, setDraftChatType] = useState<"icon" | "search">("icon");
+  const [draftSearchMobileIcon, setDraftSearchMobileIcon] = useState<boolean>(false);
   const [draftPosition, setDraftPosition] = useState<"center" | "right">("center");
   const [draftPlaceholderText, setDraftPlaceholderText] = useState("Ask about web scraping, Zyte API, anything data extraction...");
   const [draftThemeColor, setDraftThemeColor] = useState("#0fb5a1");
@@ -257,6 +261,7 @@ export default function EmbedScriptSection() {
 
     // Drafts
     setDraftChatType("icon");
+    setDraftSearchMobileIcon(false);
     setDraftPosition("center");
     setDraftPlaceholderText("Ask about web scraping, Zyte API, anything data extraction...");
     setDraftThemeColor("#0fb5a1");
@@ -312,6 +317,7 @@ export default function EmbedScriptSection() {
         if (data.agent_label) { setAgentLabel(data.agent_label); setDraftAgentLabel(data.agent_label); }
         if (data.bot_avatar) { setBotAvatar(data.bot_avatar); setDraftBotAvatar(data.bot_avatar); }
         if (data.chat_type) { setChatType(data.chat_type); setDraftChatType(data.chat_type); }
+        if (typeof data.search_mobile_icon === "boolean") { setSearchMobileIcon(data.search_mobile_icon); setDraftSearchMobileIcon(data.search_mobile_icon); }
         if (data.position) { setPosition(data.position); setDraftPosition(data.position); }
         if (data.placeholder_text) { setPlaceholderText(data.placeholder_text); setDraftPlaceholderText(data.placeholder_text); }
         if (data.button_icon) { setButtonIcon(data.button_icon); setDraftButtonIcon(data.button_icon); }
@@ -422,6 +428,7 @@ export default function EmbedScriptSection() {
       return;
     }
     setDraftChatType(chatType);
+    setDraftSearchMobileIcon(searchMobileIcon);
     setDraftPosition(position);
     setDraftPlaceholderText(placeholderText);
     setDraftThemeColor(themeColor);
@@ -474,7 +481,6 @@ export default function EmbedScriptSection() {
     const savePayload = {
       agent_id: agent.id,
       expected_version: expectedVersion,
-      change_reason: "Dashboard customizer apply",
       theme_color: draftThemeColor,
       theme_text_color: draftThemeTextColor,
       btn_bg_color: draftBtnBgColor,
@@ -486,6 +492,7 @@ export default function EmbedScriptSection() {
       agent_label: draftAgentLabel,
       bot_avatar: draftBotAvatar,
       chat_type: draftChatType,
+      search_mobile_icon: draftSearchMobileIcon,
       position: draftPosition,
       placeholder_text: draftPlaceholderText,
       button_icon: draftButtonIcon,
@@ -511,6 +518,7 @@ export default function EmbedScriptSection() {
     saveWidgetConfig({ data: savePayload }, (responsePayload) => {
       if (responsePayload?.success) {
         setChatType(draftChatType);
+        setSearchMobileIcon(draftSearchMobileIcon);
         setPosition(draftPosition);
         setPlaceholderText(draftPlaceholderText);
         setThemeColor(draftThemeColor);
@@ -560,6 +568,7 @@ export default function EmbedScriptSection() {
 
   const handleCancel = () => {
     setDraftChatType(chatType);
+    setDraftSearchMobileIcon(searchMobileIcon);
     setDraftPosition(position);
     setDraftPlaceholderText(placeholderText);
     setDraftThemeColor(themeColor);
@@ -1104,6 +1113,22 @@ export default function EmbedScriptSection() {
 
                       {draftChatType === "search" && (
                         <div className="space-y-3 pt-2">
+                          <div className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs">
+                            <div className="flex items-start gap-2.5">
+                              <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-600 dark:text-slate-300 shrink-0 mt-0.5">
+                                <MobileOutlined className="text-xs" />
+                              </div>
+                              <div>
+                                <div className="text-xs font-bold text-slate-800 dark:text-slate-200">Laptop Search Bar, Mobile Icon Button</div>
+                                <div className="text-[10px] text-slate-400 leading-tight">Show search bar on laptop and floating icon button on mobile screens.</div>
+                              </div>
+                            </div>
+                            <Switch
+                              checked={draftSearchMobileIcon}
+                              onChange={(checked) => setDraftSearchMobileIcon(checked)}
+                              style={{ backgroundColor: draftSearchMobileIcon ? draftThemeColor : undefined }}
+                            />
+                          </div>
                           <div className="space-y-1">
                             <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
                               Alignment Position
@@ -1870,12 +1895,25 @@ export default function EmbedScriptSection() {
                         </div>
                       )}
 
-                      <button
-                        onClick={() => setPreviewIsOpen(false)}
-                        className="border-none bg-transparent text-slate-400 hover:text-slate-700 cursor-pointer text-sm font-semibold ml-2"
-                      >
-                        ✕
-                      </button>
+                      <div className="flex items-center gap-1.5 ml-2">
+                        <button
+                          onClick={() => {
+                            setPreviewMessages([]);
+                            setPreviewInput("");
+                          }}
+                          className="border-none bg-transparent text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer text-sm font-semibold p-1 rounded-md transition-all flex items-center justify-center"
+                          title="New Chat"
+                        >
+                          <EditOutlined className="text-sm" />
+                        </button>
+                        <button
+                          onClick={() => setPreviewIsOpen(false)}
+                          className="border-none bg-transparent text-slate-400 hover:text-slate-700 cursor-pointer text-sm font-semibold p-1"
+                          title="Close chat"
+                        >
+                          ✕
+                        </button>
+                      </div>
                     </div>
 
                     {draftLeadCollection && !previewLeadFormSubmitted ? (

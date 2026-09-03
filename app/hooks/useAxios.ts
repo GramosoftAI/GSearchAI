@@ -8,7 +8,7 @@ import type {
 import { useRef, useState , useCallback} from "react";
 // import { App as AntApp } from "antd";
 // import Cookies from "js-cookie";
-import { getCookie } from "../config/cookies";
+import { getCookie, deleteCookie } from "../config/cookies";
 import { toast } from "react-hot-toast";
 import {useRouter} from "next/navigation"
 import { endpoints, type endpointsType, type endpointType } from "../services/endpoints";
@@ -245,14 +245,15 @@ export default function useAxios<T = any, R = any>({
   console.log("Data:", error?.response?.data);
 
       if (error.response?.status === 401) {
-    toast.error(
-      error?.response?.data?.detail ||
-      error?.response?.data?.message || error?.response?.data?.error || error?.response?.data?.meta?.message ||
-      "Invalid username or password"
-    );
-    router.push("/login");
-    return null;
-  }
+        deleteCookie("AUTH_TOKEN");
+        const isLogin = endpoint === "LOGIN";
+        const msg = isLogin
+          ? (error?.response?.data?.detail || error?.response?.data?.message || error?.response?.data?.error || "Invalid username or password")
+          : "Session expired. Please log in again.";
+        toast.error(msg);
+        router.push("/login");
+        return null;
+      }
 
   // toast.error(
   //   error?.response?.data?.detail ||

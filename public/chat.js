@@ -6,6 +6,9 @@
   const agentId = script.getAttribute("data-agent-id");
   const tenantId = script.getAttribute("data-tenant-id");
 
+  const isMobileDevice = () => window.innerWidth <= 640 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const getDeviceType = () => (isMobileDevice() ? "mobile" : "lap");
+
   // Dynamically detect base URL of the hosting widget
   let baseUrl = "";
   try {
@@ -21,9 +24,9 @@
   }
 
   const targetAgentId = agentId || "24b3d80f-aed6-4b70-b5b2-48c64cb616c1";
-  const apiHost = "https://uat.gramosoft.tech";
+  const apiHost = baseUrl || window.location.origin || "https://uat.gramosoft.tech";
   const cleanApiHost = apiHost.endsWith("/api/v1") ? apiHost : apiHost + "/api/v1";
-  const configApiUrl = `${cleanApiHost}/embed/configs/${targetAgentId}${tenantId ? `?tenant_id=${tenantId}` : ""}`;
+  const configApiUrl = `${cleanApiHost}/embed/configs/${targetAgentId}?device=${getDeviceType()}${tenantId ? `&tenant_id=${tenantId}` : ""}`;
 
   fetch(configApiUrl)
     .then(res => res.json())
