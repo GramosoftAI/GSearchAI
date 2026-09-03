@@ -616,7 +616,8 @@ class DeepInfraLLMClient:
                 "You MUST use ANY relevant facts from the 'Active Overrides' to answer the user's question, EVEN IF those facts are completely absent from the document context. "
                 "If the user asks to filter or modify previous answers, prioritize the CONVERSATION HISTORY. "
                 "If an 'Active Override' contradicts the document context or 'Graph Memory', the 'Active Override' always wins. "
-                "If the answer is not contained within the provided context, conversation history, and no preference applies, you MUST respond exactly with: "
+                "For multi-part or compound questions, evaluate each part independently: answer every part that has grounded information in the context, and for any part whose information is missing or unstated (e.g. blank fields), explicitly note that specific part is not specified in the document rather than refusing the entire answer. "
+                "If the requested information is ENTIRELY missing for ALL parts of the query from BOTH the document context AND conversation history/memory, reply exactly with: "
                 "\"Im sorry, but the requested information is not available within my current knowledge base. "
                 "Please try a related query or provide additional context.\""
             )
@@ -628,7 +629,8 @@ class DeepInfraLLMClient:
                 "You MUST use ANY relevant facts from the 'Active Overrides' to answer the user's question, EVEN IF those facts are completely absent from the document context. "
                 "If the user asks to filter or modify previous answers, prioritize the CONVERSATION HISTORY. "
                 "If an 'Active Override' contradicts the document context or 'Graph Memory', the 'Active Override' always wins. "
-                "If the information is not available in the context, conversation history, and no preference applies, respond exactly with: "
+                "For multi-part or compound questions, evaluate each part independently: answer every part that has grounded information in the context, and for any part whose information is missing or unstated (e.g. blank fields), explicitly note that specific part is not specified in the document rather than refusing the entire answer. "
+                "If the information is ENTIRELY missing for ALL parts of the query in the context, conversation history, and user preferences, respond exactly with: "
                 "\"Im sorry, but the requested information is not available within my current knowledge base. "
                 "Please try a related query or provide additional context.\""
             )

@@ -34,7 +34,7 @@ def resolve_memory_api_base_url() -> str:
     if env_host:
         return env_host.rstrip("/")
 
-    return "http://127.0.0.1:8001"
+    return "http://127.0.0.1:4917"
 
 
 _ws_memory_client: Optional[httpx.AsyncClient] = None

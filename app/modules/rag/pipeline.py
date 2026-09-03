@@ -70,6 +70,9 @@ from .query_router import QueryRouter, SearchType
 
 logger = logging.getLogger(__name__)
 
+_ROUTER_DECISION_CACHE: Dict[Tuple[str, Tuple[str, ...]], Tuple[float, dict]] = {}
+_ROUTER_CACHE_TTL_SECONDS = 600.0  # 10 minutes
+
 
 
 
@@ -599,7 +602,13 @@ class RAGPipeline:
                     from app.modules.knowledge_bases.models import KnowledgeBase
                     from sqlalchemy import select
                     from uuid import UUID
-                    stmt = select(KnowledgeBase.id, KnowledgeBase.name, KnowledgeBase.total_chunks, KnowledgeBase.summary_embedding).where(
+                    stmt = select(
+                        KnowledgeBase.id, 
+                        KnowledgeBase.name, 
+                        KnowledgeBase.total_chunks, 
+                        KnowledgeBase.summary_embedding,
+                        KnowledgeBase.dataset_schema
+                    ).where(
                         KnowledgeBase.id.in_([UUID(kbid) if isinstance(kbid, str) else kbid for kbid in kb_ids])
                     )
                     res = await self.db.execute(stmt)
@@ -607,7 +616,8 @@ class RAGPipeline:
                         self._kb_metadata[str(row.id)] = {
                             "name": row.name,
                             "total_chunks": row.total_chunks,
-                            "summary_embedding": row.summary_embedding
+                            "summary_embedding": row.summary_embedding,
+                            "dataset_schema": getattr(row, "dataset_schema", None)
                         }
                 except Exception as e:
                     logger.error(f"Error prefetching KB metadata: {e}")
@@ -624,13 +634,43 @@ class RAGPipeline:
         # Now wait for analysis to finish (needed for routing)
         analysis = await analyzer_task
         
-        # Fast-Path 2: Deterministic tabular property lookups (Decoupled from LLM fallback)
-        import re
-        tabular_pattern = r'\b(what is|find|get|give me|show)\b.*\b(salary|age|count|employee id|email)\b'
-        if re.search(tabular_pattern, focused_query, re.IGNORECASE):
-            analysis.is_tabular = True
         if kb_metadata_task:
             await kb_metadata_task
+
+        # Authoritative RAG Router Gate: Schema-Aware Gating with Doc-Signal Short-Circuit
+        # Single Source of Truth for Routing: QueryAnalyzer + Pipeline Tabular Gate
+        # Architecture Note: Uses schema_utils.get_schema_columns for canonical schema column parsing.
+        import re
+        from app.modules.rag.schema_utils import get_schema_columns
+
+        doc_signals = [
+            "in the document", "in the pdf", "policy", "manual", "according to", "clause", "article",
+            "guideline", "section", "paragraph", "doc mentions", "pdf mentions"
+        ]
+        generic_cols = {"name", "date", "id", "type", "status", "data", "info", "value", "text", "description"}
+
+        if not any(sig in focused_query.lower() for sig in doc_signals):
+            all_schema_cols = set()
+            for meta in self._kb_metadata.values():
+                ds = meta.get("dataset_schema")
+                cv = meta.get("categorical_values")
+                for col in get_schema_columns(ds, cv):
+                    c_str = str(col).lower().strip()
+                    all_schema_cols.add(c_str)
+                    all_schema_cols.add(c_str.replace(" ", "_"))
+
+            q_lower = focused_query.lower()
+            # Match non-generic schema columns referenced in the query (>2 chars, not in generic_cols)
+            matched_non_generic_cols = [
+                col for col in all_schema_cols
+                if col and len(col) > 2 and col not in generic_cols and (col in q_lower or col.replace("_", " ") in q_lower)
+            ]
+
+            analytical_pattern = r'\b(what is|find|get|give me|show|calculate|sum|average|count|total|min|max|highest|lowest)\b'
+            has_analytical_phrase = bool(re.search(analytical_pattern, q_lower))
+
+            if matched_non_generic_cols or (has_analytical_phrase and any(col in q_lower for col in all_schema_cols if col not in generic_cols)):
+                analysis.is_tabular = True
 
         # Wait for the embedding so we can use it for the routing gate
         # (It will also be cached/reused in the structured queries loop)
@@ -667,7 +707,14 @@ class RAGPipeline:
             )
             query = corrected
 
-        # STAGE 0.5: EARLY EXIT FOR TABLE ANALYTICS (Using new QueryAnalyzer)
+        # Log Authoritative Routing Decision
+        selected_routing_path = "SQL_TABLE_ANALYTICS" if getattr(analysis, "is_tabular", False) else "HYBRID_VECTOR_GRAPH_RAG"
+        logger.info(
+            f"RAG ROUTER DECISION | intent={getattr(analysis.intent, 'name', 'UNKNOWN')} | "
+            f"is_tabular={getattr(analysis, 'is_tabular', False)} | selected_path={selected_routing_path}"
+        )
+
+        # STAGE 0.5: EARLY EXIT FOR TABLE ANALYTICS (Using QueryAnalyzer & Pipeline Router)
         if getattr(analysis, "is_tabular", False):
             logger.info(f"   -> Intercepting query for SQL Table Analytics engine! (intent={analysis.intent.name}, is_tabular=True)")
             try:
@@ -1084,33 +1131,63 @@ class RAGPipeline:
                     for cid in missing_cids:
                         try:
                             uuid_list.append(UUID(str(cid)))
-                        except:
+                        except (ValueError, TypeError):
                             pass
                     
                     if uuid_list:
-                        stmt = select(DocumentChunk).where(DocumentChunk.id.in_(uuid_list))
-                        result = await self.db.execute(stmt)
-                        for row in result.scalars():
-                            c_id = str(row.id)
-                            # Create RetrievedChunk object
-                            from app.modules.rag.pipeline import RetrievedChunk
-                            s3_path = row.metadata_json.get("s3_path") if row.metadata_json else None
-                            rc = RetrievedChunk(
-                                chunk_id=c_id,
-                                text=row.text,
-                                kb_id=str(row.kb_id),
-                                position=row.chunk_index,
-                                embedding_similarity=0.0,
-                                graph_score=0.0,
-                                hybrid_score=0.0, # Will be set next
-                                reason="RRF_MERGE",
-                                source=s3_path or f"DocumentChunk {row.chunk_index}",
-                                s3_path=s3_path,
-                                engine_name="hybrid_rrf",
-                                section="Unknown",
-                                ontology_node=None
+                        if query_embedding_val:
+                            stmt = select(
+                                DocumentChunk,
+                                (1.0 - DocumentChunk.embedding.cosine_distance(query_embedding_val)).label("real_sim")
+                            ).where(
+                                DocumentChunk.id.in_(uuid_list),
+                                DocumentChunk.tenant_id == self.tenant_id
                             )
-                            vector_chunk_map[c_id] = rc
+                            result = await self.db.execute(stmt)
+                            for row, real_sim in result.all():
+                                c_id = str(row.id)
+                                s3_path = row.metadata_json.get("s3_path") if row.metadata_json else None
+                                rc = RetrievedChunk(
+                                    chunk_id=c_id,
+                                    text=row.text,
+                                    kb_id=str(row.kb_id),
+                                    position=row.chunk_index,
+                                    embedding_similarity=max(0.0, float(real_sim)),
+                                    graph_score=0.0,
+                                    hybrid_score=0.0, # Will be set next
+                                    reason="RRF_MERGE",
+                                    source=s3_path or f"DocumentChunk {row.chunk_index}",
+                                    s3_path=s3_path,
+                                    engine_name="hybrid_rrf",
+                                    section="Unknown",
+                                    ontology_node=None
+                                )
+                                vector_chunk_map[c_id] = rc
+                        else:
+                            stmt = select(DocumentChunk).where(
+                                DocumentChunk.id.in_(uuid_list),
+                                DocumentChunk.tenant_id == self.tenant_id
+                            )
+                            result = await self.db.execute(stmt)
+                            for row in result.scalars():
+                                c_id = str(row.id)
+                                s3_path = row.metadata_json.get("s3_path") if row.metadata_json else None
+                                rc = RetrievedChunk(
+                                    chunk_id=c_id,
+                                    text=row.text,
+                                    kb_id=str(row.kb_id),
+                                    position=row.chunk_index,
+                                    embedding_similarity=0.0,
+                                    graph_score=0.0,
+                                    hybrid_score=0.0,
+                                    reason="RRF_MERGE",
+                                    source=s3_path or f"DocumentChunk {row.chunk_index}",
+                                    s3_path=s3_path,
+                                    engine_name="hybrid_rrf",
+                                    section="Unknown",
+                                    ontology_node=None
+                                )
+                                vector_chunk_map[c_id] = rc
                 except Exception as e:
                     logger.warning(f"Failed to fetch missing postgres chunks before boost: {e}")
 
@@ -1158,10 +1235,47 @@ class RAGPipeline:
                                 
             logger.info(f"[RRF_FLOW_MARKER] Domain Boost applied to {domain_boosted_count} chunks.")
 
-            # Sort top N chunks
-            sorted_fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[:TOP_N]
+            # 4c. Apply Narrative Intent Boost during RRF
+            NARRATIVE_BOOST_WEIGHT = 0.03  # Significant boost to ensure narrative chunks stay in top-N window
+            narrative_kw_list = ["cause", "event", "phase", "why", "how", "reason", "accident", "analysis", "report", "statement", "damage", "led to", "happen", "occur", "defining"]
+            if any(nk in original_query.lower() for nk in narrative_kw_list):
+                narrative_boosted_count = 0
+                for cid in fused_scores.keys():
+                    chunk_obj = vector_chunk_map.get(cid)
+                    if chunk_obj:
+                        pos = getattr(chunk_obj, "position", 99999)
+                        if pos < 90000:
+                            fused_scores[cid] += NARRATIVE_BOOST_WEIGHT
+                            narrative_boosted_count += 1
+                logger.info(f"[RRF_FLOW_MARKER] Narrative Intent Boost applied to {narrative_boosted_count} narrative chunks.")
+
+            # Sort top N chunks with narrative quota preservation when narrative intent is present
+            if any(nk in original_query.lower() for nk in narrative_kw_list):
+                narrative_items = []
+                other_items = []
+                for cid, score in sorted(fused_scores.items(), key=lambda x: x[1], reverse=True):
+                    chunk_obj = vector_chunk_map.get(cid)
+                    pos = getattr(chunk_obj, "position", 99999) if chunk_obj else 99999
+                    if pos < 90000:
+                        narrative_items.append((cid, score))
+                    else:
+                        other_items.append((cid, score))
+                
+                # Reserve up to 4 slots for top narrative items
+                num_narrative = min(len(narrative_items), 4)
+                guaranteed_narrative = narrative_items[:num_narrative]
+                remaining_quota = TOP_N - len(guaranteed_narrative)
+                
+                # Combine remaining narrative and other items by score
+                remaining_candidates = narrative_items[num_narrative:] + other_items
+                remaining_candidates.sort(key=lambda x: x[1], reverse=True)
+                
+                sorted_fused = guaranteed_narrative + remaining_candidates[:remaining_quota]
+            else:
+                sorted_fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[:TOP_N]
+
             top_cids = [cid for cid, score in sorted_fused]
-            logger.info(f"[RRF_FLOW_MARKER] Fusion complete. Top {len(top_cids)} chunk IDs selected.")
+            logger.info(f"[RRF_FLOW_MARKER] Fusion complete. Top {len(top_cids)} chunk IDs selected (Narrative Quota Preserved).")
             
             # Fetch missing chunks from postgres (if any left over)
             final_chunks = []
@@ -1176,49 +1290,60 @@ class RAGPipeline:
                     
             if final_chunks:
                 logger.info(f"RRF successfully aggregated {len(final_chunks)} chunks. Returning early.")
-            # === DEEPINFRA RERANKER INTEGRATION ===
-            if final_chunks and getattr(get_settings(), "model_reranker", None):
-                try:
-                    logger.info("[RERANK] Starting DeepInfra LLM Reranking on top RRF chunks...")
-                    from app.core.llm.deepinfra_llm import get_llm_client
-                    llm = await get_llm_client()
-                    
-                    # Extract texts
-                    doc_texts = [c.text for c in final_chunks]
-                    
-                    # Call API
-                    reranked_results = await llm.rerank_documents(
-                        query=original_query,
-                        documents=doc_texts,
-                        top_n=min(len(doc_texts), 10),
-                        model=get_settings().model_reranker,
-                        tenant_id=self.tenant_id,
-                        user_id=user_id
-                    )
-                    
-                    # Reorder final_chunks based on reranker results
-                    import math
-                    new_final_chunks = []
-                    for rank, r in enumerate(reranked_results):
-                        orig_idx = r.get("original_index")
-                        if orig_idx is not None and orig_idx < len(final_chunks):
-                            chunk = final_chunks[orig_idx]
-                            raw_score = r.get("relevance_score", 0.0)
-                            if isinstance(raw_score, (int, float)):
-                                if raw_score > 1.0 or raw_score < 0.0:
-                                    prob = 1.0 / (1.0 + math.exp(-max(-20.0, min(20.0, raw_score))))
+                
+                # === DEEPINFRA RERANKER INTEGRATION ===
+                if getattr(get_settings(), "model_reranker", None):
+                    try:
+                        logger.info("[RERANK] Starting DeepInfra LLM Reranking on top RRF chunks...")
+                        from app.core.llm.deepinfra_llm import get_llm_client
+                        llm = await get_llm_client()
+                        
+                        # Extract texts
+                        doc_texts = [c.text for c in final_chunks]
+                        
+                        # Call API
+                        reranked_results = await llm.rerank_documents(
+                            query=original_query,
+                            documents=doc_texts,
+                            top_n=min(len(doc_texts), 10),
+                            model=get_settings().model_reranker,
+                            tenant_id=self.tenant_id,
+                            user_id=user_id
+                        )
+                        
+                        # Reorder final_chunks based on reranker results
+                        import math
+                        new_final_chunks = []
+                        seen_cids = set()
+                        for rank, r in enumerate(reranked_results):
+                            orig_idx = r.get("original_index")
+                            if orig_idx is not None and orig_idx < len(final_chunks):
+                                chunk = final_chunks[orig_idx]
+                                raw_score = r.get("relevance_score", 0.0)
+                                if isinstance(raw_score, (int, float)):
+                                    if raw_score > 1.0 or raw_score < 0.0:
+                                        prob = 1.0 / (1.0 + math.exp(-max(-20.0, min(20.0, raw_score))))
+                                    else:
+                                        prob = raw_score
                                 else:
-                                    prob = raw_score
-                            else:
-                                prob = 0.95 - (rank * 0.01)
-                            chunk.hybrid_score = max(0.50, prob)
-                            chunk.reason = "LLM_RERANKED"
-                            new_final_chunks.append(chunk)
-                            
-                    final_chunks = new_final_chunks
-                    logger.info(f"[RERANK] Successfully reranked top {len(final_chunks)} chunks using LLM.")
-                except Exception as e:
-                    logger.error(f"[RERANK] LLM Reranking failed, falling back to pure RRF: {e}")
+                                    prob = 0.95 - (rank * 0.01)
+                                chunk.hybrid_score = max(0.50, prob)
+                                chunk.reason = "LLM_RERANKED"
+                                new_final_chunks.append(chunk)
+                                seen_cids.add(chunk.chunk_id)
+
+                        # Preserving narrative quota: if any narrative chunk (<90000) was in pre-reranked final_chunks but dropped by top_n, preserve it
+                        for orig_chunk in final_chunks:
+                            if orig_chunk.chunk_id not in seen_cids and getattr(orig_chunk, "position", 99999) < 90000:
+                                orig_chunk.reason = "LLM_RERANKED_NARRATIVE_PRESERVED"
+                                orig_chunk.hybrid_score = 0.65
+                                new_final_chunks.append(orig_chunk)
+                                seen_cids.add(orig_chunk.chunk_id)
+
+                        final_chunks = new_final_chunks
+                        logger.info(f"[RERANK] Successfully reranked top {len(final_chunks)} chunks using LLM (Narrative Preserved).")
+                    except Exception as e:
+                        logger.error(f"[RERANK] LLM Reranking failed, falling back to pure RRF: {e}")
                 
                 triplet_context_str = ""
                 if triplet_res:
@@ -1701,7 +1826,7 @@ class RAGPipeline:
 
         if 'analysis' in locals() and analysis and analysis.metadata and analysis.metadata.query_embedding:
             query_embedding = analysis.metadata.query_embedding
-            emb_tokens = getattr(locals().get('emb_tokens'), 'emb_tokens', 10)
+            emb_tokens = emb_tokens if ('emb_tokens' in locals() and isinstance(locals().get('emb_tokens'), int)) else 10
         else:
             from app.core.embeddings import EmbeddingGenerator
             query_embedding, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(query)
@@ -1951,70 +2076,27 @@ class RAGPipeline:
 
 
         expanded_chunks = await self._expand_via_graph(
-
-
-
             seed_chunk_ids=seed_chunk_ids,
-
-
-
             kb_ids=kb_ids,
-
-
-
             max_depth=max_depth,
-
-
-
         )
 
-
+        # STEP 3.5: BULK RESOLVE & FILTER GRAPH-EXPANDED CHUNKS BEFORE SCORING/SELECTION
+        expanded_chunks = await self._bulk_resolve_and_filter_chunks(expanded_chunks)
 
         logger.info(
-
-
-
-            f" Graph expansion: {len(seed_chunk_ids)} seed  {len(expanded_chunks)} total chunks"
-
-
-
+            f" Graph expansion: {len(seed_chunk_ids)} seed  {len(expanded_chunks)} total resolved chunks"
         )
-
-
-
-
-
-
 
         # STEP 4: SCORE AND RANK (HYBRID SCORING)
-
-
-
         logger.debug("Step 4: Scoring and ranking chunks...")
 
-
-
         scored_chunks = await self._score_chunks(
-
-
-
             seed_chunks=seed_chunks,
-
-
-
             expanded_chunks=expanded_chunks,
-
-
-
             query_embedding=query_embedding,
-
             search_type=search_type,
-
-
-
         )
-
-
 
         logger.info(f" Scored {len(scored_chunks)} chunks")
 
@@ -2059,6 +2141,9 @@ class RAGPipeline:
 
 
         )
+        
+        # Ensure zero empty/unresolved chunks consume context slots
+        context_chunks = [c for c in context_chunks if c.text and c.text.strip()]
 
 
 
@@ -2684,8 +2769,34 @@ class RAGPipeline:
                 return None
 
         # --- STAGE 1.5: FILE/SCHEMA-LEVEL ROUTING GATE ---
-        def _build_router_prompt(manifest, query_str):
-            return f"""You are a file-routing classifier for a retrieval pipeline. Given a user query and a list of candidate data sources, decide which source(s), if any, the query is actually asking about.
+        tabular_llm_calls = 0
+        skipped_router = False
+        router_result = None
+        matched_kb_ids = []
+
+        cache_key = (query.strip().lower(), tuple(sorted(str(k) for k in kb_ids)))
+        now_time = time.time()
+
+        # Short-circuit check
+        if target_kb_id:
+            logger.info(f"Router short-circuit: target_kb_id pre-pinned ({target_kb_id}). Skipping router LLM call.")
+            skipped_router = True
+            matched_kb_ids = [target_kb_id]
+            router_result = {"matches": [{"kb_id": target_kb_id, "field_mapping_confidence": "exact"}], "no_match": False}
+        elif len(kb_rows) == 1:
+            single_id = str(kb_rows[0].id)
+            logger.info(f"Router short-circuit: Single candidate KB in scope ({single_id}). Skipping router LLM call.")
+            skipped_router = True
+            matched_kb_ids = [single_id]
+            router_result = {"matches": [{"kb_id": single_id, "field_mapping_confidence": "exact"}], "no_match": False}
+        elif cache_key in _ROUTER_DECISION_CACHE and (now_time - _ROUTER_DECISION_CACHE[cache_key][0]) < _ROUTER_CACHE_TTL_SECONDS:
+            logger.info(f"Router short-circuit: TTL cache hit for query '{query[:30]}...'. Skipping router LLM call.")
+            skipped_router = True
+            _, router_result = _ROUTER_DECISION_CACHE[cache_key]
+
+        if router_result is None:
+            def _build_router_prompt(manifest, query_str):
+                return f"""You are a file-routing classifier for a retrieval pipeline. Given a user query and a list of candidate data sources, decide which source(s), if any, the query is actually asking about.
 
 Rules:
 - Match on semantic and lexical overlap between the query's entities/fields (e.g. "SL.NO", "employee ID", "HSN code") and each source's column/header names AND sampled_values. If the query asks for a specific value (e.g. 'South' or 'Alice') and it appears in a source's sampled_values, that is a strong indicator of a match. Do not assume a match just because a source is the only one of its type.
@@ -2712,92 +2823,109 @@ Respond ONLY as JSON:
   "no_match": false
 }}"""
 
-        from app.modules.rag.schema_utils import get_schema_columns
-        candidate_manifest = []
-        for r in kb_rows:
-            ds = getattr(r, 'dataset_schema', None)
-            cv = getattr(r, 'categorical_values', None)
-            cols = get_schema_columns(ds, cv)
-                
-            sampled_vals = cv or {}
-            
-            candidate_manifest.append({
-                "kb_id": str(r.id),
-                "filename": r.name,
-                "source_type": getattr(r, 'description', None) or getattr(r, 'source', None),
-                "columns": cols,
-                "sampled_values": sampled_vals,
-                "schema_known": bool(cols)
-            })
+            from app.modules.rag.schema_utils import get_schema_columns
+            candidate_manifest = []
+            for r in kb_rows:
+                ds = getattr(r, 'dataset_schema', None)
+                cv = getattr(r, 'categorical_values', None)
+                cols = get_schema_columns(ds, cv)
+                sampled_vals = cv or {}
+                candidate_manifest.append({
+                    "kb_id": str(r.id),
+                    "filename": r.name,
+                    "source_type": getattr(r, 'description', None) or getattr(r, 'source', None),
+                    "columns": cols,
+                    "sampled_values": sampled_vals,
+                    "schema_known": bool(cols)
+                })
 
-        router_prompt = _build_router_prompt(candidate_manifest, query)
-        router_response = await self.llm_client.generate_cloud(
-            prompt=router_prompt,
-            system_prompt="You are a file-routing classifier. Return ONLY JSON.",
-            temperature=0.0,
-            max_tokens=1000,
-            enable_thinking=False
-        )
+            router_prompt = _build_router_prompt(candidate_manifest, query)
+            tabular_llm_calls += 1
+            router_response = await self.llm_client.generate_cloud(
+                prompt=router_prompt,
+                system_prompt="You are a file-routing classifier. Return ONLY JSON.",
+                temperature=0.0,
+                max_tokens=1000,
+                enable_thinking=False
+            )
 
-        try:
-            import re
-            json_match = re.search(r'```json\s*(\{.*?\})\s*```', router_response, re.DOTALL)
-            clean_json = json_match.group(1) if json_match else router_response[router_response.find('{'):router_response.rfind('}')+1]
-            router_result = json.loads(clean_json)
-        except Exception as e:
-            logger.error(f"Failed to parse router JSON: {e}")
-            router_result = {"no_match": True, "matches": []}
+            try:
+                import re
+                json_match = re.search(r'```json\s*(\{.*?\})\s*```', router_response, re.DOTALL)
+                clean_json = json_match.group(1) if json_match else router_response[router_response.find('{'):router_response.rfind('}')+1]
+                router_result = json.loads(clean_json)
+            except Exception as e:
+                logger.error(f"Failed to parse router JSON: {e}")
+                router_result = {"no_match": True, "matches": []}
 
-        # PASS 2 (Fallback Sampling)
-        if router_result.get("no_match", False) and any(not c["schema_known"] for c in candidate_manifest):
-            logger.info("Router found no match, running Pass 2 schema inference...")
-            unknown_kbs = [c["kb_id"] for c in candidate_manifest if not c["schema_known"]]
-            inferred_schemas = {}
-            for ukb_id in unknown_kbs:
-                kb_param_dict_2 = {"tenant_id": uuid.UUID(str(self.tenant_id)), "kb_0": uuid.UUID(ukb_id)}
-                sample_query = "SELECT row_data FROM document_table_rows WHERE kb_id = :kb_0 AND tenant_id = :tenant_id LIMIT 50;"
-                result_2 = await self.db.execute(text(sample_query), kb_param_dict_2)
-                rows = result_2.scalars().all()
-                if rows:
-                    all_keys = set()
-                    for row in rows:
-                        all_keys.update(row.keys())
-                    inferred_schemas[ukb_id] = list(all_keys)
+            # PASS 2 (Fallback Sampling)
+            if router_result.get("no_match", False) and any(not c["schema_known"] for c in candidate_manifest):
+                logger.info("Router found no match, running Pass 2 schema inference...")
+                unknown_kbs = [c["kb_id"] for c in candidate_manifest if not c["schema_known"]]
+                inferred_schemas = {}
+                for ukb_id in unknown_kbs:
+                    kb_param_dict_2 = {"tenant_id": uuid.UUID(str(self.tenant_id)), "kb_0": uuid.UUID(ukb_id)}
+                    sample_query = "SELECT row_data FROM document_table_rows WHERE kb_id = :kb_0 AND tenant_id = :tenant_id LIMIT 50;"
+                    result_2 = await self.db.execute(text(sample_query), kb_param_dict_2)
+                    rows = result_2.scalars().all()
+                    if rows:
+                        all_keys = set()
+                        for row in rows:
+                            all_keys.update(row.keys())
+                        inferred_schemas[ukb_id] = list(all_keys)
+                        
+                if inferred_schemas:
+                    for c in candidate_manifest:
+                        if c["kb_id"] in inferred_schemas:
+                            c["columns"] = inferred_schemas[c["kb_id"]]
+                            c["schema_known"] = True
                     
-            if inferred_schemas:
-                for c in candidate_manifest:
-                    if c["kb_id"] in inferred_schemas:
-                        c["columns"] = inferred_schemas[c["kb_id"]]
-                        c["schema_known"] = True
-                
-                router_prompt = _build_router_prompt(candidate_manifest, query)
-                router_response = await self.llm_client.generate_cloud(
-                    prompt=router_prompt,
-                    system_prompt="You are a file-routing classifier. Return ONLY JSON.",
-                    temperature=0.0,
-                    max_tokens=1000,
-                    enable_thinking=False
-                )
-                try:
-                    json_match = re.search(r'```json\s*(\{.*?\})\s*```', router_response, re.DOTALL)
-                    clean_json = json_match.group(1) if json_match else router_response[router_response.find('{'):router_response.rfind('}')+1]
-                    router_result = json.loads(clean_json)
-                except Exception as e:
-                    logger.error(f"Failed to parse Pass 2 router JSON: {e}")
-                    router_result = {"no_match": True, "matches": []}
+                    router_prompt = _build_router_prompt(candidate_manifest, query)
+                    tabular_llm_calls += 1
+                    router_response = await self.llm_client.generate_cloud(
+                        prompt=router_prompt,
+                        system_prompt="You are a file-routing classifier. Return ONLY JSON.",
+                        temperature=0.0,
+                        max_tokens=1000,
+                        enable_thinking=False
+                    )
+                    try:
+                        json_match = re.search(r'```json\s*(\{.*?\})\s*```', router_response, re.DOTALL)
+                        clean_json = json_match.group(1) if json_match else router_response[router_response.find('{'):router_response.rfind('}')+1]
+                        router_result = json.loads(clean_json)
+                    except Exception as e:
+                        logger.error(f"Failed to parse Pass 2 router JSON: {e}")
+                        router_result = {"no_match": True, "matches": []}
+
+            # Cache router decision
+            if router_result:
+                _ROUTER_DECISION_CACHE[cache_key] = (now_time, router_result)
 
         # Evaluate Router Result
-        if router_result.get("no_match", False) or not router_result.get("matches"):
-            logger.info("Router determined no table match. Falling back to standard pipeline.")
-            await log_attempt(0)
-            return None
-
-        matched_kb_ids = [m["kb_id"] for m in router_result.get("matches", []) if m.get("field_mapping_confidence", "none") != "none"]
-        
+        all_excel_rows = [r for r in kb_rows if getattr(r, 'description', '') == 'excel_parquet']
         if not matched_kb_ids:
-            logger.info("Router found matches but field mapping confidence was 'none'. Aborting SQL path.")
-            await log_attempt(0)
-            return None
+            if router_result.get("no_match", False) or not router_result.get("matches"):
+                if all_excel_rows:
+                    logger.info("Router returned no_match, but excel_parquet KB(s) exist. Bypassing router rejection and proceeding to PandasQueryEngine.")
+                    matched_kb_ids = [str(r.id) for r in all_excel_rows]
+                else:
+                    logger.info("Router determined no table match. Falling back to standard pipeline.")
+                    await log_attempt(0)
+                    return None
+            else:
+                matched_kb_ids = [m["kb_id"] for m in router_result.get("matches", []) if m.get("field_mapping_confidence", "none") != "none"]
+                if not matched_kb_ids and all_excel_rows:
+                    logger.info("Router found matches with low confidence, but excel_parquet KB(s) exist. Bypassing to PandasQueryEngine.")
+                    matched_kb_ids = [str(r.id) for r in all_excel_rows]
+                elif not matched_kb_ids:
+                    logger.info("Router found matches but field mapping confidence was 'none'. Aborting SQL path.")
+                    await log_attempt(0)
+                    return None
+
+        logger.info(
+            f"TELEMETRY: _execute_table_analytics routing complete in {time.perf_counter() - t_start:.2f}s | "
+            f"llm_calls={tabular_llm_calls}, skipped_router={skipped_router}"
+        )
 
         # Re-assign kb_rows
         kb_rows = [r for r in kb_rows if str(r.id) in matched_kb_ids]
@@ -3158,7 +3286,8 @@ CRITICAL RULES:
         def safe_numeric_cast(field_name):
             val = get_json_val(field_name)
             clean = f"TRIM(REGEXP_REPLACE({val}, '[\\$\\u20ac\\u00a3\\u20b9,%]', '', 'g'))"
-            return f"CASE WHEN {clean} ~ '^[-+]?[0-9]*\.?[0-9]+$' THEN {clean}::numeric ELSE NULL END"
+            norm = f"CASE WHEN {clean} ~ '^\\s*\\(\\s*([0-9]*\\.?[0-9]+)\\s*\\)\\s*$' THEN '-' || REGEXP_REPLACE({clean}, '^\\s*\\(\\s*([0-9]*\\.?[0-9]+)\\s*\\)\\s*$', '\\1') ELSE {clean} END"
+            return f"CASE WHEN ({norm}) ~ '^[-+]?[0-9]*\\.?[0-9]+$' THEN ({norm})::numeric ELSE NULL END"
 
         t_sql_start = time.perf_counter()
         
@@ -3775,6 +3904,124 @@ CRITICAL RULES:
 
         return expanded
 
+    async def _bulk_resolve_and_filter_chunks(self, expanded_chunks: Dict[str, Dict]) -> Dict[str, Dict]:
+        """
+        Bulk resolves full chunk text and metadata for expanded graph chunks BEFORE scoring and context selection.
+        Discards any chunk that cannot be resolved or has empty text to ensure empty chunks never consume context slots.
+        """
+        needed_cids = [cid for cid, meta in expanded_chunks.items() if meta.get("depth", 0) > 0 and not cid.startswith("table-")]
+        if not needed_cids:
+            return expanded_chunks
+
+        resolved_details = {}
+
+        # 1. Primary Source: Batch query PostgreSQL DocumentChunk + KnowledgeBase
+        if getattr(self, "db", None):
+            try:
+                from sqlalchemy import select
+                from app.modules.knowledge_bases.models import DocumentChunk, KnowledgeBase
+                from uuid import UUID
+
+                uuid_chunk_ids = []
+                for cid in needed_cids:
+                    try:
+                        uuid_chunk_ids.append(UUID(cid))
+                    except (ValueError, TypeError):
+                        pass
+
+                if uuid_chunk_ids:
+                    stmt = select(
+                        DocumentChunk,
+                        KnowledgeBase.parsed_path,
+                        KnowledgeBase.name,
+                        KnowledgeBase.s3_path
+                    ).outerjoin(
+                        KnowledgeBase, DocumentChunk.kb_id == KnowledgeBase.id
+                    ).where(
+                        DocumentChunk.id.in_(uuid_chunk_ids),
+                        DocumentChunk.tenant_id == self.tenant_id
+                    )
+                    res = await self.db.execute(stmt)
+                    for db_c, parsed_path, kb_name, s3_path in res.all():
+                        c_id = str(db_c.id)
+                        content_type = "text/plain"
+                        if parsed_path:
+                            if parsed_path.endswith(".html"):
+                                content_type = "text/html"
+                            elif parsed_path.endswith(".md"):
+                                content_type = "text/markdown"
+
+                        resolved_details[c_id] = {
+                            "text": db_c.text or "",
+                            "kb_id": str(db_c.kb_id),
+                            "position": db_c.chunk_index,
+                            "source": s3_path or kb_name or f"DocumentChunk {db_c.chunk_index}",
+                            "s3_path": s3_path,
+                            "content_type": content_type,
+                        }
+            except Exception as db_err:
+                logger.error(f"[CHUNK_RESOLVE] PostgreSQL batch fetch failed: {db_err}", exc_info=True)
+
+        # 2. Fallback Source: Neo4j batch query for any remaining unresolved chunk IDs
+        unresolved_pg = [cid for cid in needed_cids if cid not in resolved_details or not resolved_details[cid].get("text")]
+        if unresolved_pg and getattr(self, "neo4j_repo", None):
+            try:
+                neo_query = """
+                MATCH (c:Chunk {tenant_id: $tenant_id})
+                WHERE c.id IN $chunk_ids
+                OPTIONAL MATCH (kb:KnowledgeBase {tenant_id: $tenant_id})-[:HAS_CHUNK]->(c)
+                RETURN c.id as chunk_id, c.text as text, c.kb_id as kb_id, c.position as position, COALESCE(kb.s3_path, c.source, kb.name) as source, kb.parsed_path as parsed_path, kb.s3_path as s3_path
+                """
+                neo_res = await self.neo4j_repo.execute_read(neo_query, {
+                    "chunk_ids": unresolved_pg,
+                    "tenant_id": self.tenant_id
+                })
+                for r in neo_res:
+                    c_id = r.get("chunk_id")
+                    if c_id and r.get("text"):
+                        parsed_path = r.get("parsed_path")
+                        content_type = "text/plain"
+                        if parsed_path:
+                            if parsed_path.endswith(".html"):
+                                content_type = "text/html"
+                            elif parsed_path.endswith(".md"):
+                                content_type = "text/markdown"
+                        resolved_details[c_id] = {
+                            "text": r["text"],
+                            "kb_id": r.get("kb_id", ""),
+                            "position": r.get("position", 0),
+                            "source": r.get("source") or f"DocumentChunk {r.get('position', 0)}",
+                            "s3_path": r.get("s3_path"),
+                            "content_type": content_type,
+                        }
+            except Exception as neo_err:
+                logger.error(f"[CHUNK_RESOLVE] Neo4j batch fallback failed: {neo_err}", exc_info=True)
+
+        # 3. Filter expanded_chunks: KEEP ONLY chunks with non-empty text (or reconstructed table-* chunks)
+        filtered_expanded = {}
+        unresolved_count = 0
+        resolved_count = 0
+
+        for cid, meta in expanded_chunks.items():
+            if meta.get("depth", 0) == 0:
+                filtered_expanded[cid] = meta  # Seeds already resolved
+            elif cid.startswith("table-"):
+                filtered_expanded[cid] = meta  # Reconstructed table chunks preserved
+            elif cid in resolved_details and resolved_details[cid]["text"].strip():
+                details = resolved_details[cid]
+                meta.update(details)  # Store resolved text, kb_id, position, source in meta
+                filtered_expanded[cid] = meta
+                resolved_count += 1
+            else:
+                unresolved_count += 1
+
+        logger.info(
+            f"[CHUNK_RESOLVE] tenant={self.tenant_id} requested={len(needed_cids)} "
+            f"resolved={resolved_count} unresolved={unresolved_count}"
+        )
+
+        return filtered_expanded
+
     async def _retrieve_reconstructed_tables(
         self,
         keywords: List[str],
@@ -4152,130 +4399,74 @@ CRITICAL RULES:
 
 
 
-        # Score expanded chunks (approximate embedding similarity from neighbors)
-
-
+        # Score expanded chunks (calculate real embedding similarity via pgvector where available)
+        expanded_cids = [cid for cid, meta in expanded_chunks.items() if meta.get("depth", 0) > 0]
+        
+        real_vector_sims = {}
+        if expanded_cids and getattr(self, "db", None) and query_embedding:
+            from app.modules.knowledge_bases.models import DocumentChunk
+            from sqlalchemy import select
+            from uuid import UUID
+            
+            uuid_objs = []
+            for cid in expanded_cids:
+                try:
+                    uuid_objs.append(UUID(str(cid)))
+                except (ValueError, TypeError):
+                    pass
+            
+            if uuid_objs:
+                try:
+                    stmt = select(
+                        DocumentChunk.id,
+                        (1.0 - DocumentChunk.embedding.cosine_distance(query_embedding)).label("similarity")
+                    ).where(
+                        DocumentChunk.id.in_(uuid_objs),
+                        DocumentChunk.tenant_id == self.tenant_id
+                    )
+                    res = await self.db.execute(stmt)
+                    for row in res.all():
+                        real_vector_sims[str(row.id)] = max(0.0, float(row.similarity))
+                except Exception as err:
+                    logger.warning(f"[SCORE_CHUNKS] Failed batch pgvector similarity calculation: {err}")
 
         for chunk_id, meta in expanded_chunks.items():
-
-
-
             if meta.get("depth", 0) == 0:
-
-
-
                 continue  # Skip seeds (already scored)
 
-
-
-
-
-
-
             # Graph score based on depth (inverse distance)
-
-
-
             depth = meta.get("depth", 2)
-
-
-
             graph_score = max(0.3, 1.0 - (depth * 0.25))
 
-
-
-
-
-
-
-            # Embedding similarity: interpolate from neighbors (heuristic)
-
-
-
-            # For phase 2: Use graph_score as proxy
-
-
-
-            embedding_similarity = graph_score * 0.7
-
-
-
-
-
-
+            # Real embedding similarity if calculated via pgvector, or pre-existing similarity (e.g. table chunks), else 0.0
+            if chunk_id in real_vector_sims:
+                embedding_similarity = real_vector_sims[chunk_id]
+            elif meta.get("similarity") is not None:
+                embedding_similarity = float(meta["similarity"])
+            else:
+                embedding_similarity = 0.0
 
             base_hybrid = vector_weight * embedding_similarity + graph_weight * graph_score
-
-
-
             hybrid_score = base_hybrid * meta.get("weight", 1.0)
 
-
-
-
-
-
-
             # Build reason based on connection type
-
-
-
             connection_type = meta.get("connection", "UNKNOWN")
-
-
-
             reason = f"{connection_type} connection (depth {depth})"
 
-
-
-
-
-
-
             scored.append(
-
-
-
                 RetrievedChunk(
-
-
-
                     chunk_id=chunk_id,
-
-
-
-                    text="",  # Will be fetched if needed
-
-
-
-                    kb_id="",
-
-
-
-                    position=0,
-
-
-
+                    text=meta.get("text", ""),
+                    kb_id=meta.get("kb_id", ""),
+                    position=meta.get("position", 0),
+                    source=meta.get("source"),
+                    s3_path=meta.get("s3_path"),
+                    content_type=meta.get("content_type", "text/plain"),
                     embedding_similarity=embedding_similarity,
-
-
-
                     graph_score=graph_score,
-
-
-
                     hybrid_score=hybrid_score,
-
-
-
                     reason=reason,
-
-
-
                 )
-
-
-
             )
 
 

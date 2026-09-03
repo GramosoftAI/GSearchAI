@@ -1,21 +1,31 @@
 
 async def log_telemetry_to_backend(tenant_id, user_id, usage, task_name, query_text):
     if not usage: return
+    base_url = os.getenv("BACKEND_API_BASE_URL", "http://127.0.0.1:4915").rstrip("/")
+    candidate_urls = [
+        f"{base_url}/api/v1/analytics/internal/log-tokens",
+        "http://127.0.0.1:4915/api/v1/analytics/internal/log-tokens",
+        "http://host.docker.internal:4915/api/v1/analytics/internal/log-tokens",
+    ]
+    urls = list(dict.fromkeys(candidate_urls))
+    payload = {
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "model_name": usage.get("model_name", "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
+        "query_text": query_text[:200],
+        "input_tokens": usage.get("prompt_tokens", 0),
+        "output_tokens": usage.get("completion_tokens", 0),
+        "task_name": task_name
+    }
     try:
         async with httpx.AsyncClient() as client:
-            await client.post(
-                "http://host.docker.internal:4915/api/v1/analytics/internal/log-tokens",
-                json={
-                    "tenant_id": tenant_id,
-                    "user_id": user_id,
-                    "model_name": usage.get("model_name", "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
-                    "query_text": query_text[:200],
-                    "input_tokens": usage.get("prompt_tokens", 0),
-                    "output_tokens": usage.get("completion_tokens", 0),
-                    "task_name": task_name
-                },
-                timeout=3.0
-            )
+            for url in urls:
+                try:
+                    resp = await client.post(url, json=payload, timeout=3.0)
+                    if resp.status_code == 200:
+                        return
+                except Exception:
+                    continue
     except Exception as e:
         logger.error(f"Failed to log tokens to backend: {e}")
 

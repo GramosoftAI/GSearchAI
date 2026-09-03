@@ -2,6 +2,8 @@ import json
 import logging
 import httpx
 import os
+import time
+from uuid import UUID
 from fastapi import WebSocket, WebSocketDisconnect
 from .schemas import UnifiedChatRequest
 from .events import LoopEvent
@@ -17,7 +19,7 @@ def resolve_memory_api_base_url() -> str:
     env_host = os.getenv("MEMORY_API_HOST", "").strip()
     if env_host:
         return env_host.rstrip("/")
-    return "http://127.0.0.1:8001"
+    return "http://127.0.0.1:4917"
 
 async def _persist_partial(db, chat_service, session_id, user_id, query, response_buffer, reason: str) -> None:
     try:
@@ -137,6 +139,7 @@ async def run_unified_rag_websocket_loop(
             await adapter.send(websocket, LoopEvent(type="done"))
             continue
 
+        start_time = time.perf_counter()
         try:
             # 1. Memory API Triage & Chat History Fetching (Parallel)
             async def _fetch_memory_triage():
@@ -340,6 +343,47 @@ async def run_unified_rag_websocket_loop(
                         user_message=request.query,
                         assistant_message=full_response
                     ))
+
+            # 8. Analytics Query Logging
+            try:
+                from app.core.config import get_settings
+                settings = get_settings()
+                model_name = getattr(rag_service, "model_answer", None) or getattr(getattr(rag_service, "llm_client", None), "model_answer", None) or settings.model_answer
+                
+                in_tok = int(len(request.query.split()) * 1.3) + 50
+                out_tok = int(len(full_response.split()) * 1.3) + 10
+                tot_tok = in_tok + out_tok
+                
+                from app.core.llm.pricing import calculate_token_cost
+                cost_val = calculate_token_cost(model_name, in_tok, out_tok)
+                
+                from app.modules.analytics.repository import AnalyticsRepository
+                
+                t_uuid = UUID(str(tenant_id)) if tenant_id else None
+                u_uuid = UUID(str(user_id)) if user_id else None
+                s_uuid = UUID(str(active_session_id)) if active_session_id else None
+                
+                if t_uuid:
+                    analytics_repo = AnalyticsRepository(db, t_uuid)
+                    await analytics_repo.create_query_log({
+                        "query": request.query,
+                        "response_status": "SUCCESS",
+                        "confidence_score": 0.95,
+                        "latency_ms": latency_ms,
+                        "session_id": s_uuid,
+                        "user_id": u_uuid,
+                        "llm_input_tokens": in_tok,
+                        "llm_output_tokens": out_tok,
+                        "embedding_tokens": 0,
+                        "total_tokens": tot_tok,
+                        "llm_cost_usd": cost_val,
+                        "embedding_cost_usd": 0.0,
+                        "total_cost_usd": cost_val,
+                        "model_name": model_name,
+                    })
+                    await db.commit()
+            except Exception as analytics_err:
+                logger.warning(f"Failed to save AnalyticsQueryLog in websocket_core: {analytics_err}")
 
             await adapter.send(websocket, LoopEvent(type="done"))
 

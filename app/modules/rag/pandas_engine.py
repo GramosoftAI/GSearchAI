@@ -1,14 +1,14 @@
 import logging
-from typing import Optional, Dict, Literal
-from pydantic import BaseModel, Field
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from app.core.config import get_settings, settings
+import uuid
 import tempfile
 import os
 import re
 import json
-from typing import Optional, Dict, Literal, List
+from typing import Optional, Dict, Literal, List, Tuple, Any
+from pydantic import BaseModel, Field
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from app.core.config import get_settings, settings
 from sqlalchemy import create_engine, text
 
 logger = logging.getLogger(__name__)
@@ -32,9 +32,20 @@ def parse_json_from_thinking(text: str) -> dict:
     if start != -1 and end != -1:
         text = text[start:end+1]
         
+    fallback_dict = {
+        "intents": [],
+        "sql": "SELECT 'LLM JSON parsing failed' AS info WHERE FALSE;",
+        "explanation": "LLM JSON output parsing failed.",
+        "parse_failed": True,
+        "target_engine": "HYBRID_MERGE",
+        "confidence": 0.0,
+        "matched_columns": [],
+        "reasoning": "LLM JSON output parsing failed."
+    }
+
     if not text:
         logger.error(f"LLM returned empty text after stripping think tags: {raw_text}")
-        return {"intents": ["row_lookup"], "sql": "SELECT * FROM dataset LIMIT 10;", "explanation": "Retrieved sample records from dataset"}
+        return fallback_dict
         
     try:
         cleaned = re.sub(r',\s*}', '}', text)
@@ -50,7 +61,7 @@ def parse_json_from_thinking(text: str) -> dict:
         except Exception as e_yaml:
             logger.error(f"Both json.loads and yaml.safe_load failed on text: {text} | error: {e_yaml}")
             
-        return {"intents": ["row_lookup"], "sql": "SELECT * FROM dataset LIMIT 10;", "explanation": "Retrieved sample records from dataset"}
+        return fallback_dict
 
 class IntentClassification(BaseModel):
     """Classifies the user query into one or more execution engines."""
@@ -69,6 +80,152 @@ class DuckDBSemanticQuery(BaseModel):
         ...,
         description="Explanation of what the SQL query does."
     )
+
+def validate_sql_security(sql_str: str) -> Optional[str]:
+    """
+    Defense-in-depth SQL security validator for PandasQueryEngine.
+    Enforces:
+    1. Single-statement execution (rejects multi-statement semicolon injection).
+    2. Read-only allow-list (must start strictly with SELECT or WITH).
+    3. Restriction on file I/O, extension loading, system procedures (COPY, PRAGMA, INSTALL, LOAD, CALL, TRUNCATE, read_csv, read_parquet, etc.).
+    4. Extended keyword safety net.
+    Returns None if valid, or an error message string if a security violation is detected.
+    """
+    if not sql_str or not sql_str.strip():
+        return "Error: Security violation - empty query."
+
+    clean_sql = sql_str.strip()
+
+    # 1. Multi-Statement Validation
+    # Remove single-line comments (--), block comments (/* */), and trailing semicolons
+    stripped_sql = re.sub(r'--(.*?)$', '', clean_sql, flags=re.MULTILINE)
+    stripped_sql = re.sub(r'/\*.*?\*/', '', stripped_sql, flags=re.DOTALL).strip()
+    
+    while stripped_sql.endswith(';'):
+        stripped_sql = stripped_sql[:-1].strip()
+
+    if ';' in stripped_sql:
+        logger.warning(f"[SQL_SECURITY] Rejected multi-statement query: {sql_str}")
+        return "Error: Security violation - multi-statement queries are strictly prohibited."
+
+    # 2. Allow-List Validation (Must start strictly with SELECT or WITH)
+    upper_sql = stripped_sql.upper()
+    if not (upper_sql.startswith("SELECT") or upper_sql.startswith("WITH")):
+        logger.warning(f"[SQL_SECURITY] Query does not start with SELECT or WITH: {sql_str}")
+        return "Error: Security violation - only single read-only SELECT or WITH queries are permitted."
+
+    # 3. Restrict File I/O, Extension, and System Execution Keywords & Functions
+    forbidden_kw = [
+        "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "REPLACE",
+        "EXEC", "ATTACH", "DETACH", "COPY", "PRAGMA", "INSTALL", "LOAD",
+        "CALL", "TRUNCATE", "EXPORT", "IMPORT", "READ_CSV", "READ_PARQUET",
+        "READ_JSON", "READ_TEXT", "READ_BLOB"
+    ]
+
+    for kw in forbidden_kw:
+        pattern = r'\b' + re.escape(kw) + r'(\b|_)'
+        if re.search(pattern, upper_sql):
+            logger.warning(f"[SQL_SECURITY] Forbidden keyword/function '{kw}' detected in query: {sql_str}")
+    return None
+
+import time
+import threading
+
+_DUCKDB_ENGINE_CACHE: Dict[Tuple[str, ...], Tuple[float, Any, List[str]]] = {}
+_DUCKDB_CACHE_LOCK = threading.Lock()
+_DUCKDB_CACHE_TTL_SECONDS = 600.0  # 10 minutes TTL
+_MAX_DUCKDB_CACHE_SIZE = 50
+
+def get_pooled_duckdb_engine(paths: List[str]) -> Tuple[Any, List[str], float]:
+    """
+    Retrieves or creates a pooled, thread-safe DuckDB SQLAlchemy engine and cached catalog columns
+    for the given dataset file paths. Returns (engine, columns, acquisition_latency_ms).
+    """
+    start_time = time.time()
+    paths_key = tuple(sorted(str(p).replace('\\', '/') for p in paths if p and os.path.exists(p)))
+    if not paths_key:
+        raise ValueError("No valid existing file paths provided for DuckDB engine.")
+
+    now = time.time()
+    with _DUCKDB_CACHE_LOCK:
+        # 1. Sweep expired cache entries
+        expired_keys = [
+            k for k, (ts, eng, _) in _DUCKDB_ENGINE_CACHE.items()
+            if now - ts > _DUCKDB_CACHE_TTL_SECONDS
+        ]
+        for k in expired_keys:
+            _, eng, _ = _DUCKDB_ENGINE_CACHE.pop(k)
+            try:
+                eng.dispose()
+            except Exception as dispose_err:
+                logger.debug(f"Error disposing expired DuckDB engine for {k}: {dispose_err}")
+
+        # 2. Return cached engine if hit
+        if paths_key in _DUCKDB_ENGINE_CACHE:
+            ts, eng, cols = _DUCKDB_ENGINE_CACHE[paths_key]
+            acq_ms = (time.time() - start_time) * 1000.0
+            logger.info(f"[DUCKDB_POOL] Cache hit for paths {paths_key} (Acquisition latency: {acq_ms:.2f}ms)")
+            return eng, cols, acq_ms
+
+        # 3. LRU Eviction if max capacity reached
+        if len(_DUCKDB_ENGINE_CACHE) >= _MAX_DUCKDB_CACHE_SIZE:
+            oldest_key = min(_DUCKDB_ENGINE_CACHE.keys(), key=lambda k: _DUCKDB_ENGINE_CACHE[k][0])
+            _, old_eng, _ = _DUCKDB_ENGINE_CACHE.pop(oldest_key)
+            try:
+                old_eng.dispose()
+            except Exception:
+                pass
+
+        # 4. Create new pooled in-memory DuckDB engine & initialize dataset view
+        logger.info(f"[DUCKDB_POOL] Cache miss. Constructing pooled DuckDB engine for paths: {paths_key}")
+        engine = create_engine("duckdb:///:memory:")
+        
+        valid_readers = []
+        for path_item in paths_key:
+            if path_item.lower().endswith(".parquet"):
+                valid_readers.append(f"SELECT * FROM read_parquet('{path_item}')")
+            else:
+                valid_readers.append(f"SELECT * FROM read_csv_auto('{path_item}', sample_size=10000, nullstr='NULL')")
+        
+        if not valid_readers:
+            union_sql = "SELECT 1 WHERE FALSE"
+        else:
+            union_sql = " SELECT * FROM (" + " UNION ALL BY NAME ".join(valid_readers) + ")"
+
+        with engine.connect() as conn:
+            conn.execute(text("DROP VIEW IF EXISTS dataset;"))
+            conn.execute(text(f"CREATE VIEW dataset AS SELECT row_number() OVER () AS row_id, * FROM ({union_sql});"))
+            
+            for idx, path_item in enumerate(paths_key):
+                view_name = f"dataset_{idx+1}"
+                conn.execute(text(f"DROP VIEW IF EXISTS {view_name};"))
+                reader = f"read_parquet('{path_item}')" if path_item.lower().endswith(".parquet") else f"read_csv_auto('{path_item}', sample_size=10000, nullstr='NULL')"
+                conn.execute(text(f"CREATE VIEW {view_name} AS SELECT row_number() OVER () AS row_id, * FROM {reader};"))
+            
+            try:
+                conn.commit()
+            except Exception:
+                pass
+                
+            res = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dataset' AND column_name != 'row_id';"))
+            columns = [row[0] for row in res.fetchall()]
+
+        _DUCKDB_ENGINE_CACHE[paths_key] = (time.time(), engine, columns)
+        acq_ms = (time.time() - start_time) * 1000.0
+        logger.info(f"[DUCKDB_POOL] Initialized and cached DuckDB engine for {paths_key} (Acquisition latency: {acq_ms:.2f}ms)")
+        return engine, columns, acq_ms
+
+def invalidate_duckdb_engine_cache(paths: List[str]):
+    """Evicts the cached engine for a given set of file paths (e.g. on schema error or update)."""
+    paths_key = tuple(sorted(str(p).replace('\\', '/') for p in paths if p and os.path.exists(p)))
+    with _DUCKDB_CACHE_LOCK:
+        if paths_key in _DUCKDB_ENGINE_CACHE:
+            _, eng, _ = _DUCKDB_ENGINE_CACHE.pop(paths_key)
+            try:
+                eng.dispose()
+            except Exception as e:
+                logger.debug(f"Error disposing evicted DuckDB engine: {e}")
+
 
 class PandasQueryEngine:
     """
@@ -130,14 +287,8 @@ class PandasQueryEngine:
         if not paths_to_check:
             return []
         try:
-            temp_db_path = os.path.join(tempfile.gettempdir(), f"duckdb_{id(self)}.db")
-            engine = create_engine(f"duckdb:///{temp_db_path}")
-            with engine.connect() as conn:
-                union_sql = self._build_union_query(paths_to_check, with_row_id=False)
-                conn.execute(text("DROP VIEW IF EXISTS dataset;"))
-                conn.execute(text(f"CREATE VIEW dataset AS {union_sql};"))
-                result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dataset';"))
-                return [row[0] for row in result.fetchall()]
+            _, columns, _ = get_pooled_duckdb_engine(paths_to_check)
+            return columns
         except Exception as e:
             logger.warning(f"Failed fetching schema columns for routing: {e}")
             return []
@@ -213,35 +364,12 @@ class PandasQueryEngine:
             
         from langchain_core.output_parsers import StrOutputParser
         # DUCKDB BINDING (CSV or PARQUET)
-        logger.info(f"Initializing DuckDB on dataset(s): {target_path} | total_paths: {len(paths_to_register)}")
+        logger.info(f"Acquiring pooled DuckDB engine on dataset(s): {target_path} | total_paths: {len(paths_to_register)}")
+        engine = None
         try:
             import asyncio
-            def _setup_db():
-                temp_db_path = os.path.join(tempfile.gettempdir(), f"duckdb_{id(self)}.db")
-                engine = create_engine(f"duckdb:///{temp_db_path}")
-                
-                with engine.connect() as conn:
-                    union_sql = self._build_union_query(paths_to_register, with_row_id=True)
-                    conn.execute(text("DROP VIEW IF EXISTS dataset;"))
-                    conn.execute(text(f"CREATE VIEW dataset AS {union_sql};"))
-                    
-                    # Also register individual views (dataset_1, dataset_2, etc.) for backwards compatibility
-                    for idx, path_item in enumerate(paths_to_register):
-                        safe_path = str(path_item).replace('\\', '/')
-                        view_name = f"dataset_{idx+1}"
-                        conn.execute(text(f"DROP VIEW IF EXISTS {view_name};"))
-                        reader = f"read_parquet('{safe_path}')" if safe_path.lower().endswith(".parquet") else f"read_csv_auto('{safe_path}', sample_size=10000, nullstr='NULL')"
-                        conn.execute(text(f"CREATE VIEW {view_name} AS SELECT row_number() OVER () AS row_id, * FROM {reader};"))
-                    try:
-                        conn.commit()
-                    except:
-                        pass
-                        
-                    result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dataset';"))
-                    columns = [row[0] for row in result.fetchall()]
-                return engine, columns
-                
-            engine, columns = await asyncio.to_thread(_setup_db)
+            engine, columns, acq_ms = await asyncio.to_thread(get_pooled_duckdb_engine, paths_to_register)
+            logger.info(f"[TELEMETRY] DuckDB engine acquisition completed in {acq_ms:.2f}ms")
 
             # 3. GENERATE DUCKDB SQL DIRECTLY
             prompt = ChatPromptTemplate.from_messages([
@@ -280,6 +408,10 @@ class PandasQueryEngine:
                  "   - When asking for 'details', 'full details', or information about a specific movie, person, or title (e.g. 'Ron''s Gone Wrong full details', 'details of King''s Man'), generate a SELECT * FROM dataset WHERE LOWER(\"Title\") LIKE '%ron%gone%wrong%'; (or corresponding name column). NEVER generate a COUNT(*) aggregation query when the user asks for details of a specific item!\n"
                  "   - When a title or search string contains an apostrophe or single quote (''), you MUST escape it by doubling the single quote in SQL (e.g., '%ron''s gone wrong%') OR omit the apostrophe using wildcards (e.g., '%ron%gone%wrong%').\n"
                  "   - When querying general details without an explicit WHERE name/title filter (e.g. 'show me all movies' or general overview), ALWAYS append LIMIT 10 to prevent large result sets from causing token overflow.\n"
+                 "20. PART NUMBERS, REPAIR KITS, MRP & SKU LOOKUPS:\n"
+                 "   - When the user asks for MRP, repair kit details, or technical part information (e.g. 'What is the MRP for Part No 29019292JA?'), search across part number and description columns using ILIKE with wildcards (e.g. \"HLAAP SALES PART NO\" ILIKE '%29019292JA%' OR \"HLAAP PART DESCRIPTION\" ILIKE '%29019292JA%' OR LOWER(CAST(dataset AS VARCHAR)) LIKE '%29019292ja%').\n"
+                 "   - If the part number or code contains hyphens or mixed alphanumeric strings, search with wildcards for the main core identifier (e.g. ILIKE '%29019292%').\n"
+                 "   - Always select relevant columns including Part Number, Description, OEM, MRP, DLP, HSN, and Standard Pack.\n"
                  "IMPORTANT: DO NOT generate any <think> tags or internal reasoning steps. Output ONLY valid JSON immediately without any thinking."),
                 ("user", "{question}")
             ])
@@ -305,10 +437,10 @@ class PandasQueryEngine:
             
             logger.info(f"Generated DuckDB SQL: {sql_query} | Explanation: {query_plan.explanation}")
             
-            # Security check
-            forbidden_kw = ["INSERT ", "UPDATE ", "DELETE ", "DROP ", "ALTER ", "CREATE ", "REPLACE ", "EXEC ", "ATTACH ", "DETACH "]
-            if any(kw in sql_query.upper() for kw in forbidden_kw):
-                return "Error: Security violation - only read-only SELECT queries are permitted."
+            # Defense-in-depth SQL security validation
+            sec_err = validate_sql_security(sql_query)
+            if sec_err:
+                return sec_err
             
             # 5. EXECUTE SECURELY (with Layer 2 Self-Healing SQL Repair on Parser/Syntax Errors)
             rows = []
@@ -347,6 +479,10 @@ class PandasQueryEngine:
                     repaired_plan = DuckDBSemanticQuery(**repaired_dict)
                     sql_query = repaired_plan.sql.strip().rstrip(";") + ";"
                     logger.info(f"Self-Healed DuckDB SQL: {sql_query} | Explanation: {repaired_plan.explanation}")
+                    
+                    sec_err_repair = validate_sql_security(sql_query)
+                    if sec_err_repair:
+                        return sec_err_repair
                     
                     rows, col_names = await asyncio.to_thread(_execute_sql, sql_query)
                     query_plan = repaired_plan
@@ -420,4 +556,6 @@ class PandasQueryEngine:
             
         except Exception as e:
             logger.error(f"PandasQueryEngine Execution Failed: {e}", exc_info=True)
+            if paths_to_register:
+                invalidate_duckdb_engine_cache(paths_to_register)
             return f"Error during data analysis: {str(e)}"

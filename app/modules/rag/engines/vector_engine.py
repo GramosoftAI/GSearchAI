@@ -169,12 +169,20 @@ class VectorEngine(BaseEngine):
                         len(target_sections),
                     )
                 elif is_tabular:
-                    base_conditions.append(DocumentChunk.chunk_index >= 90000)
-                    logger.info(
-                        "VectorEngine task=%s: restricting pgvector search "
-                        "to synthetic table chunks ONLY (table_fallback).",
-                        task.task_id,
-                    )
+                    narrative_keywords = ["cause", "event", "phase", "why", "how", "reason", "accident", "analysis", "report", "statement", "damage", "led to", "happen", "occur", "defining"]
+                    has_narrative_intent = any(nk in task.query.lower() for nk in narrative_keywords)
+                    if not has_narrative_intent:
+                        base_conditions.append(DocumentChunk.chunk_index >= 90000)
+                        logger.info(
+                            "VectorEngine task=%s: restricting pgvector search "
+                            "to synthetic table chunks ONLY (table_fallback).",
+                            task.task_id,
+                        )
+                    else:
+                        logger.info(
+                            "VectorEngine task=%s: query is tabular BUT contains narrative intent terms. Allowing both narrative and table chunks.",
+                            task.task_id,
+                        )
 
                 stmt = (
                     select(
@@ -292,6 +300,12 @@ class VectorEngine(BaseEngine):
                         if len(kw) > 3 and kw in chunk_text.lower():
                             weight *= 1.05
 
+                    # 3. Narrative Intent Boost (Boost original narrative sections when query asks for cause, phase, event, etc.)
+                    narrative_keywords = ["cause", "event", "phase", "why", "how", "reason", "accident", "analysis", "report", "statement", "damage", "led to", "happen", "occur", "defining"]
+                    has_narrative_query = any(nk in task.query.lower() for nk in narrative_keywords)
+                    if has_narrative_query and row.chunk_index < 90000:
+                        weight *= 1.35
+
                     base_weighted = similarity * weight
                     pos_boost = 0.005 if row.chunk_index < 3 else 0.0
                     final_score = base_weighted + pos_boost
@@ -300,7 +314,7 @@ class VectorEngine(BaseEngine):
                         chunk_id=str(row.id),
                         text=chunk_text,
                         kb_id=str(row.kb_id),
-                        position=idx,
+                        position=row.chunk_index,
                         embedding_similarity=similarity,
                         graph_score=0.0,
                         hybrid_score=final_score,

@@ -1,10 +1,19 @@
 """
-Enterprise Hybrid RAG Router
-Schema-Aware Intent Classifier for routing queries between Structured (DuckDB/Parquet) and Unstructured (Vector/Qdrant) Knowledge Bases.
+Enterprise Hybrid RAG Router (DEPRECATED)
+
+DEPRECATION NOTICE:
+This module (EnterpriseHybridRouter) is DEPRECATED and retained for historical reference only.
+It is NOT imported or called by the live execution path.
+
+AUTHORITATIVE RAG ROUTING IMPLEMENTATION:
+The single authoritative source of truth for query intent analysis and routing is:
+1. QueryAnalyzer (`app.modules.rag.orchestrator.query_analyzer.QueryAnalyzer`)
+2. RAGPipeline Tabular Gate (`app.modules.rag.pipeline.RAGPipeline.query`)
 """
 import logging
 import re
 import json
+import warnings
 from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
@@ -35,12 +44,31 @@ class HybridRoutingDecision(BaseModel):
 
 class EnterpriseHybridRouter:
     """
-    Schema-Aware Intent Classifier with 0-latency keyword pre-filtering and structured JSON reasoning.
+    DEPRECATED: Schema-Aware Intent Classifier.
+    Use QueryAnalyzer (`app.modules.rag.orchestrator.query_analyzer.QueryAnalyzer`) instead.
     """
+
+    def __init__(self):
+        warnings.warn(
+            "EnterpriseHybridRouter is deprecated and will be removed in a future release. "
+            "Use QueryAnalyzer (app.modules.rag.orchestrator.query_analyzer.QueryAnalyzer) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    @classmethod
+    def _warn_deprecated(cls):
+        warnings.warn(
+            "EnterpriseHybridRouter is deprecated and will be removed in a future release. "
+            "Use QueryAnalyzer (app.modules.rag.orchestrator.query_analyzer.QueryAnalyzer) instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
     @staticmethod
     def _fast_path_classify(query: str, columns: List[str], doc_kbs_count: int) -> Optional[HybridRoutingDecision]:
         """0-ms deterministic check for unambiguous queries."""
+        EnterpriseHybridRouter._warn_deprecated()
         q_lower = query.lower()
 
         # Explicit document/PDF indicators

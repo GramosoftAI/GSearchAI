@@ -160,6 +160,50 @@ class AnalyticsRepository:
         self.db = db
         self.tenant_id = tenant_id
 
+    async def log_usage(
+        self,
+        tenant_id: str,
+        user_id: str,
+        model_name: str,
+        query_text: str,
+        input_tokens: int,
+        output_tokens: int,
+        task_name: str
+    ) -> Optional[LLMStageUsageLog]:
+        from app.core.llm.pricing import calculate_token_cost
+        from app.modules.chats.repository import safe_uuid
+        from sqlalchemy.exc import IntegrityError
+        import logging
+        
+        cost_usd = calculate_token_cost(model_name, input_tokens, output_tokens)
+        
+        t_uuid = safe_uuid(tenant_id) or self.tenant_id
+        u_uuid = safe_uuid(user_id)
+        if not t_uuid:
+            return None
+            
+        log = LLMStageUsageLog(
+            tenant_id=t_uuid,
+            user_id=u_uuid,
+            model_name=model_name,
+            task_type=task_name,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost_usd,
+            query_preview=query_text[:500] if query_text else ""
+        )
+        try:
+            self.db.add(log)
+            await self.db.flush()
+            return log
+        except IntegrityError as e:
+            try:
+                await self.db.rollback()
+            except Exception:
+                pass
+            logging.getLogger(__name__).warning(f"Skipping log_usage due to constraint failure: {e}")
+            return None
+
     async def create_summary(self, summary_data: dict) -> AnalyticsSummary:
         summary = AnalyticsSummary(**summary_data, tenant_id=self.tenant_id)
         self.db.add(summary)

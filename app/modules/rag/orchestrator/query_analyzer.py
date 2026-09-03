@@ -68,7 +68,7 @@ class QueryAnalyzer:
                 reasoning="Fast-path greeting regex match"
             )
 
-        kb_context_section = f"\n[ACTIVE KNOWLEDGE BASES CONTEXT]\nThe user is searching across these knowledge bases. Use this context to deduce the meaning of ambiguous terms:\n{kb_context}\n" if kb_context else ""
+        kb_context_section = f"\n[ACTIVE KNOWLEDGE BASES CONTEXT & SCHEMA VOCABULARY]\nThe user is searching across these knowledge bases. Use the provided column names and sample categorical values to resolve ambiguous terms and identify structured tabular queries:\n{kb_context}\n" if kb_context else ""
         
         chat_history_section = ""
         if chat_history:
@@ -84,7 +84,7 @@ TASKS:
 2. KEYWORDS: Extract key search terms/entities in `keywords` list.
 3. TABULAR: Set `is_tabular` to true if query asks for numbers, sums, counts, prices, salary, HSN, table records; false otherwise.
 4. COMPOSITE: If query asks both tabular and text questions, split into `tabular_subquery` and `vector_subquery` (resolving pronouns). Otherwise null.
-5. INTENT: One of FACT, CALCULATION, COMPARISON, TEMPORAL, STRUCTURAL, TABLE, SUMMARY, WHY, UNKNOWN.
+5. INTENT: One of FACT, CALCULATION, COMPARISON, TEMPORAL, STRUCTURAL, TABLE, SUMMARY, WHY, GRAPH, UNKNOWN.
 
 CRITICAL TASK: STRUCTURED QUERY REPHRASING
 You must generate an array of 3 optimized retrieval queries based on the user's input in the `structured_queries` field inside the `metadata` object. 
@@ -119,6 +119,7 @@ INTENTS:
 - TABLE: Explicitly asking about a table or cell.
 - SUMMARY: Needs an overview or tl;dr.
 - WHY: Needs reasoning or explanation.
+- GRAPH: Requires relationship/connected-entity reasoning, graph traversal, or knowledge-graph-based retrieval.
 - UNKNOWN: Fallback if nothing matches.
 
 Return ONLY valid JSON:

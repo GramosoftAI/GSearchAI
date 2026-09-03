@@ -631,9 +631,40 @@ class KnowledgeBaseService:
             if progress_callback:
                 await progress_callback(70, "Generating Document Embeddings")
 
-            # 3. GENERATE EMBEDDINGS (Optimized Batching)
+            # 3. GENERATE EMBEDDINGS (Context-Augmented Vector Embedding Input)
             t_embed_start = _time.time()
-            embeddings, emb_tokens = await EmbeddingGenerator.generate_embeddings_batch_with_usage(chunks)
+            
+            embedding_inputs = []
+            kb_name_str = (kb.name or "Document").strip()
+            generic_sections = {"main content", "introduction", "none", "", "n/a", "general"}
+            generic_categories = {"general_document", "general", "other", "unknown", ""}
+            
+            clean_category = (document_category or "").strip()
+            has_specific_category = clean_category.lower() not in generic_categories
+            
+            for i, chunk_text in enumerate(chunks):
+                sec = None
+                if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i]:
+                    sec = chunk_metadata_list[i].get("section")
+                
+                sec_str = str(sec).strip() if sec is not None else ""
+                
+                if sec_str and sec_str.lower() not in generic_sections:
+                    prefix = f"Document: {kb_name_str} | Section: {sec_str}"
+                elif has_specific_category:
+                    prefix = f"Document: {kb_name_str} | Type: {clean_category}"
+                else:
+                    prefix = f"Document: {kb_name_str}"
+                
+                if len(prefix) > 150:
+                    prefix = prefix[:147] + "..."
+                    
+                embedding_inputs.append(f"{prefix}\n\n{chunk_text}")
+
+            if embedding_inputs:
+                logger.info(f"Sample embedding context prefix: {embedding_inputs[0][:150]!r}")
+
+            embeddings, emb_tokens = await EmbeddingGenerator.generate_embeddings_batch_with_usage(embedding_inputs)
             audit_run.embedding_tokens = emb_tokens
             audit_run.embedding_cost_usd = (emb_tokens / 1000000.0) * 0.01
             # Yield control back to event loop so server stays responsive
@@ -724,6 +755,15 @@ class KnowledgeBaseService:
                     entities.add(match)
                 return [{"name": e, "type": "KEYWORD"} for e in sorted(list(entities))[:20]]
 
+            # Enterprise Smart KG Distributed Sampling:
+            # Deterministically select ~15 chunks distributed across beginning, middle, and end of the document.
+            total_chunks = len(chunks)
+            llm_budget = 15
+            if total_chunks <= llm_budget:
+                llm_chunk_indices = set(range(total_chunks))
+            else:
+                llm_chunk_indices = {round(i * (total_chunks - 1) / (llm_budget - 1)) for i in range(llm_budget)}
+
             async def safe_extract_unified(chunk_id: str, text: str, idx: int):
                 # Fast-Path: Skip LLM extraction for fluff chunks or purely structured spreadsheet chunks to save time
                 if skip_all_llm_extraction or not is_dense_chunk(text):
@@ -743,10 +783,10 @@ class KnowledgeBaseService:
                     cached_result["_metadata"]["cached"] = True
                     return cached_result
 
-                # Enterprise Smart KG Sampling:
-                # Run LLM KG extraction on top 15 chunks per document (with a 45-second timeout); 
-                # 0-ms Fast Deterministic Regex Entity Extraction on secondary chunks (idx >= 15)
-                if idx >= 15:
+                # Enterprise Smart KG Distributed Sampling:
+                # Run LLM KG extraction on ~15 distributed chunks per document; 
+                # 0-ms Fast Deterministic Regex Entity Extraction on secondary chunks (idx not in llm_chunk_indices)
+                if idx not in llm_chunk_indices:
                     routing_stats["fast_regex"] += 1
                     fast_entities = _fast_regex_extract_entities(text)
                     result = {"entities": fast_entities, "triplets": [], "structured": {"identifiers": [], "sections": []}, "_metadata": {"fast_regex": True, "chunk_idx": idx}}
@@ -961,7 +1001,7 @@ class KnowledgeBaseService:
 
 
 
-            # 5. BATCH CREATE CHUNK NODES
+            # 5. BATCH CREATE CHUNK NODES & STAGE IN POSTGRESQL
 
             chunk_ids = [str(uuid.uuid4()) for _ in range(len(chunks))]
             chunk_section_map = {
@@ -970,202 +1010,140 @@ class KnowledgeBaseService:
                 if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i]
             }
 
+            # Full untruncated chunk text stored in Neo4j payload
             chunk_data = [{
-
                 "chunk_id": chunk_ids[i], "tenant_id": str(self.tenant_id), "kb_id": kb_id,
-
-                "text": chunks[i][:1000], "position": i, "token_count": TextChunker.estimate_tokens(chunks[i]),
-
+                "text": chunks[i], "position": i, "token_count": TextChunker.estimate_tokens(chunks[i]),
                 "embedding": embeddings[i], "created_at": datetime.utcnow().isoformat(),
-
                 "metadata": json.dumps(chunk_metadata_list[i]) if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i] else "{}",
                 "chunk_type": chunk_metadata_list[i].get("chunk_type", "generic") if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i] else "generic",
                 "section": chunk_metadata_list[i].get("section") if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i] else None,
                 "sheet": chunk_metadata_list[i].get("sheet") if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i] else None,
                 "source_type": chunk_metadata_list[i].get("source_type", source_type) if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i] else source_type
-
             } for i in range(len(chunks))]
 
-
-
-            # Save chunks to PostgreSQL pgvector table
-
+            # Save full untruncated chunks to PostgreSQL pgvector table
             for i in range(len(chunks)):
-
                 pg_chunk = DocumentChunk(
-
                     id=uuid.UUID(chunk_ids[i]),
-
                     tenant_id=self.tenant_id,
-
                     kb_id=uuid.UUID(kb_id),
-
                     text=chunks[i],
-
                     chunk_index=i,
-
                     embedding=embeddings[i],
-                    
                     section=chunk_section_map.get(chunk_ids[i]),
-                    
                     metadata_json=chunk_metadata_list[i] if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i] else {}
-
                 )
-
                 self.db.add(pg_chunk)
 
             logger.info(f" Staged {len(chunks)} chunks in PostgreSQL")
 
-
-
-            batch_create_query = """
-
-            WITH $chunks AS chunk_list
-
-            UNWIND chunk_list AS data
-
-            CREATE (c:Chunk {
-
-                id: data.chunk_id, tenant_id: $tenant_id, kb_id: data.kb_id,
-
-                text: data.text, position: data.position, token_count: data.token_count,
-
-                embedding: data.embedding, created_at: data.created_at,
-
-                source: data.source, metadata: data.metadata,
-                chunk_type: data.chunk_type, section: data.section,
-                sheet: data.sheet, source_type: data.source_type
-
-            })
-
-            WITH c, data
-
-            MATCH (kb:KnowledgeBase {id: data.kb_id, tenant_id: $tenant_id})
-
-            CREATE (kb)-[:HAS_CHUNK]->(c)
-
-            """
-
-            await retry_neo4j_operation(lambda: self.neo4j_repo.execute_write(batch_create_query, {"chunks": chunk_data}))
-
-            logger.info(f" Created {len(chunks)} chunks in Neo4j")
-
-
-
-            # 6. COMPUTE SEMANTIC SIMILARITIES (O(n) but fast for small docs)
-
+            # 6. COMPUTE SEMANTIC SIMILARITIES
             similar_pairs = []
-
             if len(embeddings) < settings.similarity_brute_force_threshold:
-
                 for i in range(len(embeddings)):
-
                     for j in range(i + 1, len(embeddings)):
-
                         sim = EmbeddingGenerator.cosine_similarity(embeddings[i], embeddings[j])
-
                         if sim >= settings.similarity_min_threshold:
-
                             similar_pairs.append({"chunk_id_1": chunk_ids[i], "chunk_id_2": chunk_ids[j], "similarity": sim})
-
-                # Cap similarities
-
                 similar_pairs = sorted(similar_pairs, key=lambda x: x["similarity"], reverse=True)[:len(chunks) * settings.max_similar_per_chunk]
 
-
-
-            # 7. PARALLELIZE RELATIONSHIP CREATION
-
-            relationship_tasks = []
-
-            
-
-            # NEXT rels
-
+            # 7. PREPARE RELATIONSHIP DATA
             next_data = [{"id1": chunk_ids[i], "id2": chunk_ids[i+1]} for i in range(len(chunk_ids)-1)]
 
-            if next_data:
-
-                relationship_tasks.append(retry_neo4j_operation(lambda: self.neo4j_repo.execute_write(
-
-                    "UNWIND $rels AS r MATCH (c1:Chunk {id: r.id1, tenant_id: $tenant_id}) MATCH (c2:Chunk {id: r.id2, tenant_id: $tenant_id}) CREATE (c1)-[:NEXT]->(c2)",
-
-                    {"rels": next_data}
-
-                )))
-
-
-
-            # SIMILAR rels
-
-            if similar_pairs:
-
-                relationship_tasks.append(retry_neo4j_operation(lambda: self.neo4j_repo.execute_write(
-
-                    "UNWIND $pairs AS p MATCH (c1:Chunk {id: p.chunk_id_1, tenant_id: $tenant_id}) MATCH (c2:Chunk {id: p.chunk_id_2, tenant_id: $tenant_id}) CREATE (c1)-[:SIMILAR {similarity: p.similarity}]->(c2) CREATE (c2)-[:SIMILAR {similarity: p.similarity}]->(c1)",
-
-                    {"pairs": similar_pairs}
-
-                )))
-
-
-
-            # MENTIONS rels
-
             mentions_data = []
-
             for idx, ents in entities_by_chunk.items():
+                for e in ents: 
+                    mentions_data.append({"chunk_id": chunk_ids[idx], "text": e["text"], "type": e["type"], "conf": e["confidence"]})
 
-                for e in ents: mentions_data.append({"chunk_id": chunk_ids[idx], "text": e["text"], "type": e["type"], "conf": e["confidence"]})
-
-            if mentions_data:
-
-                relationship_tasks.append(retry_neo4j_operation(lambda: self.neo4j_repo.execute_write(
-
-                    "UNWIND $rels AS r MERGE (e:Entity {tenant_id: $tenant_id, text: r.text, type: r.type}) WITH e, r MATCH (c:Chunk {id: r.chunk_id, tenant_id: $tenant_id}) CREATE (c)-[:MENTIONS {confidence: r.conf}]->(e)",
-
-                    {"rels": mentions_data}
-
-                )))
-
-
-
-            await asyncio.gather(*relationship_tasks)
-
-            logger.info(" Created all relationships in parallel")
-
-
-
-            # 8. TRIPLET PERSISTENCE
-
+            # 8. TRIPLET PERSISTENCE DATA
             triplet_stats = {"triplets_extracted": 0, "triplet_entities": 0, "triplet_relationships": 0}
-
             if use_triplets and triplet_results:
+                for i, res in enumerate(triplet_results): 
+                    res.chunk_id = chunk_ids[i]
 
-                from ...core.triplet_extractor import TripletGraphWriter
-
-                for i, res in enumerate(triplet_results): res.chunk_id = chunk_ids[i]
-
-                persist_result = await TripletGraphWriter(str(self.tenant_id)).persist_triplets(triplet_results)
-
-                triplet_stats = {"triplets_extracted": persist_result.get("triplets_created", 0), "triplet_entities": persist_result.get("entities_created", 0), "triplet_relationships": persist_result.get("relationships_created", 0)}
-
-            # 8.5 GRAPH CLEANUP (NEW) - Run Asynchronously
-            async def run_cleanup_async(tenant_id_str: str, kb_id_str: str):
+            # 8.5 ASYNCHRONOUS BACKGROUND NEO4J SYNCHRONIZATION
+            async def run_neo4j_sync_async(
+                neo4j_repo,
+                tenant_id_str: str,
+                kb_id_str: str,
+                doc_filename: str,
+                c_data: list,
+                n_data: list,
+                s_pairs: list,
+                m_data: list,
+                has_triplets: bool,
+                t_results: list
+            ):
                 try:
-                    logger.info(f"Background graph cleanup started for tenant {tenant_id_str} and KB {kb_id_str}...")
+                    logger.info(f"Background Neo4j sync started for KB {kb_id_str} ({len(c_data)} chunks)...")
+                    batch_create_query = """
+                    WITH $chunks AS chunk_list
+                    UNWIND chunk_list AS data
+                    CREATE (c:Chunk {
+                        id: data.chunk_id, tenant_id: $tenant_id, kb_id: data.kb_id,
+                        text: data.text, position: data.position, token_count: data.token_count,
+                        embedding: data.embedding, created_at: data.created_at,
+                        source: data.source, metadata: data.metadata,
+                        chunk_type: data.chunk_type, section: data.section,
+                        sheet: data.sheet, source_type: data.source_type
+                    })
+                    WITH c, data
+                    MATCH (kb:KnowledgeBase {id: data.kb_id, tenant_id: $tenant_id})
+                    CREATE (kb)-[:HAS_CHUNK]->(c)
+                    """
+                    await retry_neo4j_operation(lambda: neo4j_repo.execute_write(batch_create_query, {"chunks": c_data}))
+
+                    rel_tasks = []
+                    if n_data:
+                        rel_tasks.append(retry_neo4j_operation(lambda: neo4j_repo.execute_write(
+                            "UNWIND $rels AS r MATCH (c1:Chunk {id: r.id1, tenant_id: $tenant_id}) MATCH (c2:Chunk {id: r.id2, tenant_id: $tenant_id}) CREATE (c1)-[:NEXT]->(c2)",
+                            {"rels": n_data}
+                        )))
+                    if s_pairs:
+                        rel_tasks.append(retry_neo4j_operation(lambda: neo4j_repo.execute_write(
+                            "UNWIND $pairs AS p MATCH (c1:Chunk {id: p.chunk_id_1, tenant_id: $tenant_id}) MATCH (c2:Chunk {id: p.chunk_id_2, tenant_id: $tenant_id}) CREATE (c1)-[:SIMILAR {similarity: p.similarity}]->(c2) CREATE (c2)-[:SIMILAR {similarity: p.similarity}]->(c1)",
+                            {"pairs": s_pairs}
+                        )))
+                    if m_data:
+                        rel_tasks.append(retry_neo4j_operation(lambda: neo4j_repo.execute_write(
+                            "UNWIND $rels AS r MERGE (e:Entity {tenant_id: $tenant_id, text: r.text, type: r.type}) WITH e, r MATCH (c:Chunk {id: r.chunk_id, tenant_id: $tenant_id}) CREATE (c)-[:MENTIONS {confidence: r.conf}]->(e)",
+                            {"rels": m_data}
+                        )))
+
+                    if rel_tasks:
+                        await asyncio.gather(*rel_tasks)
+
+                    if has_triplets and t_results:
+                        from ...core.triplet_extractor import TripletGraphWriter
+                        await TripletGraphWriter(tenant_id_str).persist_triplets(t_results)
+
+                    # Run background graph cleanup
                     from ...core.graph_cleanup import GraphCleanupService
                     cleanup_service = GraphCleanupService(tenant_id=tenant_id_str, kb_id=kb_id_str)
-                    stats = await cleanup_service.cleanup_graph()
-                    logger.info(f"Background graph cleanup completed for tenant {tenant_id_str} and KB {kb_id_str}: {stats}")
-                except Exception as cleanup_err:
-                    logger.error(f"Background graph cleanup failed for tenant {tenant_id_str} and KB {kb_id_str}: {cleanup_err}", exc_info=True)
+                    await cleanup_service.cleanup_graph()
 
-            cleanup_stats = {"total_merges": 0, "relationships_deduplicated": 0}
-            # Start cleanup task in background, avoiding blocking the main ingestion pipeline completion
-            asyncio.create_task(run_cleanup_async(str(self.tenant_id), str(kb_id)))
+                    logger.info(f"[NEO4J_SYNC] Completed successfully | file={doc_filename} | kb_id={kb_id_str} | chunks={len(c_data)} | status=COMPLETED")
+                except Exception as sync_err:
+                    logger.error(f"[NEO4J_SYNC] Failed | file={doc_filename} | kb_id={kb_id_str} | chunks={len(c_data)} | status=FAILED | error={str(sync_err)}", exc_info=True)
+
+            # Start Neo4j sync in background so user-facing request doesn't wait unnecessarily
+            doc_file_label = getattr(kb, "name", None) or s3_path or source or str(kb_id)
+            asyncio.create_task(run_neo4j_sync_async(
+                self.neo4j_repo,
+                str(self.tenant_id),
+                str(kb_id),
+                doc_file_label,
+                chunk_data,
+                next_data,
+                similar_pairs,
+                mentions_data,
+                use_triplets,
+                triplet_results if use_triplets else []
+            ))
 
             # 9. FINAL UPDATE
+            cleanup_stats = {"total_merges": 0, "relationships_deduplicated": 0}
 
             neo4j_end_time = time.time()
             write_duration_ms = int((neo4j_end_time - neo4j_start_time) * 1000)

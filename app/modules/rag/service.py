@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 from urllib.parse import urlparse
 
+from collections import deque
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .pipeline import RAGPipeline, RAGContext
@@ -78,7 +79,7 @@ class RAGMetrics:
             raise ValueError("Latency cannot be negative")
 
 
-_rag_metrics = []
+_rag_metrics = deque(maxlen=1000)
 
 
 class RAGService:
@@ -144,11 +145,50 @@ class RAGService:
                         "model_name": model_name,
                     }
                 )
-                await session.commit()
         except Exception as ae:
             logger.exception(
                 f"Failed to log analytics for stream (Tenant: {self.tenant_id}, User: {user_id}, Session: {session_id}): {ae}"
             )
+
+    def _filter_relevant_chunks(self, context) -> int:
+        """
+        Applies scale-aware relevance filtering to context.chunks to prevent context poisoning/hallucination.
+        Seamlessly handles both RRF scores (~0.001-0.033) and Vector/Legacy scores (0.0-1.0+) by using
+        a scale-independent relative cutoff (15% of top chunk score), automatically preventing static
+        threshold mismatch bugs when legacy env vars are present.
+        Returns the number of dropped chunks.
+        """
+        if not context or not getattr(context, "chunks", None):
+            return 0
+
+        import os
+        original_count = len(context.chunks)
+        max_score = max((getattr(c, "hybrid_score", 0.0) for c in context.chunks), default=0.0)
+        if max_score <= 0.0:
+            return 0
+
+        # Relative cutoff threshold (15% of highest chunk score)
+        relative_ratio = 0.15
+        cutoff = max_score * relative_ratio
+
+        env_val = os.getenv("RAG_MIN_RELEVANCE_SCORE")
+        if env_val is not None:
+            try:
+                env_score = float(env_val)
+                # Only use absolute env threshold if it does not exceed top candidate score (prevents scale mismatch)
+                if 0.0 < env_score <= max_score:
+                    cutoff = env_score
+            except ValueError:
+                pass
+
+        context.chunks = [c for c in context.chunks if getattr(c, "hybrid_score", 0.0) >= cutoff]
+        dropped = original_count - len(context.chunks)
+        if dropped > 0:
+            logger.info(
+                f"Relevance Filter (Scale-Aware): Top score = {max_score:.4f}, "
+                f"Cutoff = {cutoff:.4f}. Dropped {dropped} low-relevance chunks."
+            )
+        return dropped
 
     async def stream_rag_answer(
         self,
@@ -172,10 +212,6 @@ class RAGService:
         short_query = query[:50] + "..." if len(query) > 50 else query
         logger.info(f"[TRACE_E2E] [ENTRY] ChatService.stream_rag_answer - Input: '{short_query}', Tenant: {self.tenant_id}, Agent: {agent_id}, KB: {kb_id}")
         
-        sql_task = None
-        vector_task = None
-        memory_task = None
-
         try:
             # 1. Validate KB ownership
             kb_ids = [kb_id] if isinstance(kb_id, str) else kb_id
@@ -227,11 +263,29 @@ class RAGService:
             ont_svc = OntologyService(self.tenant_id)
             ontology = await ont_svc.get_ontology()
     
+            from app.modules.rag.schema_utils import get_schema_columns
             kb_context_lines = []
             for kb in (doc_kbs + excel_kbs):
                 name = getattr(kb, 'name', 'Unknown')
                 desc = getattr(kb, 'description', '')
-                kb_context_lines.append(f"- {name}: {desc}")
+                ds = getattr(kb, 'dataset_schema', None)
+                cv = getattr(kb, 'categorical_values', None)
+
+                schema_info = ""
+                cols = get_schema_columns(ds, cv)
+                if cols:
+                    schema_info += f" | Available Columns: {', '.join([str(c) for c in cols[:15]])}"
+                if cv and isinstance(cv, dict):
+                    sample_cats = []
+                    for c_name, vals in list(cv.items())[:5]:
+                        if vals and isinstance(vals, list):
+                            sample_str = ", ".join([str(v) for v in vals[:3] if v])
+                            if sample_str:
+                                sample_cats.append(f"{c_name}: [{sample_str}]")
+                    if sample_cats:
+                        schema_info += f" | Sample Values: {'; '.join(sample_cats)}"
+
+                kb_context_lines.append(f"- {name}: {desc}{schema_info}")
             kb_context = "\n".join(kb_context_lines) if kb_context_lines else "None provided."
 
             # ============= EARLY QUERY ANALYSIS (ROUTING) =============
@@ -356,12 +410,14 @@ class RAGService:
                 
                 # Pre-strip the tabular subquery to drop non-schema clauses
                 import re
+                col_terms = locals().get("schema_col_terms", set())
+                name_terms = locals().get("schema_name_terms", set())
                 clauses = re.split(r'\s+and\s+|\s*,\s*', tabular_subquery.lower())
                 valid_clauses = []
                 analytic_verbs = {"average", "total", "sum", "count", "list", "how many", "max", "min"}
                 for clause in clauses:
                     clause_terms = set(re.findall(r'[a-zA-Z0-9]+', clause))
-                    t_overlap = len(clause_terms & (schema_col_terms | schema_name_terms))
+                    t_overlap = len(clause_terms & (col_terms | name_terms))
                     c_id_regex = bool(re.search(r'[a-zA-Z]{2,5}[0-9]{3,}', clause))
                     if c_id_regex or t_overlap >= 1: 
                         valid_clauses.append(clause)
@@ -397,23 +453,55 @@ class RAGService:
                     
                 gather_start = time.time()
                 try:
+                    # 1. Concurrently run the 2 primary legs: vector subquery + tabular SQL engine
                     res = await asyncio.gather(
                         asyncio.wait_for(run_vector_leg(vector_subquery, "Vector-Only Subq"), timeout=_RAG_TIMEOUT_SECONDS),
-                        asyncio.wait_for(run_vector_leg(tabular_subquery, "Tabular-for-Vector Subq"), timeout=_RAG_TIMEOUT_SECONDS),
                         asyncio.wait_for(run_tabular_leg(), timeout=30.0),
                         return_exceptions=True
                     )
-                    logger.info(f"TELEMETRY: Composite engines completed in {time.time() - gather_start:.2f}s")
-                    vec1_res, vec2_res, tab_res = res[0], res[1], res[2]
-                    
+                    vec1_res, tab_res = res[0], res[1]
+
+                    # 2. Check tabular leg success
+                    unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
+                    tabular_succeeded = (
+                        not isinstance(tab_res, Exception)
+                        and tab_res
+                        and not any(sig in str(tab_res).lower() for sig in unmatched_signals)
+                    )
+
+                    vec2_res = None
+                    fallback_vector_invoked = False
+                    if tabular_succeeded:
+                        logger.info("TELEMETRY: Composite tabular leg succeeded cleanly. Skipping redundant vector search on tabular subquery.")
+                        hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(tab_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                    else:
+                        # Fallback: tabular SQL leg returned empty/error. Run secondary vector leg for tabular subquery as a hedge.
+                        logger.info("TELEMETRY: Composite tabular leg returned empty/failed. Invoking fallback vector leg for tabular subquery...")
+                        fallback_vector_invoked = True
+                        try:
+                            vec2_res = await asyncio.wait_for(
+                                run_vector_leg(tabular_subquery, "Tabular-for-Vector Fallback Subq"),
+                                timeout=_RAG_TIMEOUT_SECONDS
+                            )
+                        except Exception as fallback_err:
+                            logger.warning(f"Fallback vector leg for tabular subquery failed: {fallback_err}")
+
                     merged_chunks = []
-                    if not isinstance(vec1_res, Exception) and vec1_res:
+                    vec1_count = 0
+                    if not isinstance(vec1_res, Exception) and vec1_res and vec1_res.chunks:
                         merged_chunks.extend(vec1_res.chunks)
-                    if not isinstance(vec2_res, Exception) and vec2_res:
-                        merged_chunks.extend(vec2_res.chunks)
-                        
+                        vec1_count = len(vec1_res.chunks)
+
+                    fallback_chunks_added = 0
+                    if vec2_res and not isinstance(vec2_res, Exception) and vec2_res.chunks:
+                        existing_ids = {c.chunk_id for c in merged_chunks}
+                        for c in vec2_res.chunks:
+                            if c.chunk_id not in existing_ids:
+                                merged_chunks.append(c)
+                                fallback_chunks_added += 1
+
                     if merged_chunks:
-                        # deduplicate chunks by chunk_id and sort by hybrid_score
+                        # Deduplicate chunks by chunk_id and sort by hybrid_score
                         seen = set()
                         deduped = []
                         for c in merged_chunks:
@@ -422,13 +510,15 @@ class RAGService:
                                 deduped.append(c)
                         deduped.sort(key=lambda x: getattr(x, 'hybrid_score', 0), reverse=True)
                         
-                        context = vec1_res if not isinstance(vec1_res, Exception) else vec2_res
-                        context.chunks = deduped
-                        
-                    if not isinstance(tab_res, Exception) and tab_res:
-                        unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                        if not any(sig in str(tab_res).lower() for sig in unmatched_signals):
-                            hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(tab_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
+                        context = vec1_res if (not isinstance(vec1_res, Exception) and vec1_res) else vec2_res
+                        if context:
+                            context.chunks = deduped
+
+                    logger.info(
+                        f"TELEMETRY: Composite query execution complete in {time.time() - gather_start:.2f}s | "
+                        f"vec1_chunks={vec1_count}, tabular_succeeded={tabular_succeeded}, "
+                        f"fallback_vector_invoked={fallback_vector_invoked}, fallback_chunks_added={fallback_chunks_added}"
+                    )
                 except Exception as e:
                     logger.error(f"Composite Execution failed: {e}")
                 
@@ -460,106 +550,6 @@ class RAGService:
                 except Exception as e:
                     logger.error(f"Vector query failed: {e}")
                     context = None
-    
-            metadata_yielded = False
-            if excel_kbs and sql_task and vector_task:
-                logger.info("Executing Parallel Hybrid RAG (TABULAR_SQL + VECTOR_DOCS simultaneously)...")
-                gather_start = time.time()
-                res = await asyncio.gather(vector_task, sql_task, return_exceptions=True)
-                logger.info(f"TELEMETRY: Parallel engines completed in {time.time() - gather_start:.2f}s")
-                context_res, sql_res = res[0], res[1]
-                
-                if not isinstance(context_res, Exception):
-                    context = context_res
-                    
-                    # Yield metadata immediately so the UI doesn't hang!
-                    metadata = {
-                        "type": "metadata",
-                        "sources": [
-                            {
-                                "chunk_id": c.chunk_id,
-                                "source": c.source,
-                                "score": round(c.hybrid_score, 3),
-                                "position": c.position,
-                                "reason": c.reason,
-                                "kb_id": c.kb_id,
-                                "content_type": getattr(c, "content_type", "original")
-                            }
-                            for c in context.chunks
-                        ],
-                        "triplets": [
-                            {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
-                            for t in (context.triplets or [])
-                        ],
-                        "kb_name": kb.name if len(kb_ids) == 1 else f"Multi-KB ({len(kb_ids)})",
-                        "augmented_query": query,
-                        "authoritative_entities": context.authoritative_entities or []
-                    }
-                    yield json.dumps(metadata)
-                    metadata_yielded = True
-                else:
-                    logger.error(f"Parallel RAG Retrieval failed: {context_res}")
-                    yield json.dumps({"error": f"Retrieval failed: {str(context_res)}"})
-                    return
-    
-                if not isinstance(sql_res, Exception) and sql_res:
-                    unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                    if not any(sig in str(sql_res).lower() for sig in unmatched_signals):
-                        hybrid_merge_context = f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS (TABULAR_SQL INSIGHTS)]\n{str(sql_res)}\nUse the above numerical table results alongside document citations to answer the user query completely.\n"
-                elif isinstance(sql_res, Exception):
-                    logger.warning(f"Parallel TABULAR_SQL failed: {sql_res}")
-    
-            elif sql_task:
-                logger.info("Executing TABULAR_SQL standalone...")
-                tabular_start = time.time()
-                try:
-                    sql_res = await asyncio.wait_for(sql_task, timeout=30.0)
-                    logger.info(f"TELEMETRY: Standalone tabular engine completed in {time.time() - tabular_start:.2f}s")
-                    unmatched_signals = ["not present in dataset", "no records matched", "error", "0 rows", "empty dataframe"]
-                    is_unmatched = any(sig in str(sql_res).lower() for sig in unmatched_signals)
-                    if is_unmatched:
-                        logger.info(f"Excel dataset lacked answer ({sql_res}).")
-                    else:
-                        yield json.dumps({
-                            "type": "metadata",
-                            "sources": [],
-                            "kb_name": ", ".join(getattr(ek, "name", "Excel Parquet") for ek in excel_kbs),
-                            "context_type": "duckdb_parquet"
-                        })
-                        yield str(sql_res)
-                        latency_ms = (time.time() - trace_start_time) * 1000
-                        await self._log_query_analytics_safely(
-                            query=query,
-                            user_id=user_id,
-                            session_id=session_id,
-                            status=ResponseStatus.SUCCESS,
-                            confidence=1.0,
-                            latency_ms=latency_ms,
-                            model_name=self.llm_client.model_answer,
-                            llm_input_tokens=0,
-                            llm_output_tokens=0,
-                            embedding_tokens=max(1, len(query) // 4),
-                        )
-                        return
-                except Exception as e:
-                    logger.error(f"PandasQueryEngine stream failed: {e}")
-                    yield json.dumps({"error": str(e)})
-                    return
-    
-            elif vector_task:
-                logger.info("Executing VECTOR_DOCS standalone...")
-                vector_start = time.time()
-                try:
-                    context = await asyncio.wait_for(vector_task, timeout=_RAG_TIMEOUT_SECONDS)
-                    logger.info(f"TELEMETRY: Standalone vector engine completed in {time.time() - vector_start:.2f}s")
-                except asyncio.TimeoutError:
-                    logger.error(f"RAG Retrieval timed out after {_RAG_TIMEOUT_SECONDS}s")
-                    yield json.dumps({"error": "The AI provider is taking too long to respond. Please try again later."})
-                    return
-                except Exception as e:
-                    logger.error(f"RAG Retrieval failed for stream: {e}")
-                    yield json.dumps({"error": f"Retrieval failed: {e}"})
-                    return
                     
             skip_search = True  # Bypass redundant sequential search below
     
@@ -676,11 +666,13 @@ class RAGService:
     - Do not combine information from your general knowledge with the retrieved context.
     - Never use outside knowledge.
     - Never invent, infer, estimate, or assume facts.
-    - If the user is asking a factual/document question and the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
+    - For multi-part or compound questions (e.g., asking for multiple facts/attributes like defining event and phase of operation), evaluate each part independently:
+      * Answer EVERY part that has grounded information present in the context.
+      * For any part where the specific field or information is missing, unstated, or blank in the document, explicitly state that specific part is not specified or left blank in the document (do NOT refuse the entire answer).
+    - If the user is asking a factual/document question and the requested information is ENTIRELY missing for ALL parts from BOTH the document context AND the user memory section, reply exactly:
       "I couldn't find it."
-    - If only part of the answer exists, answer only that part.
     - Mention the relevant source at the end.
-    - Answer ONLY the specific question asked by the user. If the user asks a complex or multi-part question, you MUST address EVERY part of the question in your response. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
+    - Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
     - Be concise. Focus strictly on direct answers and avoid filler.
     - NEVER include internal relevance scores or confidence numbers (e.g. "(relevance: 0.65)", "(relevance: 0.58)", or "score: 0.61") in your output text. Relevance scores are for internal search ranking only and must never be shown to the user.
     - TRANSACTION CLASSIFICATION: Categorize transactions strictly:
@@ -769,15 +761,7 @@ class RAGService:
             # ==================================================
             # RELEVANCE FILTER (Context Poisoning Protection)
             # ==================================================
-            import os
-            # Note: RRF hybrid scores range from ~0.001 to ~0.033 (1/(60+rank)). Default threshold set to 0.0 to retain valid RRF chunks.
-            min_score = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.0"))
-            if context and context.chunks:
-                original_count = len(context.chunks)
-                context.chunks = [c for c in context.chunks if getattr(c, "hybrid_score", 0.0) >= min_score]
-                dropped = original_count - len(context.chunks)
-                if dropped > 0:
-                    logger.info(f"Relevance Filter: Dropped {dropped} irrelevant chunks (score < {min_score}) to prevent hallucination.")
+            self._filter_relevant_chunks(context)
     
             # 3. Yield metadata first
             metadata_yielded = False
@@ -938,7 +922,22 @@ class RAGService:
                 enable_thinking=False,
                 on_usage_callback=handle_usage,
             ):
+                full_answer.append(chunk)
                 yield chunk
+
+            # 4.5. NUMERIC VALIDATION (Fact-checking streamed response against context)
+            complete_answer = "".join(full_answer)
+            if context and context.chunks and complete_answer:
+                try:
+                    from app.modules.rag.orchestrator.validator import NumericValidator
+                    validator = NumericValidator()
+                    if not validator.validate(complete_answer, context):
+                        logger.warning(
+                            f"[NUMERIC_VALIDATOR] Validation failed for streamed response (Session: {session_id}). Yielding warning."
+                        )
+                        yield "\n\n> [!WARNING]\n> Some numbers in this response could not be strictly verified against the retrieved context. Please double check the source documents."
+                except Exception as val_err:
+                    logger.warning(f"[NUMERIC_VALIDATOR] Error validating streamed response: {val_err}")
     
             # 5. ASYNC LOGGING (Background)
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
@@ -991,6 +990,7 @@ class RAGService:
         agent_id: str,
         kb_id: str | list[str],
         user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         top_k: int = 15,
         max_depth: int = 2,
         reasoning_enabled: bool = True,
@@ -1156,10 +1156,23 @@ class RAGService:
 
         # ============= MEMORY-API: BACKGROUND TURN PROCESSING =============
         episodic_guidance = ""
-        memory_enabled = (
+        is_memory_enabled = memory_enabled and (
             str(getattr(get_settings(), "memory_enabled", "True")).strip().lower()
             in ("true", "1", "yes")
         )
+
+        if is_memory_enabled and user_id:
+            try:
+                from app.modules.chats.service import _fetch_memory_guidance
+                episodic_guidance = await _fetch_memory_guidance(
+                    query=query,
+                    session_id=session_id or "",
+                    agent_id=agent_id,
+                    user_id=user_id,
+                    tenant_id=self.tenant_id,
+                )
+            except Exception as mem_err:
+                logger.warning(f"Memory guidance fetch failed in generate_answer: {mem_err}")
 
         injected_system_prompt = f"""
 [PERSONALITY MODE: STRICT]
@@ -1199,11 +1212,13 @@ If retrieved passages conflict, state the conflict. Do not resolve it yourself.
 - Do not combine information from your general knowledge with the retrieved context.
 - Never use outside knowledge.
 - Never invent, infer, estimate, or assume facts.
-- If the user is asking a factual/document question and the requested information is missing from BOTH the document context AND the user memory section, reply exactly:
+- For multi-part or compound questions (e.g., asking for multiple facts/attributes like defining event and phase of operation), evaluate each part independently:
+  * Answer EVERY part that has grounded information present in the context.
+  * For any part where the specific field or information is missing, unstated, or blank in the document, explicitly state that specific part is not specified or left blank in the document (do NOT refuse the entire answer).
+- If the user is asking a factual/document question and the requested information is ENTIRELY missing for ALL parts from BOTH the document context AND the user memory section, reply exactly:
   "I couldn't find it."
-- If only part of the answer exists, answer only that part.
 - Mention the relevant source at the end.
-- Answer ONLY the specific question asked by the user. If the user asks a complex or multi-part question, you MUST address EVERY part of the question in your response. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
+- Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
 - Be concise. Focus strictly on direct answers and avoid filler.
 - TRANSACTION CLASSIFICATION: Categorize transactions strictly:
   * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
@@ -1345,8 +1360,10 @@ RESPONSE FORMAT
             return {
                 "error": f"RAG retrieval failed: {str(e)}",
                 "answer": None,
-                "sources": [],
             }
+
+        # Apply scale-aware relevance filtering to context chunks
+        self._filter_relevant_chunks(context)
 
         is_social = context.search_type == "SOCIAL" if context else False
         is_support = context.search_type == "SUPPORT_INTENT" if context else False
@@ -1844,7 +1861,7 @@ RESPONSE FORMAT
         if not _rag_metrics or len(_rag_metrics) < 10:
             return
 
-        recent = _rag_metrics[-10:]
+        recent = list(_rag_metrics)[-10:]
         avg_latency = sum(m.total_latency_ms for m in recent) / len(recent)
         cache_hit_rate = sum(1 for m in recent if m.cache_hit) / len(recent)
         timeout_count = sum(1 for m in recent if m.timeout_occurred)
@@ -1857,7 +1874,7 @@ RESPONSE FORMAT
         )
 
     def get_metrics(self) -> list:
-        return _rag_metrics.copy()
+        return list(_rag_metrics)
 
     def clear_metrics(self) -> None:
         global _rag_metrics
