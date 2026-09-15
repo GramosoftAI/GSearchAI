@@ -361,6 +361,7 @@ class ParquetIngester:
         """
         Retrieves the filepath of the most recent version of a dataset.
         Includes single-source-of-truth registry lookup + resilient fuzzy fallback sweep.
+        Handles full filepaths, S3 URLs, versioned filenames, and raw names.
         """
         if not dataset_name:
             return None
@@ -369,7 +370,20 @@ class ParquetIngester:
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             output_dir = os.path.join(base_dir, output_dir)
 
+        clean_dataset = dataset_name.strip()
+        
+        # 0. Direct file check: If the given path is an existing parquet file on disk
+        if os.path.isabs(clean_dataset) and os.path.exists(clean_dataset) and clean_dataset.lower().endswith('.parquet'):
+            return clean_dataset
+
         clean_name = ParquetIngester._clean_dataset_name(dataset_name)
+        # Normalize key names from absolute path, URL, or filename
+        base = os.path.basename(clean_dataset)
+        if base.lower().startswith("spreadsheet: "):
+            base = base[13:].strip()
+        name_no_ext = os.path.splitext(base)[0] if base.lower().endswith(('.csv', '.xlsx', '.xls', '.parquet')) else base
+        # Strip versioned timestamp suffix like _1789473099
+        raw_name = re.sub(r'_\d{10,}$', '', name_no_ext).strip()
         clean_key = clean_name
         if clean_key.lower().endswith(('.csv', '.xlsx', '.xls', '.parquet')):
             clean_key = os.path.splitext(clean_key)[0]
@@ -378,11 +392,11 @@ class ParquetIngester:
         registry_path = os.path.join(output_dir, "active_datasets.json")
         if os.path.exists(registry_path):
             try:
-                with open(registry_path, 'r') as f:
+                with open(registry_path, 'r', encoding='utf-8') as f:
                     registry = json.load(f)
-                    lookup_keys = [clean_key, clean_name, dataset_name, dataset_name.strip()]
+                    lookup_keys = [raw_name, name_no_ext, base, clean_key, clean_name, clean_dataset, dataset_name, dataset_name.strip()]
                     for key in lookup_keys:
-                        if key in registry:
+                        if key and key in registry:
                             candidate = os.path.join(output_dir, registry[key])
                             if os.path.exists(candidate):
                                 return candidate
@@ -403,23 +417,30 @@ class ParquetIngester:
 
         # 2. Resilient Fuzzy / Glob Fallback Sweep
         if os.path.exists(output_dir):
-            target_prefix = f"{clean_key.lower()}_"
-            target_exact = f"{clean_key.lower()}.parquet"
-
+            target_keys = [k for k in [raw_name.lower(), name_no_ext.lower(), clean_key.lower()] if k]
             candidates = []
-            for fname in os.listdir(output_dir):
-                fn_lower = fname.lower()
-                if fn_lower == target_exact or (fn_lower.startswith(target_prefix) and fn_lower.endswith(".parquet")):
-                    full_p = os.path.join(output_dir, fname)
-                    if os.path.exists(full_p):
-                        mtime = os.path.getmtime(full_p)
-                        candidates.append((mtime, full_p))
+            for target_key in target_keys:
+                target_prefix = f"{target_key}_"
+                target_exact = f"{target_key}.parquet"
+                for fname in os.listdir(output_dir):
+                    fn_lower = fname.lower()
+                    if fn_lower == target_exact or (fn_lower.startswith(target_prefix) and fn_lower.endswith(".parquet")):
+                        full_p = os.path.join(output_dir, fname)
+                        if os.path.exists(full_p):
+                            mtime = os.path.getmtime(full_p)
+                            candidates.append((mtime, full_p))
+                if candidates:
+                    break
 
             if candidates:
                 candidates.sort(key=lambda x: x[0], reverse=True)
                 selected_path = candidates[0][1]
                 logger.warning(f"[PARQUET_REGISTRY_FALLBACK] Resolved dataset '{dataset_name}' to newest parquet file '{selected_path}' via fuzzy fallback sweep.")
                 return selected_path
+
+        # 3. Final Fallback: If input is an absolute path that exists
+        if os.path.isabs(clean_dataset) and os.path.exists(clean_dataset):
+            return clean_dataset
 
         logger.error(f"[PARQUET_REGISTRY] Could not find any parquet file for dataset_name='{dataset_name}' in '{output_dir}'")
         return None

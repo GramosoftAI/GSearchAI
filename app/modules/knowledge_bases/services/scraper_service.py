@@ -2,6 +2,7 @@ import logging
 import httpx
 import asyncio
 import time
+from datetime import datetime, timezone
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Callable, Set, Tuple
@@ -570,6 +571,13 @@ class WebsiteCrawler:
         # Stage 6: Convert response into domain model
         documents = self.convert(scraped_data, valid_url, context)
 
+        if not documents:
+            logger.warning(f"[{context.format_log_prefix()}] GCrawl returned 0 documents for {valid_url}. Attempting direct fallback.")
+            direct_doc = await ScraperService.extract_url_direct(valid_url)
+            if direct_doc:
+                documents.append(direct_doc)
+                context.markdown_generated = len(documents)
+
         context.total_time = time.time() - context.start_time
         logger.info(
             f"Website Crawl Metrics [{context.format_log_prefix()}] | "
@@ -664,13 +672,70 @@ class ScraperService:
         }
 
     @staticmethod
+    async def extract_url_direct(url: str) -> Optional[WebsiteDocument]:
+        """
+        Direct HTTP fallback fetch using httpx + BeautifulSoup + markdownify.
+        Used when GCrawl fails, times out, or returns empty text for a URL.
+        """
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+            async with httpx.AsyncClient(timeout=25.0, follow_redirects=True, headers=headers) as client:
+                resp = await client.get(url)
+                if resp.status_code >= 400:
+                    logger.warning(f"Direct fetch for {url} failed with HTTP {resp.status_code}")
+                    return None
+
+                content_type = resp.headers.get("content-type", "").lower()
+                if content_type and "html" not in content_type and "text" not in content_type:
+                    logger.warning(f"Direct fetch for {url} returned non-text content-type: {content_type}")
+                    return None
+
+                import bs4
+                import markdownify
+
+                soup = bs4.BeautifulSoup(resp.text, "html.parser")
+                for tag in soup(["script", "style", "nav", "footer", "noscript", "iframe", "svg"]):
+                    tag.decompose()
+
+                title = soup.title.string.strip() if (soup.title and soup.title.string) else "Untitled Page"
+                meta_desc = ""
+                desc_tag = soup.find("meta", attrs={"name": "description"}) or soup.find("meta", attrs={"property": "og:description"})
+                if desc_tag and desc_tag.get("content"):
+                    meta_desc = desc_tag["content"].strip()
+
+                md_content = markdownify.markdownify(str(soup), heading_style="ATX").strip()
+                if not md_content or len(md_content) < 50:
+                    logger.warning(f"Direct fetch for {url} extracted negligible text ({len(md_content)} chars)")
+                    return None
+
+                logger.info(f"Direct fetch fallback successfully extracted {len(md_content)} chars from {url}")
+                return WebsiteDocument(
+                    url=str(resp.url),
+                    markdown=md_content,
+                    metadata={
+                        "source": "direct_fetch",
+                        "title": title,
+                        "description": meta_desc,
+                        "scraped_at": datetime.now(timezone.utc).isoformat()
+                    }
+                )
+        except Exception as e:
+            logger.warning(f"Direct fetch fallback error for {url}: {e}")
+            return None
+
+    @staticmethod
     async def scrape_selected_urls(urls: List[str]) -> Tuple[List[Dict[str, Any]], List[str]]:
         """
         Bulk scrape a specific list of user-selected URLs and return legacy document dictionaries and failed URLs.
         Uses client-side parallel sub-batching to mitigate lack of API-level per-URL timeouts.
+        Falls back to direct HTTP extraction if GCrawl fails, times out, or returns empty content.
         """
         if not urls:
-            return []
+            return [], []
         
         root_url = validate_url(urls[0])
         batch_size = getattr(settings, 'gcrawl_concurrency', 10)
@@ -687,22 +752,41 @@ class ScraperService:
         all_documents = []
         failed_urls = []
         
-        async def process_sub_batch(sub_urls: List[str]):
+        async def process_sub_batch(sub_urls: List[str]) -> Tuple[List[WebsiteDocument], List[str]]:
             crawler = WebsiteCrawler(client=client, config=config)
+            batch_docs: List[WebsiteDocument] = []
+            batch_failed: List[str] = []
+
             try:
                 async def scrape_sub_batch():
                     gsearch_id = await crawler.scrape(sub_urls, context)
                     scraped_data = await crawler.poll_scraping(gsearch_id, context)
                     return crawler.convert(scraped_data, root_url, context)
                 
-                documents = await asyncio.wait_for(scrape_sub_batch(), timeout=sub_batch_timeout)
-                return documents, None
+                batch_docs = await asyncio.wait_for(scrape_sub_batch(), timeout=sub_batch_timeout)
             except asyncio.TimeoutError:
-                logger.error(f"Scraping sub-batch timed out after {sub_batch_timeout}s. Failed URLs: {sub_urls}")
-                return [], sub_urls
+                logger.warning(f"Scraping sub-batch timed out after {sub_batch_timeout}s for: {sub_urls}. Trying direct fetch fallback.")
+                batch_docs = []
             except Exception as e:
-                logger.error(f"Scraping sub-batch failed: {e}. Failed URLs: {sub_urls}")
-                return [], sub_urls
+                logger.warning(f"Scraping sub-batch failed ({e}) for: {sub_urls}. Trying direct fetch fallback.")
+                batch_docs = []
+
+            # Check which URLs succeeded from GCrawl
+            succeeded_urls = {doc.url.rstrip("/").lower() for doc in batch_docs}
+
+            # For any URL in sub_urls that did not succeed in GCrawl, attempt direct fallback
+            for u in sub_urls:
+                norm_u = u.rstrip("/").lower()
+                matched = any(norm_u == s or norm_u.endswith(s.replace("https://", "").replace("http://", "")) for s in succeeded_urls)
+                if not matched:
+                    logger.info(f"URL {u} was not successfully returned by GCrawl. Attempting direct fallback fetch...")
+                    direct_doc = await ScraperService.extract_url_direct(u)
+                    if direct_doc:
+                        batch_docs.append(direct_doc)
+                    else:
+                        batch_failed.append(u)
+
+            return batch_docs, batch_failed
 
         # Create tasks for all sub-batches
         tasks = []
@@ -718,7 +802,7 @@ class ScraperService:
                 failed_urls.extend(failed)
                 
         if failed_urls:
-            logger.warning(f"Scraping completed with partial failures. {len(all_documents)} succeeded, {len(failed_urls)} failed/timed out.")
+            logger.warning(f"Scraping completed with partial failures. {len(all_documents)} succeeded, {len(failed_urls)} failed: {failed_urls}")
         else:
             logger.info(f"Scraping successfully completed for all {len(urls)} URLs.")
             

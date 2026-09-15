@@ -1035,7 +1035,6 @@ class RAGService:
                 s_names = locals().get('schema_name_terms', set())
                 
                 # Pre-strip the tabular subquery to drop non-schema clauses
-                import re
                 clauses = re.split(r'\s+and\s+|\s*,\s*', tabular_subquery.lower())
                 valid_clauses = []
                 analytic_verbs = {"average", "total", "sum", "count", "list", "how many", "max", "min"}
@@ -2718,3 +2717,348 @@ RESPONSE FORMAT
             "timeout_rate": f"{timeout_rate:.1%}",
             "partial_result_rate": f"{partial_rate:.1%}",
         }
+
+
+async def execute_rag(
+    db: AsyncSession,
+    tenant_id: str,
+    agent_id: str,
+    query: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    source: str = "api",
+    enable_memory: bool = True,
+    top_k: int = 15,
+    max_depth: int = 2,
+    target_kb_id: Optional[str] = None,
+    kb_ids: Optional[List[str]] = None,
+    on_event: Optional[Callable[[Any], Any]] = None,
+) -> dict:
+    """
+    Unified RAG Execution Service.
+
+    Shared internal orchestration entrypoint invoked by:
+    - WebSocket streaming handler (/api/v1/rag/ws/{agent_id})
+    - Slack asynchronous background worker (/api/v1/slack/events)
+    - Synchronous REST endpoints (/api/v1/rag/query)
+
+    Guarantees consistent tenant isolation, agent validation, knowledge base resolution,
+    chat session lifecycle, memory augmentation, LLM generation, escalation intent detection,
+    and message persistence across all channels without code duplication or service-account bypasses.
+    """
+    import inspect
+    from .events import LoopEvent
+    from .escalation import detect_escalation_intent
+    from .websocket_core import resolve_memory_api_base_url, _rag_chunk_to_loop_event
+    from ..chats.repository import ChatRepository
+    import httpx
+
+    async def _emit_event(event: LoopEvent):
+        if on_event:
+            res = on_event(event)
+            if inspect.isawaitable(res):
+                await res
+
+    agent_repo = AgentRepository(db, tenant_id)
+    agent = await agent_repo.get_by_id(agent_id)
+    if not agent:
+        err_msg = f"Agent {agent_id} not found or inactive under current tenant"
+        await _emit_event(LoopEvent(type="error", error_detail=err_msg))
+        return {
+            "error": err_msg,
+            "answer": err_msg,
+            "sources": [],
+            "session_id": session_id,
+            "escalation_detected": False,
+        }
+
+    if not kb_ids:
+        kb_repo = KnowledgeBaseRepository(db, tenant_id)
+        agent_kbs, _ = await kb_repo.list_by_agent(agent_id, limit=20)
+        if not agent_kbs:
+            err_msg = "No knowledge base found for this agent. Please add a knowledge base first."
+            await _emit_event(LoopEvent(type="error", error_detail=err_msg))
+            return {
+                "error": err_msg,
+                "answer": err_msg,
+                "sources": [],
+                "session_id": session_id,
+                "escalation_detected": False,
+            }
+        kb_ids = [str(k.id) for k in agent_kbs]
+
+    chat_repo = ChatRepository(db, tenant_id)
+    session = None
+    if session_id:
+        try:
+            session = await chat_repo.get_session_by_id(session_id)
+        except Exception:
+            session = None
+
+    default_user_id = str(agent.user_id) if agent and agent.user_id else (user_id or "00000000-0000-0000-0000-000000000000")
+    if not session:
+        session = await chat_repo.create_session(
+            agent_id=agent_id,
+            user_id=default_user_id,
+            title=f"{source.title()} Conversation" if source else "New Conversation",
+            session_id=session_id,
+        )
+    active_session_id = str(session.id)
+
+    # Save user message
+    user_msg = await chat_repo.add_message(
+        session_id=active_session_id,
+        role="user",
+        content=query,
+        metadata={"channel": source},
+    )
+    await db.commit()
+
+    # Fast-path for greetings
+    clean_query = query.strip().lower()
+    if re.fullmatch(r"hi|hello|hey|good morning|good evening|good afternoon|greetings|howdy|what's up", clean_query):
+        greetings = [
+            "Hello! How can I assist you today?",
+            "Hi there! What can I help you with?",
+            "Greetings! How may I be of service?",
+            "Hello! It's nice to meet you. Is there something I can help you with or would you like to know more about our services?",
+            "Hi! I'm here to help. What's on your mind?",
+        ]
+        ack = random.choice(greetings)
+        await chat_repo.add_message(
+            session_id=active_session_id,
+            role="assistant",
+            content=ack,
+            metadata={"is_greeting": True, "channel": source},
+        )
+        await db.commit()
+        await _emit_event(LoopEvent(type="token", text=ack))
+        return {
+            "answer": ack,
+            "sources": [],
+            "session_id": active_session_id,
+            "escalation_detected": False,
+        }
+
+    # Parallel memory triage and chat history
+    memory_api_url = f"{resolve_memory_api_base_url()}/api/v1/memory"
+
+    async def _fetch_memory_triage():
+        if enable_memory:
+            async with httpx.AsyncClient() as client:
+                try:
+                    resp = await client.post(
+                        f"{memory_api_url}/process-turn",
+                        json={
+                            "query": query,
+                            "session_id": active_session_id,
+                            "agent_id": agent_id,
+                            "user_id": default_user_id,
+                            "tenant_id": tenant_id,
+                        },
+                        timeout=2.0,
+                    )
+                    if resp.status_code == 200:
+                        return resp.json()
+                except Exception as e:
+                    logger.warning(f"memory-api process-turn note: {e}")
+        return {}
+
+    async def _fetch_chat_history():
+        if session and session.message_count > 1:
+            return await chat_repo.get_recent_messages(
+                session_id=active_session_id, count=10
+            )
+        return []
+
+    memory_task = asyncio.create_task(_fetch_memory_triage())
+    memory_messages = await _fetch_chat_history()
+
+    history_messages = [m for m in memory_messages if str(m.id) != str(user_msg.id)]
+    chat_history_str = None
+    if history_messages:
+        turns = []
+        for m in history_messages:
+            role_label = "User" if m.role == "user" else "Assistant"
+            turns.append(f"{role_label}: {m.content}")
+        chat_history_str = "\n".join(turns)
+
+    rag_service = RAGService(db=db, tenant_id=tenant_id)
+    response_buffer = []
+    collected_sources = []
+    has_error = False
+    error_detail = None
+    router_category = None
+
+    try:
+        async for chunk in rag_service.stream_rag_answer(
+            query=query,
+            agent_id=agent_id,
+            kb_id=kb_ids,
+            user_id=default_user_id,
+            session_id=active_session_id,
+            chat_history=chat_history_str,
+            skip_search=False,
+            top_k=top_k,
+            max_depth=max_depth,
+            memory_task=memory_task,
+            target_kb_id=target_kb_id,
+        ):
+            if chunk.startswith("{"):
+                try:
+                    parsed = json.loads(chunk)
+                    if parsed.get("type") == "feedback_bypass":
+                        ack = parsed["ack"]
+                        router_category = parsed.get("router_category")
+                        async with httpx.AsyncClient() as client:
+                            try:
+                                await client.post(
+                                    f"{memory_api_url}/save-turn",
+                                    json={
+                                        "query": query,
+                                        "ai_response": ack,
+                                        "session_id": active_session_id,
+                                        "agent_id": agent_id,
+                                        "user_id": default_user_id,
+                                        "tenant_id": tenant_id,
+                                        "is_feedback_only": True,
+                                        "metadata": {"router_category": router_category},
+                                    },
+                                    timeout=3.0,
+                                )
+                            except Exception:
+                                pass
+                        response_buffer.append(ack)
+                        await _emit_event(LoopEvent(type="token", text=ack))
+                        break
+                    elif parsed.get("type") == "history_bypass":
+                        history_prompt = parsed["history_prompt"]
+                        try:
+                            full_response_text = await rag_service.llm_client.generate_cloud(prompt=history_prompt)
+                            response_buffer.append(full_response_text)
+                            await _emit_event(LoopEvent(type="token", text=full_response_text))
+                            break
+                        except Exception as e:
+                            has_error = True
+                            error_detail = str(e)
+                            await _emit_event(LoopEvent(type="error", error_detail=str(e)))
+                            break
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            event = _rag_chunk_to_loop_event(chunk)
+            if event.type == "token":
+                response_buffer.append(event.text)
+            elif event.type == "sources":
+                collected_sources = event.sources or []
+            elif event.type == "clarification_needed":
+                plain_fallback = event.text or "Please choose a file."
+                response_buffer.append(plain_fallback)
+                await _emit_event(event)
+                break
+            elif event.type == "error":
+                has_error = True
+                error_detail = event.error_detail
+                await _emit_event(event)
+                break
+            await _emit_event(event)
+
+    except Exception as stream_err:
+        logger.exception("Error during RAG stream execution: %s", stream_err)
+        has_error = True
+        error_detail = str(stream_err)
+        await _emit_event(LoopEvent(type="error", error_detail=error_detail))
+
+    full_response = "".join(response_buffer)
+    if not full_response and has_error:
+        full_response = error_detail or "An error occurred while processing your request."
+
+    # Escalation detection
+    is_escalated = detect_escalation_intent(
+        query=query,
+        sources=collected_sources,
+        response_text=full_response,
+    )
+
+    # Persist assistant message
+    try:
+        await chat_repo.add_message(
+            session_id=active_session_id,
+            role="assistant",
+            content=full_response,
+            metadata={
+                "sources": collected_sources,
+                "status": "error" if has_error else "complete",
+                "escalation_detected": is_escalated,
+                "channel": source,
+                "error_detail": error_detail if has_error else None,
+            },
+        )
+        await db.commit()
+    except Exception as db_err:
+        logger.warning("Failed to persist assistant message in execute_rag, rolling back and retrying: %s", db_err)
+        try:
+            await db.rollback()
+            await chat_repo.add_message(
+                session_id=active_session_id,
+                role="assistant",
+                content=full_response,
+                metadata={
+                    "sources": collected_sources,
+                    "status": "error" if has_error else "complete",
+                    "escalation_detected": is_escalated,
+                    "channel": source,
+                    "error_detail": error_detail if has_error else None,
+                },
+            )
+            await db.commit()
+        except Exception as retry_err:
+            logger.error("Failed to persist assistant message after rollback: %s", retry_err)
+
+    # Memory API turn save
+    if enable_memory and not has_error and full_response:
+        async with httpx.AsyncClient() as client:
+            try:
+                await client.post(
+                    f"{memory_api_url}/save-turn",
+                    json={
+                        "query": query,
+                        "ai_response": full_response,
+                        "session_id": active_session_id,
+                        "agent_id": agent_id,
+                        "user_id": default_user_id,
+                        "tenant_id": tenant_id,
+                        "metadata": {"router_category": router_category},
+                    },
+                    timeout=3.0,
+                )
+            except Exception as mem_save_err:
+                logger.warning(f"memory-api save-turn note: {mem_save_err}")
+
+    # Knowledge Flywheel Background Sync
+    if enable_memory and collected_sources and not has_error:
+        top_chunk_id = collected_sources[0].get("chunk_id") if isinstance(collected_sources[0], dict) else getattr(collected_sources[0], "chunk_id", None)
+        kb_id = kb_ids[0] if kb_ids else None
+        if top_chunk_id and kb_id:
+            try:
+                from ..chats.knowledge_service import ChatKnowledgeService
+                asyncio.create_task(ChatKnowledgeService.run_sync_background(
+                    tenant_id=tenant_id,
+                    session_id=active_session_id,
+                    kb_id=kb_id,
+                    chunk_id=top_chunk_id,
+                    user_message=query,
+                    assistant_message=full_response
+                ))
+            except Exception as sync_err:
+                logger.debug("Flywheel sync note: %s", sync_err)
+
+    return {
+        "answer": full_response,
+        "sources": collected_sources,
+        "session_id": active_session_id,
+        "escalation_detected": is_escalated,
+        "error": error_detail if has_error else None,
+    }
+
+

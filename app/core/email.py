@@ -89,7 +89,7 @@ class EmailService:
             </div>
             <div style="text-align: center; margin-top: 30px; color: #a0aec0; font-size: 12px;">
                 <p>This is an automated email. Please do not reply.</p>
-                <p>© 2026 GRAG. All rights reserved.</p>
+                <p>© 2026 GsearchAi. All rights reserved.</p>
             </div>
         </div>
         """
@@ -99,7 +99,7 @@ class EmailService:
     @staticmethod
     async def send_registration_otp_email(email: str, otp: str, first_name: str = None) -> bool:
         """Send registration OTP to user"""
-        subject = "GRAG - Registration Verification Code"
+        subject = "GsearchAi - Registration Verification Code"
         greeting = f"Hello {first_name}," if first_name else "Hello,"
         body = f"Your registration verification code is: {otp}\n\nThis code will expire in 5 minutes."
         html_body = f"""
@@ -124,7 +124,7 @@ class EmailService:
             </div>
             <div style="text-align: center; margin-top: 30px; color: #a0aec0; font-size: 12px;">
                 <p>This is an automated email. Please do not reply.</p>
-                <p>© 2026 GRAG. All rights reserved.</p>
+                <p>© 2026 GSearchAi. All rights reserved.</p>
             </div>
         </div>
         """
@@ -134,8 +134,8 @@ class EmailService:
     @staticmethod
     async def send_welcome_email(email: str, first_name: str) -> bool:
         """Send welcome email to user after successful registration"""
-        subject = "Welcome to GRAG! 🎉"
-        body = f"Hello {first_name},\n\nWelcome to our platform! We're thrilled to have you join our community.\n\nYour account has been successfully created! You can now access all features and start using the platform.\n\nThank you for choosing us!\n\nBest regards,\nThe GRAG Team"
+        subject = "Welcome to GSearchAI! 🎉"
+        body = f"Hello {first_name},\n\nWelcome to our platform! We're thrilled to have you join our community.\n\nYour account has been successfully created! You can now access all features and start using the platform.\n\nThank you for choosing us!\n\nBest regards,\nThe GSearchAi Team"
         
         html_body = f"""
         <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f9f9fb; padding: 20px;">
@@ -156,12 +156,12 @@ class EmailService:
                 
                 <div style="margin-top: 40px;">
                     <p style="color: #4a5568; margin: 0;">Best regards,</p>
-                    <p style="color: #6b46c1; font-weight: bold; margin: 5px 0 0 0;">The GRAG Team</p>
+                    <p style="color: #6b46c1; font-weight: bold; margin: 5px 0 0 0;">The GSearchAi Team</p>
                 </div>
             </div>
             <div style="text-align: center; margin-top: 30px; color: #a0aec0; font-size: 12px;">
                 <p>This is an automated email. Please do not reply.</p>
-                <p>© 2026 GRAG. All rights reserved.</p>
+                <p>© 2026 GSearchAi. All rights reserved.</p>
             </div>
         </div>
         """

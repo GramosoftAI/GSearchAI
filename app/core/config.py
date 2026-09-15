@@ -412,7 +412,15 @@ class Settings(BaseSettings):
 
 
 
+    # ============= SLACK INTEGRATION =============
+    slack_client_id: Optional[str] = None
+    slack_client_secret: Optional[str] = None
+    slack_signing_secret: Optional[str] = None
+    slack_redirect_uri: Optional[str] = None
+    slack_token_encryption_key: Optional[str] = None
+
     # ============= CORS =============
+
 
     # SECURITY: Never use "*" in production (allows any origin + credentials)
 

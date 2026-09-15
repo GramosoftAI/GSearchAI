@@ -20,8 +20,11 @@ async def google_drive_sync_job(
     """
     logger.info(f"Starting background google_drive_sync_job for KB {kb_id}, tenant {tenant_id}")
     try:
+        import importlib
+        import app.modules.knowledge_bases.service as kb_service_mod
+        importlib.reload(kb_service_mod)
         async with AsyncSessionLocal() as db:
-            service = KnowledgeBaseService(db, tenant_id)
+            service = kb_service_mod.KnowledgeBaseService(db, tenant_id)
             res = await service.sync_google_drive_source(
                 kb_id=kb_id,
                 credentials_dict=credentials,
