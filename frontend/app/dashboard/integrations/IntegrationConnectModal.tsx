@@ -52,9 +52,36 @@ export default function IntegrationConnectModal({
     type === "sharepoint" ? "sharepoint" : 
     type === "email" ? "email" : "outlook";
 
-  // Helper to fetch details for a single agent to check connection
-  // Helper to fetch/create KB ID for a single agent
-  const fetchAgentKbId = async (agentId: string, agentName: string) => {
+  // Helper to fetch an existing KB ID for a single agent (read-only query, no side effects)
+  const fetchExistingAgentKbId = async (agentId: string) => {
+    try {
+      const token = getCookie("AUTH_TOKEN");
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/${agentId}/list_knowledge_bases`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      const kbs: any[] = data?.data?.kbs || [];
+      const match = kbs.find(
+        (kb) =>
+          kb.connected_integration === providerKey ||
+          (kb.source && kb.source.startsWith(providerKey)) ||
+          (kb.name && kb.name.toLowerCase().includes(providerLabel.toLowerCase()))
+      );
+      return match?.id || (kbs.length > 0 ? kbs[0].id : null);
+    } catch (err) {
+      console.error(`Error checking existing KB for agent ${agentId}:`, err);
+      return null;
+    }
+  };
+
+  // Helper to create a new KB on-demand ONLY for the selected agent when connecting
+  const createAgentKbId = async (agentId: string, agentName: string) => {
     try {
       const token = getCookie("AUTH_TOKEN");
       const kbName = 
@@ -78,11 +105,11 @@ export default function IntegrationConnectModal({
           }),
         }
       );
-      if (!res.ok) throw new Error("Failed to fetch/create knowledge base");
+      if (!res.ok) throw new Error("Failed to create knowledge base");
       const data = await res.json();
       return data?.data?.kb?.id || null;
     } catch (err) {
-      console.error(`Error fetching KB for agent ${agentId}:`, err);
+      console.error(`Error creating KB for agent ${agentId}:`, err);
       return null;
     }
   };
@@ -128,7 +155,7 @@ export default function IntegrationConnectModal({
         return;
       }
 
-      // 2. Fetch connection states and KB IDs in parallel
+      // 2. Fetch connection states and existing KB IDs in parallel (read-only, no side effects)
       const statesMap: Record<string, string[]> = {};
       const kbMap: Record<string, string> = {};
 
@@ -138,8 +165,8 @@ export default function IntegrationConnectModal({
           const integrations = await checkAgentConnection(agent.id);
           statesMap[agent.id] = integrations;
 
-          // Check/Fetch KB ID
-          const kbId = await fetchAgentKbId(agent.id, agent.name);
+          // Check for existing KB ID without creating unwanted empty KBs
+          const kbId = await fetchExistingAgentKbId(agent.id);
           if (kbId) {
             kbMap[agent.id] = kbId;
           }
@@ -180,9 +207,8 @@ export default function IntegrationConnectModal({
       },
       onOk: async () => {
         try {
-          // const kbId = kbIds[agentId];
           if (!agentId) {
-            throw new Error("Agent is  not found .");
+            throw new Error("Agent is not found.");
           }
 
           // Call disconnect API
@@ -221,9 +247,18 @@ export default function IntegrationConnectModal({
     ? connectionStates[selectedAgentId]?.includes(providerKey)
     : false;
 
-  const handleActionClick = () => {
+  const handleActionClick = async () => {
     if (!selectedAgentId || !selectedAgent) return;
-    const kbId = kbIds[selectedAgentId];
+    let kbId = kbIds[selectedAgentId];
+
+    // If no existing KB was found, create one ON DEMAND for the selected agent ONLY
+    if (!kbId) {
+      kbId = await createAgentKbId(selectedAgent.id, selectedAgent.name);
+      if (kbId) {
+        setKbIds((prev) => ({ ...prev, [selectedAgent.id]: kbId }));
+      }
+    }
+
     if (!kbId) {
       notification.error({
         message: "Knowledge Base Error",
