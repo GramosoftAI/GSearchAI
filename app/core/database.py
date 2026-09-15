@@ -342,6 +342,9 @@ async def init_rls_policies():
         "document_ingestion_runs",
         "widget_customizations",
         "password_reset_tokens",
+        "database_knowledgebases",
+        "db_schema_snapshots",
+        "db_schema_embeddings",
     ]
 
 
@@ -600,6 +603,8 @@ async def verify_rls_enabled():
         "document_ingestion_runs",
         "widget_customizations",
         "password_reset_tokens",
+        "database_knowledgebases",
+        "db_schema_snapshots",
     ]
 
 
@@ -736,6 +741,11 @@ async def init_db():
         from ..modules.jobs.models import ProcessingJob
         from ..modules.Embed.models import WidgetCustomization
         from ..modules.analytics.models import AnalyticsSummary, AnalyticsQueryLog as ChatAnalyticsQueryLog, AppErrorLog, LLMStageUsageLog
+        from ..modules.database_knowledgebase.models import (
+            DatabaseKnowledgebase,
+            DatabaseSchemaSnapshot,
+            DatabaseSchemaEmbedding,
+        )
         try:
             from ..memory.app.schema.database import EpisodicMemory, UserPreference, init_db as init_memory_db
             await init_memory_db()

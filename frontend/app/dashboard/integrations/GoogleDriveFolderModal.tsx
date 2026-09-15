@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Modal, Button, Spin, Input, message } from "antd";
+import { Modal, Button, Spin, Input, message, notification } from "antd";
 import {
   FolderOpenOutlined,
   FileOutlined,
@@ -10,6 +10,7 @@ import {
   CloudSyncOutlined,
   RightOutlined,
   HomeOutlined,
+  LoadingOutlined,
 } from "@ant-design/icons";
 import {useSession } from "next-auth/react";
 
@@ -232,6 +233,71 @@ export default function GoogleDriveFolderModal({
 
   const isSelected = (item: DriveItem) =>
     item.isFolder ? selectedFolders.includes(item.id) : selectedFiles.includes(item.id);
+  const pollJobStatus = (jobId: string) => {
+    const notifKey = `sync_${jobId}`;
+    notification.open({
+      key: notifKey,
+      message: "Syncing Google Drive",
+      description: "Processing your files in the background. You can continue using the dashboard.",
+      icon: <LoadingOutlined style={{ color: "#1890ff" }} spin />,
+      duration: 0,
+      placement: "topRight",
+    });
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_API_BASE_URL}/jobs/${jobId}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              accept: "application/json",
+            },
+          }
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const jobData = data?.data;
+        const status = jobData?.status;
+
+        if (status === "complete") {
+          clearInterval(interval);
+          const result = jobData?.result;
+          if (result && result.success === false) {
+            notification.error({
+              key: notifKey,
+              message: "Google Drive Sync Failed",
+              description: result.error || "An error occurred during synchronization.",
+              duration: 6,
+              placement: "topRight",
+            });
+          } else {
+            const filesCount = result?.files_synced;
+            notification.success({
+              key: notifKey,
+              message: "Google Drive Sync Completed",
+              description: filesCount !== undefined ? `Successfully synced ${filesCount} file(s).` : "Files synchronized successfully with Knowledge Base!",
+              duration: 5,
+              placement: "topRight",
+            });
+            onSuccess?.();
+          }
+        } else if (status === "failed") {
+          clearInterval(interval);
+          notification.error({
+            key: notifKey,
+            message: "Google Drive Sync Failed",
+            description: "The background sync job failed. Please try again.",
+            duration: 6,
+            placement: "topRight",
+          });
+        }
+      } catch (pollErr) {
+        console.error("Job poll error:", pollErr);
+      }
+    }, 2500);
+  };
+
   const handleSync = async () => {
     try {
       setLoading(true);
@@ -243,16 +309,25 @@ export default function GoogleDriveFolderModal({
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ file_ids: selectedFiles, folder_ids: selectedFolders,email:session }),
+          body: JSON.stringify({ file_ids: selectedFiles, folder_ids: selectedFolders, email: session }),
         }
       );
       if (!res.ok) throw new Error("Sync failed");
-      message.success("Google Drive synced successfully");
-      onSuccess?.();
+      const data = await res.json();
+      const jobId = data?.data?.job_id;
+
+      // Close modal immediately so the user can continue their work without being blocked!
       onClose();
+
+      if (jobId) {
+        pollJobStatus(jobId);
+      } else {
+        message.success("Google Drive synced successfully");
+        onSuccess?.();
+      }
     } catch (err) {
-      console.log(err);
-      message.error("Sync failed");
+      console.error(err);
+      message.error("Sync failed to start");
     } finally {
       setLoading(false);
     }
@@ -266,8 +341,8 @@ export default function GoogleDriveFolderModal({
 
   const toggleSelectAll = () => {
     if (isAllSelected) {
-      let descendantFolderIds = new Set<string>();
-      let descendantFileIds = new Set<string>();
+      const descendantFolderIds = new Set<string>();
+      const descendantFileIds = new Set<string>();
 
       filteredItems.forEach(item => {
         if (item.isFolder) {
@@ -285,8 +360,8 @@ export default function GoogleDriveFolderModal({
       setSelectedFolders(prev => prev.filter(id => !descendantFolderIds.has(id)));
       setSelectedFiles(prev => prev.filter(id => !descendantFileIds.has(id)));
     } else {
-      let newFolderIds = new Set<string>();
-      let newFileIds = new Set<string>();
+      const newFolderIds = new Set<string>();
+      const newFileIds = new Set<string>();
 
       filteredItems.forEach(item => {
         if (item.isFolder) {

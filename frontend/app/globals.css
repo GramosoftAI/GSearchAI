@@ -226,5 +226,157 @@ span.ant-dropdown-trigger {
   box-shadow: none !important;
 }
 
+/* Grounded Answer Rich Formatting */
+.grounded-markdown-container {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  color: var(--app-text);
+  font-size: 0.925rem;
+  line-height: 1.6;
+}
 
+.grounded-markdown-container p {
+  margin-bottom: 0.75rem;
+}
+
+.grounded-markdown-container p:last-child {
+  margin-bottom: 0;
+}
+
+.grounded-markdown-container table {
+  min-width: 100%;
+  width: max-content;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 1rem 0;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.grounded-markdown-container th {
+  background-color: rgba(15, 181, 161, 0.08);
+  color: var(--app-text);
+  font-weight: 600;
+  text-align: left;
+  padding: 8px 14px;
+  border-bottom: 2px solid var(--app-border);
+  border-right: 1px solid var(--app-border);
+  white-space: nowrap;
+}
+
+.grounded-markdown-container th:last-child {
+  border-right: none;
+}
+
+.grounded-markdown-container td {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--app-border);
+  border-right: 1px solid var(--app-border);
+  color: var(--app-text-muted);
+  white-space: nowrap;
+}
+
+.grounded-markdown-container td:last-child {
+  border-right: none;
+}
+
+.grounded-markdown-container tr:last-child td {
+  border-bottom: none;
+}
+
+.grounded-markdown-container tr:nth-child(even) td {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+:root[data-theme="dark"] .grounded-markdown-container tr:nth-child(even) td {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+.grounded-markdown-container tr:hover td {
+  background-color: rgba(15, 181, 161, 0.05);
+}
+
+.grounded-markdown-container code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(15, 181, 161, 0.1);
+  color: var(--app-primary);
+}
+
+.grounded-markdown-container pre {
+  background: #0d1117;
+  color: #e6edf3;
+  padding: 12px 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+
+.grounded-markdown-container ul,
+.grounded-markdown-container ol {
+  padding-left: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.grounded-markdown-container li {
+  margin-bottom: 0.25rem;
+}
+
+/* Database Evidence Table: enterprise border accuracy & clean data density */
+.database-evidence-table .ant-table-container {
+  border: 1px solid var(--app-border) !important;
+  border-radius: 10px !important;
+  overflow: hidden !important;
+}
+
+.database-evidence-table .ant-table-thead > tr > th {
+  background: rgba(15, 181, 161, 0.08) !important;
+  color: var(--app-text) !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+  border-bottom: 1px solid var(--app-border) !important;
+  border-right: 1px solid var(--app-border) !important;
+  padding: 8px 12px !important;
+  white-space: nowrap !important;
+}
+
+.database-evidence-table .ant-table-thead > tr > th:last-child {
+  border-right: none !important;
+}
+
+.database-evidence-table .ant-table-tbody > tr > td {
+  border-bottom: 1px solid var(--app-border) !important;
+  border-right: 1px solid var(--app-border) !important;
+  padding: 8px 12px !important;
+  font-size: 12.5px !important;
+  color: var(--app-text) !important;
+  background: var(--app-surface) !important;
+  white-space: nowrap !important;
+}
+
+.database-evidence-table .ant-table-tbody > tr:hover > td {
+  background: rgba(15, 181, 161, 0.05) !important;
+}
+
+.database-evidence-table .ant-table-tbody > tr > td:last-child {
+  border-right: none !important;
+}
+
+.database-evidence-table .ant-table-pagination.ant-pagination {
+  margin: 14px 0 0 0 !important;
+  padding: 0 4px !important;
+}
+
+/* Ensure the floating AskMe widget on Database KnowledgeBase screen does not overlap table cells */
+body:has(.database-knowledge-page) div[id*="gsearch-chat"],
+body:has(.database-knowledge-page) div[id*="chat-widget"],
+body:has(.database-knowledge-page) #gsearch-chat-container {
+  bottom: 16px !important;
+  right: 16px !important;
+  z-index: 40 !important;
+}
 

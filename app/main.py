@@ -599,17 +599,17 @@ def load_routers():
 # Load all routers on startup
 
 try:
-
     loaded_count, failed_count = load_routers()
-
     if failed_count > 0:
-
         logger.warning(f"[WARN] {failed_count} modules failed to load")
 
+    # Explicit guarantee for database_knowledgebase router
+    from app.modules.database_knowledgebase.routes import router as db_kb_router
+    if not any(getattr(r, "path", "").startswith("/api/v1/database-knowledgebases") for r in app.routes):
+        app.include_router(db_kb_router)
+        logger.info("[OK] Explicitly loaded database_knowledgebase router")
 except Exception as e:
-
     logger.error(f"[ERROR] Critical error loading routers: {e}")
-
     raise
 
 

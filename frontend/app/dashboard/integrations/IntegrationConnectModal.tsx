@@ -57,6 +57,13 @@ export default function IntegrationConnectModal({
   const fetchAgentKbId = async (agentId: string, agentName: string) => {
     try {
       const token = getCookie("AUTH_TOKEN");
+      const kbName = 
+        type === "google" ? "Google Drive Knowledge" :
+        type === "sharepoint" ? "SharePoint Knowledge" :
+        type === "email" ? "Gmail Knowledge" :
+        type === "outlook" ? "Outlook Knowledge" :
+        `${agentName} Knowledge`;
+
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases`,
         {
@@ -67,7 +74,7 @@ export default function IntegrationConnectModal({
           },
           body: JSON.stringify({
             agent_id: agentId,
-            name: agentName,
+            name: kbName,
           }),
         }
       );
