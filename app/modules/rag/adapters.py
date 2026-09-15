@@ -20,6 +20,9 @@ class DashboardAdapter:
     async def send(self, websocket: WebSocket, event: LoopEvent) -> None:
         if event.type == "token":
             await websocket.send_text(event.text)
+        elif event.type == "clarification_needed":
+            payload = event.clarification or {"type": "clarification_needed", "plain_text_fallback": event.text}
+            await websocket.send_text(json.dumps(payload))
         elif event.type == "sources":
             payload = {"type": "metadata", "sources": event.sources}
             if event.escalation_detected is not None:
@@ -49,6 +52,9 @@ class EmbedAdapter:
             if event.message_id:
                 payload["message_id"] = event.message_id
             await websocket.send_json(payload)
+        elif event.type == "clarification_needed":
+            payload = event.clarification or {"type": "clarification_needed", "plain_text_fallback": event.text}
+            await websocket.send_json(payload)
         elif event.type == "sources":
             payload = {"type": "sources", "sources": event.sources}
             if event.escalation_detected is not None:
@@ -64,3 +70,4 @@ class EmbedAdapter:
 
     async def send_error(self, websocket: WebSocket, message: str) -> None:
         await websocket.send_json({"type": "error", "delta": message})
+

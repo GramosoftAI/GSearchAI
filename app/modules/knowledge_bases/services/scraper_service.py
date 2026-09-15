@@ -4,7 +4,7 @@ import asyncio
 import time
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Callable, Set
+from typing import List, Dict, Any, Optional, Callable, Set, Tuple
 from pydantic import BaseModel, Field
 from ....core.config import get_settings
 
@@ -58,11 +58,11 @@ class InvalidURLException(GCrawlException):
 @dataclass
 class GCrawlConfig:
     """Configuration for GCrawl bounded polling and retry behavior."""
-    LINK_DISCOVERY_TIMEOUT: int = 120
-    SCRAPE_TIMEOUT: int = 300
+    LINK_DISCOVERY_TIMEOUT: int = 180
+    SCRAPE_TIMEOUT: int = 1200
     POLL_INTERVAL: int = 2
     MAX_PAGES: int = 50
-    RETRY_COUNT: int = 3
+    RETRY_COUNT: int = 6
     BACKOFF_FACTOR: int = 2
 
 
@@ -176,16 +176,13 @@ def validate_url(url: str) -> str:
 
 def canonicalize_url(url: str) -> Optional[str]:
     """
-    Canonicalizes a URL by stripping tracking params, fragments, trailing slashes,
-    and filtering out non-HTML extensions or administrative paths.
-    Returns None if the URL should be excluded.
+    Validates a URL and filters out non-HTML extensions or administrative paths.
+    Returns None if the URL should be excluded. Does NOT strip fragments or query params.
     """
-    if not url or url.startswith(("mailto:", "tel:", "javascript:", "#")):
+    if not url or url.startswith(("mailto:", "tel:", "javascript:")):
         return None
 
     url = url.strip()
-    if "#" in url:
-        url = url.split("#", 1)[0]
 
     parsed = urlparse(url)
     scheme = parsed.scheme.lower()
@@ -206,23 +203,7 @@ def canonicalize_url(url: str) -> Optional[str]:
         if excl in path_lower:
             return None
 
-    # Normalize trailing slashes including root path
-    if path == "/":
-        path = ""
-    elif len(path) > 1 and path.endswith("/"):
-        path = path.rstrip("/")
-
-    # Strip tracking query parameters
-    query_str = ""
-    if parsed.query:
-        params = parse_qs(parsed.query, keep_blank_values=True)
-        filtered_params = {
-            k: v for k, v in params.items() if k.lower() not in TRACKING_PARAMS
-        }
-        if filtered_params:
-            query_str = urlencode(filtered_params, doseq=True)
-
-    return urlunparse((scheme, hostname, path, parsed.params, query_str, ""))
+    return url
 
 
 def filter_links(
@@ -257,7 +238,8 @@ def filter_links(
 
         parsed_u = urlparse(canon_u)
         u_domain = (parsed_u.hostname or "").lower()
-        if u_domain != root_domain:
+        # Allow subdomains (e.g. www.domain.com should match domain.com)
+        if not u_domain.endswith(root_domain):
             continue
 
         selected.append(canon_u)
@@ -361,7 +343,7 @@ class GCrawlClient:
 
     async def get_link_results(self, crawl_id: str) -> Dict[str, Any]:
         """Step 2: GET /crawler/results/{crawl_id} to poll link discovery results."""
-        return await self._request("GET", f"/crawler/results/{crawl_id}", timeout=15)
+        return await self._request("GET", f"/crawler/results/{crawl_id}", timeout=60)
 
     async def submit_scrape(self, urls: List[str]) -> ScrapeSubmissionResponse:
         """Step 3: POST /api/v1/batch to submit bulk scrape job."""
@@ -370,10 +352,10 @@ class GCrawlClient:
             "geo": "IN",
             "markdown": {
                 "enabled": True,
-                "clean": False
+                "clean": True
             }
         }
-        data = await self._request("POST", "/api/v1/batch", json_data=payload, timeout=30)
+        data = await self._request("POST", "/api/v1/batch", json_data=payload, timeout=60)
         try:
             return ScrapeSubmissionResponse(**data)
         except Exception as e:
@@ -381,7 +363,7 @@ class GCrawlClient:
 
     async def get_scrape_results(self, crawl_id: str) -> Dict[str, Any]:
         """Step 4: GET /crawler/results/{crawl_id} to poll scraped contents."""
-        return await self._request("GET", f"/crawler/results/{crawl_id}", timeout=15)
+        return await self._request("GET", f"/crawler/results/{crawl_id}", timeout=300)
 
 
 # =====================================================================
@@ -660,7 +642,7 @@ class ScraperService:
             return []
 
     @staticmethod
-    async def discover_site_links(url: str, max_pages: int = 50) -> Dict[str, Any]:
+    async def discover_site_links(url: str, max_pages: int = 100) -> Dict[str, Any]:
         """
         Discover and filter all valid internal URLs from a website for UI presentation.
         Returns {'root_url': url, 'total_discovered': len(urls), 'urls': urls}
@@ -682,21 +664,67 @@ class ScraperService:
         }
 
     @staticmethod
-    async def scrape_selected_urls(urls: List[str]) -> List[Dict[str, Any]]:
+    async def scrape_selected_urls(urls: List[str]) -> Tuple[List[Dict[str, Any]], List[str]]:
         """
-        Bulk scrape a specific list of user-selected URLs and return legacy document dictionaries.
+        Bulk scrape a specific list of user-selected URLs and return legacy document dictionaries and failed URLs.
+        Uses client-side parallel sub-batching to mitigate lack of API-level per-URL timeouts.
         """
         if not urls:
             return []
+        
         root_url = validate_url(urls[0])
-        client = GCrawlClient()
-        crawler = WebsiteCrawler(client=client)
+        batch_size = getattr(settings, 'gcrawl_concurrency', 10)
+        url_timeout = getattr(settings, 'gcrawl_url_timeout', 20)
+        # Give some extra padding for the batch overhead
+        sub_batch_timeout = (url_timeout * batch_size) + 30 
+        
+        config = GCrawlConfig(SCRAPE_TIMEOUT=sub_batch_timeout)
+        client = GCrawlClient(config=config)
         context = CrawlContext()
-        logger.info(f"Bulk scraping {len(urls)} user-selected URLs...")
-        gsearch_id = await crawler.scrape(urls, context)
-        scraped_data = await crawler.poll_scraping(gsearch_id, context)
-        documents = crawler.convert(scraped_data, root_url, context)
-        return [doc.to_legacy_dict() for doc in documents]
+        
+        logger.info(f"Bulk scraping {len(urls)} user-selected URLs in parallel sub-batches of {batch_size} (timeout per sub-batch: {sub_batch_timeout}s)...")
+        
+        all_documents = []
+        failed_urls = []
+        
+        async def process_sub_batch(sub_urls: List[str]):
+            crawler = WebsiteCrawler(client=client, config=config)
+            try:
+                async def scrape_sub_batch():
+                    gsearch_id = await crawler.scrape(sub_urls, context)
+                    scraped_data = await crawler.poll_scraping(gsearch_id, context)
+                    return crawler.convert(scraped_data, root_url, context)
+                
+                documents = await asyncio.wait_for(scrape_sub_batch(), timeout=sub_batch_timeout)
+                return documents, None
+            except asyncio.TimeoutError:
+                logger.error(f"Scraping sub-batch timed out after {sub_batch_timeout}s. Failed URLs: {sub_urls}")
+                return [], sub_urls
+            except Exception as e:
+                logger.error(f"Scraping sub-batch failed: {e}. Failed URLs: {sub_urls}")
+                return [], sub_urls
+
+        # Create tasks for all sub-batches
+        tasks = []
+        for i in range(0, len(urls), batch_size):
+            tasks.append(process_sub_batch(urls[i:i+batch_size]))
+            
+        results = await asyncio.gather(*tasks)
+        
+        for docs, failed in results:
+            if docs:
+                all_documents.extend([doc.to_legacy_dict() for doc in docs])
+            if failed:
+                failed_urls.extend(failed)
+                
+        if failed_urls:
+            logger.warning(f"Scraping completed with partial failures. {len(all_documents)} succeeded, {len(failed_urls)} failed/timed out.")
+        else:
+            logger.info(f"Scraping successfully completed for all {len(urls)} URLs.")
+            
+        return all_documents, failed_urls
+
+
 
     # =================================================================
     # Legacy Implementation (v1 Fallback via Feature Flag)

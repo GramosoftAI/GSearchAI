@@ -47,19 +47,15 @@ engine = create_async_engine(
     pool_recycle=settings.postgres_pool_recycle,
 
     connect_args={
-
         "server_settings": {
-
             # Enable connection statement for every session
-
             "application_name": f"{settings.app_name}/{settings.app_version}",
-
             "jit": "off",  # Disable JIT for consistent performance
-
-        }
-
+        },
+        "timeout": 30,
+        "command_timeout": 60,
+        "ssl": False if settings.postgres_host in ("localhost", "127.0.0.1") else None,
     },
-
 )
 
 

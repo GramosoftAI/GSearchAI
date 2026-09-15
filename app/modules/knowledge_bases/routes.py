@@ -746,56 +746,49 @@ async def ingest_file(
         s3_service = S3StorageService()
         await s3_service.store_file_if_not_duplicate(str(tenant_id), file.filename, content)
 
+        from ..file_supporter import ALLOWED_UPLOAD_EXTENSIONS, SUPPORTED_EXTENSIONS, prepare_for_pdf_pipeline, ConversionError
+        import tempfile
+        import shutil
+        from pathlib import Path
+        
         # 2. Route based on file extension
-        if filename.endswith(".pdf"):
-
-
-
-            # Extract PDF using PDFExtractor (Gdocz primary + pdfplumber fallback)
-
-            from ...core.pdf_extractor import PDFExtractor
-
-
-
+        if filename.endswith(SUPPORTED_EXTENSIONS) or filename.endswith(".pdf"):
+            temp_dir = tempfile.mkdtemp(prefix="doc_convert_")
             try:
+                temp_upload_path = Path(temp_dir) / file.filename
+                temp_upload_path.write_bytes(content)
+                
+                try:
+                    pdf_path = await prepare_for_pdf_pipeline(str(temp_upload_path), temp_dir)
+                    pdf_content = Path(pdf_path).read_bytes()
+                except ConversionError as ce:
+                    logger.error(f"Document conversion failed: {ce}")
+                    raise HTTPException(status_code=422, detail=str(ce))
 
-                document_text = await PDFExtractor.extract(
-
-                    pdf_bytes=content,
-
-                    filename=file.filename,
-
-                    tenant_id=tenant_id,
-
-                )
-
-            except ValueError as e:
-
-                raise HTTPException(status_code=400, detail=str(e))
-
-            except Exception as e:
-
-                logger.error(f"PDF extraction failed: {e}")
-
-                raise HTTPException(
-
-                    status_code=400,
-
-                    detail=f"Failed to extract text from PDF: {str(e)}",
-
-                )
-
-
-
-            if not document_text.strip():
-
-                raise HTTPException(
-
-                    status_code=400,
-
-                    detail="Could not extract any text from the PDF",
-
-                )
+                # Extract PDF using PDFExtractor (Gdocz primary + pdfplumber fallback)
+                from ...core.pdf_extractor import PDFExtractor
+                try:
+                    document_text = await PDFExtractor.extract(
+                        pdf_bytes=pdf_content,
+                        filename=Path(pdf_path).name,
+                        tenant_id=tenant_id,
+                    )
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+                except Exception as e:
+                    logger.error(f"PDF extraction failed: {e}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Failed to extract text from document: {str(e)}",
+                    )
+                    
+                if not document_text.strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Could not extract any text from the document",
+                    )
+            finally:
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 
@@ -850,7 +843,12 @@ async def ingest_file(
                 from sqlalchemy import update
                 method = getattr(document_text, "extraction_method", "gdocz")
                 display_method = "Gdocz" if method.lower() == "gdocz" else "pdfplumber"
-                kb_description = f"Automated PDF upload source ({display_method} extraction)"
+                
+                if filename.endswith(SUPPORTED_EXTENSIONS) and not filename.endswith(".pdf"):
+                    kb_description = f"Automated upload source (Converted from {Path(filename).suffix}, {display_method} extraction)"
+                else:
+                    kb_description = f"Automated PDF upload source ({display_method} extraction)"
+                    
                 await db.execute(
                     update(KnowledgeBase)
                     .where(KnowledgeBase.id == uuid.UUID(kb_id))
@@ -894,13 +892,9 @@ async def ingest_file(
                     os.remove(temp_path)
 
         else:
-
             raise HTTPException(
-
                 status_code=400,
-
-                detail="Unsupported file format. Supported extensions: .pdf, .xlsx, .xls, .csv"
-
+                detail=f"Unsupported file format. Supported extensions: {', '.join(ALLOWED_UPLOAD_EXTENSIONS)}"
             )
 
 
@@ -2523,5 +2517,33 @@ async def sync_outlook_api(request: Request, kb_id: str, payload: schemas.Outloo
         logger.error(f"Error in sync_outlook: {e}")
         from app.utils.formatters import format_error
         return format_error(f"Internal server error: {e}")
+
+
+@router.post("/admin/graph-cleanup", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_graph_cleanup(request: Request, kb_id: str = None):
+    """
+    Manually trigger the Graph Cleanup pipeline to merge duplicate entities.
+    Because this was removed from the synchronous ingestion path, this should be 
+    called periodically via cron or manually by an admin to keep the graph deduplicated.
+    """
+    tenant_id, _ = get_tenant_and_user(request)
+    
+    from app.core.graph_cleanup import GraphCleanupService
+    
+    # Run in background to not block the request
+    async def run_cleanup():
+        try:
+            cleanup_service = GraphCleanupService(tenant_id=tenant_id, kb_id=kb_id)
+            await cleanup_service.cleanup_graph()
+        except Exception as e:
+            logger.error(f"[Admin] Graph cleanup failed for tenant {tenant_id}: {e}", exc_info=True)
+
+    import asyncio
+    asyncio.create_task(run_cleanup())
+    
+    return {
+        "success": True,
+        "message": f"Graph cleanup task initiated in the background for tenant {tenant_id}"
+    }
 
 

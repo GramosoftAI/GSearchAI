@@ -1,5 +1,6 @@
 import polars as pl
 import os
+import re
 import logging
 import time
 import json
@@ -14,6 +15,56 @@ class ParquetIngester:
     Safely streams large CSVs or reads massive Excel files using memory-efficient Calamine,
     and writes them out as chunked, compressed Parquet files for DuckDB querying.
     """
+    @staticmethod
+    def _validate_csv_headers(columns: list[str]) -> bool:
+        """
+        Validate whether auto-detected CSV headers look like real column names
+        or like data values that Polars mistakenly promoted to headers.
+        
+        Uses a combined 2-of-4 signal scoring approach to avoid false positives
+        on legitimate edge cases (e.g. a single verbose column, year-named columns).
+        
+        Returns True if headers look legitimate, False if they look like data.
+        """
+        if not columns:
+            return True
+        
+        signals_fired = 0
+        
+        # Signal 1: Any column name > 60 chars (data values like addresses, descriptions)
+        long_cols = [c for c in columns if len(c) > 60]
+        if long_cols:
+            signals_fired += 1
+            logger.debug(f"CSV header signal 1 (excessive length): {len(long_cols)} columns exceed 60 chars")
+        
+        # Signal 2: > 50% of columns are purely numeric strings (data row, not headers)
+        numeric_cols = [c for c in columns if c.replace('.', '', 1).replace('-', '', 1).isdigit()]
+        if len(numeric_cols) > len(columns) * 0.5:
+            signals_fired += 1
+            logger.debug(f"CSV header signal 2 (numeric dominance): {len(numeric_cols)}/{len(columns)} columns are numeric")
+        
+        # Signal 3: Average underscores per column > 3 (Polars normalizes spaces in data to underscores)
+        avg_underscores = sum(c.count('_') for c in columns) / max(len(columns), 1)
+        if avg_underscores > 3:
+            signals_fired += 1
+            logger.debug(f"CSV header signal 3 (underscore density): avg {avg_underscores:.1f} underscores/column")
+        
+        # Signal 4: Any column matches auto-generated naming patterns (library already struggled)
+        auto_pattern = [c for c in columns if re.match(r'^(column|unnamed|none)_\d+$', c, re.IGNORECASE)]
+        if auto_pattern:
+            signals_fired += 1
+            logger.debug(f"CSV header signal 4 (auto-pattern): {auto_pattern}")
+        
+        if signals_fired >= 2:
+            logger.warning(
+                f"CSV header validation FAILED ({signals_fired}/4 signals fired). "
+                f"Detected headers look like data values, not column names. "
+                f"Headers: {columns[:5]}{'...' if len(columns) > 5 else ''}"
+            )
+            return False
+        
+        return True
+
     @staticmethod
     def ingest_to_parquet(file_path: str, output_dir: str = "data/parquet", dataset_name: Optional[str] = None) -> tuple[Optional[str], dict, dict]:
         if not os.path.exists(file_path):
@@ -54,8 +105,26 @@ class ParquetIngester:
                 # infer_schema_length=0 forces all columns to String (Utf8).
                 # DuckDB will handle strict typing/casting at the semantic SQL layer.
                 lf = pl.scan_csv(file_path, separator=separator, ignore_errors=True, infer_schema_length=0)
+                
+                # Validate that auto-detected headers are real column names, not data values.
+                # Polars has no built-in "headerless CSV" detection — if the CSV lacks a header row,
+                # the first data row silently becomes column names, corrupting both schema and data.
+                detected_columns = lf.collect_schema().names()
+                if not ParquetIngester._validate_csv_headers(detected_columns):
+                    logger.warning(
+                        f"Re-reading CSV with has_header=False due to suspected data-as-headers. "
+                        f"Rejected headers: {detected_columns[:5]}{'...' if len(detected_columns) > 5 else ''}"
+                    )
+                    lf = pl.scan_csv(
+                        file_path, separator=separator, ignore_errors=True,
+                        infer_schema_length=0, has_header=False
+                    )
+                    # Polars assigns column_1, column_2, ... when has_header=False
+                    logger.info(f"Re-scanned CSV with synthetic headers: {lf.collect_schema().names()[:5]}")
+                
                 lf.sink_parquet(output_path, row_group_size=100_000)
                 logger.info(f"Successfully streamed CSV to {output_path}")
+
                 
             elif file_path.lower().endswith(('.xlsx', '.xls')):
                 from app.core.excel_extractor import ExcelExtractor

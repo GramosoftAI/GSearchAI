@@ -1013,13 +1013,13 @@ async def instant_ingest_pdf(
 
         ext = filename.lower().split(".")[-1]
 
-        if ext not in ["pdf", "csv", "xlsx", "xls"]:
+        if ext not in ["pdf", "csv", "xlsx", "xls", "docx", "doc", "txt", "md"]:
 
             raise HTTPException(
 
                 status_code=400,
 
-                detail="Unsupported file format. Supported formats: PDF, CSV, Excel (.xlsx, .xls)"
+                detail="Unsupported file format. Supported formats: PDF, CSV, Excel (.xlsx, .xls), DOCX, DOC, TXT, MD"
 
             )
 
@@ -1041,7 +1041,8 @@ async def instant_ingest_pdf(
             s3_service = S3StorageService()
             s3_url = s3_service.get_s3_url(str(tenant_id), filename)
             is_spreadsheet = filename.lower().endswith(('.csv', '.xls', '.xlsx'))
-            kb_name = f"Spreadsheet: {filename}" if is_spreadsheet else f"PDF: {filename}"
+            is_document = filename.lower().endswith(('.doc', '.docx', '.txt', '.md'))
+            kb_name = f"Spreadsheet: {filename}" if is_spreadsheet else (f"Document: {filename}" if is_document else f"PDF: {filename}")
 
             # 1. Check for exact duplicate content first
             stmt = select(KnowledgeBase).where(
@@ -1118,9 +1119,19 @@ async def instant_ingest_pdf(
             
         # 3. Launch ingestion as an independent async task
         import asyncio
+
+        def _task_done_cb(task: asyncio.Task):
+            """Log any unhandled exception from background ingestion tasks."""
+            if task.cancelled():
+                logger.warning(f"Ingestion task for job {job_id} was cancelled.")
+                return
+            exc = task.exception()
+            if exc:
+                logger.error(f"Ingestion task for job {job_id} failed with unhandled exception: {exc}", exc_info=exc)
+
         if is_spreadsheet:
             from app.modules.jobs.worker import run_excel_ingestion_job
-            asyncio.create_task(
+            task = asyncio.create_task(
                 run_excel_ingestion_job(
                     tenant_id=str(tenant_id),
                     user_id=str(user_id),
@@ -1130,8 +1141,9 @@ async def instant_ingest_pdf(
                     content=content
                 )
             )
+            task.add_done_callback(_task_done_cb)
         else:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 run_pdf_ingestion_job(
                     tenant_id=str(tenant_id),
                     user_id=str(user_id),
@@ -1141,6 +1153,7 @@ async def instant_ingest_pdf(
                     content=content
                 )
             )
+            task.add_done_callback(_task_done_cb)
 
         return {
             "success": True,
@@ -1654,12 +1667,123 @@ async def discover_url_links_for_ui(
         raise HTTPException(status_code=400, detail=f"Failed to discover links: {str(e)}")
 
 
+import asyncio
+
+async def _background_scrape_and_ingest_detached(
+    tenant_id: str,
+    user_id: str,
+    agent_id: str,
+    kb_id: str,
+    urls: list,
+    job_id: str
+):
+    """Fully detached background task using asyncio and JobService tracking."""
+    try:
+        import time
+        from app.modules.jobs.service import JobService
+
+        logger.info(f"[Background Job] Starting ingestion for KB {kb_id}. Total URLs to crawl: {len(urls)}")
+        t_gcrawl_start = time.time()
+        
+        async with AsyncSessionLocal() as db:
+            job_service = JobService(db, tenant_id)
+            await job_service.update_job_progress(job_id, status="processing", progress=10, current_step="Scraping URLs", kb_id=kb_id)
+        
+        # Scrape
+        logger.info(f"[Background Job] KB {kb_id} -> Submitting URLs to ScraperService...")
+        documents, failed_urls = await ScraperService.scrape_selected_urls(urls)
+        
+        if failed_urls:
+            logger.warning(f"[Background Job] KB {kb_id} -> Scraped with partial failures: {len(documents)} succeeded, {len(failed_urls)} failed/timed out: {failed_urls}")
+        
+        if not documents:
+            logger.error(f"[Background Job] KB {kb_id} -> No extractable text content returned. Cleaning up KnowledgeBase.")
+            async with AsyncSessionLocal() as db:
+                kb_service = KnowledgeBaseService(db, tenant_id)
+                await kb_service.delete_kb(kb_id, user_id=user_id)
+                job_service = JobService(db, tenant_id)
+                await job_service.update_job_progress(job_id, status="failed", progress=100, current_step="Failed", error_message="No extractable text content returned", kb_id=kb_id)
+            return
+
+        async with AsyncSessionLocal() as db:
+            job_service = JobService(db, tenant_id)
+            await job_service.update_job_progress(job_id, status="processing", progress=50, current_step="Preparing text", kb_id=kb_id)
+
+        logger.info(f"[Background Job] KB {kb_id} -> ScraperService finished. Received {len(documents)} valid documents. Preparing for vector ingestion...")
+
+        # Calculate a rough total character length for validation
+        total_chars = sum(len(doc.get("content", "")) for doc in documents)
+
+        if total_chars == 0:
+            logger.error(f"[Background Job] KB {kb_id} -> Scraped pages contained no text. Cleaning up KnowledgeBase.")
+            async with AsyncSessionLocal() as db:
+                kb_service = KnowledgeBaseService(db, tenant_id)
+                await kb_service.delete_kb(kb_id, user_id=user_id)
+                job_service = JobService(db, tenant_id)
+                await job_service.update_job_progress(job_id, status="failed", progress=100, current_step="Failed", error_message="Scraped pages contained no text", kb_id=kb_id)
+            return
+
+        # Ingest
+        logger.info(f"[Background Job] KB {kb_id} -> Starting Vector Database ingestion for {len(documents)} documents ({total_chars} chars)...")
+        async with AsyncSessionLocal() as db:
+            job_service = JobService(db, tenant_id)
+            await job_service.update_job_progress(job_id, status="processing", progress=75, current_step="Vector Database Ingestion", kb_id=kb_id)
+            kb_service = KnowledgeBaseService(db, tenant_id)
+            ingest_result = await kb_service.ingest_document(
+                kb_id=kb_id, 
+                document_text="", # Passed as empty because we use documents_list
+                source="url_list", 
+                documents_list=documents
+            )
+            
+            if not ingest_result.get("success"):
+                err_msg = ingest_result.get("error", "Vector Ingestion failed")
+                logger.error(f"[Background Job] KB {kb_id} -> Vector Ingestion failed: {err_msg}. Cleaning up KnowledgeBase.")
+                await kb_service.delete_kb(kb_id, user_id=user_id)
+                await job_service.update_job_progress(
+                    job_id,
+                    status="failed",
+                    progress=100,
+                    current_step="Failed",
+                    error_message=err_msg,
+                    kb_id=kb_id
+                )
+            else:
+                total_time = round(time.time() - t_gcrawl_start, 2)
+                logger.info(f"[Background Job] KB {kb_id} -> SUCCESS! Background ingestion fully completed in {total_time}s.")
+                await job_service.update_job_progress(
+                    job_id,
+                    status="completed",
+                    progress=100,
+                    current_step="Complete",
+                    kb_id=kb_id
+                )
+
+    except Exception as e:
+        logger.error(f"[Background Job] KB {kb_id} -> FATAL ERROR during background scrape/ingest: {e}", exc_info=True)
+        try:
+            async with AsyncSessionLocal() as db:
+                job_service = JobService(db, tenant_id)
+                await job_service.update_job_progress(
+                    job_id,
+                    status="failed",
+                    progress=100,
+                    current_step="Failed",
+                    error_message=f"Internal Server Error: {str(e)}",
+                    kb_id=kb_id
+                )
+                kb_service = KnowledgeBaseService(db, tenant_id)
+                await kb_service.delete_kb(kb_id, user_id=user_id)
+        except Exception as cleanup_err:
+            logger.error(f"[Background Job] KB {kb_id} -> Failed to clean up KB/Job after fatal error: {cleanup_err}")
+
+
 @router.post(
     "/{agent_id}/sources/url/select",
     response_model=dict,
     status_code=status.HTTP_200_OK,
-    summary="Ingest Selected URLs",
-    description="Scrape and ingest only the specific list of URLs selected by the user in the UI.",
+    summary="Ingest Selected URLs (Detached)",
+    description="Scrape and ingest the selected URLs asynchronously in a fully detached task to prevent Cloudflare timeouts.",
 )
 async def ingest_selected_url_links(
     request: Request,
@@ -1667,39 +1791,33 @@ async def ingest_selected_url_links(
     request_data: URLSelectIngestRequest,
 ) -> dict:
     """
-    Step 2 of Interactive UI Crawl: Scrape selected checkboxes and ingest into Agent Knowledge Graph.
+    Step 2 of Interactive UI Crawl: Trigger fully detached background scrape to bypass Cloudflare 524 limits.
+    Step 2 of Interactive UI Crawl: Trigger fully detached background scrape with Job tracking.
     """
     try:
         tenant_id, user_id = get_tenant_and_user(request)
-        import time
-        t_total_start = time.time()
 
         if not request_data.urls:
             raise HTTPException(status_code=400, detail="No URLs provided for ingestion")
 
-        t_gcrawl_start = time.time()
-        documents = await ScraperService.scrape_selected_urls(request_data.urls)
-        t_gcrawl_end = time.time()
-        gcrawl_time_seconds = round(t_gcrawl_end - t_gcrawl_start, 2)
-
-        if not documents:
-            raise HTTPException(status_code=400, detail="No extractable text content returned for selected URLs")
-
-        final_doc = ""
-        for doc in documents:
-            if len(documents) > 1:
-                final_doc += f"\n\n# SOURCE: {doc['source']}\n\n"
-            final_doc += doc["content"]
-        document_text = final_doc.strip()
-
-        if not document_text:
-            raise HTTPException(status_code=400, detail="Scraped pages contained no text")
+        from app.modules.jobs.service import JobService
+        from app.modules.jobs.schemas import JobCreate
 
         async with AsyncSessionLocal() as db:
             agent_service = AgentService(db, tenant_id)
             agent_result = await agent_service.get_agent(agent_id)
             if not agent_result.get("success"):
                 raise HTTPException(status_code=404, detail="Agent not found")
+
+            # Create Job in DB
+            job_service = JobService(db, tenant_id)
+            job_create = JobCreate(job_type="url_ingestion", file_name=f"{len(request_data.urls)} Selected URLs")
+            job_result = await job_service.create_job(user_id, job_create)
+            
+            if not job_result.get("success"):
+                raise HTTPException(status_code=500, detail="Failed to create processing job")
+                
+            job_id = str(job_result["data"]["job"].id)
 
             kb_service = KnowledgeBaseService(db, tenant_id)
             kb_name = f"{request_data.urls[0]} (Selected Links)"
@@ -1714,35 +1832,30 @@ async def ingest_selected_url_links(
                 raise HTTPException(status_code=500, detail="Failed to create KnowledgeBase entry")
 
             kb_id = str(kb_result["data"]["kb"].id)
-
-            t_process_start = time.time()
-            ingest_result = await kb_service.ingest_document(kb_id, document_text)
-            t_process_end = time.time()
-            processing_time_seconds = round(t_process_end - t_process_start, 2)
-            total_time_seconds = round(time.time() - t_total_start, 2)
-
-            if not ingest_result.get("success"):
-                try:
-                    logger.info(f"Selected URLs ingest failed. Cleaning up KnowledgeBase {kb_id}.")
-                    await kb_service.delete_kb(kb_id, user_id=user_id)
-                except Exception as cleanup_err:
-                    logger.error(f"Failed to clean up KnowledgeBase {kb_id} after ingestion failure: {cleanup_err}")
-                error_msg = ingest_result.get("error", "Unknown error")
-                status_code = ingest_result.get("status_code", 400)
-                raise HTTPException(status_code=status_code, detail=error_msg)
-
             agent_name = agent_result["data"]["agent"]["name"]
-            ingest_result["data"]["agent_name"] = agent_name
-            ingest_result["data"]["time_metrics"] = {
-                "gcrawl_time_seconds": gcrawl_time_seconds,
-                "processing_time_seconds": processing_time_seconds,
-                "total_time_seconds": total_time_seconds
-            }
-            ingest_result["meta"]["message"] = f"Processed {len(request_data.urls)} selected URLs for agent: {agent_name}"
 
-            return ingest_result
+        # Enqueue fully detached background task using asyncio
+        asyncio.create_task(
+            _background_scrape_and_ingest_detached(
+                tenant_id,
+                user_id,
+                agent_id,
+                kb_id,
+                request_data.urls,
+                job_id
+            )
+        )
+
+        return {
+            "success": True,
+            "job_id": job_id,
+            "status": "queued",
+            "meta": {"message": f"Document ingestion has been queued in the background for {len(request_data.urls)} URLs. Use the job_id to poll for status."}
+        }
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Ingest selected URLs error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        error_msg = str(e) if str(e).strip() else f"{type(e).__name__} occurred while ingesting URLs."
+        raise HTTPException(status_code=500, detail=error_msg)

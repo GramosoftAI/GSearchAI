@@ -192,21 +192,25 @@ def get_pooled_duckdb_engine(paths: List[str]) -> Tuple[Any, List[str], float]:
         else:
             union_sql = " SELECT * FROM (" + " UNION ALL BY NAME ".join(valid_readers) + ")"
 
-        with engine.connect() as conn:
-            conn.execute(text("DROP VIEW IF EXISTS dataset;"))
-            conn.execute(text(f"CREATE VIEW dataset AS SELECT row_number() OVER () AS row_id, * FROM ({union_sql});"))
-            
-            for idx, path_item in enumerate(paths_key):
-                view_name = f"dataset_{idx+1}"
-                conn.execute(text(f"DROP VIEW IF EXISTS {view_name};"))
-                reader = f"read_parquet('{path_item}')" if path_item.lower().endswith(".parquet") else f"read_csv_auto('{path_item}', sample_size=10000, nullstr='NULL')"
-                conn.execute(text(f"CREATE VIEW {view_name} AS SELECT row_number() OVER () AS row_id, * FROM {reader};"))
-            
+        from sqlalchemy import event
+        @event.listens_for(engine, "checkout")
+        def on_checkout(dbapi_connection, connection_record, connection_proxy):
+            cursor = dbapi_connection.cursor()
             try:
-                conn.commit()
-            except Exception:
-                pass
-                
+                # Instrumenting connection acquisition to definitively prove connection-scoping of views
+                logger.info(f"[DUCKDB_POOL] Checkout conn_id={id(dbapi_connection)}. Registering views...")
+                cursor.execute(f"CREATE OR REPLACE VIEW dataset AS SELECT row_number() OVER () AS row_id, * FROM ({union_sql})")
+                for idx, path_item in enumerate(paths_key):
+                    view_name = f"dataset_{idx+1}"
+                    reader = f"read_parquet('{path_item}')" if path_item.lower().endswith(".parquet") else f"read_csv_auto('{path_item}', sample_size=10000, nullstr='NULL')"
+                    cursor.execute(f"CREATE OR REPLACE VIEW {view_name} AS SELECT row_number() OVER () AS row_id, * FROM {reader}")
+                logger.info(f"[DUCKDB_POOL] Views registered successfully for conn_id={id(dbapi_connection)}")
+            except Exception as e:
+                logger.error(f"[DUCKDB_POOL] Failed to register views on checkout for conn_id={id(dbapi_connection)}: {e}")
+            finally:
+                cursor.close()
+
+        with engine.connect() as conn:
             res = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'dataset' AND column_name != 'row_id';"))
             columns = [row[0] for row in res.fetchall()]
 
@@ -225,6 +229,248 @@ def invalidate_duckdb_engine_cache(paths: List[str]):
                 eng.dispose()
             except Exception as e:
                 logger.debug(f"Error disposing evicted DuckDB engine: {e}")
+    with _COLUMN_VALUES_CACHE_LOCK:
+        keys_to_remove = [k for k in _COLUMN_VALUES_CACHE if k[0] == paths_key]
+        for k in keys_to_remove:
+            _COLUMN_VALUES_CACHE.pop(k, None)
+
+
+# -------------------------------------------------------------------------
+# Two-Stage Entity Resolution & Column Distinct Value Cache
+# -------------------------------------------------------------------------
+_COLUMN_VALUES_CACHE: Dict[Tuple[Tuple[str, ...], str], Tuple[float, List[str]]] = {}
+_COLUMN_VALUES_CACHE_LOCK = threading.Lock()
+_COLUMN_VALUES_CACHE_TTL_SECONDS = 600.0  # 10 minutes TTL
+_MAX_COLUMN_VALUES_CACHE_SIZE = 200
+
+def invalidate_column_values_cache(paths: Optional[List[str]] = None, column: Optional[str] = None):
+    """Evicts cached distinct column values on dataset reload or invalidation."""
+    paths_key = tuple(sorted(str(p).replace('\\', '/') for p in paths if p and os.path.exists(p))) if paths else None
+    with _COLUMN_VALUES_CACHE_LOCK:
+        keys_to_remove = [
+            k for k in _COLUMN_VALUES_CACHE
+            if (paths_key is None or k[0] == paths_key) and (column is None or k[1].lower() == column.lower())
+        ]
+        for k in keys_to_remove:
+            _COLUMN_VALUES_CACHE.pop(k, None)
+
+def _sanitize_column_identifier(column: str, available_columns: Optional[List[str]] = None) -> str:
+    """
+    Safely validates that the column exists in the dataset schema and wraps it in quotes.
+    Protects against SQL injection in column identifiers.
+    """
+    if not column or not str(column).strip():
+        raise ValueError("Column name cannot be empty.")
+    col_clean = str(column).strip()
+    if available_columns:
+        for c in available_columns:
+            if str(c).strip().lower() == col_clean.lower():
+                escaped = str(c).replace('"', '""')
+                return f'"{escaped}"'
+        raise ValueError(f"Column '{column}' not found in available dataset columns: {available_columns}")
+    if not re.match(r'^[a-zA-Z0-9_ \-\.\(\)]+$', col_clean):
+        raise ValueError(f"Invalid column identifier: {column}")
+    escaped = col_clean.replace('"', '""')
+    return f'"{escaped}"'
+
+def _infer_column_id_pattern(sample_values: List[str]) -> Optional[str]:
+    """
+    Samples distinct column values to infer a regex format (e.g. '^EMP\\d{4}$' or '^[A-Z]{2,}\\d+$').
+    """
+    if not sample_values:
+        return None
+    patterns = []
+    for val in sample_values[:20]:
+        val_str = str(val).strip()
+        m = re.match(r'^([A-Za-z]+)([-_]?)(\d+)$', val_str)
+        if m:
+            prefix, sep, digits = m.groups()
+            patterns.append((prefix.upper(), sep, len(digits)))
+    if patterns:
+        from collections import Counter
+        most_common = Counter(patterns).most_common(1)[0][0]
+        prefix, sep, d_len = most_common
+        sep_pattern = re.escape(sep) if sep else ""
+        return rf'^{re.escape(prefix)}{sep_pattern}\d{{{d_len}}}$'
+    return None
+
+def is_partial_entity_reference(reference: str, id_format_pattern: Optional[str] = None) -> bool:
+    """
+    Cheap detection step (No LLM):
+    Returns True if reference is a partial fragment (bare number, short alphanumeric token).
+    Returns False if reference is already well-formed according to format hint or standard ID patterns.
+    """
+    ref = str(reference).strip()
+    if not ref:
+        return False
+    # If a specific ID format pattern is available, test against it
+    if id_format_pattern:
+        if re.match(id_format_pattern, ref, re.IGNORECASE):
+            return False  # Well-formed match!
+        return True
+
+    # If reference contains SQL syntax, quotes, spaces, or injection characters,
+    # it is not a well-formed ID and must be treated as partial/malformed for safe parameterized lookup
+    if not re.match(r'^[A-Za-z0-9_-]+$', ref):
+        return True
+
+    # Bare numbers are always partial entity references (e.g. '9', '1004')
+    if ref.isdigit():
+        return True
+
+    # Standard well-formed IDs: prefix + optional separator + digits (e.g. EMP1004, ORD-9921, ITEM_12345)
+    if re.match(r'^[A-Za-z]{2,}[-_]?\d{3,}$', ref):
+        return False
+
+    # Short alphanumeric fragments (<= 4 chars) are partial (e.g. 'EMP9', 'A1', 'E10')
+    if len(ref) <= 4:
+        return True
+
+    return False
+
+def extract_candidate_entity_references(
+    query: str, 
+    id_format_pattern: Optional[str] = None
+) -> List[Tuple[str, bool]]:
+    """
+    Extracts candidate entity references from user query using lightweight regex/heuristics.
+    Returns a list of tuples: [(candidate_text, is_partial)].
+    """
+    candidates: List[Tuple[str, bool]] = []
+    seen = set()
+
+    # 1. Well-formed IDs: e.g. EMP1004, PROD-102
+    for m in re.finditer(r'\b[A-Za-z]{2,}[-_]?\d+\b', query):
+        tok = m.group(0)
+        if tok.lower() not in seen:
+            seen.add(tok.lower())
+            is_part = is_partial_entity_reference(tok, id_format_pattern)
+            candidates.append((tok, is_part))
+
+    # 2. Conjoined partial fragments (e.g. "EMP1004 or 9", "EMP1004 and 1009", "EMP1004, 9")
+    for m in re.finditer(r'(?:or|and|,)\s+([A-Za-z0-9_-]{1,8})\b', query, re.IGNORECASE):
+        tok = m.group(1).strip()
+        stopwords = {'the', 'a', 'an', 'in', 'on', 'at', 'to', 'for', 'of', 'by', 'is', 'are', 'not', 'all', 'both'}
+        if tok.lower() not in stopwords and tok.lower() not in seen:
+            seen.add(tok.lower())
+            is_part = is_partial_entity_reference(tok, id_format_pattern)
+            candidates.append((tok, is_part))
+
+    # 3. Entity keyword preceded fragments (e.g. "id 9", "employee 9", "code 9", "emp #9")
+    for m in re.finditer(r'\b(?:id|employee|emp|code|no|number|num|part|sku|item)\b\s*(?:#|no|number|id)?\s*[:=]?\s*([A-Za-z0-9_-]{1,8})\b', query, re.IGNORECASE):
+        tok = m.group(1).strip()
+        stopwords = {'is', 'the', 'of', 'for', 'show', 'all', 'details'}
+        if tok.lower() not in stopwords and tok.lower() not in seen:
+            seen.add(tok.lower())
+            is_part = is_partial_entity_reference(tok, id_format_pattern)
+            candidates.append((tok, is_part))
+
+    return candidates
+
+class EntityResolutionResult(dict):
+    """
+    Dictionary mapping original fragment -> resolved matches list,
+    with convenience properties for exact_matches, ambiguous_matches, and unresolved.
+    """
+    def __init__(self, mapping: Dict[str, List[str]]):
+        super().__init__(mapping)
+        self.exact_matches: Dict[str, str] = {k: v[0] for k, v in mapping.items() if len(v) == 1}
+        self.ambiguous_matches: Dict[str, List[str]] = {k: v for k, v in mapping.items() if len(v) > 1}
+        self.unresolved: List[str] = [k for k, v in mapping.items() if len(v) == 0]
+
+def resolve_partial_entities(
+    query_entities: List[str],
+    column: str,
+    engine: Any,
+    dataset_paths: Optional[List[str]] = None,
+    available_columns: Optional[List[str]] = None,
+    id_format_pattern: Optional[str] = None,
+) -> EntityResolutionResult:
+    """
+    DuckDB-based entity resolution step. Runs BEFORE SQL-generation LLM call.
+    Parameterizes column safely and uses parameter binding for search fragments.
+    Caches distinct column values to avoid full table rescans.
+    Logs each attempt at INFO level with TELEMETRY format.
+    """
+    results: Dict[str, List[str]] = {}
+    if not query_entities:
+        return EntityResolutionResult(results)
+
+    safe_col = _sanitize_column_identifier(column, available_columns)
+    paths_key = tuple(sorted(str(p).replace('\\', '/') for p in dataset_paths if p and os.path.exists(p))) if dataset_paths else ()
+
+    # Check distinct values cache
+    cached_values: Optional[List[str]] = None
+    now = time.time()
+    with _COLUMN_VALUES_CACHE_LOCK:
+        if paths_key and (paths_key, column.lower()) in _COLUMN_VALUES_CACHE:
+            ts, vals = _COLUMN_VALUES_CACHE[(paths_key, column.lower())]
+            if now - ts <= _COLUMN_VALUES_CACHE_TTL_SECONDS:
+                cached_values = vals
+
+    for entity in query_entities:
+        frag = str(entity).strip()
+        if not frag:
+            continue
+
+        # Fast path check: if entity is well-formed according to pattern, bypass lookup
+        if not is_partial_entity_reference(frag, id_format_pattern):
+            logger.info(f"[TELEMETRY] [ENTITY_RESOLUTION] Fast path bypassed for well-formed entity '{frag}' on column {safe_col}")
+            results[frag] = [frag]
+            continue
+
+        t0 = time.time()
+        matches: List[str] = []
+
+        if cached_values is not None:
+            # In-memory scan over cached distinct values (<0.05ms)
+            frag_lower = frag.lower()
+            exact = [v for v in cached_values if str(v).lower() == frag_lower]
+            suffix = [v for v in cached_values if str(v).lower().endswith(frag_lower) and v not in exact]
+            contains = [v for v in cached_values if frag_lower in str(v).lower() and v not in exact and v not in suffix]
+            matches = exact or (suffix + contains)
+        else:
+            # Query DuckDB with parameter binding (:pat)
+            try:
+                query_sql = f"SELECT DISTINCT {safe_col} FROM dataset WHERE {safe_col} IS NOT NULL AND CAST({safe_col} AS VARCHAR) ILIKE :pat LIMIT 50;"
+                param = f"%{frag}%"
+                with engine.connect() as conn:
+                    db_res = conn.execute(text(query_sql), {"pat": param}).fetchall()
+                    raw_matches = [str(r[0]) for r in db_res if r[0] is not None]
+                    
+                    frag_lower = frag.lower()
+                    exact = [m for m in raw_matches if m.lower() == frag_lower]
+                    suffix_matches = [m for m in raw_matches if m.lower().endswith(frag_lower) and m not in exact]
+                    other_matches = [m for m in raw_matches if not m.lower().endswith(frag_lower) and m not in exact]
+                    matches = exact or (suffix_matches + other_matches)
+
+                # Populate column values cache if not yet cached
+                if paths_key:
+                    try:
+                        with engine.connect() as conn:
+                            all_res = conn.execute(text(f"SELECT DISTINCT {safe_col} FROM dataset WHERE {safe_col} IS NOT NULL LIMIT 10000;")).fetchall()
+                            all_vals = [str(r[0]) for r in all_res if r[0] is not None]
+                            with _COLUMN_VALUES_CACHE_LOCK:
+                                if len(_COLUMN_VALUES_CACHE) >= _MAX_COLUMN_VALUES_CACHE_SIZE:
+                                    oldest_k = min(_COLUMN_VALUES_CACHE.keys(), key=lambda k: _COLUMN_VALUES_CACHE[k][0])
+                                    _COLUMN_VALUES_CACHE.pop(oldest_k, None)
+                                _COLUMN_VALUES_CACHE[(paths_key, column.lower())] = (time.time(), all_vals)
+                                cached_values = all_vals
+                    except Exception as cache_err:
+                        logger.debug(f"Failed to populate column values cache: {cache_err}")
+
+            except Exception as q_err:
+                logger.error(f"[ENTITY_RESOLUTION] DuckDB resolution query failed for '{frag}': {q_err}")
+                matches = []
+
+        latency_ms = (time.time() - t0) * 1000.0
+        logger.info(
+            f"[TELEMETRY] [ENTITY_RESOLUTION] column='{column}', fragment='{frag}', "
+            f"matches_found={len(matches)}, matches={matches[:5]}, latency={latency_ms:.2f}ms"
+        )
+        results[frag] = matches
+
+    return EntityResolutionResult(results)
 
 
 class PandasQueryEngine:
@@ -243,7 +489,7 @@ class PandasQueryEngine:
         
         api_key = getattr(settings, "deepinfra_api_key", "")
         base_url = getattr(settings, "deepinfra_api_url", "https://api.deepinfra.com/v1/openai")
-        model_name = settings.model_answer
+        model_name = getattr(settings, "sql_generation_model", "deepseek-ai/DeepSeek-V4-Flash-0731")
         self.llm = ChatOpenAI(
             model=model_name,
             api_key=api_key,
@@ -292,6 +538,31 @@ class PandasQueryEngine:
         except Exception as e:
             logger.warning(f"Failed fetching schema columns for routing: {e}")
             return []
+
+    @staticmethod
+    def _format_table_results(rows: list, col_names: list) -> str:
+        """Helper to format SQL rows and columns into clean markdown presentation."""
+        formatted = ""
+        if len(rows) == 1 and len(col_names) == 1:
+            val = rows[0][0]
+            formatted += f"**{val}**"
+        elif len(rows) == 1:
+            parts = []
+            for k, v in zip(col_names, rows[0]):
+                parts.append(f"- **{k}**: {v if v is not None else 'NULL'}")
+            formatted += "\n".join(parts)
+        else:
+            headers = " | ".join(str(c) for c in col_names)
+            sep = " | ".join("---" for _ in col_names)
+            formatted += f"| {headers} |\n| {sep} |\n"
+            for r in rows[:100]:
+                row_str = " | ".join(str(item) if item is not None else "NULL" for item in r)
+                formatted += f"| {row_str} |\n"
+        
+        formatted = re.sub(r'<think>.*?</think>', '', formatted, flags=re.DOTALL).strip()
+        if '<think>' in formatted:
+            formatted = formatted[:formatted.index('<think>')].strip()
+        return formatted
 
     async def _synthesize_analytical_response(self, question: str, table_md: str, explanation: str) -> str:
         """Synthesizes an executive natural-language answer from SQL table results for comparative or analytical queries."""
@@ -353,7 +624,14 @@ class PandasQueryEngine:
                 return path  # Return original - caller will catch os.path.exists failure
         return path
 
-    async def execute_query(self, query: str, data_path: Optional[str] = None) -> Optional[str]:
+    async def execute_query(
+        self, 
+        query: str, 
+        data_path: Optional[str] = None, 
+        dataset_schema: Optional[Dict] = None, 
+        categorical_values: Optional[Dict] = None,
+        disambiguation_mode: Literal["prompt_enrichment", "clarify"] = "prompt_enrichment"
+    ) -> Optional[str]:
         raw_path = data_path or getattr(self, "data_path", None)
         # Resolve S3/HTTPS URLs to local temp files before DuckDB can read them
         target_path = await self._resolve_to_local_path(raw_path) if raw_path else None
@@ -371,13 +649,112 @@ class PandasQueryEngine:
             engine, columns, acq_ms = await asyncio.to_thread(get_pooled_duckdb_engine, paths_to_register)
             logger.info(f"[TELEMETRY] DuckDB engine acquisition completed in {acq_ms:.2f}ms")
 
+            # 2.4 TWO-STAGE ENTITY RESOLUTION PRE-PROCESSING
+            resolved_query = query
+            id_columns = [
+                c for c in columns 
+                if any(kw in str(c).lower() for kw in ['id', 'code', 'no', 'number', 'num', 'key', 'sku', 'part'])
+            ]
+            target_id_col = None
+            for c in id_columns:
+                if str(c).lower() in query.lower():
+                    target_id_col = str(c)
+                    break
+            if not target_id_col and id_columns:
+                target_id_col = str(id_columns[0])
+
+            if target_id_col:
+                id_pattern = None
+                paths_key = tuple(sorted(str(p).replace('\\', '/') for p in paths_to_register if p and os.path.exists(p)))
+                with _COLUMN_VALUES_CACHE_LOCK:
+                    cached_entry = _COLUMN_VALUES_CACHE.get((paths_key, target_id_col.lower()))
+                    if cached_entry:
+                        id_pattern = _infer_column_id_pattern(cached_entry[1])
+
+                candidates = extract_candidate_entity_references(query, id_pattern)
+                partial_candidates = [cand for cand, is_part in candidates if is_part]
+
+                if partial_candidates:
+                    resolution = await asyncio.to_thread(
+                        resolve_partial_entities,
+                        partial_candidates,
+                        column=target_id_col,
+                        engine=engine,
+                        dataset_paths=paths_to_register,
+                        available_columns=columns,
+                        id_format_pattern=id_pattern
+                    )
+
+                    # Branch 1: Exactly 1 match -> substitute resolved ID
+                    for frag, resolved_id in resolution.exact_matches.items():
+                        resolved_query = re.sub(r'\b' + re.escape(frag) + r'\b', resolved_id, resolved_query)
+                        logger.info(f"[ENTITY_RESOLUTION] Substituted partial entity '{frag}' -> '{resolved_id}' in query.")
+
+                    # Branch 2: Multiple matches -> clarify or enrich prompt context
+                    if resolution.ambiguous_matches:
+                        if disambiguation_mode == "clarify":
+                            ambig_parts = [f"'{frag}': {', '.join(matches)}" for frag, matches in resolution.ambiguous_matches.items()]
+                            return f"Multiple candidates found for partial reference(s): {'; '.join(ambig_parts)}. Please specify the full identifier."
+                        else:
+                            ctx_notes = "; ".join(f"Candidates for '{frag}': {', '.join(matches)}" for frag, matches in resolution.ambiguous_matches.items())
+                            resolved_query += f"\n[Entity Disambiguation Context: {ctx_notes} — use query context to disambiguate or include all matching candidate identifiers]"
+                            logger.info(f"[ENTITY_RESOLUTION] Enriched prompt with candidate identifiers: {ctx_notes}")
+
+                    # Branch 3: Zero matches -> leaves query as-is
+
+            # 2.5 FAST-PATH TEMPLATE FOR SIMPLE FILTER QUERIES
+            fast_path_matched = False
+            fast_path_rows = []
+            fast_path_col_names = []
+            fast_sql = ""
+            query_plan = None
+            query_lower = resolved_query.lower()
+            complex_keywords = ['sum', 'average', 'count', 'group by', 'order by', '>', '<', '=', 'between', 'max', 'min', 'total', 'highest', 'lowest', 'senior', 'first', 'last', 'how many']
+            
+            from app.modules.rag.schema_utils import get_schema_columns
+            text_columns = get_schema_columns(dataset_schema, categorical_values)
+            if not text_columns:
+                text_columns = columns
+                
+            if len(resolved_query.split()) <= 15 and not any(k in query_lower for k in complex_keywords):
+                target_cols = [c for c in columns if str(c).lower() in query_lower and len(str(c)) > 2]
+                if target_cols:
+                    stopwords = {'what', 'is', 'the', 'of', 'for', 'show', 'me', 'details', 'who', 'has', 'whose', 'tell', 'about', 'and', 'or', "'s"}
+                    words = [w.strip("?.,;'\"") for w in query_lower.split()]
+                    entity_tokens = [w for w in words if w not in stopwords and all(w not in str(c).lower() for c in target_cols)]
+                    
+                    if 0 < len(entity_tokens) <= 3 and any(not t.isnumeric() for t in entity_tokens):
+                        fast_path_matched = True
+                        select_clause = ", ".join(f'"{c}"' for c in target_cols)
+                        concat_expr = "CONCAT_WS(' ', " + ", ".join(f'CAST("{c}" AS VARCHAR)' for c in text_columns) + ")"
+                        where_clauses = " AND ".join(f"{concat_expr} ILIKE :p{i}" for i in range(len(entity_tokens)))
+                        params = {f"p{i}": f"%{t}%" for i, t in enumerate(entity_tokens)}
+                        
+                        fast_sql = f"SELECT {select_clause} FROM dataset WHERE {where_clauses} LIMIT 10;"
+                        logger.info(f"Fast-path heuristic triggered: {fast_sql} with params {params}")
+                        
+                        try:
+                            def _execute_fast_sql(sql_str, p):
+                                with engine.connect() as conn:
+                                    res = conn.execute(text(sql_str), p)
+                                    return res.fetchall(), list(res.keys())
+                            
+                            fast_path_rows, fast_path_col_names = await asyncio.to_thread(_execute_fast_sql, fast_sql, params)
+                            if fast_path_rows:
+                                logger.info(f"Fast-path matched and returned {len(fast_path_rows)} rows. Bypassing LLM generation.")
+                                return self._format_table_results(fast_path_rows, fast_path_col_names)
+                            else:
+                                logger.info(f"Fast-path executed cleanly but returned 0 rows. Falling through to full LLM generation.")
+                        except Exception as fp_err:
+                            logger.warning(f"Fast-path template failed: {fp_err}. Falling through to full LLM generation.")
+
             # 3. GENERATE DUCKDB SQL DIRECTLY
             prompt = ChatPromptTemplate.from_messages([
-                ("system", 
-                 "You are an enterprise data engine and SQL expert. Convert the user's natural language question into a clean, read-only DuckDB SELECT SQL query on the view named 'dataset'.\n\n"
-                 "Available columns in 'dataset':\n{columns}\n\n"
-                 "CRITICAL RULES FOR DUCKDB SQL:\n"
-                 "1. Table name MUST ALWAYS be 'dataset'.\n"
+                    ("system", 
+                     "You are an enterprise data engine and SQL expert. Convert the user's natural language question into a clean, read-only DuckDB SELECT SQL query on the view named \"dataset\".\n\n"
+                     "Available columns in 'dataset':\n{columns}\n\n"
+                     "CRITICAL RULES FOR DUCKDB SQL:\n"
+                     "1. Table name MUST ALWAYS be dataset (unquoted).\n"
                  "2. COLUMN NAMES WITH SPACES OR SYMBOLS: You MUST ALWAYS wrap column names containing spaces, punctuation, or special characters in DOUBLE QUOTES (e.g., \"Customer ID\", \"Customer Name\", \"Total Amount\"). NEVER write unquoted multi-word column names like Customer ID.\n"
                  "3. When performing mathematical calculations (SUM, AVG, arithmetic) on string/varchar columns, ALWAYS wrap the column in TRY_CAST(\"col\" AS DOUBLE), e.g., SUM(TRY_CAST(\"exchange_rate\" AS DOUBLE)), AVG(TRY_CAST(\"exchange_rate\" AS DOUBLE)), to prevent type conversion issues.\n"
                  "4. For counting total records, use SELECT COUNT(*) AS total_records FROM dataset;\n"
@@ -390,7 +767,7 @@ class PandasQueryEngine:
                  "11. Output ONLY valid JSON matching the schema with 'sql' and 'explanation'.\n"
                  "12. In your 'explanation' string, NEVER use the words 'error', 'errors', 'exception', or 'fail' (use 'issues' or 'problems' instead).\n"
                  "13. For extracting YEAR, MONTH, or date parts from timestamp columns, ALWAYS cast to timestamp first: EXTRACT(YEAR FROM TRY_CAST(\"col\" AS TIMESTAMP)).\n"
-                 "14. NO PROXY METRICS: If the user asks for information or columns that DO NOT EXIST in the schema (e.g. 'Age', 'wholesale price', 'CEO'), DO NOT hallucinate or substitute an unrelated column to estimate it (e.g. DO NOT use 'Hire Date' to calculate 'Age'). You MUST generate exactly: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset.\n"
+                 "14. NO PROXY METRICS: If the user asks for analytical/aggregate calculations (e.g. 'average age', 'total wholesale price', 'count by CEO') on columns that DO NOT EXIST in the schema, DO NOT hallucinate or substitute an unrelated column to estimate it (e.g. DO NOT use 'Hire Date' to calculate 'Age'). You MUST generate exactly: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset. NOTE: This rule applies ONLY to aggregate/analytical queries, NOT to entity record lookups (see Rule 19).\n"
                  "15. STRING FILTERING & ENTITY MATCHING: When filtering string columns (e.g. employee names, IDs, departments in WHERE clauses), NEVER use exact '=' or 'LOWER(col) = ...' with mismatching case. Instead, ALWAYS use case-insensitive matching using the ILIKE operator (e.g., \"Employee ID\" ILIKE 'EMP1005' or \"Employee Name\" ILIKE '%Matthew%') so that case differences or spacing never cause zero results.\n"
                  "16. COMPARATIVE & SUPERLATIVE QUERIES: When the user asks to compare two or more entities (e.g. 'who has higher salary', 'compare the salary of both', 'who is better', 'who earns more', 'which has better'):\n"
                  "   - If the query mentions 'both', 'all', or does not specify explicit employee names, DO NOT filter with WHERE name = 'both'. Instead, select all rows from dataset and ORDER BY the comparison metric DESC (e.g., SELECT * FROM dataset ORDER BY TRY_CAST(\"Salary\" AS DOUBLE) DESC LIMIT 10;).\n"
@@ -404,8 +781,10 @@ class PandasQueryEngine:
                  "   - When the user asks for the 'first row(s)', 'first N rows', 'first record(s)', 'first entry', or 'first movie/item in the dataset/excel/table', select directly from top: SELECT * FROM dataset LIMIT N;\n"
                  "   - When the user asks for 'latest', 'newest', or 'most recent' by date/release date, cast date strings to DATE and order DESCENDING: ORDER BY TRY_CAST(\"Release_Date\" AS DATE) DESC LIMIT N;\n"
                  "   - When the user asks for 'oldest' or 'earliest' by date, order ASCENDING: ORDER BY TRY_CAST(\"Release_Date\" AS DATE) ASC LIMIT N;\n"
-                 "19. SPECIFIC RECORD DETAILS LOOKUP, STRING APOSTROPHES & LENGTH GUARDS:\n"
-                 "   - When asking for 'details', 'full details', or information about a specific movie, person, or title (e.g. 'Ron''s Gone Wrong full details', 'details of King''s Man'), generate a SELECT * FROM dataset WHERE LOWER(\"Title\") LIKE '%ron%gone%wrong%'; (or corresponding name column). NEVER generate a COUNT(*) aggregation query when the user asks for details of a specific item!\n"
+                 "19. SPECIFIC RECORD DETAILS & ATTRIBUTE LOOKUPS (phone, mobile, email, address, etc.):\n"
+                 "   - When asking for details or specific attributes (e.g. 'Mobile number for APR Tech', 'phone number for APR Tech', 'address of Accord Engineering', 'email for Acme Corp', 'Ron''s Gone Wrong full details'):\n"
+                 "     * If the exact attribute column name is not explicitly and unambiguously present in the schema, you MUST use SELECT * FROM dataset WHERE ... so that the full record is returned for the Answer LLM to extract the requested field. NEVER guess or invent non-existent column names (like \"Mobile Number\" or \"Phone Number\") if they do not exist in the available columns list!\n"
+                 "     * Filter by the entity using case-insensitive matching across text columns, e.g. WHERE LOWER(CAST(dataset AS VARCHAR)) LIKE '%apr tech%' or candidate text columns with LIMIT 5.\n"
                  "   - When a title or search string contains an apostrophe or single quote (''), you MUST escape it by doubling the single quote in SQL (e.g., '%ron''s gone wrong%') OR omit the apostrophe using wildcards (e.g., '%ron%gone%wrong%').\n"
                  "   - When querying general details without an explicit WHERE name/title filter (e.g. 'show me all movies' or general overview), ALWAYS append LIMIT 10 to prevent large result sets from causing token overflow.\n"
                  "20. PART NUMBERS, REPAIR KITS, MRP & SKU LOOKUPS:\n"
@@ -421,7 +800,7 @@ class PandasQueryEngine:
             
             query_plan_dict = await chain.ainvoke({
                 "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns), 
-                "question": query
+                "question": resolved_query
             })
             query_plan = DuckDBSemanticQuery(**query_plan_dict)
             
@@ -437,6 +816,7 @@ class PandasQueryEngine:
             
             logger.info(f"Generated DuckDB SQL: {sql_query} | Explanation: {query_plan.explanation}")
             
+            
             # Defense-in-depth SQL security validation
             sec_err = validate_sql_security(sql_query)
             if sec_err:
@@ -451,6 +831,7 @@ class PandasQueryEngine:
                     res = conn.execute(text(sql_str))
                     return res.fetchall(), list(res.keys())
                     
+            failed_sql_query = sql_query
             try:
                 rows, col_names = await asyncio.to_thread(_execute_sql, sql_query)
             except Exception as e:
@@ -464,7 +845,9 @@ class PandasQueryEngine:
                          "1. Return ONLY valid JSON with 'sql' and 'explanation'. No markdown, no <think> tags.\n"
                          "2. ALWAYS enclose column names containing spaces or symbols in DOUBLE QUOTES (e.g. \"Customer ID\").\n"
                          "3. When searching for strings containing apostrophes or single quotes (e.g. 'Ron''s Gone Wrong'), double the single quotes in SQL ('%ron''s gone wrong%') or use wildcards ('%ron%gone%wrong%').\n"
-                         "4. NO PROXY METRICS: If the DuckDB Error Message indicates that a column requested by the user does not exist (e.g. 'Referenced column \"Age\" not found'), DO NOT hallucinate or substitute an unrelated column (e.g. DO NOT use 'Hire Date' to estimate 'Age'). You MUST return exactly: SELECT 'not present in dataset' AS info WHERE FALSE;\n"
+                         "4. COLUMN NOT FOUND REPAIR: If the DuckDB Error Message indicates that a requested column does not exist (e.g. 'Referenced column \"Mobile Number\" not found'):\n"
+                         "   - If the query has a WHERE filter searching for an entity/person/company/record: DO NOT return WHERE FALSE. Instead, change the SELECT clause to SELECT * FROM dataset WHERE ... LIMIT 5 so that the entity record is retrieved with all its available fields!\n"
+                         "   - ONLY return SELECT 'not present in dataset' AS info WHERE FALSE; if the query requested an aggregate calculation on a non-existent metric and no entity was being looked up.\n"
                          "5. The query MUST be a read-only DuckDB SELECT on table 'dataset'."),
                         ("user",
                          "User Question: {question}\n\nFailed SQL Query:\n{sql}\n\nDuckDB Error Message:\n{error}\n\nProvide the corrected DuckDB SQL query in valid JSON.")
@@ -472,7 +855,7 @@ class PandasQueryEngine:
                     repair_chain = repair_prompt | self.llm | StrOutputParser() | parse_json_from_thinking
                     repaired_dict = await repair_chain.ainvoke({
                         "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns),
-                        "question": query,
+                        "question": resolved_query,
                         "sql": sql_query,
                         "error": str(e)
                     })
@@ -483,6 +866,25 @@ class PandasQueryEngine:
                     sec_err_repair = validate_sql_security(sql_query)
                     if sec_err_repair:
                         return sec_err_repair
+                    
+                    # Programmatic safety net: If self-healing defaulted to WHERE FALSE because a specific
+                    # attribute column (e.g. "Mobile Number", "phone", "email") wasn't in the schema, but the
+                    # query was filtering for an entity/record, rewrite the failed query to SELECT *
+                    if "WHERE FALSE" in sql_query.upper() and ("referenced column" in str(e).lower() or "binder error" in str(e).lower()):
+                        where_match = re.search(r'(WHERE\s+.+?)(?:LIMIT|\;|$)', failed_sql_query, re.IGNORECASE)
+                        if where_match:
+                            fb_where = where_match.group(1).strip().rstrip(";")
+                            fallback_sql = f"SELECT * FROM dataset {fb_where} LIMIT 5;"
+                            try:
+                                fb_sec_err = validate_sql_security(fallback_sql)
+                                if not fb_sec_err:
+                                    fb_rows, fb_cols = await asyncio.to_thread(_execute_sql, fallback_sql)
+                                    if fb_rows:
+                                        logger.info(f"[SELF_HEAL] Entity attribute fallback recovered {len(fb_rows)} row(s) via SELECT * on WHERE filter: {fallback_sql}")
+                                        sql_query = fallback_sql
+                                        repaired_plan = DuckDBSemanticQuery(sql=fallback_sql, explanation="Retrieved matching record details from dataset.")
+                            except Exception as fb_err:
+                                logger.warning(f"[SELF_HEAL] Fallback SELECT * execution failed: {fb_err}")
                     
                     rows, col_names = await asyncio.to_thread(_execute_sql, sql_query)
                     query_plan = repaired_plan
@@ -517,7 +919,7 @@ class PandasQueryEngine:
                     fuzzy_chain = fuzzy_prompt | self.llm | StrOutputParser() | parse_json_from_thinking
                     fuzzy_dict = await fuzzy_chain.ainvoke({
                         "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns),
-                        "question": query,
+                        "question": resolved_query,
                         "sql": sql_query
                     })
                     fuzzy_plan = DuckDBSemanticQuery(**fuzzy_dict)
@@ -525,14 +927,15 @@ class PandasQueryEngine:
                     
                     def _has_unparenthesized_or_and(sql: str) -> bool:
                         where_clause = sql.split("WHERE", 1)[-1] if "WHERE" in sql.upper() else sql
-                        return bool(re.search(r"\bOR\b(?!.*\)).*\bAND\b", where_clause, re.IGNORECASE)) \
+                        return bool(re.search(r"\bOR\b", where_clause, re.IGNORECASE)) \
+                            and bool(re.search(r"\bAND\b", where_clause, re.IGNORECASE)) \
                             and "(" not in where_clause
                             
                     if _has_unparenthesized_or_and(sql_query):
                         logger.warning(f"Unparenthesized OR...AND detected in generated SQL: {sql_query}. Auto-wrapping OR conditions in parentheses.")
-                        if " WHERE " in sql_query.upper():
-                            # Crude but effective programmatic wrap
-                            parts = re.split(r'\bWHERE\b', sql_query, maxsplit=1, flags=re.IGNORECASE)
+                        # Crude but effective programmatic wrap
+                        parts = re.split(r'\bWHERE\b', sql_query, maxsplit=1, flags=re.IGNORECASE)
+                        if len(parts) > 1:
                             where_part = parts[1]
                             # Split by AND, wrap any part containing OR
                             and_parts = re.split(r'\bAND\b', where_part, flags=re.IGNORECASE)
@@ -549,34 +952,29 @@ class PandasQueryEngine:
                     logger.warning(f"Fuzzy retry failed: {fuzzy_err}")
 
             if not rows:
-                return f"Error: {query_plan.explanation}\nNo records matched your query. Not present in dataset."
-                
-            formatted = ""
-            # Format clean, enterprise-grade response
-            if len(rows) == 1 and len(col_names) == 1:
-                val = rows[0][0]
-                formatted += f"**{val}**"
-            elif len(rows) == 1:
-                parts = []
-                for k, v in zip(col_names, rows[0]):
-                    parts.append(f"- **{k}**: {v if v is not None else 'NULL'}")
-                formatted += "\n".join(parts)
-            else:
-                headers = " | ".join(str(c) for c in col_names)
-                sep = " | ".join("---" for _ in col_names)
-                formatted += f"| {headers} |\n| {sep} |\n"
-                for r in rows[:100]:
-                    row_str = " | ".join(str(item) if item is not None else "NULL" for item in r)
-                    formatted += f"| {row_str} |\n"
+                logger.info(f"Layer 3 returned 0 rows. Attempting Layer 4 programmatic ILIKE fallback for semantic search replacement.")
+                try:
+                    stopwords = {"what", "when", "this", "that", "code", "data", "info", "find", "how", "why", "where", "which", "with", "does", "then", "from", "they", "tell", "about", "show", "give", "list", "all", "some"}
+                    keywords = [w.strip("?'\".,!") for w in query.split() if len(w.strip("?'\".,!")) > 3 and w.lower() not in stopwords]
+                    if keywords:
+                        fallback_conditions = []
+                        for kw in keywords:
+                            safe_kw = kw.replace("'", "''").replace("%", "")
+                            col_conditions = [f"CAST(\"{c}\" AS VARCHAR) ILIKE '%{safe_kw}%'" for c in columns]
+                            fallback_conditions.append("(" + " OR ".join(col_conditions) + ")")
+                        
+                        if fallback_conditions:
+                            fallback_sql = f"SELECT * FROM dataset WHERE {' OR '.join(fallback_conditions)} LIMIT 25;"
+                            logger.info(f"Layer 4 Programmatic ILIKE Fallback SQL: {fallback_sql}")
+                            rows, col_names = await asyncio.to_thread(_execute_sql, fallback_sql)
+                            if rows:
+                                query_plan.explanation = "Used fuzzy semantic keyword search across all columns."
+                except Exception as l4_err:
+                    logger.warning(f"Layer 4 programmatic fallback failed: {l4_err}")
                     
-            # 6. UNIVERSAL NATURAL-LANGUAGE SYNTHESIS
-            # (Removed redundant synthesis step. The final RAG LLM will read the formatted Markdown table directly, saving 20-60 seconds.)
-
-            # For large result sets (>50 rows): strip <think> and return formatted table
-            formatted = re.sub(r'<think>.*?</think>', '', formatted, flags=re.DOTALL).strip()
-            if '<think>' in formatted:
-                formatted = formatted[:formatted.index('<think>')].strip()
-            return formatted
+            if not rows:
+                return f"Error: {query_plan.explanation}\nNo records matched your query. Not present in dataset."
+            return self._format_table_results(rows, col_names)
             
         except Exception as e:
             logger.error(f"PandasQueryEngine Execution Failed: {e}", exc_info=True)

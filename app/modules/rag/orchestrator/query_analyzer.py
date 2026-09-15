@@ -273,7 +273,8 @@ QUERY:
                     metadata=metadata,
                     is_tabular=is_tabular,
                     confidence=float(data.get("confidence", 0.5)),
-                    reasoning=data.get("reasoning", "LLM determined")
+                    reasoning=data.get("reasoning", "LLM determined"),
+                    heuristic_fallback_used=False
                 )
                 
             except Exception as e:
@@ -304,5 +305,6 @@ QUERY:
                         ),
                         is_tabular=False,
                         confidence=0.5,
-                        reasoning=f"Provider timeout/error fallback. Original error: {e}"
+                        reasoning=f"Provider timeout/error fallback. Original error: {e}",
+                        heuristic_fallback_used=True
                     )

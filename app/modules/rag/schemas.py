@@ -11,6 +11,7 @@ class RAGQueryRequest(BaseModel):
     """User RAG query request (Hiding IDs in path)"""
 
     query: str = Field(..., min_length=5, max_length=2000, description="User query")
+    target_kb_id: Optional[str] = Field(None, description="User-selected KB ID to resolve ambiguous file routing")
     Reasoning: Optional[str] = Field("True", description="Whether to return detailed graph reasoning path")
     Memory: Optional[str] = Field("True", description="Whether to use conversational memory context")
     top_k: Optional[int] = Field(15, ge=5, le=50, description="Initial seed chunks")
@@ -19,6 +20,7 @@ class RAGQueryRequest(BaseModel):
     class Config:
         example = {
             "query": "What are the main concepts in this knowledge base?",
+            "target_kb_id": None,
             "Reasoning": "True",
             "Memory": "True",
         }
@@ -111,6 +113,7 @@ class RAGFeedbackRequest(BaseModel):
 
 class UnifiedChatRequest(BaseModel):
     query: str
+    target_kb_id: Optional[str] = None
     top_k: int = 10
     max_depth: int = 2
     session_id: Optional[str] = None
@@ -122,10 +125,25 @@ class UnifiedChatRequest(BaseModel):
             raise ValueError("Missing 'query' or 'message' field")
         return cls(
             query=query,
+            target_kb_id=payload.get("target_kb_id") or payload.get("selected_kb_id"),
             top_k=10,
             max_depth=2,
             session_id=payload.get("session_id"),
         )
+
+class CSVDisambiguationCandidate(BaseModel):
+    kb_id: str
+    filename: str
+    row_count: int
+    columns: List[str]
+    description: str
+
+class ClarificationNeededResponse(BaseModel):
+    type: str = "clarification_needed"
+    reason: str
+    message: str
+    candidates: List[CSVDisambiguationCandidate]
+    plain_text_fallback: str
 
 class RetrievalTask(BaseModel):
     """Shared task contract for vector engines and other retrieval modules"""

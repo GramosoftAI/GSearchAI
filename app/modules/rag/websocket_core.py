@@ -49,6 +49,8 @@ def _rag_chunk_to_loop_event(chunk: str) -> LoopEvent:
             parsed = json.loads(chunk)
             if parsed.get("type") == "metadata":
                 return LoopEvent(type="sources", sources=parsed.get("sources", []), triplets=parsed.get("triplets", []))
+            elif parsed.get("type") == "clarification_needed":
+                return LoopEvent(type="clarification_needed", text=parsed.get("plain_text_fallback"), clarification=parsed)
             elif "error" in parsed:
                 return LoopEvent(type="error", error_detail=parsed["error"])
     except (json.JSONDecodeError, TypeError):
@@ -205,12 +207,26 @@ async def run_unified_rag_websocket_loop(
                 skip_search=False,
                 top_k=request.top_k,
                 max_depth=request.max_depth,
-                memory_task=memory_task
+                memory_task=memory_task,
+                target_kb_id=request.target_kb_id
             ):
                 if chunk.startswith("{"):
                     try:
                         parsed = json.loads(chunk)
-                        if parsed.get("type") == "feedback_bypass":
+                        if parsed.get("type") == "clarification_needed":
+                            plain_fallback = parsed.get("plain_text_fallback", "Please choose a file.")
+                            response_buffer.append(plain_fallback)
+                            msg_metadata["clarification"] = parsed
+                            await adapter.send(
+                                websocket, 
+                                LoopEvent(
+                                    type="clarification_needed", 
+                                    text=plain_fallback, 
+                                    clarification=parsed
+                                )
+                            )
+                            break
+                        elif parsed.get("type") == "feedback_bypass":
                             ack = parsed["ack"]
                             router_category = parsed.get("router_category")
                             async with httpx.AsyncClient() as client:
@@ -344,47 +360,7 @@ async def run_unified_rag_websocket_loop(
                         assistant_message=full_response
                     ))
 
-            # 8. Analytics Query Logging
-            try:
-                from app.core.config import get_settings
-                settings = get_settings()
-                model_name = getattr(rag_service, "model_answer", None) or getattr(getattr(rag_service, "llm_client", None), "model_answer", None) or settings.model_answer
-                
-                in_tok = int(len(request.query.split()) * 1.3) + 50
-                out_tok = int(len(full_response.split()) * 1.3) + 10
-                tot_tok = in_tok + out_tok
-                
-                from app.core.llm.pricing import calculate_token_cost
-                cost_val = calculate_token_cost(model_name, in_tok, out_tok)
-                
-                from app.modules.analytics.repository import AnalyticsRepository
-                
-                t_uuid = UUID(str(tenant_id)) if tenant_id else None
-                u_uuid = UUID(str(user_id)) if user_id else None
-                s_uuid = UUID(str(active_session_id)) if active_session_id else None
-                
-                if t_uuid:
-                    latency_ms = (time.perf_counter() - start_time) * 1000.0
-                    analytics_repo = AnalyticsRepository(db, t_uuid)
-                    await analytics_repo.create_query_log({
-                        "query": request.query,
-                        "response_status": "SUCCESS",
-                        "confidence_score": 0.95,
-                        "latency_ms": latency_ms,
-                        "session_id": s_uuid,
-                        "user_id": u_uuid,
-                        "llm_input_tokens": in_tok,
-                        "llm_output_tokens": out_tok,
-                        "embedding_tokens": 0,
-                        "total_tokens": tot_tok,
-                        "llm_cost_usd": cost_val,
-                        "embedding_cost_usd": 0.0,
-                        "total_cost_usd": cost_val,
-                        "model_name": model_name,
-                    })
-                    await db.commit()
-            except Exception as analytics_err:
-                logger.warning(f"Failed to save AnalyticsQueryLog in websocket_core: {analytics_err}")
+            # 8. Analytics Query Logging (Removed redundant logging block, now handled entirely by RAG service layer)
 
             await adapter.send(websocket, LoopEvent(type="done"))
 

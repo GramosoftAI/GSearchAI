@@ -9,7 +9,14 @@ ID_REGEX_PATTERN = r'(?=.*\d)[a-zA-Z0-9-]{5,}'
 def get_schema_columns(dataset_schema: Optional[Dict[str, Any]], categorical_values: Optional[Dict[str, list]]) -> list[str]:
     cols = []
     if dataset_schema and "columns" in dataset_schema:
-        cols = list(dataset_schema["columns"].keys())
+        # If columns dict has type information as values (e.g., 'object', 'string', 'int64')
+        for col_name, col_info in dataset_schema["columns"].items():
+            col_type = str(col_info).lower()
+            # Include text, string, object, category types. Exclude purely numeric types (int, float, double)
+            if any(t in col_type for t in ["str", "obj", "char", "text", "cat"]) or not any(n in col_type for n in ["int", "float", "double", "num"]):
+                cols.append(col_name)
+        if not cols:
+            cols = list(dataset_schema["columns"].keys())
     elif isinstance(dataset_schema, dict) and dataset_schema:
         cols = list(dataset_schema.keys())
     elif categorical_values:

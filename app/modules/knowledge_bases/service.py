@@ -501,6 +501,7 @@ class KnowledgeBaseService:
         document_category: str = "general_document",
         structured_records: Optional[list] = None,
         progress_callback: Optional[callable] = None,
+        documents_list: Optional[list] = None,
     ) -> dict:
 
         """
@@ -617,6 +618,21 @@ class KnowledgeBaseService:
                 structured_chunks = StructuredChunker.chunk(structured_records)
                 chunks = [sc.text for sc in structured_chunks]
                 chunk_metadata_list = [sc.metadata for sc in structured_chunks]
+            elif documents_list:
+                from ...core.adaptive_chunker import AdaptiveChunker
+                chunks = []
+                chunk_metadata_list = []
+                for doc in documents_list:
+                    doc_chunks = await AdaptiveChunker.chunk(content=doc["content"], source_type="url")
+                    for i, c in enumerate(doc_chunks):
+                        chunks.append(c["chunk_text"])
+                        meta = c["metadata"].copy()
+                        meta["source_url"] = doc.get("url") or doc.get("source")
+                        meta["title"] = doc.get("metadata", {}).get("title", "")
+                        # Mark the last chunk of the document to prevent cross-document NEXT linking
+                        if i == len(doc_chunks) - 1:
+                            meta["_is_last_in_doc"] = True
+                        chunk_metadata_list.append(meta)
             else:
                 from ...core.adaptive_chunker import AdaptiveChunker
                 adaptive_chunks = await AdaptiveChunker.chunk(content=document_text, source_type=source_type)
@@ -650,11 +666,23 @@ class KnowledgeBaseService:
                 sec_str = str(sec).strip() if sec is not None else ""
                 
                 if sec_str and sec_str.lower() not in generic_sections:
-                    prefix = f"Document: {kb_name_str} | Section: {sec_str}"
+                    if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i].get("source_url"):
+                        title_str = chunk_metadata_list[i].get("title", "")
+                        prefix = f"Source: {chunk_metadata_list[i]['source_url']} | Title: {title_str} | Section: {sec_str}"
+                    else:
+                        prefix = f"Document: {kb_name_str} | Section: {sec_str}"
                 elif has_specific_category:
-                    prefix = f"Document: {kb_name_str} | Type: {clean_category}"
+                    if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i].get("source_url"):
+                        title_str = chunk_metadata_list[i].get("title", "")
+                        prefix = f"Source: {chunk_metadata_list[i]['source_url']} | Title: {title_str} | Type: {clean_category}"
+                    else:
+                        prefix = f"Document: {kb_name_str} | Type: {clean_category}"
                 else:
-                    prefix = f"Document: {kb_name_str}"
+                    if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i].get("source_url"):
+                        title_str = chunk_metadata_list[i].get("title", "")
+                        prefix = f"Source: {chunk_metadata_list[i]['source_url']} | Title: {title_str}"
+                    else:
+                        prefix = f"Document: {kb_name_str}"
                 
                 if len(prefix) > 150:
                     prefix = prefix[:147] + "..."
@@ -1042,15 +1070,47 @@ class KnowledgeBaseService:
             # 6. COMPUTE SEMANTIC SIMILARITIES
             similar_pairs = []
             if len(embeddings) < settings.similarity_brute_force_threshold:
-                for i in range(len(embeddings)):
-                    for j in range(i + 1, len(embeddings)):
-                        sim = EmbeddingGenerator.cosine_similarity(embeddings[i], embeddings[j])
-                        if sim >= settings.similarity_min_threshold:
-                            similar_pairs.append({"chunk_id_1": chunk_ids[i], "chunk_id_2": chunk_ids[j], "similarity": sim})
+                try:
+                    import numpy as np
+                    # Vectorized similarity computation
+                    embeddings_matrix = np.array(embeddings)
+                    # L2 normalize rows
+                    norm = np.linalg.norm(embeddings_matrix, axis=1, keepdims=True)
+                    # Handle zero norms to avoid division by zero
+                    norm[norm == 0] = 1e-10
+                    normed = embeddings_matrix / norm
+                    # Full similarity matrix
+                    sim_matrix = normed @ normed.T
+                    
+                    # Extract upper triangle (i < j)
+                    i_indices, j_indices = np.triu_indices_from(sim_matrix, k=1)
+                    
+                    # Filter by threshold
+                    valid_mask = sim_matrix[i_indices, j_indices] >= settings.similarity_min_threshold
+                    valid_i = i_indices[valid_mask]
+                    valid_j = j_indices[valid_mask]
+                    valid_sims = sim_matrix[valid_i, valid_j]
+                    
+                    for idx in range(len(valid_i)):
+                        i = int(valid_i[idx])
+                        j = int(valid_j[idx])
+                        sim = float(valid_sims[idx])
+                        similar_pairs.append({"chunk_id_1": chunk_ids[i], "chunk_id_2": chunk_ids[j], "similarity": sim})
+                except ImportError:
+                    logger.warning("numpy not available, falling back to slow pairwise cosine similarity")
+                    for i in range(len(embeddings)):
+                        for j in range(i + 1, len(embeddings)):
+                            sim = EmbeddingGenerator.cosine_similarity(embeddings[i], embeddings[j])
+                            if sim >= settings.similarity_min_threshold:
+                                similar_pairs.append({"chunk_id_1": chunk_ids[i], "chunk_id_2": chunk_ids[j], "similarity": sim})
                 similar_pairs = sorted(similar_pairs, key=lambda x: x["similarity"], reverse=True)[:len(chunks) * settings.max_similar_per_chunk]
 
             # 7. PREPARE RELATIONSHIP DATA
-            next_data = [{"id1": chunk_ids[i], "id2": chunk_ids[i+1]} for i in range(len(chunk_ids)-1)]
+            next_data = []
+            for i in range(len(chunk_ids)-1):
+                # Do not create NEXT edges between chunks from different documents
+                if not (chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i].get("_is_last_in_doc")):
+                    next_data.append({"id1": chunk_ids[i], "id2": chunk_ids[i+1]})
 
             mentions_data = []
             for idx, ents in entities_by_chunk.items():
@@ -1078,6 +1138,8 @@ class KnowledgeBaseService:
             ):
                 try:
                     logger.info(f"Background Neo4j sync started for KB {kb_id_str} ({len(c_data)} chunks)...")
+                    NEO4J_WRITE_BATCH_SIZE = 100
+                    
                     batch_create_query = """
                     WITH $chunks AS chunk_list
                     UNWIND chunk_list AS data
@@ -1093,37 +1155,49 @@ class KnowledgeBaseService:
                     MATCH (kb:KnowledgeBase {id: data.kb_id, tenant_id: $tenant_id})
                     CREATE (kb)-[:HAS_CHUNK]->(c)
                     """
-                    await retry_neo4j_operation(lambda: neo4j_repo.execute_write(batch_create_query, {"chunks": c_data}))
+                    
+                    # Batch write Chunks
+                    for i in range(0, len(c_data), NEO4J_WRITE_BATCH_SIZE):
+                        batch = c_data[i:i+NEO4J_WRITE_BATCH_SIZE]
+                        try:
+                            await retry_neo4j_operation(lambda: neo4j_repo.execute_write(batch_create_query, {"chunks": batch}))
+                        except Exception as e:
+                            logger.error(f"[NEO4J_SYNC] Batch chunk creation failed at index {i} (size {len(batch)}): {e}")
+                            # Keep going to try to salvage remaining batches
 
-                    rel_tasks = []
-                    if n_data:
-                        rel_tasks.append(retry_neo4j_operation(lambda: neo4j_repo.execute_write(
-                            "UNWIND $rels AS r MATCH (c1:Chunk {id: r.id1, tenant_id: $tenant_id}) MATCH (c2:Chunk {id: r.id2, tenant_id: $tenant_id}) CREATE (c1)-[:NEXT]->(c2)",
-                            {"rels": n_data}
-                        )))
-                    if s_pairs:
-                        rel_tasks.append(retry_neo4j_operation(lambda: neo4j_repo.execute_write(
-                            "UNWIND $pairs AS p MATCH (c1:Chunk {id: p.chunk_id_1, tenant_id: $tenant_id}) MATCH (c2:Chunk {id: p.chunk_id_2, tenant_id: $tenant_id}) CREATE (c1)-[:SIMILAR {similarity: p.similarity}]->(c2) CREATE (c2)-[:SIMILAR {similarity: p.similarity}]->(c1)",
-                            {"pairs": s_pairs}
-                        )))
-                    if m_data:
-                        rel_tasks.append(retry_neo4j_operation(lambda: neo4j_repo.execute_write(
-                            "UNWIND $rels AS r MERGE (e:Entity {tenant_id: $tenant_id, text: r.text, type: r.type}) WITH e, r MATCH (c:Chunk {id: r.chunk_id, tenant_id: $tenant_id}) CREATE (c)-[:MENTIONS {confidence: r.conf}]->(e)",
-                            {"rels": m_data}
-                        )))
+                    # Batch write NEXT relationships
+                    next_query = "UNWIND $rels AS r MATCH (c1:Chunk {id: r.id1, tenant_id: $tenant_id}) MATCH (c2:Chunk {id: r.id2, tenant_id: $tenant_id}) CREATE (c1)-[:NEXT]->(c2)"
+                    for i in range(0, len(n_data), NEO4J_WRITE_BATCH_SIZE):
+                        batch = n_data[i:i+NEO4J_WRITE_BATCH_SIZE]
+                        try:
+                            await retry_neo4j_operation(lambda: neo4j_repo.execute_write(next_query, {"rels": batch}))
+                        except Exception as e:
+                            logger.error(f"[NEO4J_SYNC] Batch NEXT rel creation failed at index {i} (size {len(batch)}): {e}")
 
-                    if rel_tasks:
-                        await asyncio.gather(*rel_tasks)
+                    # Batch write SIMILAR relationships
+                    sim_query = "UNWIND $pairs AS p MATCH (c1:Chunk {id: p.chunk_id_1, tenant_id: $tenant_id}) MATCH (c2:Chunk {id: p.chunk_id_2, tenant_id: $tenant_id}) CREATE (c1)-[:SIMILAR {similarity: p.similarity}]->(c2) CREATE (c2)-[:SIMILAR {similarity: p.similarity}]->(c1)"
+                    for i in range(0, len(s_pairs), NEO4J_WRITE_BATCH_SIZE):
+                        batch = s_pairs[i:i+NEO4J_WRITE_BATCH_SIZE]
+                        try:
+                            await retry_neo4j_operation(lambda: neo4j_repo.execute_write(sim_query, {"pairs": batch}))
+                        except Exception as e:
+                            logger.error(f"[NEO4J_SYNC] Batch SIMILAR rel creation failed at index {i} (size {len(batch)}): {e}")
+
+                    # Batch write MENTIONS relationships
+                    mentions_query = "UNWIND $rels AS r MERGE (e:Entity {tenant_id: $tenant_id, text: r.text, type: r.type}) WITH e, r MATCH (c:Chunk {id: r.chunk_id, tenant_id: $tenant_id}) CREATE (c)-[:MENTIONS {confidence: r.conf}]->(e)"
+                    for i in range(0, len(m_data), NEO4J_WRITE_BATCH_SIZE):
+                        batch = m_data[i:i+NEO4J_WRITE_BATCH_SIZE]
+                        try:
+                            await retry_neo4j_operation(lambda: neo4j_repo.execute_write(mentions_query, {"rels": batch}))
+                        except Exception as e:
+                            logger.error(f"[NEO4J_SYNC] Batch MENTIONS rel creation failed at index {i} (size {len(batch)}): {e}")
+
 
                     if has_triplets and t_results:
                         from ...core.triplet_extractor import TripletGraphWriter
                         await TripletGraphWriter(tenant_id_str).persist_triplets(t_results)
-
-                    # Run background graph cleanup
-                    from ...core.graph_cleanup import GraphCleanupService
-                    cleanup_service = GraphCleanupService(tenant_id=tenant_id_str, kb_id=kb_id_str)
-                    await cleanup_service.cleanup_graph()
-
+                    # Graph cleanup removed from ingestion path. 
+                    # Call POST /api/v1/admin/graph-cleanup instead or use a cron job.
                     logger.info(f"[NEO4J_SYNC] Completed successfully | file={doc_filename} | kb_id={kb_id_str} | chunks={len(c_data)} | status=COMPLETED")
                 except Exception as sync_err:
                     logger.error(f"[NEO4J_SYNC] Failed | file={doc_filename} | kb_id={kb_id_str} | chunks={len(c_data)} | status=FAILED | error={str(sync_err)}", exc_info=True)
@@ -1316,9 +1390,10 @@ class KnowledgeBaseService:
 
 
 
-            # 1.5. Large Dataset Bypass (Tabular Files > 2MB)
-            if len(file_bytes) > 2 * 1024 * 1024:
-                logger.info(f"Large tabular dataset detected ({len(file_bytes)} bytes). Bypassing Vector Ingestion in favor of Pandas Query Engine.")
+            # 1.5. Dataset Bypass (Tabular Files > 2MB or DuckDB Unification Flag)
+            import os
+            if len(file_bytes) > 2 * 1024 * 1024 or os.getenv("UNIFY_TABULAR_DUCKDB", "true").lower() == "true":
+                logger.info(f"Tabular dataset detected ({len(file_bytes)} bytes). Bypassing Vector Ingestion in favor of Pandas Query Engine.")
                 import uuid
                 from sqlalchemy import update
                 

@@ -534,7 +534,6 @@ class DeepInfraLLMClient:
                     if req_timeout < 10.0 and ("timeout" in str(e).lower() or isinstance(e, asyncio.TimeoutError)):
                         logger.warning("generate_cloud() aborting retries due to strict timeout bounds on this task.")
                         break
-                    import asyncio
                     await asyncio.sleep(2 ** attempt)
         
         logger.error(f"generate_cloud() all attempts failed. Last error: {last_error}")

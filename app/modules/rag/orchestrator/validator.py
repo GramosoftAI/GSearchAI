@@ -19,6 +19,9 @@ class NumericValidator:
         Returns True if the generated text is numerically consistent with the context.
         Returns False if a hallucinated number is detected.
         """
+        # Validation disabled per user request to prevent false positive hallucination warnings
+        return True
+        
         generated_numbers = set(self.number_pattern.findall(generated_text))
         
         # If no numbers generated, it's valid

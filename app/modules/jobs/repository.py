@@ -60,7 +60,10 @@ class JobRepository(BaseRepository):
         if status == "processing" and job.started_at is None:
             update_data["started_at"] = datetime.utcnow()
         elif status in ["completed", "failed"]:
-            update_data["completed_at"] = datetime.utcnow()
+            if job.completed_at is None:
+                update_data["completed_at"] = datetime.utcnow()
+            if job.started_at is None:
+                update_data["started_at"] = job.created_at or datetime.utcnow()
             
         stmt = update(ProcessingJob).where(
             ProcessingJob.id == (uuid.UUID(job_id) if isinstance(job_id, str) else job_id),

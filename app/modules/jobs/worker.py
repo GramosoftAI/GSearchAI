@@ -61,6 +61,7 @@ async def run_pdf_ingestion_job(
     Updates the ProcessingJob table with progress.
     """
     kb_id = None
+    logger.info(f"Job {job_id}: *** run_pdf_ingestion_job STARTED for {filename} ({len(content)} bytes) ***")
     try:
         # Calculate file hash
         import hashlib
@@ -153,12 +154,62 @@ async def run_pdf_ingestion_job(
                             for i, row in enumerate(table_rows)
                         ]
                 else:
-                    document_text = await PDFExtractor.extract(
-                        pdf_bytes=content,
-                        filename=filename,
-                        tenant_id=tenant_id,
-                        agent_id=agent_id,
-                    )
+                    ext = filename.lower().split('.')[-1] if '.' in filename else ''
+                    if f".{ext}" in [".doc", ".docx", ".txt", ".md"]:
+                        converted = False
+                        try:
+                            from app.modules.file_supporter import prepare_for_pdf_pipeline
+                            import tempfile
+                            import os
+                            
+                            with tempfile.TemporaryDirectory() as workdir:
+                                temp_input_path = os.path.join(workdir, filename)
+                                with open(temp_input_path, 'wb') as f:
+                                    f.write(content)
+                                
+                                logger.info(f"Job {job_id}: Converting {filename} to PDF using prepare_for_pdf_pipeline")
+                                pdf_path = await prepare_for_pdf_pipeline(temp_input_path, workdir)
+                                
+                                with open(pdf_path, 'rb') as f:
+                                    content = f.read()
+                                    
+                                filename = f"{filename}.pdf"
+                                converted = True
+                        except Exception as conv_err:
+                            logger.warning(f"Job {job_id}: LibreOffice conversion failed or soffice missing ({conv_err}). Falling back to native text parser.")
+
+                        if converted:
+                            document_text = await PDFExtractor.extract(
+                                pdf_bytes=content,
+                                filename=filename,
+                                tenant_id=tenant_id,
+                                agent_id=agent_id,
+                            )
+                        else:
+                            from app.core.pdf_extractor import ExtractedText
+                            if ext == "docx":
+                                import zipfile
+                                import io
+                                import xml.etree.ElementTree as ET
+                                with zipfile.ZipFile(io.BytesIO(content)) as docx:
+                                    xml_content = docx.read('word/document.xml')
+                                    tree = ET.fromstring(xml_content)
+                                    paragraphs = []
+                                    for elem in tree.iter():
+                                        if elem.tag.endswith('t'):
+                                            paragraphs.append(elem.text or "")
+                                    raw_text = " ".join(paragraphs)
+                                document_text = ExtractedText(raw_text, extraction_method="docx_native")
+                            else:
+                                raw_text = content.decode("utf-8", errors="ignore")
+                                document_text = ExtractedText(raw_text, extraction_method="text_native")
+                    else:
+                        document_text = await PDFExtractor.extract(
+                            pdf_bytes=content,
+                            filename=filename,
+                            tenant_id=tenant_id,
+                            agent_id=agent_id,
+                        )
             except Exception as e:
                 logger.error(f"Job {job_id}: Extraction failed: {e}")
                 await job_service.update_job_progress(job_id, status="failed", progress=5, current_step="Extraction", error_message=f"Failed to extract text: {str(e)}")
@@ -179,7 +230,7 @@ async def run_pdf_ingestion_job(
             await job_service.update_job_progress(job_id, status="processing", progress=25, current_step="Extracting Structured Tables")
             
             # Step 1.5: Table Extraction (PDF only)
-            if not filename.lower().endswith(('.csv', '.xls', '.xlsx')):
+            if filename.lower().endswith('.pdf'):
                 logger.info(f"Job {job_id}: Extracting structured tables")
                 raw_markdown = getattr(document_text, "raw_html", None)
                 table_rows = await PDFExtractor.extract_tables_to_json(pdf_bytes=content, raw_markdown=raw_markdown, filename=filename)

@@ -10,7 +10,7 @@ Phase 2 Step 4: Product-facing RAG query interface
 
 import logging
 
-from typing import Union
+from typing import Union, Dict, Any, Optional
 
 
 
@@ -119,16 +119,11 @@ def get_tenant_and_user(request: Request) -> tuple[str, str]:
 )
 
 async def rag_query(
-
     request: Request,
-
     agent_id: str,
-
     query_request: RAGQueryRequest,
-
     db: AsyncSession = Depends(get_db),
-
-) -> Union[RAGQueryResponse, RAGErrorResponse]:
+) -> Union[RAGQueryResponse, RAGErrorResponse, Dict[str, Any]]:
 
     """
 
@@ -316,27 +311,29 @@ async def rag_query(
 
         kb_ids = [str(kb.id) for kb in kbs]
 
-        
+        if query_request.target_kb_id and query_request.target_kb_id not in kb_ids:
+            logger.warning(
+                f"[SECURITY_ALERT] Unauthorized target_kb_id '{query_request.target_kb_id}' rejected for agent {agent_id}, tenant {tenant_id}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unauthorized target_kb_id: Knowledge base does not belong to this agent"
+            )
 
         response = await rag_service.generate_answer(
-
             query=query_request.query,
-
             agent_id=agent_id,
-
             kb_id=kb_ids,
-
             user_id=user,
-
             top_k=query_request.top_k or 15,
-
             max_depth=query_request.max_depth or 2,
-
             reasoning_enabled=(str(query_request.Reasoning).strip().lower() in ("true", "1", "yes")),
-
             memory_enabled=(str(query_request.Memory).strip().lower() in ("true", "1", "yes")),
-
+            target_kb_id=query_request.target_kb_id,
         )
+
+        if isinstance(response, dict) and response.get("type") == "clarification_needed":
+            return response
 
 
 

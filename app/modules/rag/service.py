@@ -8,7 +8,7 @@ import time
 import os
 import re
 import json
-from typing import Optional, Callable
+from typing import Optional, Callable, List, Dict, Any, Tuple
 from uuid import UUID
 import asyncio
 import hashlib
@@ -63,6 +63,31 @@ _MAX_CACHE_SIZE = 1000
 _CACHE_INSERTION_ORDER = []
 _RAG_TIMEOUT_SECONDS = 180.0
 
+# Phrases that indicate a "not found" / failure answer — these must NEVER be cached.
+_NOT_FOUND_PHRASES = [
+    "i'm sorry",
+    "im sorry",
+    "i am sorry",
+    "not available in my current knowledge",
+    "don't have that specific information",
+    "requested information is not available",
+    "i do not have",
+    "i don't have",
+    "not found in the provided",
+    "no relevant information",
+    "cannot find",
+    "could not find",
+    "unable to find",
+]
+
+
+def _is_not_found_answer(answer_text: str) -> bool:
+    """Returns True if the answer looks like a 'not found' / failure response that should NOT be cached."""
+    if not answer_text or not answer_text.strip():
+        return True
+    lower = answer_text.strip().lower()
+    return any(phrase in lower for phrase in _NOT_FOUND_PHRASES)
+
 
 @dataclass
 class RAGMetrics:
@@ -82,6 +107,240 @@ class RAGMetrics:
 
 
 _rag_metrics = deque(maxlen=1000)
+
+
+class CSVSessionPinStore:
+    """
+    Manages session-pinned CSV knowledge bases.
+    Uses async Redis with TTL of 600s if available, falling back to an in-memory
+    dict protected by asyncio.Lock.
+    """
+    def __init__(self):
+        self._memory_store: Dict[str, dict] = {}
+        self._lock = asyncio.Lock()
+        self._redis_client = None
+        self._redis_initialized = False
+
+    async def _get_redis(self):
+        if not self._redis_initialized:
+            try:
+                import redis.asyncio as aioredis
+                settings = get_settings()
+                if getattr(settings, "redis_url", None):
+                    client = aioredis.from_url(
+                        settings.redis_url,
+                        encoding="utf-8",
+                        decode_responses=True,
+                        socket_timeout=1.5,
+                        socket_connect_timeout=1.5
+                    )
+                    await client.ping()
+                    self._redis_client = client
+            except Exception as e:
+                logger.debug(f"[CSVSessionPinStore] Redis unavailable, using in-memory store: {e}")
+                self._redis_client = None
+            finally:
+                self._redis_initialized = True
+        return self._redis_client
+
+    def _make_key(self, tenant_id: str, session_id: str) -> str:
+        return f"csv_pin:{tenant_id}:{session_id}"
+
+    async def get_pin(self, tenant_id: str, session_id: Optional[str]) -> Optional[dict]:
+        if not session_id:
+            return None
+        key = self._make_key(tenant_id, session_id)
+        redis_client = await self._get_redis()
+        if redis_client:
+            try:
+                raw = await redis_client.get(key)
+                if raw:
+                    return json.loads(raw)
+                return None
+            except Exception as e:
+                logger.warning(f"[CSVSessionPinStore] Redis get failed: {e}")
+
+        async with self._lock:
+            entry = self._memory_store.get(key)
+            if not entry:
+                return None
+            if time.time() > entry.get("expires_at", 0):
+                self._memory_store.pop(key, None)
+                return None
+            return entry.get("data")
+
+    async def set_pin(
+        self,
+        tenant_id: str,
+        session_id: Optional[str],
+        kb_id: str,
+        filename: str,
+        turns: int = 3,
+        ttl_seconds: int = 600
+    ) -> None:
+        if not session_id:
+            return
+        key = self._make_key(tenant_id, session_id)
+        data = {
+            "kb_id": str(kb_id),
+            "filename": filename,
+            "turns_left": turns,
+            "created_at": time.time(),
+        }
+        redis_client = await self._get_redis()
+        if redis_client:
+            try:
+                await redis_client.set(key, json.dumps(data), ex=ttl_seconds)
+                return
+            except Exception as e:
+                logger.warning(f"[CSVSessionPinStore] Redis set failed: {e}")
+
+        async with self._lock:
+            self._memory_store[key] = {
+                "data": data,
+                "expires_at": time.time() + ttl_seconds
+            }
+
+    async def decrement_or_clear_pin(self, tenant_id: str, session_id: Optional[str]) -> None:
+        if not session_id:
+            return
+        pin = await self.get_pin(tenant_id, session_id)
+        if not pin:
+            return
+        turns_left = pin.get("turns_left", 1) - 1
+        if turns_left <= 0:
+            await self.clear_pin(tenant_id, session_id)
+        else:
+            pin["turns_left"] = turns_left
+            key = self._make_key(tenant_id, session_id)
+            redis_client = await self._get_redis()
+            if redis_client:
+                try:
+                    ttl = await redis_client.ttl(key)
+                    ex = max(ttl, 60) if ttl > 0 else 600
+                    await redis_client.set(key, json.dumps(pin), ex=ex)
+                    return
+                except Exception as e:
+                    logger.warning(f"[CSVSessionPinStore] Redis update failed: {e}")
+            async with self._lock:
+                if key in self._memory_store:
+                    self._memory_store[key]["data"] = pin
+
+    async def clear_pin(self, tenant_id: str, session_id: Optional[str]) -> None:
+        if not session_id:
+            return
+        key = self._make_key(tenant_id, session_id)
+        redis_client = await self._get_redis()
+        if redis_client:
+            try:
+                await redis_client.delete(key)
+            except Exception as e:
+                logger.warning(f"[CSVSessionPinStore] Redis delete failed: {e}")
+        async with self._lock:
+            self._memory_store.pop(key, None)
+
+
+_csv_session_store = CSVSessionPinStore()
+
+
+def is_csv_kb(kb) -> bool:
+    """Returns True if the knowledge base represents a CSV file."""
+    name = getattr(kb, "name", "") or ""
+    s3_path = getattr(kb, "s3_path", "") or ""
+    parsed_path = getattr(kb, "parsed_path", "") or ""
+    meta = getattr(kb, "metadata_json", None) or {}
+    source_type = ""
+    if isinstance(meta, dict):
+        source_type = str(meta.get("source_type") or meta.get("file_type") or "").lower()
+        if str(meta.get("original_filename", "")).lower().endswith(".csv"):
+            return True
+    return (
+        name.lower().endswith(".csv")
+        or s3_path.lower().endswith(".csv")
+        or parsed_path.lower().endswith(".csv")
+        or source_type == "csv"
+        or "csv" in getattr(kb, "source", "").lower()
+    )
+
+
+def is_cross_file_query(query: str) -> bool:
+    """Returns True if query explicitly compares or aggregates across multiple files."""
+    q = query.lower()
+    patterns = [
+        r"\bcompare\b",
+        r"\bacross\b",
+        r"\bboth\b",
+        r"\bvs\b",
+        r"\bversus\b",
+        r"\bdifference\s+between\b",
+    ]
+    return any(re.search(p, q) for p in patterns)
+
+
+def _get_kb_row_count(kb, active_path: Optional[str] = None) -> int:
+    meta = getattr(kb, "metadata_json", None) or {}
+    if isinstance(meta, dict):
+        if "row_count" in meta:
+            try:
+                return int(meta["row_count"])
+            except Exception:
+                pass
+        if "total_rows" in meta:
+            try:
+                return int(meta["total_rows"])
+            except Exception:
+                pass
+    if active_path and os.path.exists(active_path):
+        try:
+            import pyarrow.parquet as pq
+            return pq.ParquetFile(active_path).metadata.num_rows
+        except Exception:
+            pass
+    return getattr(kb, "total_chunks", 0) or 0
+
+
+def _build_csv_disambiguation_payload(candidates_kbs: list, reason: str) -> dict:
+    from app.modules.rag.schema_utils import get_schema_columns
+    from app.core.parquet_ingester import ParquetIngester
+
+    candidates = []
+    plain_text_lines = ["I found multiple CSV files that could answer your question:"]
+
+    for idx, item in enumerate(candidates_kbs, 1):
+        kb = item["kb"] if isinstance(item, dict) and "kb" in item else item
+        kb_id = str(kb.id)
+        filename = getattr(kb, "name", None) or getattr(kb, "parsed_path", None) or f"Dataset_{kb_id[:8]}"
+
+        path = getattr(kb, "parsed_path", None)
+        active_path = ParquetIngester.get_active_dataset(path) if path else None
+        row_count = _get_kb_row_count(kb, active_path)
+
+        cols = get_schema_columns(getattr(kb, "dataset_schema", None), getattr(kb, "categorical_values", None))
+        if not cols and getattr(kb, "dataset_schema", None) and isinstance(getattr(kb, "dataset_schema", None), dict):
+            cols = list(getattr(kb, "dataset_schema").keys())
+
+        cols_summary = ", ".join(cols[:5]) + ("..." if len(cols) > 5 else "") if cols else "N/A"
+        desc = f"{row_count:,} rows | Columns: {cols_summary}" if row_count else f"Columns: {cols_summary}"
+
+        candidates.append({
+            "kb_id": kb_id,
+            "filename": filename,
+            "row_count": row_count,
+            "columns": cols,
+            "description": desc
+        })
+        plain_text_lines.append(f"{idx}. **{filename}** ({desc})")
+
+    plain_text_lines.append("\nPlease select which file you would like to use.")
+    plain_text_fallback = "\n".join(plain_text_lines)
+
+    return {
+        "type": "clarification_needed",
+        "reason": reason,
+        "message": "Multiple relevant CSV files were found. Please select which file you would like to query:",
+        "candidates": candidates,
+        "plain_text_fallback": plain_text_fallback
+    }
 
 
 class RAGService:
@@ -308,6 +567,7 @@ class RAGService:
         chat_history: Optional[str] = None,
         skip_search: bool = False,
         memory_task: Optional['asyncio.Task'] = None,
+        target_kb_id: Optional[str] = None,
     ):
         logger.info(f" RAG Service: Streaming answer for agent={agent_id}, kb={kb_id}")
         
@@ -345,6 +605,45 @@ class RAGService:
                     excel_kbs.append(kb)
                 else:
                     doc_kbs.append(kb)
+
+            # Security IDOR authorization check
+            authorized_kb_ids = {str(k.id) for k in (excel_kbs + doc_kbs)}
+            if target_kb_id and str(target_kb_id) not in authorized_kb_ids:
+                logger.warning(
+                    f"[SECURITY_ALERT] Unauthorized target_kb_id '{target_kb_id}' rejected for agent {agent_id}, tenant {self.tenant_id}"
+                )
+                yield json.dumps({"error": f"Unauthorized: Knowledge Base {target_kb_id} does not belong to this agent"})
+                return
+
+            effective_target_kb_id = str(target_kb_id) if target_kb_id else None
+            if not effective_target_kb_id and session_id:
+                pin = await _csv_session_store.get_pin(self.tenant_id, session_id)
+                if pin and pin.get("kb_id") in authorized_kb_ids:
+                    pinned_kb_cand = next((k for k in excel_kbs if str(k.id) == pin.get("kb_id")), None)
+                    if pinned_kb_cand:
+                        from app.modules.rag.schema_utils import calculate_schema_overlap_score
+                        ds = getattr(pinned_kb_cand, "dataset_schema", None)
+                        cv = getattr(pinned_kb_cand, "categorical_values", None)
+                        nm = getattr(pinned_kb_cand, "parsed_path", None) or getattr(pinned_kb_cand, "name", None)
+                        cat_score, gen_score = calculate_schema_overlap_score(query, ds, cv, nm)
+                        pin_score = cat_score * 2 + gen_score
+                        if pin_score > 0:
+                            effective_target_kb_id = str(pinned_kb_cand.id)
+                            await _csv_session_store.decrement_or_clear_pin(self.tenant_id, session_id)
+                            logger.info(f"[SESSION_PIN] Reusing pinned KB {nm} (relevance={pin_score}, turns_left={pin.get('turns_left', 1)-1})")
+                        else:
+                            await _csv_session_store.clear_pin(self.tenant_id, session_id)
+                            logger.info(f"[SESSION_PIN] Query relevance is 0 for pinned KB {nm}. Topic switched - evicted pin.")
+
+            if effective_target_kb_id:
+                selected_kb = next((k for k in excel_kbs if str(k.id) == effective_target_kb_id), None)
+                if selected_kb:
+                    excel_kbs = [selected_kb]
+                    if target_kb_id:
+                        await _csv_session_store.set_pin(
+                            self.tenant_id, session_id, str(selected_kb.id), getattr(selected_kb, "name", "unknown")
+                        )
+                    logger.info(f"[DISAMBIGUATION_RESOLVED] target_kb_id={effective_target_kb_id}, filename={getattr(selected_kb, 'name', 'unknown')}")
 
             agent = await self.agent_repo.get_by_id(agent_id)
             if agent:
@@ -475,104 +774,222 @@ class RAGService:
                         
                         best_score = -1
                         best_kb = None
-                        
-                        kb_scores = []
-                        for kb in excel_kbs:
-                            ds = getattr(kb, "dataset_schema", None)
-                            cv = getattr(kb, "categorical_values", None)
-                            name = getattr(kb, "parsed_path", None) or getattr(kb, "name", None)
-                            
-                            cat_score, gen_score = calculate_schema_overlap_score(query, ds, cv, name)
-                            total_score = cat_score * 2 + gen_score  # weight categorical matches higher
-                            
-                            logger.info(f"[SCHEMA_SCORING] KB: {name} | cat_score: {cat_score} | gen_score: {gen_score} | total_score: {total_score}")
-                            kb_scores.append({"kb": kb, "name": name, "cat_score": cat_score, "gen_score": gen_score, "total_score": total_score})
-                            
-                        if kb_scores:
-                            max_total = max(s["total_score"] for s in kb_scores)
-                            tied = [s for s in kb_scores if s["total_score"] == max_total]
-                            
-                            # Tiebreaker: exact membership check on ID index
-                            if len(tied) > 1 and all(s["cat_score"] == 0 for s in tied):
-                                from app.modules.rag.schema_utils import ID_REGEX_PATTERN
-                                extracted_id_match = re.search(ID_REGEX_PATTERN, query)
-                                extracted_id = extracted_id_match.group(0) if extracted_id_match else None
+                        probe_hits = []
+                        entity_to_probe = None
+
+                        if effective_target_kb_id and excel_kbs:
+                            best_kb = excel_kbs[0]
+                            strict_schema_overlap = True
+                            reason = f"user_or_session_selected_kb ({getattr(best_kb, 'name', 'unknown')})"
+                            is_tabular = True
+                            overlap = True
+                            analysis.metadata.target_kb_id = str(best_kb.id)
+                            logger.info(f"Direct routing pinned target KB: {getattr(best_kb, 'name', 'Unknown')} ({best_kb.id})")
+                        else:
+                            kb_scores = []
+                            for kb in excel_kbs:
+                                ds = getattr(kb, "dataset_schema", None)
+                                cv = getattr(kb, "categorical_values", None)
+                                name = getattr(kb, "parsed_path", None) or getattr(kb, "name", None)
                                 
-                                if extracted_id:
-                                    token = extracted_id.upper().strip()
+                                cat_score, gen_score = calculate_schema_overlap_score(query, ds, cv, name)
+                                total_score = cat_score * 2 + gen_score  # weight categorical matches higher
+                                
+                                logger.info(f"[SCHEMA_SCORING] KB: {name} | cat_score: {cat_score} | gen_score: {gen_score} | total_score: {total_score}")
+                                kb_scores.append({"kb": kb, "name": name, "cat_score": cat_score, "gen_score": gen_score, "total_score": total_score})
+                                
+                            if kb_scores:
+                                max_total = max(s["total_score"] for s in kb_scores)
+                                tied = [s for s in kb_scores if s["total_score"] == max_total]
+                                
+                                # Tiebreaker: exact membership check on ID index
+                                if len(tied) > 1 and all(s["cat_score"] == 0 for s in tied):
+                                    from app.modules.rag.schema_utils import ID_REGEX_PATTERN
+                                    extracted_id_match = re.search(ID_REGEX_PATTERN, query)
+                                    extracted_id = extracted_id_match.group(0) if extracted_id_match else None
                                     
-                                    # Function to load index with caching
-                                    def get_id_index(kb):
-                                        try:
-                                            path = getattr(kb, "parsed_path", None)
-                                            if not path:
-                                                return {}
-                                            # e.g., if path is .../MAS updated MRP FEB 2026_1787925527.parquet
-                                            base = os.path.splitext(os.path.basename(path))[0]
-                                            version = base.split("_")[-1] if "_" in base else "unknown"
-                                            kb_id_str = str(kb.id)
-                                            
-                                            cached = self._id_index_cache.get(kb_id_str)
-                                            if cached and cached[0] == version:
-                                                return cached[1]
-                                                
-                                            index_path = os.path.join(os.path.dirname(path), f"{base}_idindex.json")
-                                            if os.path.exists(index_path):
-                                                t0 = time.time()
-                                                with open(index_path, 'r') as f:
-                                                    index = json.load(f)
-                                                
-                                                # Convert list to sets for O(1) lookup
-                                                for col in index:
-                                                    index[col] = set(index[col])
-                                                    
-                                                self._id_index_cache[kb_id_str] = (version, index)
-                                                logger.info(f"Loaded ID index for {base} in {time.time()-t0:.3f}s")
-                                                return index
-                                        except Exception as e:
-                                            logger.warning(f"Failed to load ID index for {getattr(kb, 'name')}: {e}")
-                                        return {}
+                                    if extracted_id:
+                                        token = extracted_id.upper().strip()
                                         
-                                    matches = []
-                                    for s in tied:
-                                        index = get_id_index(s["kb"])
-                                        found = False
-                                        for col, vals in index.items():
-                                            if token in vals:
-                                                found = True
-                                                break
-                                        if found:
-                                            matches.append(s)
+                                        # Function to load index with caching
+                                        def get_id_index(kb):
+                                            try:
+                                                path = getattr(kb, "parsed_path", None)
+                                                if not path:
+                                                    return {}
+                                                # e.g., if path is .../MAS updated MRP FEB 2026_1787925527.parquet
+                                                base = os.path.splitext(os.path.basename(path))[0]
+                                                version = base.split("_")[-1] if "_" in base else "unknown"
+                                                kb_id_str = str(kb.id)
+                                                
+                                                cached = self._id_index_cache.get(kb_id_str)
+                                                if cached and cached[0] == version:
+                                                    return cached[1]
+                                                    
+                                                index_path = os.path.join(os.path.dirname(path), f"{base}_idindex.json")
+                                                if os.path.exists(index_path):
+                                                    t0 = time.time()
+                                                    with open(index_path, 'r') as f:
+                                                        index = json.load(f)
+                                                    
+                                                    # Convert list to sets for O(1) lookup
+                                                    for col in index:
+                                                        index[col] = set(index[col])
+                                                        
+                                                    self._id_index_cache[kb_id_str] = (version, index)
+                                                    logger.info(f"Loaded ID index for {base} in {time.time()-t0:.3f}s")
+                                                    return index
+                                            except Exception as e:
+                                                logger.warning(f"Failed to load ID index for {getattr(kb, 'name')}: {e}")
+                                            return {}
                                             
-                                    if len(matches) == 1:
-                                        # We found exactly one match! Force it by adding a huge score
-                                        matches[0]["total_score"] += 100
-                                        logger.info(f"Resolved ambiguous routing via ID-index membership: {token} found only in {matches[0]['name']}")
-                                    elif len(matches) > 1:
-                                        logger.warning(f"ID {token} found in multiple KBs: {[m['name'] for m in matches]} — genuine ambiguity")
-                            
-                            # Re-eval max after tiebreaker
-                            max_total = max(s["total_score"] for s in kb_scores)
-                            final_winners = [s for s in kb_scores if s["total_score"] == max_total]
-                            
-                            if len(final_winners) > 1 and all(s["cat_score"] == 0 for s in final_winners):
-                                logger.warning(
-                                    f"Ambiguous routing: zero categorical matches AND tied gen_scores "
-                                    f"among candidates {[s['name'] for s in final_winners]} — picked "
-                                    f"{final_winners[0]['name']} by tiebreak order, not by evidence."
-                                )
+                                        matches = []
+                                        for s in tied:
+                                            index = get_id_index(s["kb"])
+                                            found = False
+                                            for col, vals in index.items():
+                                                if token in vals:
+                                                    found = True
+                                                    break
+                                            if found:
+                                                matches.append(s)
+                                                
+                                        if len(matches) == 1:
+                                            # We found exactly one match! Force it by adding a huge score
+                                            matches[0]["total_score"] += 100
+                                            logger.info(f"Resolved ambiguous routing via ID-index membership: {token} found only in {matches[0]['name']}")
+                                        elif len(matches) > 1:
+                                            logger.warning(f"ID {token} found in multiple KBs: {[m['name'] for m in matches]} — genuine ambiguity")
                                 
-                            best_kb = final_winners[0]["kb"]
-                        
-                        strict_schema_overlap = False
-                        reason = "weak_or_zero_schema_overlap"
-                        if best_kb:
-                            ds = getattr(best_kb, "dataset_schema", None)
-                            cv = getattr(best_kb, "categorical_values", None)
-                            paths = [best_kb.parsed_path] if getattr(best_kb, "parsed_path", None) else []
-                            strict_schema_overlap, reason, is_tabular = evaluate_schema_overlap(
-                                query, ds, cv, paths
-                            )
+                                # Re-eval max after tiebreaker
+                                max_total = max(s["total_score"] for s in kb_scores)
+                                
+                                # --- ENTITY PRESENCE PROBE FALLBACK ---
+                                MIN_BASELINE = 4
+                                probe_hits = []
+                                entity_to_probe = None
+                                if max_total < MIN_BASELINE:  # Covers 0 or weak coincidental scores
+                                    # Extract potential entity from query (Capitalized phrase or Quoted string)
+                                    entity_candidates = re.findall(r'"([^"]+)"|\'([^\']+)\'|\b([A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*)+)\b', query)
+                                    for cand in entity_candidates:
+                                        extracted = cand[0] or cand[1] or cand[2]
+                                        if extracted and len(extracted) > 3:
+                                            entity_to_probe = extracted.strip()
+                                            break
+                                    
+                                    if entity_to_probe:
+                                        logger.info(f"[ENTITY_PROBE] All KBs scored < {MIN_BASELINE} (max was {max_total}). Triggering presence probe for entity: '{entity_to_probe}'")
+                                        import duckdb
+                                        import time
+                                        from app.modules.rag.schema_utils import get_schema_columns
+                                        
+                                        for s in kb_scores:
+                                            try:
+                                                path = getattr(s["kb"], "parsed_path", None)
+                                                if not path:
+                                                    continue
+                                                active_path = ParquetIngester.get_active_dataset(path)
+                                                if not active_path:
+                                                    continue
+                                                    
+                                                text_cols = get_schema_columns(getattr(s["kb"], "dataset_schema", None), getattr(s["kb"], "categorical_values", None))
+                                                if not text_cols:
+                                                    continue
+                                                    
+                                                # Execute probe
+                                                concat_expr = "CONCAT_WS(' ', " + ", ".join([f'"{c}"' for c in text_cols]) + ")"
+                                                probe_sql = f"SELECT 1 FROM read_parquet(?) WHERE {concat_expr} ILIKE ? LIMIT 1"
+                                                
+                                                t0 = time.time()
+                                                with duckdb.connect() as con:
+                                                    res = con.execute(probe_sql, [active_path, f"%{entity_to_probe}%"]).fetchall()
+                                                elapsed = time.time() - t0
+                                                
+                                                if res:
+                                                    probe_hits.append(s)
+                                                    logger.info(f"[ENTITY_PROBE] HIT  | KB: {s['name']} | Latency: {elapsed*1000:.1f}ms")
+                                                else:
+                                                    logger.info(f"[ENTITY_PROBE] MISS | KB: {s['name']} | Latency: {elapsed*1000:.1f}ms")
+                                            except Exception as e:
+                                                logger.warning(f"[ENTITY_PROBE] Failed on KB {s['name']}: {e}")
+                                                
+                                        if len(probe_hits) == 1:
+                                            # Pin to this KB by boosting its score
+                                            probe_hits[0]["total_score"] += 100
+                                            max_total = max(s_kb["total_score"] for s_kb in kb_scores)
+                                            logger.info(f"[ENTITY_PROBE] Resolved ambiguous routing via presence probe: '{entity_to_probe}' found only in {probe_hits[0]['name']}")
+                                        elif len(probe_hits) > 1:
+                                            logger.warning(f"[ENTITY_PROBE] Entity '{entity_to_probe}' found in multiple KBs: {[m['name'] for m in probe_hits]} — genuine ambiguity")
+                                # --- END ENTITY PRESENCE PROBE ---
+
+                                # --- CSV DISAMBIGUATION FLOW ---
+                                csv_kbs = [kb for kb in excel_kbs if is_csv_kb(kb)]
+                                is_cross_file = is_cross_file_query(query)
+
+                                if len(csv_kbs) >= 2 and not is_cross_file:
+                                    csv_scores = [s for s in kb_scores if s["kb"] in csv_kbs]
+                                    csv_probe_hits = [h for h in probe_hits if h["kb"] in csv_kbs]
+
+                                    # Ambiguity Condition 1: Multiple CSV probe hits
+                                    if len(csv_probe_hits) >= 2:
+                                        clarification_payload = _build_csv_disambiguation_payload(
+                                            csv_probe_hits, reason="multi_entity_probe_hit"
+                                        )
+                                        logger.info(
+                                            f"[TELEMETRY] [DISAMBIGUATION_TRIGGERED] reason=multi_entity_probe_hit, "
+                                            f"candidates={[c['filename'] for c in clarification_payload['candidates']]}"
+                                        )
+                                        yield json.dumps(clarification_payload)
+                                        return
+
+                                    # Ambiguity Condition 2: Relative dominance margin gap < 0.20
+                                    if csv_scores:
+                                        sorted_csv = sorted(csv_scores, key=lambda x: x["total_score"], reverse=True)
+                                        s1 = sorted_csv[0]["total_score"]
+                                        s2 = sorted_csv[1]["total_score"]
+
+                                        if s1 > 0:
+                                            relative_gap = (s1 - s2) / max(s1, 1.0)
+                                            if relative_gap < 0.20:
+                                                close_candidates = [
+                                                    s for s in sorted_csv
+                                                    if (s1 - s["total_score"]) / max(s1, 1.0) < 0.20
+                                                ]
+                                                clarification_payload = _build_csv_disambiguation_payload(
+                                                    close_candidates, reason="score_gap_ambiguity"
+                                                )
+                                                logger.info(
+                                                    f"[TELEMETRY] [DISAMBIGUATION_TRIGGERED] reason=score_gap_ambiguity, "
+                                                    f"relative_gap={relative_gap:.2f}, candidates={[c['filename'] for c in clarification_payload['candidates']]}"
+                                                )
+                                                yield json.dumps(clarification_payload)
+                                                return
+                                # --- END CSV DISAMBIGUATION FLOW ---
+
+                                final_winners = [s for s in kb_scores if s["total_score"] == max_total]
+                                
+                                if len(final_winners) > 1 and all(s["cat_score"] == 0 for s in final_winners):
+                                    logger.warning(
+                                        f"Ambiguous routing: zero categorical matches AND tied gen_scores "
+                                        f"among candidates {[s['name'] for s in final_winners]} — picked "
+                                        f"{final_winners[0]['name']} by tiebreak order, not by evidence."
+                                    )
+                                    
+                                best_kb = final_winners[0]["kb"]
+                            
+                            strict_schema_overlap = False
+                            reason = "weak_or_zero_schema_overlap"
+                            if probe_hits and len(probe_hits) == 1:
+                                strict_schema_overlap = True
+                                reason = f"entity_presence_probe_hit ('{entity_to_probe}' in {probe_hits[0]['name']})"
+                                is_tabular = True
+                            elif best_kb:
+                                ds = getattr(best_kb, "dataset_schema", None)
+                                cv = getattr(best_kb, "categorical_values", None)
+                                paths = [best_kb.parsed_path] if getattr(best_kb, "parsed_path", None) else []
+                                strict_schema_overlap, reason, is_tabular = evaluate_schema_overlap(
+                                    query, ds, cv, paths
+                                )
                         
                         if strict_schema_overlap:
                             overlap = True
@@ -619,8 +1036,6 @@ class RAGService:
                 
                 # Pre-strip the tabular subquery to drop non-schema clauses
                 import re
-                col_terms = locals().get("schema_col_terms", set())
-                name_terms = locals().get("schema_name_terms", set())
                 clauses = re.split(r'\s+and\s+|\s*,\s*', tabular_subquery.lower())
                 valid_clauses = []
                 analytic_verbs = {"average", "total", "sum", "count", "list", "how many", "max", "min"}
@@ -1203,19 +1618,31 @@ class RAGService:
             ):
                 full_answer.append(chunk)
                 yield chunk
+                
+            complete_answer = "".join(full_answer).strip()
+            if not complete_answer:
+                fallback_msg = "I'm sorry, but I don't have that specific information in my current knowledge base. Please try a related query or provide additional context."
+                logger.info(f"[RAG_STREAM] LLM returned empty string. Yielding fallback message.")
+                full_answer.append(fallback_msg)
+                yield fallback_msg
+                
             if not chat_history and full_answer:
-                # Note: 300s TTL means a doc re-ingested mid-window can serve a stale answer for up to 5 minutes.
-                _rag_cache[cache_key] = {
-                    'timestamp': time.time(),
-                    'metadata': metadata if 'metadata' in locals() else None,
-                    'answer': "".join(full_answer)
-                }
-                if cache_key in _CACHE_INSERTION_ORDER:
-                    _CACHE_INSERTION_ORDER.remove(cache_key)
-                _CACHE_INSERTION_ORDER.append(cache_key)
-                if len(_CACHE_INSERTION_ORDER) > _MAX_CACHE_SIZE:
-                    oldest = _CACHE_INSERTION_ORDER.pop(0)
-                    _rag_cache.pop(oldest, None)
+                joined_answer = "".join(full_answer)
+                if _is_not_found_answer(joined_answer):
+                    logger.info(f"[RAG_CACHE] Skipping cache write — answer is a 'not found' response (Key: {cache_key})")
+                else:
+                    # Note: 300s TTL means a doc re-ingested mid-window can serve a stale answer for up to 5 minutes.
+                    _rag_cache[cache_key] = {
+                        'timestamp': time.time(),
+                        'metadata': metadata if 'metadata' in locals() else None,
+                        'answer': joined_answer
+                    }
+                    if cache_key in _CACHE_INSERTION_ORDER:
+                        _CACHE_INSERTION_ORDER.remove(cache_key)
+                    _CACHE_INSERTION_ORDER.append(cache_key)
+                    if len(_CACHE_INSERTION_ORDER) > _MAX_CACHE_SIZE:
+                        oldest = _CACHE_INSERTION_ORDER.pop(0)
+                        _rag_cache.pop(oldest, None)
 
             # 4.5. NUMERIC VALIDATION (Fact-checking streamed response against context)
             complete_answer = "".join(full_answer)
@@ -1287,6 +1714,7 @@ class RAGService:
         max_depth: int = 2,
         reasoning_enabled: bool = True,
         memory_enabled: bool = True,
+        target_kb_id: Optional[str] = None,
     ) -> dict:
         logger.info(f" RAG Service: Generating answer for agent={agent_id}, kb={kb_id}")
         start_time_total = datetime.now()
@@ -1320,12 +1748,87 @@ class RAGService:
                 "sources": [],
             }
 
+        # Security IDOR authorization check
+        authorized_kb_ids = {str(k.id) for k in (excel_kbs + doc_kbs)}
+        if target_kb_id and str(target_kb_id) not in authorized_kb_ids:
+            logger.warning(
+                f"[SECURITY_ALERT] Unauthorized target_kb_id '{target_kb_id}' rejected for agent {agent_id}, tenant {self.tenant_id}"
+            )
+            return {
+                "error": f"Unauthorized: Knowledge Base {target_kb_id} does not belong to this agent",
+                "answer": None,
+                "sources": [],
+            }
+
+        effective_target_kb_id = str(target_kb_id) if target_kb_id else None
+        if not effective_target_kb_id and session_id:
+            pin = await _csv_session_store.get_pin(self.tenant_id, session_id)
+            if pin and pin.get("kb_id") in authorized_kb_ids:
+                pinned_kb_cand = next((k for k in excel_kbs if str(k.id) == pin.get("kb_id")), None)
+                if pinned_kb_cand:
+                    from app.modules.rag.schema_utils import calculate_schema_overlap_score
+                    ds = getattr(pinned_kb_cand, "dataset_schema", None)
+                    cv = getattr(pinned_kb_cand, "categorical_values", None)
+                    nm = getattr(pinned_kb_cand, "parsed_path", None) or getattr(pinned_kb_cand, "name", None)
+                    cat_score, gen_score = calculate_schema_overlap_score(query, ds, cv, nm)
+                    pin_score = cat_score * 2 + gen_score
+                    if pin_score > 0:
+                        effective_target_kb_id = str(pinned_kb_cand.id)
+                        await _csv_session_store.decrement_or_clear_pin(self.tenant_id, session_id)
+                        logger.info(f"[SESSION_PIN] Reusing pinned KB {nm} (relevance={pin_score}, turns_left={pin.get('turns_left', 1)-1})")
+                    else:
+                        await _csv_session_store.clear_pin(self.tenant_id, session_id)
+                        logger.info(f"[SESSION_PIN] Query relevance is 0 for pinned KB {nm}. Topic switched - evicted pin.")
+
+        if effective_target_kb_id:
+            selected_kb = next((k for k in excel_kbs if str(k.id) == effective_target_kb_id), None)
+            if selected_kb:
+                excel_kbs = [selected_kb]
+                if target_kb_id:
+                    await _csv_session_store.set_pin(
+                        self.tenant_id, session_id, str(selected_kb.id), getattr(selected_kb, "name", "unknown")
+                    )
+                logger.info(f"[DISAMBIGUATION_RESOLVED] target_kb_id={effective_target_kb_id}, filename={getattr(selected_kb, 'name', 'unknown')}")
+
         kb = doc_kbs[0] if doc_kbs else excel_kbs[0]
 
         # ============= HYBRID RAG: INTERCEPT EXCEL/PARQUET QUERIES =============
         if excel_kbs:
             from app.core.parquet_ingester import ParquetIngester
             from app.modules.rag.pandas_engine import PandasQueryEngine
+            from app.modules.rag.schema_utils import calculate_schema_overlap_score
+
+            if not effective_target_kb_id:
+                csv_kbs = [k for k in excel_kbs if is_csv_kb(k)]
+                if len(csv_kbs) >= 2 and not is_cross_file_query(query):
+                    kb_scores = []
+                    for k in csv_kbs:
+                        ds = getattr(k, "dataset_schema", None)
+                        cv = getattr(k, "categorical_values", None)
+                        nm = getattr(k, "parsed_path", None) or getattr(k, "name", None)
+                        c_score, g_score = calculate_schema_overlap_score(query, ds, cv, nm)
+                        t_score = c_score * 2 + g_score
+                        kb_scores.append({"kb": k, "name": nm, "cat_score": c_score, "gen_score": g_score, "total_score": t_score})
+
+                    if kb_scores:
+                        sorted_scores = sorted(kb_scores, key=lambda x: x["total_score"], reverse=True)
+                        s1 = sorted_scores[0]["total_score"]
+                        s2 = sorted_scores[1]["total_score"]
+                        if s1 > 0:
+                            relative_gap = (s1 - s2) / max(s1, 1.0)
+                            if relative_gap < 0.20:
+                                close_candidates = [
+                                    s for s in sorted_scores
+                                    if (s1 - s["total_score"]) / max(s1, 1.0) < 0.20
+                                ]
+                                clarification_payload = _build_csv_disambiguation_payload(
+                                    close_candidates, reason="score_gap_ambiguity"
+                                )
+                                logger.info(
+                                    f"[TELEMETRY] [DISAMBIGUATION_TRIGGERED] reason=score_gap_ambiguity, "
+                                    f"relative_gap={relative_gap:.2f}, candidates={[c['filename'] for c in clarification_payload['candidates']]}"
+                                )
+                                return clarification_payload
 
             active_paths = []
             for ek in excel_kbs:
@@ -1355,6 +1858,15 @@ class RAGService:
                     is_unmatched = any(
                         sig in result_str.lower() for sig in unmatched_signals
                     )
+                    if is_unmatched and effective_target_kb_id:
+                        chosen_name = getattr(excel_kbs[0], "name", "the selected file")
+                        return {
+                            "answer": f"No matching records found in {chosen_name}.",
+                            "sources": [],
+                            "context": {"type": "duckdb_parquet"},
+                            "stats": {},
+                        }
+
                     explicit_math_keywords = [
                         "sum of",
                         "average of",
@@ -1951,6 +2463,11 @@ RESPONSE FORMAT
 
     def _cache_response(self, cache_key: str, response: dict) -> None:
         global _CACHE_INSERTION_ORDER
+        # Don't cache "not found" answers from the non-streaming path either
+        answer_text = response.get("answer", "") if isinstance(response, dict) else ""
+        if _is_not_found_answer(answer_text):
+            logger.info(f"[RAG_CACHE] Skipping cache write (non-streaming) — answer is a 'not found' response")
+            return
         _rag_cache[cache_key] = (response, datetime.now())
 
         if cache_key not in _CACHE_INSERTION_ORDER:
@@ -1974,7 +2491,8 @@ RESPONSE FORMAT
 
         for i, chunk in enumerate(context.chunks, 1):
             s3_path = getattr(chunk, "s3_path", None)
-            source_info = s3_path if s3_path else (clean_source_name(chunk.source) if chunk.source else "Unknown Source")
+            source_val = chunk.source or s3_path
+            source_info = clean_source_name(source_val) if source_val else "Unknown Source"
             context_text += f"\n[Chunk {i}/{len(context.chunks)} - Source: {source_info} - Position {chunk.position}]"
             context_text += f"\nScore: {chunk.hybrid_score:.3f} (Semantic: {chunk.embedding_similarity:.3f}, Graph: {chunk.graph_score:.3f})"
             context_text += f"\n{'-' * 40}\n{chunk.text}\n"

@@ -220,6 +220,9 @@ import time
 _KB_NOISY_WORDS_CACHE = {}  # kb_id -> {"data": noisy_words_list, "expiry": timestamp}
 KB_NOISY_WORDS_CACHE_TTL = 300  # 5 minutes
 
+TRUST_THRESHOLD = 2.0
+SECTION_TRUST_FLOOR = 0.5  # TODO: tune against real query logs, currently a starting estimate
+
 class RAGPipeline:
 
 
@@ -859,6 +862,7 @@ class RAGPipeline:
                 meta_dict["confidence"] = getattr(analysis, "confidence", 0.0)
                 meta_dict["reasoning"] = getattr(analysis, "reasoning", "")
                 meta_dict["_sql_cascade_fell_through"] = sql_cascade_fell_through
+                meta_dict["heuristic_fallback_used"] = getattr(analysis, "heuristic_fallback_used", False)
 
             # 0. Section Ranking
             async def _run_section_ranking():
@@ -886,6 +890,17 @@ class RAGPipeline:
                     if not candidate_sections:
                         return []
                         
+                    heuristic_fallback_used = meta_dict.get("heuristic_fallback_used", False)
+
+                    # Unconditional Gate: Rejection if candidate pool was derived from degraded heuristic keywords
+                    if heuristic_fallback_used:
+                        logger.info(
+                            f"[SECTION_TRUST] heuristic_fallback_used=True -> candidate pool derived from "
+                            f"noisy heuristic keywords, rejecting regardless of candidate sections -> "
+                            f"falling back to full-KB search."
+                        )
+                        return []
+
                     ranker = SectionRanker()
                     ranked_sections = ranker.rank_sections(current_query, candidate_sections, top_k=5)
                     logger.info(f"SectionRanker selected {len(ranked_sections)} candidate sections out of {len(candidate_sections)}")
@@ -900,15 +915,22 @@ class RAGPipeline:
                         return [s.get("section_id") for s in candidate_sections if s.get("section_id")]
                         
                     top_score = ranked_sections[0].get("rank_score", 0.0)
-                    if top_score < 2.0:
-                        # SectionRanker can't score the title well (e.g., generic names like "Page 1"),
-                        # but get_candidate_sections already filtered by keyword ILIKE — those sections
-                        # ARE keyword-relevant even if the title doesn't overlap with the query.
-                        # Trust the Postgres ILIKE results instead of falling back to full-KB.
-                        logger.info(f"[SECTION_TRUST] SectionRanker top score ({top_score}) < 2.0, "
-                                    f"but {len(candidate_sections)} sections were found via keyword ILIKE. "
-                                    f"Using ILIKE candidates instead of full-KB fallback.")
-                        return [s.get("section_id") for s in candidate_sections if s.get("section_id")]
+
+                    if top_score < TRUST_THRESHOLD:
+                        if top_score >= SECTION_TRUST_FLOOR:
+                            logger.info(
+                                f"[SECTION_TRUST] top_score={top_score:.2f} < TRUST_THRESHOLD={TRUST_THRESHOLD}, "
+                                f"heuristic_fallback_used={heuristic_fallback_used} -> "
+                                f"Using {len(candidate_sections)} ILIKE candidate sections (weak but plausible match)."
+                            )
+                            return [s.get("section_id") for s in candidate_sections if s.get("section_id")]
+                        else:
+                            logger.info(
+                                f"[SECTION_TRUST] top_score={top_score:.2f} < TRUST_THRESHOLD={TRUST_THRESHOLD}, "
+                                f"heuristic_fallback_used={heuristic_fallback_used} -> "
+                                f"falling back to full-KB search (ILIKE candidates rejected: low confidence top_score={top_score:.2f} < floor={SECTION_TRUST_FLOOR})"
+                            )
+                            return []
                         
                     if len(ranked_sections) > 1:
                         second_score = ranked_sections[1].get("rank_score", 0.0)
@@ -1020,7 +1042,10 @@ class RAGPipeline:
                         top_k=TOP_N,
                         target_section_ids=target_sections or []
                     )
-                    return await vector_engine.retrieve(dummy_task, kb_ids)
+                    res = await vector_engine.retrieve(dummy_task, kb_ids)
+                    if not target_sections:
+                        logger.info(f"[FULL_KB_FALLBACK] Executed broad pgvector search without section restrictions. Returned {len(res)} chunks.")
+                    return res
                 except Exception as e:
                     logger.warning(f"Vector search failed (non-blocking): {e}")
                     return []
@@ -1270,10 +1295,13 @@ class RAGPipeline:
                             self.db.rollback()
 
             # 4b. Apply Domain Boost
-            logger.info(f"[RRF_BOOST_DEBUG] boost loop starting. NOTE: It receives NO matched_kb_ids from vector_engine because the signature drops them.")
+            matched_kb_ids = list({chunk.kb_id for chunk in vector_res if getattr(chunk, "domain_matched", False)})
+            logger.info(f"[RRF_BOOST_DEBUG] boost loop starting with matched_kb_ids={matched_kb_ids}.")
             from app.modules.rag.scoring.term_frequency import get_kb_doc_frequency, idf_discount
             import re
             
+            doc_freq_cache: Dict[str, Dict] = {}
+
             for cid in fused_scores.keys():
                 chunk_obj = vector_chunk_map.get(cid)
                 if chunk_obj:
@@ -1285,12 +1313,16 @@ class RAGPipeline:
                     if not term_matches and not kb_level_match:
                         continue
                         
-                    kb_id = getattr(chunk_obj, "kb_id", None)
-                    doc_freq = {}
-                    if kb_id and getattr(self, "db", None):
-                        doc_freq = await get_kb_doc_frequency(kb_id, self.db)
+                    idf_boost = 0.0
+                    if term_matches:
+                        kb_id = getattr(chunk_obj, "kb_id", None)
+                        doc_freq = {}
+                        if kb_id and getattr(self, "db", None):
+                            if kb_id not in doc_freq_cache:
+                                doc_freq_cache[kb_id] = await get_kb_doc_frequency(kb_id, self.db)
+                            doc_freq = doc_freq_cache[kb_id]
+                        idf_boost = sum(idf_discount(t, doc_freq) for t in term_matches)
                         
-                    idf_boost = sum(idf_discount(t, doc_freq) for t in term_matches) if term_matches else 0.0
                     kb_boost = DOMAIN_BOOST_WEIGHT if kb_level_match else 0.0
                     
                     total_boost = idf_boost + kb_boost
@@ -3041,7 +3073,12 @@ Respond ONLY as JSON:
                 all_csv_results = []
                 for ekb, path in zip(excel_kb_rows, active_paths):
                     try:
-                        res = await engine.execute_query(query, path)
+                        res = await engine.execute_query(
+                            query, 
+                            path, 
+                            dataset_schema=getattr(ekb, 'dataset_schema', None), 
+                            categorical_values=getattr(ekb, 'categorical_values', None)
+                        )
                         if res and "No valid spreadsheet" not in res:
                             kb_label = ekb.name or path
                             all_csv_results.append(f"[Source: {kb_label}]\n{res}")
@@ -4160,7 +4197,7 @@ CRITICAL RULES:
                    ({max_clauses}) AS unique_hits,
                    ({sum_clauses}) AS total_hits
             FROM document_table_rows 
-            WHERE kb_id IN ({kb_in_str}) AND ({like_clauses})
+            WHERE kb_id = ANY(:kb_ids) AND ({like_clauses})
             GROUP BY kb_id, page_number, table_index
             ORDER BY unique_hits DESC, total_hits DESC
         """

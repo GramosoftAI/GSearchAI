@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     gcrawl_retry: int = 3
     gcrawl_enabled: bool = True
     website_acquisition_provider: str = "gcrawl_v2"
+    gcrawl_concurrency: int = 10
+    gcrawl_url_timeout: int = 20
     # ============= REDIS (ARQ) =============
     redis_url: str = "redis://localhost:6379"
 
@@ -90,8 +92,9 @@ class Settings(BaseSettings):
         """Construct async PostgreSQL URL from components"""
 
         import urllib.parse
+        host = "127.0.0.1" if self.postgres_host in ("localhost", "127.0.0.1") else self.postgres_host
         encoded_pw = urllib.parse.quote_plus(urllib.parse.unquote_plus(self.postgres_password))
-        return f"postgresql+asyncpg://{self.postgres_user}:{encoded_pw}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        return f"postgresql+asyncpg://{self.postgres_user}:{encoded_pw}@{host}:{self.postgres_port}/{self.postgres_db}"
 
 
 
@@ -272,7 +275,7 @@ class Settings(BaseSettings):
 
     # ============= EXTERNAL SERVICES =============
 
-    sql_generation_model: str = "Qwen/Qwen2.5-72B-Instruct"
+    sql_generation_model: str = "deepseek-ai/DeepSeek-V4-Flash-0731"
 
     llm_gateway_api_key: Optional[str] = None
     gdocz_api_key: Optional[str] = None  # For PDF  Markdown extraction (primary)
@@ -377,7 +380,7 @@ class Settings(BaseSettings):
 
     # Hybrid mode: Use O(n) for small KBs, vector index for large
 
-    similarity_brute_force_threshold: int = 500  # Use O(n) if chunks < this
+    similarity_brute_force_threshold: int = 2000  # Vectorized computation can handle >2000 chunks
 
     similarity_min_threshold: float = 0.5  # Only link chunks with >50% similarity
 

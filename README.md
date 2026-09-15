@@ -225,6 +225,12 @@ curl -X GET "http://localhost:8000/api/v1/health" \
 # Expected: {"status": "healthy", "database": "connected", "graph": "connected"}
 ```
 
+**Note on Graph Cleanup:**
+To keep the graph deduplicated, it is highly recommended to set up a cron job to call the graph cleanup endpoint periodically (e.g. every 6 hours):
+```bash
+0 */6 * * * curl -X POST http://localhost:8000/api/v1/admin/graph-cleanup -H "x-tenant-id: YOUR_TENANT_ID"
+```
+
 *Swagger UI documentation is available at `http://localhost:8000/docs`.*
 
 ## 🧩 Use Cases & Verticals

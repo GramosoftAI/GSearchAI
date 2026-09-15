@@ -1094,9 +1094,9 @@ async def get_embed_config(
 
     if config.get("search_mobile_icon"):
         if device == "mobile":
-            config["button_icon"] = "icon"
+            config["chat_type"] = "icon"
         elif device == "lap":
-            config["button_icon"] = "chat"
+            config["chat_type"] = "search"
 
     if is_public_access:
         # Return sanitized public response — excludes internal metadata

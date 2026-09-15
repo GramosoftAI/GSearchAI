@@ -47,9 +47,26 @@ async def generate_kb_summary_embedding(kb_id: str, db) -> None:
                 document_text = "\n".join(row_strs)
                 
         if not document_text:
-            logger.warning(f"KB {kb.id} ({kb.name}) has no chunks or rows. Falling back to filename-only summary.")
-            document_text = f"This is a structured dataset or file named {kb.name}. The content is stored externally (e.g. as parquet or s3 path) and is not available in chunk form."
-            
+            schema = getattr(kb, 'dataset_schema', None)
+            cols = []
+            if schema and isinstance(schema, dict):
+                if "columns" in schema and isinstance(schema["columns"], dict):
+                    cols = list(schema["columns"].keys())
+                else:
+                    cols = list(schema.keys())
+                    
+            if cols:
+                logger.info(f"KB {kb.id} ({kb.name}) has no chunks but has dataset_schema. Building schema-based summary text.")
+                col_str = ", ".join(str(c) for c in cols)
+                document_text = f"This is a structured dataset named {kb.name}. It contains the following columns: {col_str}."
+                
+                # Check for description or sheet name if available
+                desc = schema.get("description", "") if isinstance(schema, dict) else ""
+                if desc and isinstance(desc, str):
+                    document_text += f" Description: {desc}"
+            else:
+                logger.warning(f"KB {kb.id} ({kb.name}) has no chunks, rows, or valid dataset_schema. Falling back to silently-degraded filename-only summary.")
+                document_text = f"This is a structured dataset or file named {kb.name}. The content is stored externally (e.g. as parquet or s3 path) and is not available in chunk form."
         # Use a fast LLM call to summarize the document
         prompt = f"""
         You are an expert indexer. Summarize the following document accurately in 2-3 sentences.
