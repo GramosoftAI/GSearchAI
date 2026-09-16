@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Card, Flex, Button, Typography, Modal, Spin } from "antd";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { signIn, useSession } from "next-auth/react";
 import { getCookie } from "../../config/cookies";
 import GoogleDriveFolderModal from "./GoogleDriveFolderModal";
@@ -13,6 +14,7 @@ import { toast } from "react-hot-toast";
 const { Title } = Typography;
 
 export default function ChannelsSection() {
+  const router = useRouter();
   const { data: session } = useSession() as any;
   const [googleModal, setGoogleModal] = useState(false);
   const [sharePointModal, setSharePointModal] = useState(false);
@@ -365,6 +367,36 @@ export default function ChannelsSection() {
         </Title>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card
+            hoverable
+            className="group relative overflow-hidden bg-[var(--app-surface)] border border-[var(--app-border)] rounded-3xl transition-all duration-300 hover:shadow-xl hover:shadow-emerald-900/5 hover:-translate-y-1"
+            styles={{ body: { padding: "24px sm:32px" } }}
+          >
+            <div className="p-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Image
+                  src="https://img.icons8.com/color/96/slack-new.png"
+                  alt="Slack"
+                  width={40}
+                  height={40}
+                  unoptimized
+                />
+                <div>
+                  <h2 className="font-semibold text-[var(--app-text)]">Slack</h2>
+                  <p className="text-sm text-gray-500">Channels, direct messages, bot events</p>
+                </div>
+              </div>
+              
+              <Button
+                type="primary"
+                onClick={() => router.push("/dashboard/integrations/slack")}
+                className="!bg-[#0fb5a1] hover:!bg-[#0a8576] border-none text-white px-6 py-2 rounded-xl h-11 font-semibold transition-transform active:scale-95"
+              >
+                Connect
+              </Button>
+            </div>
+          </Card>
+
           <Card
             hoverable
             className="group relative overflow-hidden bg-[var(--app-surface)] border border-[var(--app-border)] rounded-3xl transition-all duration-300 hover:shadow-xl hover:shadow-blue-900/5 hover:-translate-y-1"

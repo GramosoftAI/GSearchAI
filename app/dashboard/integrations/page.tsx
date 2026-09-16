@@ -3,7 +3,6 @@
 import { Flex, App } from "antd";
 import EmbedScriptSection from "./EmbedScriptSection";
 import ChannelsSection from "./ChannelsSection";
-import SlackIntegrationSettings from "./SlackIntegrationSettings";
 
 function IntegrationsContent() {
   return (
@@ -11,8 +10,6 @@ function IntegrationsContent() {
       <Flex vertical gap={40}>
         
         <EmbedScriptSection />
-
-        <SlackIntegrationSettings />
 
         <ChannelsSection />
 
