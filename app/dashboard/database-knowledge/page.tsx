@@ -867,16 +867,6 @@ export default function DatabaseKnowledgePage() {
     }
   };
 
-  const sampleQuestions = [
-    "Show all employees in the Engineering department.",
-    "What is the average salary by department?",
-    "Show the top 5 highest-paid employees.",
-    "Which employees are working on more than one project?",
-    "What was the total payroll expense for each department?",
-    "Which employees received a performance rating of 5?",
-    "Which employees have never submitted a leave request?",
-  ];
-
   const formatColumnTitle = (raw: string, count: number) => {
     let title = raw
       .replace(/_id_id$/, "_id")
@@ -1371,7 +1361,7 @@ export default function DatabaseKnowledgePage() {
                     ),
                     children: (
                       <div className="flex flex-col gap-4">
-                        {/* Sample Queries Chips */}
+                        {/* Query Input */}
                         <Card
                           style={{
                             background: "var(--app-surface)",
@@ -1380,62 +1370,40 @@ export default function DatabaseKnowledgePage() {
                           }}
                           styles={{ body: { padding: 16 } }}
                         >
-                          <Text style={{ fontSize: 12, color: "#8c8c8c", display: "block", marginBottom: 6 }}>
-                            Quick Sample Questions:
-                          </Text>
-                          <div className="flex flex-wrap gap-2">
-                            {sampleQuestions.map((q, idx) => (
-                              <Tag
-                                key={idx}
-                                color="default"
-                                style={{ cursor: "pointer", padding: "4px 10px", borderRadius: 16 }}
-                                onClick={() => {
-                                  setUserQuery(q);
-                                  handleRunQuery(q);
-                                }}
-                              >
-                                {q}
-                              </Tag>
-                            ))}
-                          </div>
-
-                          {/* Query Input */}
-                          <div className="mt-4">
-                            <div className="flex gap-2 w-full">
-                              <Input
-                                size="large"
-                                placeholder="Ask any natural-language question about this database..."
-                                value={userQuery}
-                                onChange={(e) => setUserQuery(e.target.value)}
-                                onPressEnter={() => handleRunQuery()}
-                                disabled={queryLoading}
-                                prefix={<SearchOutlined style={{ color: "#8c8c8c" }} />}
-                                style={{
-                                  borderRadius: 8,
-                                  background: "var(--app-surface)",
-                                  borderColor: "var(--app-border)",
-                                  color: "var(--app-text)",
-                                  flex: 1,
-                                  minWidth: 0,
-                                }}
-                              />
-                              <Button
-                                type="primary"
-                                size="large"
-                                loading={queryLoading}
-                                onClick={() => handleRunQuery()}
-                                className="shrink-0 whitespace-nowrap min-w-[140px] px-6"
-                                style={{
-                                  backgroundColor: "var(--app-primary)",
-                                  borderColor: "var(--app-primary)",
-                                  borderRadius: 8,
-                                  fontWeight: 600,
-                                  flexShrink: 0,
-                                }}
-                              >
-                                Ask Database
-                              </Button>
-                            </div>
+                          <div className="flex gap-2 w-full">
+                            <Input
+                              size="large"
+                              placeholder="Ask any natural-language question about this database..."
+                              value={userQuery}
+                              onChange={(e) => setUserQuery(e.target.value)}
+                              onPressEnter={() => handleRunQuery()}
+                              disabled={queryLoading}
+                              prefix={<SearchOutlined style={{ color: "#8c8c8c" }} />}
+                              style={{
+                                borderRadius: 8,
+                                background: "var(--app-surface)",
+                                borderColor: "var(--app-border)",
+                                color: "var(--app-text)",
+                                flex: 1,
+                                minWidth: 0,
+                              }}
+                            />
+                            <Button
+                              type="primary"
+                              size="large"
+                              loading={queryLoading}
+                              onClick={() => handleRunQuery()}
+                              className="shrink-0 whitespace-nowrap min-w-[140px] px-6"
+                              style={{
+                                backgroundColor: "var(--app-primary)",
+                                borderColor: "var(--app-primary)",
+                                borderRadius: 8,
+                                fontWeight: 600,
+                                flexShrink: 0,
+                              }}
+                            >
+                              Ask Database
+                            </Button>
                           </div>
                         </Card>
 

@@ -282,7 +282,15 @@ export const DatabasePipelineProgress: React.FC<DatabasePipelineProgressProps> =
       {error && (
         <div className="mt-4 p-3 rounded-lg bg-red-950/40 border border-red-800 text-red-300 text-xs flex items-center justify-between">
           <span>{error}</span>
-          <Tag color="error">SECURITY / VALIDATION REJECTION</Tag>
+          <Tag color="error">
+            {error.includes("VALIDATION") || error.includes("SECURITY")
+              ? "SECURITY / VALIDATION REJECTION"
+              : error.includes("EXECUTION")
+              ? "DATABASE EXECUTION ERROR"
+              : error.includes("TIMEOUT")
+              ? "TIMEOUT ERROR"
+              : "PIPELINE EXECUTION ERROR"}
+          </Tag>
         </div>
       )}
 
