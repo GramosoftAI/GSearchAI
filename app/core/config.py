@@ -56,8 +56,12 @@ class Settings(BaseSettings):
 
 
 
-    # ============= EXTERNAL ALERTS =============
+    # ============= EXTERNAL ALERTS & SLACK =============
     slack_webhook_url: Optional[str] = None
+    slack_client_id: Optional[str] = None
+    slack_client_secret: Optional[str] = None
+    slack_signing_secret: Optional[str] = None
+    slack_token_encryption_key: Optional[str] = None
     
     # ============= GCRAWL API =============
     gcrawl_api_key: Optional[str] = None
