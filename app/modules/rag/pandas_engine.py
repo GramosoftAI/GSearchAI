@@ -1076,7 +1076,9 @@ class PandasQueryEngine:
 
             if not rows:
                 return f"Error: {query_plan.explanation}\nNo records matched your query. Not present in dataset."
-            return self._format_table_results(rows, col_names)
+            
+            formatted_table = self._format_table_results(rows, col_names)
+            return f"[Context: {query_plan.explanation}]\n\n{formatted_table}"
             
         except Exception as e:
             logger.error(f"PandasQueryEngine Execution Failed: {e}", exc_info=True)
