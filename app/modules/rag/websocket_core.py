@@ -100,22 +100,42 @@ async def run_unified_rag_websocket_loop(
         if not active_session_id and request.session_id:
             active_session_id = request.session_id
 
+        if not active_session_id:
+            try:
+                new_session = await chat_service.chat_repo.create_session(
+                    agent_id=agent_id,
+                    user_id=user_id,
+                    title="New Conversation"
+                )
+                active_session_id = str(new_session.id)
+                await db.commit()
+            except Exception as e:
+                logger.error(f"Failed to auto-create session: {e}")
+
+        if active_session_id:
+            try:
+                await chat_service.chat_repo.add_message(
+                    session_id=active_session_id,
+                    role="user",
+                    content=request.query
+                )
+                await db.commit()
+            except Exception as e:
+                logger.error(f"Failed to persist user message: {e}")
+
         async def _forward_event(event: LoopEvent):
             await adapter.send(websocket, event)
 
         try:
             async def _fetch_chat_history():
-                if session.message_count > 1:
+                if active_session_id:
                     return await chat_service.chat_repo.get_recent_messages(
                         session_id=active_session_id, count=10
                     )
                 return []
             
             # Await ONLY chat history synchronously
-            memory_messages = await _fetch_chat_history()
-
-            # 2. Chat History for Memory Context (used only as context, never to rewrite the query)
-            history_messages = [m for m in memory_messages if str(m.id) != str(user_msg.id)]
+            history_messages = await _fetch_chat_history()
 
             # Original query is immutable from this point forward
             original_query = request.query
@@ -240,6 +260,27 @@ async def run_unified_rag_websocket_loop(
                 sources=collected_sources,
                 response_text=full_response
             )
+
+            # Persist response and send completion event
+            if active_session_id:
+                try:
+                    await chat_service.chat_repo.add_message(
+                        session_id=active_session_id,
+                        role="assistant",
+                        content=full_response,
+                        metadata={
+                            "sources": collected_sources,
+                            "status": "complete",
+                            "escalation_detected": is_escalated,
+                            "channel": channel,
+                        },
+                    )
+                    await db.commit()
+                except Exception as e:
+                    logger.error(f"Failed to persist response: {e}")
+
+            await adapter.send(websocket, LoopEvent(type="done", escalation_detected=is_escalated))
+
         except WebSocketDisconnect:
             return
         except Exception as e:

@@ -923,94 +923,10 @@ class RAGPipeline:
 
             # 0. Section Ranking
             async def _run_section_ranking():
-                is_tabular = meta_dict.get("is_tabular") or getattr(analysis, "is_tabular", False)
-                sql_fell_through = meta_dict.get("_sql_cascade_fell_through", False)
-                if is_tabular and not sql_fell_through:
-                    logger.info("Skipping SectionRanker for tabular query (SQL path active).")
-                    return []
-                if sql_fell_through:
-                    logger.info("SQL cascade fell through to RRF. Re-enabling SectionRanker.")
-                try:
-                    from app.modules.rag.engines.vector_engine import VectorEngine
-                    from app.modules.rag.orchestrator.section_ranker import SectionRanker
-                    from app.modules.rag.schemas import RetrievalTask
-                    
-                    v_engine = VectorEngine(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
-                    dummy_task = RetrievalTask(
-                        task_id="section_ranking",
-                        query=current_query,
-                        metadata_filters=meta_dict,
-                        top_k=50,
-                        target_section_ids=[]
-                    )
-                    candidate_sections = await v_engine.get_candidate_sections(dummy_task, kb_ids)
-                    if not candidate_sections:
-                        return []
-                        
-                    heuristic_fallback_used = meta_dict.get("heuristic_fallback_used", False)
-
-                    # Unconditional Gate: Rejection if candidate pool was derived from degraded heuristic keywords
-                    if heuristic_fallback_used:
-                        logger.info(
-                            f"[SECTION_TRUST] heuristic_fallback_used=True -> candidate pool derived from "
-                            f"noisy heuristic keywords, rejecting regardless of candidate sections -> "
-                            f"falling back to full-KB search."
-                        )
-                        return []
-
-                    ranker = SectionRanker()
-                    ranked_sections = ranker.rank_sections(current_query, candidate_sections, top_k=15)
-                    logger.info(f"SectionRanker selected {len(ranked_sections)} candidate sections out of {len(candidate_sections)}")
-                    
-                    # Implement fallback logic:
-                    if not ranked_sections:
-                        # SectionRanker returned nothing, but get_candidate_sections found
-                        # keyword-matched sections via Postgres ILIKE. Trust the Postgres results.
-                        logger.info(f"[SECTION_TRUST] SectionRanker returned 0 ranked sections, "
-                                    f"but Postgres ILIKE found {len(candidate_sections)} candidates. "
-                                    f"Using ILIKE candidates as section scope.")
-                        return [s.get("section_id") for s in candidate_sections if s.get("section_id")]
-                        
-                    top_score = ranked_sections[0].get("rank_score", 0.0)
-
-                    if top_score < TRUST_THRESHOLD:
-                        if top_score >= SECTION_TRUST_FLOOR:
-                            logger.info(
-                                f"[SECTION_TRUST] top_score={top_score:.2f} < TRUST_THRESHOLD={TRUST_THRESHOLD}, "
-                                f"heuristic_fallback_used={heuristic_fallback_used} -> "
-                                f"Using {len(candidate_sections)} ILIKE candidate sections (weak but plausible match)."
-                            )
-                            return [s.get("section_id") for s in candidate_sections if s.get("section_id")]
-                        else:
-                            logger.info(
-                                f"[SECTION_TRUST] top_score={top_score:.2f} < TRUST_THRESHOLD={TRUST_THRESHOLD}, "
-                                f"heuristic_fallback_used={heuristic_fallback_used} -> "
-                                f"falling back to full-KB search (ILIKE candidates rejected: low confidence top_score={top_score:.2f} < floor={SECTION_TRUST_FLOOR})"
-                            )
-                            return []
-                        
-                    if len(ranked_sections) > 1:
-                        second_score = ranked_sections[1].get("rank_score", 0.0)
-                        gap = top_score - second_score
-                        if gap < (0.3 * top_score):
-                            # Rather than abandoning section targeting entirely when top sections tie or have a narrow gap,
-                            # union the close candidate sections (score >= 70% of top_score, up to top 3) to preserve scope.
-                            close_sections = [
-                                s.get("section_id")
-                                for s in ranked_sections[:3]
-                                if s.get("section_id") and s.get("rank_score", 0.0) >= (0.70 * top_score)
-                            ]
-                            if close_sections:
-                                logger.info(
-                                    f"[SECTION_TRUST] SectionRanker score gap between {top_score} and {second_score} is < 30%. "
-                                    f"Unioning {len(close_sections)} tied/close candidate sections instead of full-KB fallback."
-                                )
-                                return close_sections
-
-                    return [s.get("section_id") for s in ranked_sections if s.get("section_id")]
-                except Exception as e:
-                    logger.warning(f"Section ranking failed (non-blocking): {e}")
-                    return []
+                # BYPASS: SectionRanker's keyword-based pre-filtering drops relevant semantic chunks.
+                # Returning [] forces the pipeline to fall back to a full-KB search, which relies on 
+                # embeddings to find the best chunks across the entire knowledge base.
+                return []
 
             # 1. Graph Traversal (Dynamic Decision Gated)
             async def _run_triplet_search(target_sections=None):
