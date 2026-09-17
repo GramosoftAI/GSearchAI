@@ -488,6 +488,9 @@ class DeepInfraLLMClient:
             "reasoning_effort": "none"
         }
         
+        if "response_format" in kwargs:
+            payload["response_format"] = kwargs["response_format"]
+        
         req_timeout = timeout if timeout is not None else self.timeout
         import time
         last_error = None

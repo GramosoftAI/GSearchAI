@@ -85,10 +85,23 @@ class QueryAnalyzerLegacy:
     def __init__(self):
         self.llm_client = DeepInfraLLMClient.get_instance()
         
+    @staticmethod
+    def normalize_query_text(text: str) -> str:
+        """Normalizes Unicode dashes, curly quotes, non-breaking spaces to standard ASCII."""
+        if not text:
+            return ""
+        text = str(text)
+        text = re.sub(r'[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]', '-', text)
+        text = re.sub(r'[\u2018\u2019\u201a\u201b\u2032\u2035]', "'", text)
+        text = re.sub(r'[\u201c\u201d\u201e\u201f\u2033\u2036]', '"', text)
+        text = re.sub(r'[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000\ufeff\u200b]', ' ', text)
+        return text.strip()
+
     async def analyze_query(self, query: str, kb_context: str = "", chat_history: Optional[str] = None, tenant_id: Optional[str] = None, user_id: Optional[str] = None, session_id: Optional[str] = None) -> AnalysisResult:
         """
         Uses LLM to extract intent and metadata in a single pass (Legacy).
         """
+        query = self.normalize_query_text(query)
         q_strip = query.strip()
         # Fast-Path 1: Simple greetings & casual chat (0 ms overhead, no LLM call needed!)
         if re.match(r'^(hello|hi|hey|good\s+morning|good\s+afternoon|good\s+evening|howdy|greetings|thanks|thank\s+you|how\s+are\s+you)[!.,?]*$', q_strip, re.IGNORECASE):
@@ -99,6 +112,16 @@ class QueryAnalyzerLegacy:
                 confidence=1.0,
                 reasoning="Fast-path greeting regex match"
             )
+
+        # Fast-Path 2: Deterministic tabular property lookups
+        is_tabular_override = False
+        tabular_pattern = r'\b(what is|what\'s|find|get|give me|show|calculate|tell me|list|search|fetch|details of|details for)\b.*\b(salary|age|count|employee id|email|mrp|price|prices|cost|rate|amount|product|products|item|items|part|parts|partno|part no|article|articleno|article no|stock|inventory|quantity|qty|total|sum|serial|serial number|sr no|sr\. no|sl no|sl\. no|number|num|code|hsn|details|detail|record|records|row|rows|specs|specification|model|oem|group)\b'
+        if re.search(tabular_pattern, q_strip, re.IGNORECASE):
+            is_tabular_override = True
+
+        if not is_tabular_override:
+            if re.search(r'\b(serial\s*number|part\s*number|part\s*no|partno|article\s*no|articleno|article\s*number|sr\s*no|sr\.\s*no|sl\s*no|sl\.\s*no|item\s*code|hsn\s*code|model\s*number|product\s*code|product\s*details|details\s+for|details\s+of)\b', q_strip, re.IGNORECASE):
+                is_tabular_override = True
 
         kb_context_section = f"\n[ACTIVE KNOWLEDGE BASES CONTEXT & SCHEMA VOCABULARY]\nThe user is searching across these knowledge bases. Use the provided column names and sample categorical values to resolve ambiguous terms and identify structured tabular queries:\n{kb_context}\n" if kb_context else ""
         
@@ -226,12 +249,12 @@ QUERY:
                         max_tokens=1024,
                         enable_thinking=False,
                         model=self.llm_client.model_intent,
-                        timeout=4.5, # Tighter timeout for fast-fail when provider is degraded
+                        timeout=30.0, # Resilient timeout to handle provider load
                         task=LLMTask.INTENT_DETECTION,
                         tenant_id=tenant_id,
                         user_id=user_id
                     ),
-                    timeout=5.0
+                    timeout=32.0
                 )
                 
                 # Extract JSON block
@@ -303,7 +326,7 @@ QUERY:
                     structured_queries=metadata_dict.get("structured_queries", [])
                 )
 
-                is_tabular = bool(data.get("is_tabular", False))
+                is_tabular = bool(data.get("is_tabular", False)) or is_tabular_override
                 
                 return AnalysisResult(
                     intent=intent,

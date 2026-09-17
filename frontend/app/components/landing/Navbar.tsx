@@ -1,5 +1,6 @@
 "use client";
 import React, { useState} from "react";
+import "@/app/home/style.css";
 import { Button, Drawer } from "antd";
 import { MenuOutlined, GithubOutlined } from "@ant-design/icons";
 import BrandGlyph from "./BrandGlyph";
@@ -29,9 +30,15 @@ export default function Navbar() {
         const element = document.getElementById(targetId);
         if (element) {
           element.scrollIntoView({ behavior: "smooth" });
+        } else {
+          window.location.href = "/" + href;
         }
       } else {
-        window.scrollTo({ top: 0, behavior: "smooth" });
+        if (window.location.pathname !== "/") {
+          window.location.href = "/";
+        } else {
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }
       }
     }
   };

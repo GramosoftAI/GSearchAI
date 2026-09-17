@@ -35,7 +35,7 @@ const AnimatedCounter = ({ value }: { value: string }) => {
         const [entry] = entries;
         if (entry.isIntersecting && !hasAnimated) {
           setHasAnimated(true);
-          let start = 0;
+          const start = 0;
           const end = target;
           const duration = 1200; 
           const startTime = performance.now();

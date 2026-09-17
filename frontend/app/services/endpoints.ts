@@ -138,6 +138,14 @@ export const endpoints = {
     url: "/embed/configs",  // append /{agent_id} at call site
     method: methods.delete,
   },
+  GET_WIDGET_CONFIG: {
+    url: "/embed/configs",
+    method: methods.get,
+  },
+  SAVE_WIDGET_CONFIG: {
+    url: "/embed/configs",
+    method: methods.post,
+  }
 } as const;
 
 export type endpointsType = keyof typeof endpoints;

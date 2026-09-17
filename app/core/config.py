@@ -384,6 +384,18 @@ class Settings(BaseSettings):
 
     
 
+    # ============= SCHEMA-GROUNDED ENTITY RESOLUTION =============
+    entity_resolution_mode: str = "schema_grounded"  # "legacy" | "schema_grounded"
+    entity_resolution_embedding_weight: float = 0.75
+    entity_resolution_fuzzy_weight: float = 0.25
+    entity_resolution_high_threshold: float = 0.75
+    entity_resolution_medium_threshold: float = 0.50
+    entity_resolution_low_threshold: float = 0.30
+
+    # ============= DATABASE UNDERSTANDING & KNOWLEDGEBASE CONFIG =============
+    database_understanding_mode: str = "universal"  # "legacy" or "universal"
+    entity_resolution_mode: str = "schema_grounded"  # "schema_grounded" or "lexical"
+
     # ============= SIMILARITY SEARCH CONFIG =============
 
     # Hybrid mode: Use O(n) for small KBs, vector index for large
@@ -411,7 +423,15 @@ class Settings(BaseSettings):
 
 
 
+    # ============= SLACK INTEGRATION =============
+    slack_client_id: Optional[str] = None
+    slack_client_secret: Optional[str] = None
+    slack_signing_secret: Optional[str] = None
+    slack_redirect_uri: Optional[str] = None
+    slack_token_encryption_key: Optional[str] = None
+
     # ============= CORS =============
+
 
     # SECURITY: Never use "*" in production (allows any origin + credentials)
 

@@ -454,7 +454,7 @@ const STAGES = [
   { at: 3000, label: "Reading relevant documents..." },
   { at: 8000, label: "Analyzing context..." },
   { at: 15000, label: "Generating answer..." },
-  { at: 30000, label: "Still working — complex query, almost there..." },
+  { at: 30000, label: "Deep reasoning in progress..." },
 ];
 
 function useProgressLabel(isLoading: boolean) {
@@ -869,7 +869,7 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
           );
         }
 
-        let bulletMatch = line.match(bulletRegex);
+        const bulletMatch = line.match(bulletRegex);
         if (bulletMatch) {
           return (
             <div key={`${bIdx}-${index}`} className="flex items-start gap-2 pl-2 my-1">
@@ -881,7 +881,7 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
           );
         }
 
-        let numberMatch = line.match(numberListRegex);
+        const numberMatch = line.match(numberListRegex);
         if (numberMatch) {
           const prefix = numberMatch[1].trim();
           return (
@@ -919,6 +919,7 @@ export default function ChatPlaygroundPage() {
   const [selectedModel, setSelectedModel] = useState<'Flash' | 'Pro' | 'Ultra'>('Flash');
   const [searchQuery, setSearchQuery] = useState<string>("");
   const searchRef = useRef<HTMLInputElement>(null);
+  const [agentSearch, setAgentSearch] = useState<string>("");
 
   // Feedback states
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
@@ -1027,7 +1028,9 @@ export default function ChatPlaygroundPage() {
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [shouldLoadLatestOnFetch, setShouldLoadLatestOnFetch] = useState(false);
 
-  // ─── IPPO ADD PANNA VENDIYA STATES ───────────────────────────────────
+  const queryStartTimeRef = useRef<number | null>(null);
+  const lastResponseTimeSecRef = useRef<number | null>(null);
+  const lastUserQueryRef = useRef<string>("");
   const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null);
   const [tempEditText, setTempEditText] = useState("");
   // File Upload State Tracker
@@ -1055,6 +1058,16 @@ export default function ChatPlaygroundPage() {
   const [activeExcelSheet, setActiveExcelSheet] = useState<string>("");
   const [excelPage, setExcelPage] = useState<number>(1);
   const excelArrayBufferRef = useRef<ArrayBuffer | null>(null);
+  const chatInputRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!isTyping && wsStatus === "open" && agent) {
+      const timer = setTimeout(() => {
+        chatInputRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isTyping, wsStatus, agent]);
 
   const resetChatStates = () => {
     setIsTyping(false);
@@ -1067,6 +1080,8 @@ export default function ChatPlaygroundPage() {
     setActiveSources([]);
     setSelectedSourceForPreview(null);
     activeQuerySessionIdRef.current = null;
+    queryStartTimeRef.current = null;
+    lastResponseTimeSecRef.current = null;
   };
 
   useEffect(() => {
@@ -1260,6 +1275,13 @@ export default function ChatPlaygroundPage() {
       if (activeQuerySessionIdRef.current !== currentSessionIdRef.current) return;
       const rawData = String(event.data);
       console.log("onmessage");
+      
+      if (queryStartTimeRef.current && lastResponseTimeSecRef.current === null) {
+        const latency = (Date.now() - queryStartTimeRef.current) / 1000;
+        lastResponseTimeSecRef.current = Math.round(latency * 10) / 10;
+        queryStartTimeRef.current = null;
+      }
+
       if (!rawData.startsWith("{")) { //&& !rawData.startsWith("[")) rawData.length === 1 || (
         streamingTextRef.current += rawData;
         setStreamingText(streamingTextRef.current);
@@ -1269,6 +1291,35 @@ export default function ChatPlaygroundPage() {
 
       try {
         const data = JSON.parse(rawData);
+
+        if (data.type === "clarification_needed") {
+          streamingTextRef.current = "";
+          setStreamingText("");
+          setIsTyping(false);
+          activeQuerySessionIdRef.current = null;
+          setMessages((prev: any) => [
+            ...prev,
+            {
+              id: data.message_id || `clarification_${Date.now()}`,
+              role: "assistant",
+              type: "clarification_needed",
+              content: data.message || "Multiple datasets matched your query. Please select one to proceed:",
+              clarification: {
+                reason: data.reason,
+                message: data.message,
+                candidates: Array.isArray(data.candidates) ? data.candidates : [],
+                plain_text_fallback: data.plain_text_fallback,
+              },
+              originalQuery: lastUserQueryRef.current,
+              timestamp: new Date().toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+              responseTime: lastResponseTimeSecRef.current || undefined,
+            },
+          ]);
+          return;
+        }
 
         const parsedId = data.message_id || data.messageId || data.id ||
           (data.message && (data.message.id || data.message.message_id || data.message.messageId)) ||
@@ -1339,6 +1390,7 @@ export default function ChatPlaygroundPage() {
                   hour: "2-digit",
                   minute: "2-digit",
                 }),
+                responseTime: lastResponseTimeSecRef.current || undefined
               },
             ]);
           }
@@ -1380,21 +1432,36 @@ export default function ChatPlaygroundPage() {
               }
 
               if (rawMsgs.length > 0) {
-                const mappedMessages = rawMsgs.map((msg: any) => {
-                  const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
-                  return {
-                    id: msg.id || msg.message_id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
-                    role: msg.role,
-                    content: cleanedContent,
-                    file: msg.file,
-                    sources: sources.length > 0 ? sources : undefined,
-                    feedback: msg.feedback_type || msg.feedback,
-                    timestamp: msg.created_at
-                      ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                      : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-                  };
+                setMessages((prevMessages: any[]) => {
+                  const mappedMessages = rawMsgs.map((msg: any, idx: number) => {
+                    const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
+                    const msgId = msg.id || msg.message_id || msg.messageId || msg.msg_id || msg._id || msg.msgId;
+                    const existingMsg = prevMessages.find((pm: any) => pm.id === msgId || (pm.role === msg.role && pm.content === cleanedContent));
+                    const isLastAssistant = msg.role === "assistant" && idx === rawMsgs.length - 1;
+                    const responseTimeVal =
+                      msg.response_time ??
+                      msg.response_time_sec ??
+                      msg.responseTime ??
+                      msg.latency ??
+                      existingMsg?.responseTime ??
+                      ((isLastAssistant && lastResponseTimeSecRef.current !== null) ? lastResponseTimeSecRef.current : undefined);
+
+                    return {
+                      id: msgId,
+                      role: msg.role,
+                      content: cleanedContent,
+                      file: msg.file,
+                      sources: sources.length > 0 ? sources : undefined,
+                      feedback: msg.feedback_type || msg.feedback,
+                      timestamp: msg.created_at
+                        ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                        : (existingMsg?.timestamp || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })),
+                      responseTime: responseTimeVal
+                    };
+                  });
+                  return deduplicateMessages(mappedMessages);
                 });
-                setMessages(deduplicateMessages(mappedMessages));
+                lastResponseTimeSecRef.current = null;
               }
             })();
           }
@@ -1522,6 +1589,7 @@ export default function ChatPlaygroundPage() {
 
     const mappedMessages = rawMessages.map((msg: any) => {
       const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
+      const responseTimeVal = msg.response_time ?? msg.response_time_sec ?? msg.responseTime ?? msg.latency ?? undefined;
       return {
         id: msg.message_id || msg.id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
         role: msg.role,
@@ -1532,6 +1600,7 @@ export default function ChatPlaygroundPage() {
         timestamp: msg.created_at
           ? new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
           : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        responseTime: responseTimeVal
       };
     });
 
@@ -1627,6 +1696,8 @@ export default function ChatPlaygroundPage() {
     const updatedMessages = messages.slice(0, userMessageIndex + 1);
     setMessages(updatedMessages);
 
+    queryStartTimeRef.current = Date.now();
+    lastResponseTimeSecRef.current = null;
     ws.current?.send(JSON.stringify({
       query: userMsg.content,
       file: userMsg.file ? { name: userMsg.file.name, type: userMsg.file.type } : null,
@@ -1731,6 +1802,9 @@ export default function ChatPlaygroundPage() {
       };
     }
 
+    queryStartTimeRef.current = Date.now();
+    lastResponseTimeSecRef.current = null;
+    lastUserQueryRef.current = trimmed;
     setMessages((prev: any) => [...prev, {
       role: "user",
       content: trimmed,
@@ -1754,6 +1828,47 @@ export default function ChatPlaygroundPage() {
     setStreamingText("");
     activeQuerySessionIdRef.current = targetSessionId;
     setIsTyping(true);
+  };
+
+  const handleSelectCandidate = (msgIndex: number, candidate: any, originalQuery?: string) => {
+    const queryToSend = originalQuery || lastUserQueryRef.current;
+    if (!queryToSend || !agent?.id || wsStatus !== "open" || isTyping) return;
+
+    let targetSessionId = currentSessionId;
+
+    setMessages((prev: any) => {
+      const copy = [...prev];
+      if (copy[msgIndex]) {
+        copy[msgIndex] = {
+          ...copy[msgIndex],
+          selectedCandidateId: candidate.kb_id,
+        };
+      }
+      return [
+        ...copy,
+        {
+          role: "user",
+          content: `Selected dataset: ${candidate.filename}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        }
+      ];
+    });
+
+    queryStartTimeRef.current = Date.now();
+    lastResponseTimeSecRef.current = null;
+    streamingTextRef.current = "";
+    streamingMessageIdRef.current = null;
+    wsSourcesRef.current = [];
+    setStreamingText("");
+    activeQuerySessionIdRef.current = targetSessionId;
+    setIsTyping(true);
+
+    ws.current?.send(JSON.stringify({
+      query: queryToSend,
+      target_kb_id: candidate.kb_id,
+      session_id: targetSessionId && !targetSessionId.startsWith("session_") ? targetSessionId : null,
+      embed: false
+    }));
   };
 
   const handleCopyMessage = async (text: string) => {
@@ -2159,7 +2274,8 @@ export default function ChatPlaygroundPage() {
     // 3. Edit mode-ai close seiyavum
     setEditingMessageIndex(null);
 
-    // 4. WebSocket-il puthu query-ai anupavum
+    queryStartTimeRef.current = Date.now();
+    lastResponseTimeSecRef.current = null;
     ws.current?.send(JSON.stringify({
       query: tempEditText.trim(),
       file: null,
@@ -2732,8 +2848,14 @@ export default function ChatPlaygroundPage() {
                   )}
 
                   <div className="flex flex-col space-y-1 min-w-0 flex-1">
-                    <span className={`text-[9px] font-bold text-[var(--app-text-soft)] px-1 ${isUser ? "text-right" : "text-left"}`}>
-                      {msg.timestamp}
+                    <span className={`text-[9px] font-bold text-[var(--app-text-soft)] px-1 ${isUser ? "text-right" : "text-left"} flex items-center gap-1.5 ${isUser ? "justify-end" : "justify-start"}`}>
+                      <span>{msg.timestamp}</span>
+                      {!isUser && msg.responseTime !== undefined && (
+                        <>
+                          <span>•</span>
+                          <span>Answered in {msg.responseTime}s</span>
+                        </>
+                      )}
                     </span>
 
                     <div
@@ -2895,6 +3017,81 @@ export default function ChatPlaygroundPage() {
 
                         </div>}
 
+                      {!isUser && msg.type === "clarification_needed" && msg.clarification?.candidates && msg.clarification.candidates.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-[var(--app-border)]/60 flex flex-col gap-2.5 w-full">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full">
+                            {msg.clarification.candidates.map((cand: any) => {
+                              const isSelected = msg.selectedCandidateId === cand.kb_id;
+                              const isDisabled = !!msg.selectedCandidateId;
+
+                              return (
+                                <button
+                                  key={cand.kb_id}
+                                  type="button"
+                                  disabled={isDisabled}
+                                  onClick={() => handleSelectCandidate(i, cand, msg.originalQuery)}
+                                  className={`flex flex-col text-left p-3 rounded-xl border transition-all duration-200 relative overflow-hidden group ${
+                                    isSelected
+                                      ? "border-[#0fb5a1] bg-[#0fb5a1]/10 shadow-sm ring-1 ring-[#0fb5a1]"
+                                      : isDisabled
+                                      ? "opacity-50 border-[var(--app-border)]/50 bg-[var(--app-surface)]/50 cursor-not-allowed"
+                                      : "border-[var(--app-border)] bg-[var(--app-surface)] hover:border-[#0fb5a1]/60 hover:bg-[#0fb5a1]/5 hover:shadow-sm cursor-pointer hover:-translate-y-0.5"
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between gap-2 w-full">
+                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-sm ${
+                                        isSelected ? "bg-[#0fb5a1] text-white" : "bg-[#0fb5a1]/10 text-[#0fb5a1] group-hover:bg-[#0fb5a1] group-hover:text-white transition-colors"
+                                      }`}>
+                                        <LuFileText />
+                                      </div>
+                                      <span className={`font-semibold text-xs truncate ${
+                                        isSelected ? "text-[#0fb5a1]" : "text-[var(--app-text)] group-hover:text-[#0fb5a1] transition-colors"
+                                      }`} title={cand.filename}>
+                                        {cand.filename}
+                                      </span>
+                                    </div>
+                                    {isSelected && (
+                                      <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-[#0fb5a1] text-white shrink-0">
+                                        Selected
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-2 mt-2 text-[11px] text-[var(--app-text-soft)]">
+                                    <span className="bg-[var(--app-surface-muted)] px-1.5 py-0.5 rounded font-medium border border-[var(--app-border)]/40">
+                                      {cand.row_count !== undefined ? `${cand.row_count.toLocaleString()} rows` : "Dataset"}
+                                    </span>
+                                    {cand.sample_columns && cand.sample_columns.length > 0 && (
+                                      <span>• {cand.sample_columns.length} columns</span>
+                                    )}
+                                  </div>
+
+                                  {cand.sample_columns && cand.sample_columns.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5 mt-2">
+                                      {cand.sample_columns.slice(0, 3).map((col: string, cIdx: number) => (
+                                        <span
+                                          key={cIdx}
+                                          className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40 truncate max-w-[110px]"
+                                          title={col}
+                                        >
+                                          {col}
+                                        </span>
+                                      ))}
+                                      {cand.sample_columns.length > 3 && (
+                                        <span className="text-[10px] text-[var(--app-text-soft)]/70 self-center">
+                                          +{cand.sample_columns.length - 3} more
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
 
                       {!isUser && (msg.confidence || msg.nodes) && (
                         <div className="mt-4 pt-3 border-t border-[var(--app-border)]/60 flex flex-wrap gap-2">
@@ -3041,6 +3238,7 @@ export default function ChatPlaygroundPage() {
             {/* Input Text Area */}
             <div className="w-full">
               <Input.TextArea
+                ref={chatInputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -3076,17 +3274,37 @@ export default function ChatPlaygroundPage() {
                 {activeMode === 'agent' && (
                   <Dropdown
                     menu={{
-                      items: botsCache?.map((bot) => ({
-                        key: bot.id,
-                        label: <span className="font-semibold text-xs">{bot.name}</span>
-                      })),
+                      items: (botsCache || [])
+                        .filter((bot) =>
+                          bot.name.toLowerCase().includes(agentSearch.toLowerCase())
+                        )
+                        .map((bot) => ({
+                          key: bot.id,
+                          label: <span className="font-semibold text-xs">{bot.name}</span>
+                        })),
                       onClick: (e) => {
                         const selected = botsCache?.find(b => b.id === e.key);
                         if (selected) {
                           handleAgentChange(selected.id, selected.name);
                         }
-                      }
+                      },
+                      style: { maxHeight: "250px", overflowY: "auto" }
                     }}
+                    dropdownRender={(menu) => (
+                      <div className="bg-[var(--app-surface)] border border-[var(--app-border)] rounded-xl shadow-lg p-2 min-w-[200px]">
+                        {(botsCache || []).length > 5 && (
+                          <Input
+                            prefix={<LuSearch size={14} className="text-gray-400 mr-1" />}
+                            placeholder="Search agents..."
+                            value={agentSearch}
+                            onChange={(e) => setAgentSearch(e.target.value)}
+                            className="mb-2 text-xs"
+                            allowClear
+                          />
+                        )}
+                        {menu}
+                      </div>
+                    )}
                     trigger={["click"]}
                   >
                     <div className="inline-flex bg-transparent rounded-full overflow-hidden">

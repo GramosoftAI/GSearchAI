@@ -1,0 +1,2746 @@
+[
+  {
+    "idx": 1,
+    "category": "PROFILE",
+    "query": "What is Girinath's full name?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "base_employeeshift",
+      "employee_employeeworkinformation"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, be.id, be.full_time, ee.employee_last_name, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id INNER JOIN public.base_employeeshift AS be ON emp1.shift_id_id = be.id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 2,
+    "category": "PROFILE",
+    "query": "What is Girinath's employee ID?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 3,
+    "category": "PROFILE",
+    "query": "What is Girinath's email address?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 4,
+    "category": "PROFILE",
+    "query": "What is Girinath's phone number?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 5,
+    "category": "PROFILE",
+    "query": "Where does Girinath live?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 6,
+    "category": "PROFILE",
+    "query": "What is Girinath's city?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 7,
+    "category": "PROFILE",
+    "query": "What is Girinath's state?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.marital_status, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 8,
+    "category": "PROFILE",
+    "query": "What is Girinath's country?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 9,
+    "category": "PROFILE",
+    "query": "What is Girinath's date of birth?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath",
+      "birth"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%' AND ee.employee_first_name ILIKE '%birth%'"
+  },
+  {
+    "idx": 10,
+    "category": "PROFILE",
+    "query": "What is Girinath's gender?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.gender, ee.address, ee.country, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 11,
+    "category": "PROFILE",
+    "query": "What is Girinath's marital status?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.marital_status, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 12,
+    "category": "PROFILE",
+    "query": "How many children does Girinath have?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 13,
+    "category": "PROFILE",
+    "query": "What is Girinath's qualification?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.qualification, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 14,
+    "category": "PROFILE",
+    "query": "How many years of experience does Girinath have?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 15,
+    "category": "PROFILE",
+    "query": "Is Girinath currently active?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%' AND ee.is_active = True"
+  },
+  {
+    "idx": 16,
+    "category": "ORG",
+    "query": "Which department does Girinath work in?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "base_department",
+      "base_department_company_id",
+      "base_announcement_department",
+      "employee_employeeworkinformation"
+    ],
+    "sql": "SELECT bad.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, bd.id, bd.department, bdci.id, bdci.department_id, emp1.work_type_id_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id INNER JOIN public.base_department AS bd ON emp1.department_id_id = bd.id INNER JOIN public.base_announcement_department AS bad ON bd.id = bad.department_id INNER JOIN public.base_department_company_id AS bdci ON bd.id = bdci.department_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 17,
+    "category": "ORG",
+    "query": "What is Girinath's job position?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "base_jobposition",
+      "base_announcement_job_position",
+      "employee_employeeworkinformation",
+      "leave_restrictleave_job_position",
+      "recruitment_recruitmentsurvey_job_position_ids"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, bajp.id, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, bas1.id, bas1.job_position, rrjpi.id, lrjp.id, bajp.jobposition_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id INNER JOIN public.base_jobposition AS bas1 ON emp1.job_position_id_id = bas1.id INNER JOIN public.base_announcement_job_position AS bajp ON bas1.id = bajp.jobposition_id INNER JOIN public.recruitment_recruitmentsurvey_job_position_ids AS rrjpi ON bas1.id = rrjpi.jobposition_id INNER JOIN public.leave_restrictleave_job_position AS lrjp ON bas1.id = lrjp.jobposition_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 18,
+    "category": "ORG",
+    "query": "What is Girinath's job role?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "base_jobrole",
+      "employee_employeeworkinformation"
+    ],
+    "sql": "SELECT bj.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, ee.dob, bj.job_role, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id INNER JOIN public.base_jobrole AS bj ON emp1.job_role_id_id = bj.id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 19,
+    "category": "ORG",
+    "query": "Who is Girinath's manager?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "pms_meetings_manager",
+      "employee_employeeworkinformation"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pmm.id, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, emp1.reporting_manager_id_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.pms_meetings_manager AS pmm ON ee.id = pmm.employee_id INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 20,
+    "category": "ORG",
+    "query": "Who does Girinath report to?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "base_department",
+      "employee_employeeworkinformation"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, bd.id, bd.department, emp1.reporting_manager_id_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id INNER JOIN public.base_department AS bd ON emp1.department_id_id = bd.id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 21,
+    "category": "ORG",
+    "query": "Who is the head of Girinath's department?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath",
+      "head"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "base_jobrole",
+      "base_department",
+      "base_department_company_id",
+      "base_announcement_department",
+      "employee_employeeworkinformation"
+    ],
+    "sql": "SELECT bad.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, bj.id, bd.id, bd.department, bdci.id, bj.created_at, bdci.department_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id INNER JOIN public.base_department AS bd ON emp1.department_id_id = bd.id INNER JOIN public.base_announcement_department AS bad ON bd.id = bad.department_id INNER JOIN public.base_jobrole AS bj ON emp1.job_role_id_id = bj.id INNER JOIN public.base_department_company_id AS bdci ON bd.id = bdci.department_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND ee.employee_first_name ILIKE '%head%'"
+  },
+  {
+    "idx": 22,
+    "category": "ORG",
+    "query": "List all employees in the Engineering department.",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "base_department",
+      "employee_employee",
+      "base_department_company_id",
+      "base_announcement_employees",
+      "base_announcement_department",
+      "pms_meetings_answer_employees",
+      "employee_employeeworkinformation",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees",
+      "payroll_contract"
+    ],
+    "sql": "SELECT bae.id, bad.id, pdse.id, bafe.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, epse.id, pdee.id, ade.id, bd.id, bd.department, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, pmae.id, bdci.id, paee.id, pase.id, bdci.department_id FROM public.base_department AS bd INNER JOIN public.employee_employeeworkinformation AS emp1 ON bd.id = emp1.department_id_id INNER JOIN public.employee_employee AS ee ON emp1.employee_id_id = ee.id INNER JOIN public.payroll_contract AS pc ON bd.id = pc.department_id INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.base_announcement_department AS bad ON bd.id = bad.department_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.base_department_company_id AS bdci ON bd.id = bdci.department_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE pc.is_active = True"
+  },
+  {
+    "idx": 23,
+    "category": "ORG",
+    "query": "How many employees are in Engineering?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "employee_employee",
+      "base_announcement_employees",
+      "pms_meetings_answer_employees",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id FROM public.employee_employee AS ee INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id"
+  },
+  {
+    "idx": 24,
+    "category": "ORG",
+    "query": "Who are the employees reporting to Kannan?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Kannan"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "base_announcement_employees",
+      "pms_meetings_answer_employees",
+      "employee_employeeworkinformation",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees"
+    ],
+    "sql": "SELECT bae.id, pdse.id, bafe.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, epse.id, pdee.id, ade.id, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, pmae.id, paee.id, pase.id, ee.employee_profile, emp1.reporting_manager_id_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE ee.employee_first_name ILIKE '%Kannan%'"
+  },
+  {
+    "idx": 25,
+    "category": "ORG",
+    "query": "List all managers in the company.",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "base_company",
+      "employee_employee",
+      "pms_meetings_manager",
+      "pms_period_company_id",
+      "pms_objective_managers",
+      "base_jobrole_company_id",
+      "base_worktype_company_id",
+      "project_project_managers",
+      "asset_assetlot_company_id",
+      "base_department_company_id",
+      "employee_policy_company_id",
+      "project_task_task_managers",
+      "base_jobposition_company_id",
+      "base_announcement_company_id",
+      "base_employeetype_company_id",
+      "base_employeeshift_company_id",
+      "asset_assetcategory_company_id",
+      "attendance_gracetime_company_id",
+      "pms_questiontemplate_company_id",
+      "base_employeeshiftday_company_id",
+      "employee_employeeworkinformation",
+      "offboarding_offboarding_managers",
+      "recruitment_stage_stage_managers",
+      "offboarding_offboardingtask_managers",
+      "base_employeeshiftschedule_company_id",
+      "offboarding_offboardingstage_managers",
+      "recruitment_recruitment_recruitment_managers",
+      "attendance_attendancevalidationcondition_company_id",
+      "recruitment_recruitment",
+      "recruitment_stage",
+      "pms_objective",
+      "offboarding_offboarding",
+      "offboarding_offboardingstage",
+      "helpdesk_departmentmanager",
+      "project_project",
+      "project_task"
+    ],
+    "sql": "SELECT rssm.id, baci.id, pom.id, pqci.id, agci.id, att1.id, oom.id, bc.id, bc.city, bc.state, bc.address, bc.company, bc.country, bas5.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, rrrm.id, aaci.id, bas4.id, bas3.id, off2.id, off1.id, bas2.id, ass1.id, beci.id, bwci.id, ppm.id, bjci.id, pttm.id, ppci.id, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, bdci.id, epci.id, pmm.id, emp1.reporting_manager_id_id, ppci.company_id FROM public.base_company AS bc INNER JOIN public.employee_employeeworkinformation AS emp1 ON bc.id = emp1.company_id_id INNER JOIN public.employee_employee AS ee ON emp1.employee_id_id = ee.id INNER JOIN public.project_project_managers AS ppm ON ee.id = ppm.employee_id INNER JOIN public.recruitment_recruitment AS rr ON bc.id = rr.company_id_id INNER JOIN public.recruitment_stage AS rs ON rr.id = rs.recruitment_id_id INNER JOIN public.recruitment_stage_stage_managers AS rssm ON rs.id = rssm.stage_id INNER JOIN public.base_announcement_company_id AS baci ON bc.id = baci.company_id INNER JOIN public.pms_objective AS po ON bc.id = po.company_id_id INNER JOIN public.pms_objective_managers AS pom ON po.id = pom.objective_id INNER JOIN public.pms_questiontemplate_company_id AS pqci ON bc.id = pqci.company_id INNER JOIN public.attendance_gracetime_company_id AS agci ON bc.id = agci.company_id INNER JOIN public.attendance_attendancevalidationcondition_company_id AS att1 ON bc.id = att1.company_id INNER JOIN public.offboarding_offboarding AS oo ON bc.id = oo.company_id_id INNER JOIN public.offboarding_offboarding_managers AS oom ON oo.id = oom.offboarding_id INNER JOIN public.base_employeeshiftschedule_company_id AS bas5 ON bc.id = bas5.company_id INNER JOIN public.recruitment_recruitment_recruitment_managers AS rrrm ON rr.id = rrrm.recruitment_id INNER JOIN public.asset_assetlot_company_id AS aaci ON bc.id = aaci.company_id INNER JOIN public.base_employeeshiftday_company_id AS bas4 ON bc.id = bas4.company_id INNER JOIN public.base_employeeshift_company_id AS bas3 ON bc.id = bas3.company_id INNER JOIN public.offboarding_offboardingstage AS off3 ON oo.id = off3.offboarding_id_id INNER JOIN public.offboarding_offboardingstage_managers AS off2 ON off3.id = off2.offboardingstage_id INNER JOIN public.helpdesk_departmentmanager AS hd ON bc.id = hd.company_id_id INNER JOIN public.offboarding_offboardingtask_managers AS off1 ON ee.id = off1.employee_id INNER JOIN public.base_jobposition_company_id AS bas2 ON bc.id = bas2.company_id INNER JOIN public.asset_assetcategory_company_id AS ass1 ON bc.id = ass1.company_id INNER JOIN public.base_employeetype_company_id AS beci ON bc.id = beci.company_id INNER JOIN public.base_worktype_company_id AS bwci ON bc.id = bwci.company_id INNER JOIN public.project_project AS pp ON bc.id = pp.company_id_id INNER JOIN public.base_jobrole_company_id AS bjci ON bc.id = bjci.company_id INNER JOIN public.project_task AS pt ON pp.id = pt.project_id INNER JOIN public.project_task_task_managers AS pttm ON pt.id = pttm.task_id INNER JOIN public.pms_period_company_id AS ppci ON bc.id = ppci.company_id INNER JOIN public.base_department_company_id AS bdci ON bc.id = bdci.company_id INNER JOIN public.employee_policy_company_id AS epci ON bc.id = epci.company_id INNER JOIN public.pms_meetings_manager AS pmm ON ee.id = pmm.employee_id"
+  },
+  {
+    "idx": 26,
+    "category": "ORG",
+    "query": "Which employees have the job position Software Engineer?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "base_jobposition",
+      "employee_employee",
+      "base_announcement_employees",
+      "pms_meetings_answer_employees",
+      "base_announcement_job_position",
+      "employee_employeeworkinformation",
+      "leave_restrictleave_job_position",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees",
+      "recruitment_recruitmentsurvey_job_position_ids",
+      "payroll_contract"
+    ],
+    "sql": "SELECT bae.id, pdse.id, bafe.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, bajp.id, epse.id, pdee.id, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, bas1.id, bas1.job_position, ade.id, pmae.id, rrjpi.id, pase.id, paee.id, lrjp.id, ee.gender FROM public.base_jobposition AS bas1 INNER JOIN public.employee_employeeworkinformation AS emp1 ON bas1.id = emp1.job_position_id_id INNER JOIN public.employee_employee AS ee ON emp1.employee_id_id = ee.id INNER JOIN public.payroll_contract AS pc ON bas1.id = pc.job_position_id INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.base_announcement_job_position AS bajp ON bas1.id = bajp.jobposition_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.recruitment_recruitmentsurvey_job_position_ids AS rrjpi ON bas1.id = rrjpi.jobposition_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.leave_restrictleave_job_position AS lrjp ON bas1.id = lrjp.jobposition_id WHERE pc.is_active = True"
+  },
+  {
+    "idx": 27,
+    "category": "ORG",
+    "query": "Which employees are in the same department as Girinath?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "base_department",
+      "employee_employee",
+      "base_department_company_id",
+      "base_announcement_employees",
+      "base_announcement_department",
+      "pms_meetings_answer_employees",
+      "employee_employeeworkinformation",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees",
+      "payroll_contract"
+    ],
+    "sql": "SELECT bae.id, bad.id, pdse.id, bafe.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, epse.id, pdee.id, ade.id, bd.id, bd.department, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, pmae.id, bdci.id, paee.id, pase.id, ee.employee_last_name, bdci.department_id FROM public.base_department AS bd INNER JOIN public.employee_employeeworkinformation AS emp1 ON bd.id = emp1.department_id_id INNER JOIN public.employee_employee AS ee ON emp1.employee_id_id = ee.id INNER JOIN public.payroll_contract AS pc ON bd.id = pc.department_id INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.base_announcement_department AS bad ON bd.id = bad.department_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.base_department_company_id AS bdci ON bd.id = bdci.department_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE pc.is_active = True"
+  },
+  {
+    "idx": 28,
+    "category": "ORG",
+    "query": "Which employees have the same job role as Girinath?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "same"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "base_jobrole",
+      "base_announcement_employees",
+      "pms_meetings_answer_employees",
+      "employee_employeeworkinformation",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees"
+    ],
+    "sql": "SELECT bae.id, pdse.id, bafe.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, epse.id, bj.id, pdee.id, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, ade.id, pmae.id, paee.id, pase.id, ee.dob, bj.job_role, ee.employee_last_name, emp1.job_role_id_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.base_jobrole AS bj ON emp1.job_role_id_id = bj.id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE ee.employee_first_name ILIKE '%same%'"
+  },
+  {
+    "idx": 29,
+    "category": "ORG",
+    "query": "How many employees are in each department?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "base_department",
+      "employee_employee",
+      "base_department_company_id",
+      "base_announcement_employees",
+      "base_announcement_department",
+      "pms_meetings_answer_employees",
+      "employee_employeeworkinformation",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees",
+      "payroll_contract"
+    ],
+    "sql": "SELECT COUNT(bd.id) AS count_id, bd.id FROM public.base_department AS bd INNER JOIN public.employee_employeeworkinformation AS emp1 ON bd.id = emp1.department_id_id INNER JOIN public.employee_employee AS ee ON emp1.employee_id_id = ee.id INNER JOIN public.payroll_contract AS pc ON bd.id = pc.department_id INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.base_announcement_department AS bad ON bd.id = bad.department_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.base_department_company_id AS bdci ON bd.id = bdci.department_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE pc.is_active = True GROUP BY bd.id"
+  },
+  {
+    "idx": 30,
+    "category": "ORG",
+    "query": "Which department has the most employees?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "base_department",
+      "employee_employee",
+      "base_department_company_id",
+      "base_announcement_employees",
+      "base_announcement_department",
+      "pms_meetings_answer_employees",
+      "employee_employeeworkinformation",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees",
+      "payroll_contract"
+    ],
+    "sql": "SELECT COUNT(bd.id) AS count_id, bd.id FROM public.base_department AS bd INNER JOIN public.employee_employeeworkinformation AS emp1 ON bd.id = emp1.department_id_id INNER JOIN public.employee_employee AS ee ON emp1.employee_id_id = ee.id INNER JOIN public.payroll_contract AS pc ON bd.id = pc.department_id INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.base_announcement_department AS bad ON bd.id = bad.department_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.base_department_company_id AS bdci ON bd.id = bdci.department_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE pc.is_active = True GROUP BY bd.id ORDER BY count_id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 31,
+    "category": "CONTRACT",
+    "query": "What type of contract does Girinath have?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "base_worktype",
+      "payroll_contract",
+      "base_worktyperequest"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pc.id, pc.wage, bw.id, pc.contract_name, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id INNER JOIN public.base_worktyperequest AS bas1 ON ee.id = bas1.employee_id_id INNER JOIN public.base_worktype AS bw ON bas1.previous_work_type_id_id = bw.id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True"
+  },
+  {
+    "idx": 32,
+    "category": "CONTRACT",
+    "query": "Is Girinath's contract active?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pc.id, pc.wage, pc.contract_name, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id WHERE (ee.employee_first_name ILIKE '%Girinath%' AND ee.is_active = True) AND pc.is_active = True"
+  },
+  {
+    "idx": 33,
+    "category": "CONTRACT",
+    "query": "When did Girinath's contract start?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pc.id, pc.wage, pc.contract_name, pc.contract_status, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True"
+  },
+  {
+    "idx": 34,
+    "category": "CONTRACT",
+    "query": "When does Girinath's contract end?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pc.id, pc.wage, pc.contract_name, ee.gender, pc.contract_end_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True"
+  },
+  {
+    "idx": 35,
+    "category": "CONTRACT",
+    "query": "What is Girinath's current salary?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract",
+      "employee_employeeworkinformation"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, pc.id, pc.wage, emp1.salary_hour, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY pc.id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 36,
+    "category": "CONTRACT",
+    "query": "What is Girinath's initial salary?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract",
+      "employee_employeeworkinformation"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, pc.id, pc.wage, pc.initial_wage, emp1.salary_hour, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY pc.id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 37,
+    "category": "CONTRACT",
+    "query": "When was Girinath's salary last revised?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract",
+      "employee_employeeworkinformation"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, pc.id, pc.wage, emp1.salary_hour, pc.revised_salary_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY pc.id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 38,
+    "category": "CONTRACT",
+    "query": "What is Girinath's pay frequency?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pc.id, pc.wage, pc.pay_frequency, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY pc.id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 39,
+    "category": "CONTRACT",
+    "query": "What is Girinath's wage type?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pc.id, pc.wage, pc.initial_wage, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY pc.id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 40,
+    "category": "CONTRACT",
+    "query": "What is Girinath's notice period?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pc.id, pc.wage, pc.note, pc.notice_period_in_days, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True"
+  },
+  {
+    "idx": 41,
+    "category": "CONTRACT",
+    "query": "What department is specified in Girinath's contract?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath",
+      "specified"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "base_department",
+      "payroll_contract",
+      "base_department_company_id",
+      "base_announcement_department",
+      "employee_employeeworkinformation"
+    ],
+    "sql": "SELECT bad.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, bd.id, bd.department, bdci.id, pc.id, pc.wage, pc.contract_name, pc.department_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id INNER JOIN public.base_department AS bd ON emp1.department_id_id = bd.id INNER JOIN public.base_announcement_department AS bad ON bd.id = bad.department_id INNER JOIN public.base_department_company_id AS bdci ON bd.id = bdci.department_id INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id WHERE (ee.employee_first_name ILIKE '%Girinath%' AND ee.employee_first_name ILIKE '%specified%') AND pc.is_active = True"
+  },
+  {
+    "idx": 42,
+    "category": "CONTRACT",
+    "query": "What job position is specified in Girinath's contract?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath",
+      "specified"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract",
+      "base_announcement_job_position",
+      "employee_employeeworkinformation",
+      "leave_restrictleave_job_position",
+      "recruitment_recruitmentsurvey_job_position_ids",
+      "base_jobposition"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, bajp.id, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, rrjpi.id, pc.id, pc.wage, lrjp.id, pc.job_position_id, pc.contract_name, bajp.jobposition_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id INNER JOIN public.base_jobposition AS bj ON emp1.job_position_id_id = bj.id INNER JOIN public.base_announcement_job_position AS bajp ON bj.id = bajp.jobposition_id INNER JOIN public.recruitment_recruitmentsurvey_job_position_ids AS rrjpi ON bj.id = rrjpi.jobposition_id INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id INNER JOIN public.leave_restrictleave_job_position AS lrjp ON bj.id = lrjp.jobposition_id WHERE (ee.employee_first_name ILIKE '%Girinath%' AND ee.employee_first_name ILIKE '%specified%') AND pc.is_active = True"
+  },
+  {
+    "idx": 43,
+    "category": "CONTRACT",
+    "query": "What work type does Girinath have?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "base_worktype",
+      "employee_employeeworkinformation",
+      "base_worktyperequest"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, bw.id, emp1.work_type_id_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id INNER JOIN public.base_worktyperequest AS bas1 ON ee.id = bas1.employee_id_id INNER JOIN public.base_worktype AS bw ON bas1.previous_work_type_id_id = bw.id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 44,
+    "category": "CONTRACT",
+    "query": "What shift is Girinath assigned to?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract",
+      "base_rotatingshift",
+      "helpdesk_ticket_assigned_to",
+      "employee_employeeworkinformation",
+      "asset_assetassignment_assign_images",
+      "asset_assetassignment",
+      "base_rotatingshiftassign"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, aaai.id, htat.id, pc.id, pc.wage, br.id, br.name, pc.shift_id, emp1.shift_id_id, aaai.assetassignment_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id INNER JOIN public.asset_assetassignment AS aa ON ee.id = aa.assigned_by_employee_id_id INNER JOIN public.asset_assetassignment_assign_images AS aaai ON aa.id = aaai.assetassignment_id INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ee.id = htat.employee_id INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id INNER JOIN public.base_rotatingshiftassign AS bas1 ON ee.id = bas1.employee_id_id INNER JOIN public.base_rotatingshift AS br ON bas1.rotating_shift_id_id = br.id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True"
+  },
+  {
+    "idx": 45,
+    "category": "CONTRACT",
+    "query": "Does Girinath currently have an active contract?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pc.id, pc.wage, pc.contract_name, pc.contract_document, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id WHERE (ee.employee_first_name ILIKE '%Girinath%' AND ee.is_active = True) AND pc.is_active = True"
+  },
+  {
+    "idx": 46,
+    "category": "CONTRACT",
+    "query": "Has Girinath's salary changed?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract",
+      "employee_employeeworkinformation"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, pc.id, pc.wage, emp1.salary_hour, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY pc.id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 47,
+    "category": "CONTRACT",
+    "query": "What was Girinath's previous salary?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract",
+      "employee_employeeworkinformation"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, pc.id, pc.wage, emp1.salary_hour, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY pc.id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 48,
+    "category": "CONTRACT",
+    "query": "When was the salary changed?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "payroll_contract",
+      "employee_employeeworkinformation",
+      "base_department"
+    ],
+    "sql": "SELECT emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, pc.id, pc.wage, emp1.salary_hour FROM public.payroll_contract AS pc INNER JOIN public.base_department AS bd ON pc.department_id = bd.id INNER JOIN public.employee_employeeworkinformation AS emp1 ON bd.id = emp1.department_id_id WHERE pc.is_active = True ORDER BY pc.id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 49,
+    "category": "CONTRACT",
+    "query": "Show Girinath's salary revision history.",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract",
+      "employee_employeeworkinformation"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pc.id, pc.wage, emp1.id, emp1.email, emp1.mobile, emp1.basic_salary, emp1.salary_hour, pc.revised_salary_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 50,
+    "category": "LEAVE",
+    "query": "How many leave days does Girinath have?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest",
+      "leave_availableleave"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id FROM public.employee_employee AS ee INNER JOIN public.leave_availableleave AS la ON ee.id = la.employee_id_id INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE ee.employee_first_name ILIKE '%Girinath%' AND la.is_active = True"
+  },
+  {
+    "idx": 51,
+    "category": "LEAVE",
+    "query": "What is Girinath's annual leave balance?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest",
+      "leave_availableleave"
+    ],
+    "sql": "SELECT la.id, la.available_days, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ll.id, ll.name, lea1.id, lea1.status, lea1.end_date, lea1.start_date, lea1.description, ee.qualification, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.leave_availableleave AS la ON ee.id = la.employee_id_id INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE ee.employee_first_name ILIKE '%Girinath%' AND la.is_active = True"
+  },
+  {
+    "idx": 52,
+    "category": "LEAVE",
+    "query": "How many sick leaves does Girinath have?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest",
+      "leave_availableleave"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id FROM public.employee_employee AS ee INNER JOIN public.leave_availableleave AS la ON ee.id = la.employee_id_id INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE ee.employee_first_name ILIKE '%Girinath%' AND la.is_active = True"
+  },
+  {
+    "idx": 53,
+    "category": "LEAVE",
+    "query": "How much carry-forward leave does Girinath have?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest",
+      "leave_availableleave"
+    ],
+    "sql": "SELECT la.id, la.available_days, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ll.id, ll.name, lea1.id, lea1.status, lea1.end_date, lea1.start_date, lea1.description, ll.carryforward_max, lea1.leave_type_id_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.leave_availableleave AS la ON ee.id = la.employee_id_id INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE ee.employee_first_name ILIKE '%Girinath%' AND la.is_active = True"
+  },
+  {
+    "idx": 54,
+    "category": "LEAVE",
+    "query": "How many compensatory leaves does Girinath have?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest",
+      "leave_availableleave"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id FROM public.employee_employee AS ee INNER JOIN public.leave_availableleave AS la ON ee.id = la.employee_id_id INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE ee.employee_first_name ILIKE '%Girinath%' AND la.is_active = True"
+  },
+  {
+    "idx": 55,
+    "category": "LEAVE",
+    "query": "What leave types are available to Girinath?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath",
+      "available"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest",
+      "leave_availableleave"
+    ],
+    "sql": "SELECT la.id, la.available_days, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ll.id, ll.name, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.leave_availableleave AS la ON ee.id = la.employee_id_id INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE (ee.employee_first_name ILIKE '%Girinath%' AND ee.employee_first_name ILIKE '%available%') AND la.is_active = True"
+  },
+  {
+    "idx": 56,
+    "category": "LEAVE",
+    "query": "What was Girinath's latest leave request?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest"
+    ],
+    "sql": "SELECT lea1.id, lea1.status, lea1.end_date, lea1.start_date, lea1.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ll.id, ll.name, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 57,
+    "category": "LEAVE",
+    "query": "Is Girinath currently on leave?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest",
+      "leave_availableleave"
+    ],
+    "sql": "SELECT la.id, la.available_days, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ll.id, ll.name, lea1.id, lea1.status, lea1.end_date, lea1.start_date, lea1.description, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.leave_availableleave AS la ON ee.id = la.employee_id_id INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE (lea1.status = 'approved' AND ee.employee_first_name ILIKE '%Girinath%') AND la.is_active = True"
+  },
+  {
+    "idx": 58,
+    "category": "LEAVE",
+    "query": "What leaves did Girinath take this year?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest",
+      "leave_availableleave"
+    ],
+    "sql": "SELECT la.id, la.available_days, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ll.id, ll.name, lea1.id, lea1.status, lea1.end_date, lea1.start_date, lea1.description, lea1.leave_type_id_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.leave_availableleave AS la ON ee.id = la.employee_id_id INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE ee.employee_first_name ILIKE '%Girinath%' AND la.is_active = True"
+  },
+  {
+    "idx": 59,
+    "category": "LEAVE",
+    "query": "How many days of leave did Girinath take this year?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest",
+      "leave_availableleave"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id FROM public.employee_employee AS ee INNER JOIN public.leave_availableleave AS la ON ee.id = la.employee_id_id INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE ee.employee_first_name ILIKE '%Girinath%' AND la.is_active = True"
+  },
+  {
+    "idx": 60,
+    "category": "LEAVE",
+    "query": "How many leave requests did Girinath submit?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id FROM public.employee_employee AS ee INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 61,
+    "category": "LEAVE",
+    "query": "Which leave requests were approved?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "leave_leavetype",
+      "leave_leaverequest"
+    ],
+    "sql": "SELECT lea1.id, lea1.status, lea1.end_date, lea1.start_date, lea1.description, ll.id, ll.name FROM public.leave_leavetype AS ll INNER JOIN public.leave_leaverequest AS lea1 ON ll.id = lea1.leave_type_id_id"
+  },
+  {
+    "idx": 62,
+    "category": "LEAVE",
+    "query": "Which leave requests were rejected?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "leave_leavetype",
+      "leave_leaverequest"
+    ],
+    "sql": "SELECT lea1.id, lea1.status, lea1.end_date, lea1.start_date, lea1.description, ll.id, ll.name, lea1.requested_date FROM public.leave_leavetype AS ll INNER JOIN public.leave_leaverequest AS lea1 ON ll.id = lea1.leave_type_id_id"
+  },
+  {
+    "idx": 63,
+    "category": "LEAVE",
+    "query": "Why was Girinath's leave request rejected?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest",
+      "recruitment_rejectedcandidate_reject_reason_id",
+      "recruitment_candidate",
+      "recruitment_rejectedcandidate"
+    ],
+    "sql": "SELECT lea1.id, lea1.status, lea1.end_date, lea1.start_date, lea1.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, rrrri.id, ll.id, ll.name, lea1.requested_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.recruitment_candidate AS rc ON ee.id = rc.converted_employee_id_id INNER JOIN public.recruitment_rejectedcandidate AS rr ON rc.id = rr.candidate_id_id INNER JOIN public.recruitment_rejectedcandidate_reject_reason_id AS rrrri ON rr.id = rrrri.rejectedcandidate_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 64,
+    "category": "LEAVE",
+    "query": "When did Girinath's last leave start?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest",
+      "leave_availableleave"
+    ],
+    "sql": "SELECT la.id, la.available_days, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ll.id, ll.name, lea1.id, lea1.status, lea1.end_date, lea1.start_date, lea1.description, lea1.leave_type_id_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.leave_availableleave AS la ON ee.id = la.employee_id_id INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE ee.employee_first_name ILIKE '%Girinath%' AND la.is_active = True"
+  },
+  {
+    "idx": 65,
+    "category": "LEAVE",
+    "query": "When did it end?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "it"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.gender, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%it%'"
+  },
+  {
+    "idx": 66,
+    "category": "LEAVE",
+    "query": "What type of leave did Girinath take?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest",
+      "leave_availableleave"
+    ],
+    "sql": "SELECT la.id, la.available_days, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ll.id, ll.name, lea1.id, lea1.status, lea1.end_date, lea1.start_date, lea1.description, lea1.leave_type_id_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.leave_availableleave AS la ON ee.id = la.employee_id_id INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE ee.employee_first_name ILIKE '%Girinath%' AND la.is_active = True"
+  },
+  {
+    "idx": 67,
+    "category": "LEAVE",
+    "query": "Which employees are currently on leave?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "currently"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest",
+      "leave_availableleave",
+      "base_announcement_employees",
+      "pms_meetings_answer_employees",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees"
+    ],
+    "sql": "SELECT lea1.id, lea1.status, lea1.end_date, lea1.start_date, lea1.description, bae.id, pdse.id, bafe.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, epse.id, pdee.id, ade.id, ll.id, ll.name, pmae.id, la.id, la.available_days, paee.id, pase.id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.leave_availableleave AS la ON ee.id = la.employee_id_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE (lea1.status = 'approved' AND ee.employee_first_name ILIKE '%currently%') AND la.is_active = True"
+  },
+  {
+    "idx": 68,
+    "category": "LEAVE",
+    "query": "Who is on leave today?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "leave_leavetype",
+      "leave_leaverequest",
+      "leave_availableleave"
+    ],
+    "sql": "SELECT la.id, la.available_days, ll.id, ll.name, lea1.id, lea1.status, lea1.end_date, lea1.start_date, lea1.description FROM public.leave_leavetype AS ll INNER JOIN public.leave_availableleave AS la ON ll.id = la.leave_type_id_id INNER JOIN public.leave_leaverequest AS lea1 ON ll.id = lea1.leave_type_id_id WHERE (lea1.status = 'approved' AND lea1.end_date = CURRENT_DATE) AND la.is_active = True"
+  },
+  {
+    "idx": 69,
+    "category": "LEAVE",
+    "query": "Which employees in Engineering are on leave?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "leave_leavetype",
+      "employee_employee",
+      "leave_leaverequest",
+      "leave_availableleave",
+      "base_announcement_employees",
+      "pms_meetings_answer_employees",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees"
+    ],
+    "sql": "SELECT lea1.id, lea1.status, lea1.end_date, lea1.start_date, lea1.description, bae.id, pdse.id, bafe.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, epse.id, pdee.id, ade.id, ll.id, ll.name, pmae.id, la.id, la.available_days, paee.id, pase.id FROM public.leave_leavetype AS ll INNER JOIN public.leave_leaverequest AS lea1 ON ll.id = lea1.leave_type_id_id INNER JOIN public.leave_availableleave AS la ON ll.id = la.leave_type_id_id INNER JOIN public.employee_employee AS ee ON lea1.created_by_id = ee.id INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE lea1.status = 'approved' AND la.is_active = True"
+  },
+  {
+    "idx": 70,
+    "category": "LEAVE",
+    "query": "How many employees are on leave this week?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "leave_leavetype",
+      "employee_employee",
+      "leave_leaverequest",
+      "leave_availableleave",
+      "base_announcement_employees",
+      "pms_meetings_answer_employees",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees"
+    ],
+    "sql": "SELECT COUNT(ll.id) AS count_id, lea1.status, lea1.end_date FROM public.leave_leavetype AS ll INNER JOIN public.leave_leaverequest AS lea1 ON ll.id = lea1.leave_type_id_id INNER JOIN public.leave_availableleave AS la ON ll.id = la.leave_type_id_id INNER JOIN public.employee_employee AS ee ON lea1.created_by_id = ee.id INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE (lea1.status = 'approved' AND lea1.end_date >= DATE_TRUNC('WEEK', CURRENT_DATE)) AND la.is_active = True"
+  },
+  {
+    "idx": 71,
+    "category": "LEAVE",
+    "query": "Which employees have upcoming leave?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "upcoming"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest",
+      "leave_availableleave",
+      "base_announcement_employees",
+      "pms_meetings_answer_employees",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees"
+    ],
+    "sql": "SELECT bae.id, pdse.id, bafe.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, epse.id, pdee.id, paee.id, ade.id, ll.id, ll.name, pmae.id, la.id, la.available_days, lea1.id, lea1.status, lea1.end_date, lea1.start_date, lea1.description, pase.id, ee.employee_profile, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.leave_availableleave AS la ON ee.id = la.employee_id_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE ee.employee_first_name ILIKE '%upcoming%' AND la.is_active = True"
+  },
+  {
+    "idx": 72,
+    "category": "LEAVE",
+    "query": "Which employee has taken the most leave this year?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "taken"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "leave_leavetype",
+      "leave_leaverequest"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id FROM public.employee_employee AS ee INNER JOIN public.leave_leaverequest AS lea1 ON ee.id = lea1.created_by_id INNER JOIN public.leave_leavetype AS ll ON lea1.leave_type_id_id = ll.id WHERE ee.employee_first_name ILIKE '%taken%'"
+  },
+  {
+    "idx": 73,
+    "category": "ATTENDANCE",
+    "query": "Was Girinath present today?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "attendance_attendance",
+      "horilla_automations_mailautomation_also_sent_to"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, hamast.id, aa.id, aa.is_holiday, aa.request_type, aa.attendance_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.horilla_automations_mailautomation_also_sent_to AS hamast ON ee.id = hamast.employee_id INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id WHERE aa.attendance_date = CURRENT_DATE AND ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 74,
+    "category": "ATTENDANCE",
+    "query": "Was Girinath absent yesterday?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "attendance_attendance",
+      "horilla_automations_mailautomation_also_sent_to"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, hamast.id, aa.id, aa.requested_data, aa.attendance_overtime, aa.attendance_day_id, aa.attendance_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.horilla_automations_mailautomation_also_sent_to AS hamast ON ee.id = hamast.employee_id INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id WHERE aa.attendance_date = CURRENT_DATE - INTERVAL '1 DAY' AND ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 75,
+    "category": "ATTENDANCE",
+    "query": "What time did Girinath check in?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "attendance_attendance",
+      "attendance_attendanceovertime"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, aa.id, att1.id, att1.overtime, aa.modified_time, aa.attendance_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id INNER JOIN public.attendance_attendanceovertime AS att1 ON ee.id = att1.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 76,
+    "category": "ATTENDANCE",
+    "query": "What time did Girinath check out?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "out",
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "attendance_attendance",
+      "attendance_attendanceovertime"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, aa.id, att1.id, att1.overtime, aa.modified_time, aa.attendance_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id INNER JOIN public.attendance_attendanceovertime AS att1 ON ee.id = att1.employee_id_id WHERE ee.employee_first_name ILIKE '%out%' AND ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 77,
+    "category": "ATTENDANCE",
+    "query": "How many hours did Girinath work today?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "attendance_attendance",
+      "attendance_attendanceovertime"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id, aa.attendance_date FROM public.employee_employee AS ee INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id INNER JOIN public.attendance_attendanceovertime AS att1 ON ee.id = att1.employee_id_id WHERE aa.attendance_date = CURRENT_DATE AND ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 78,
+    "category": "ATTENDANCE",
+    "query": "How many hours did Girinath work this week?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "attendance_attendance",
+      "attendance_attendanceovertime"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id, aa.attendance_date FROM public.employee_employee AS ee INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id INNER JOIN public.attendance_attendanceovertime AS att1 ON ee.id = att1.employee_id_id WHERE aa.attendance_date >= DATE_TRUNC('WEEK', CURRENT_DATE) AND ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 79,
+    "category": "ATTENDANCE",
+    "query": "How many days was Girinath absent this month?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "attendance_attendance",
+      "attendance_attendanceovertime",
+      "horilla_automations_mailautomation_also_sent_to"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id, aa.attendance_date FROM public.employee_employee AS ee INNER JOIN public.horilla_automations_mailautomation_also_sent_to AS hamast ON ee.id = hamast.employee_id INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id INNER JOIN public.attendance_attendanceovertime AS att1 ON ee.id = att1.employee_id_id WHERE aa.attendance_date >= DATE_TRUNC('MONTH', CURRENT_DATE) AND ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 80,
+    "category": "ATTENDANCE",
+    "query": "How many times was Girinath late this month?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "attendance_attendance",
+      "attendance_attendanceovertime"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id, aa.attendance_date FROM public.employee_employee AS ee INNER JOIN public.attendance_attendanceovertime AS att1 ON ee.id = att1.employee_id_id INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id WHERE aa.attendance_date >= DATE_TRUNC('MONTH', CURRENT_DATE) AND ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 81,
+    "category": "ATTENDANCE",
+    "query": "How many times did Girinath leave early?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "attendance_attendance",
+      "attendance_attendanceovertime"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id FROM public.employee_employee AS ee INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id INNER JOIN public.attendance_attendanceovertime AS att1 ON ee.id = att1.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 82,
+    "category": "ATTENDANCE",
+    "query": "How much overtime did Girinath work?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "attendance_attendance",
+      "attendance_attendanceovertime"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, aa.id, att1.id, att1.overtime, aa.attendance_overtime, aa.attendance_date, aa.work_type_id_id, aa.overtime_second, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id INNER JOIN public.attendance_attendanceovertime AS att1 ON ee.id = att1.employee_id_id WHERE aa.overtime_second > 0 AND ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 83,
+    "category": "ATTENDANCE",
+    "query": "What was Girinath's attendance percentage?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "attendance_attendance",
+      "attendance_attendanceovertime"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, aa.id, att1.id, ee.experience, aa.attendance_date, aa.attendance_overtime, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id INNER JOIN public.attendance_attendanceovertime AS att1 ON ee.id = att1.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 84,
+    "category": "ATTENDANCE",
+    "query": "Show Girinath's attendance for August.",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath",
+      "August"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "attendance_attendance",
+      "attendance_attendanceovertime"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, aa.id, att1.id, aa.attendance_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id INNER JOIN public.attendance_attendanceovertime AS att1 ON ee.id = att1.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND ee.employee_first_name ILIKE '%August%'"
+  },
+  {
+    "idx": 85,
+    "category": "ATTENDANCE",
+    "query": "Which employees were absent today?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "employee_employee",
+      "attendance_attendance",
+      "base_announcement_employees",
+      "pms_meetings_answer_employees",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees",
+      "horilla_automations_mailautomation_also_sent_to"
+    ],
+    "sql": "SELECT bae.id, pdse.id, hamast.id, aa.id, bafe.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, epse.id, pdee.id, ade.id, pmae.id, paee.id, pase.id, aa.requested_data, aa.is_holiday, ee.employee_last_name, aa.attendance_overtime, aa.attendance_day_id, aa.attendance_date FROM public.employee_employee AS ee INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.horilla_automations_mailautomation_also_sent_to AS hamast ON ee.id = hamast.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE aa.attendance_date = CURRENT_DATE"
+  },
+  {
+    "idx": 86,
+    "category": "ATTENDANCE",
+    "query": "Which employees were late today?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "late"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "attendance_attendance",
+      "base_announcement_employees",
+      "pms_meetings_answer_employees",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees"
+    ],
+    "sql": "SELECT bae.id, pdse.id, aa.id, bafe.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, epse.id, pdee.id, ade.id, pmae.id, paee.id, pase.id, aa.is_holiday, ee.employee_last_name, aa.attendance_day_id, aa.attendance_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE aa.attendance_date = CURRENT_DATE AND ee.employee_first_name ILIKE '%late%'"
+  },
+  {
+    "idx": 87,
+    "category": "ATTENDANCE",
+    "query": "Which department has the highest absenteeism?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "base_department",
+      "employee_employee",
+      "base_department_company_id",
+      "base_announcement_department",
+      "horilla_automations_mailautomation_also_sent_to",
+      "payroll_contract"
+    ],
+    "sql": "SELECT COUNT(bd.id) AS count_id, bd.id FROM public.base_department AS bd INNER JOIN public.base_department_company_id AS bdci ON bd.id = bdci.department_id INNER JOIN public.base_announcement_department AS bad ON bd.id = bad.department_id INNER JOIN public.payroll_contract AS pc ON bd.id = pc.department_id INNER JOIN public.employee_employee AS ee ON pc.employee_id_id = ee.id INNER JOIN public.horilla_automations_mailautomation_also_sent_to AS hamast ON ee.id = hamast.employee_id WHERE pc.is_active = True GROUP BY bd.id ORDER BY count_id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 88,
+    "category": "ATTENDANCE",
+    "query": "Who worked the most overtime this month?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "attendance_attendance",
+      "employee_employee",
+      "attendance_attendanceovertime"
+    ],
+    "sql": "SELECT MAX(att1.overtime_second) AS max_overtime_second, ee.id, aa.overtime_second, aa.attendance_date FROM public.attendance_attendance AS aa INNER JOIN public.employee_employee AS ee ON aa.employee_id_id = ee.id INNER JOIN public.attendance_attendanceovertime AS att1 ON ee.id = att1.employee_id_id WHERE aa.overtime_second > 0 AND aa.attendance_date >= DATE_TRUNC('MONTH', CURRENT_DATE) GROUP BY ee.id ORDER BY max_overtime_second DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 89,
+    "category": "ATTENDANCE",
+    "query": "Who had the most late arrivals this month?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "attendance_attendanceovertime",
+      "employee_employee",
+      "attendance_attendance"
+    ],
+    "sql": "SELECT COUNT(att1.id) AS count_id, ee.id, aa.attendance_date FROM public.attendance_attendanceovertime AS att1 INNER JOIN public.employee_employee AS ee ON att1.employee_id_id = ee.id INNER JOIN public.attendance_attendance AS aa ON ee.id = aa.employee_id_id WHERE aa.attendance_date >= DATE_TRUNC('MONTH', CURRENT_DATE) GROUP BY ee.id ORDER BY count_id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 90,
+    "category": "PAYSLIP",
+    "query": "What is Girinath's latest payslip?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_payslip",
+      "payroll_contract",
+      "payroll_payslip_installment_ids"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pp.id, pp.status, pp.end_date, pp.start_date, ppii.id, pc.id, pc.wage, ppii.payslip_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_payslip AS pp ON ee.id = pp.employee_id_id INNER JOIN public.payroll_payslip_installment_ids AS ppii ON pp.id = ppii.payslip_id INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY ppii.id DESC NULLS LAST, pp.start_date DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 91,
+    "category": "PAYSLIP",
+    "query": "What is Girinath's gross salary?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_payslip",
+      "payroll_contract"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pp.id, pp.status, pp.end_date, pp.start_date, pc.id, pc.wage, pp.gross_pay, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id INNER JOIN public.payroll_payslip AS pp ON ee.id = pp.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY pp.start_date DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 92,
+    "category": "PAYSLIP",
+    "query": "What is Girinath's net salary?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_payslip",
+      "payroll_contract"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pp.id, pp.status, pp.end_date, pp.start_date, pc.id, pc.wage, pp.net_pay, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id INNER JOIN public.payroll_payslip AS pp ON ee.id = pp.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY pp.start_date DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 93,
+    "category": "PAYSLIP",
+    "query": "What is Girinath's basic salary?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_payslip",
+      "payroll_contract"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pp.id, pp.status, pp.end_date, pp.start_date, pc.id, pc.wage, pp.basic_pay, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id INNER JOIN public.payroll_payslip AS pp ON ee.id = pp.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY pp.start_date DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 94,
+    "category": "PAYSLIP",
+    "query": "What deductions were made?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "made"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_payslip",
+      "payroll_deduction",
+      "payroll_loanaccount_deduction_ids",
+      "payroll_deduction_other_conditions",
+      "payroll_deduction_exclude_employees",
+      "payroll_deduction_specific_employees",
+      "payroll_loanaccount"
+    ],
+    "sql": "SELECT pldi.id, pdoc.id, pdse.id, pd.id, pd.title, pd.amount, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pdee.id, pp.id, pp.status, pp.end_date, pp.deduction, pp.start_date, pldi.deduction_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_loanaccount AS pl ON ee.id = pl.employee_id_id INNER JOIN public.payroll_loanaccount_deduction_ids AS pldi ON pl.id = pldi.loanaccount_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.payroll_deduction AS pd ON pdee.deduction_id = pd.id INNER JOIN public.payroll_deduction_other_conditions AS pdoc ON pd.id = pdoc.deduction_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.payroll_payslip AS pp ON ee.id = pp.employee_id_id WHERE ee.employee_first_name ILIKE '%made%' ORDER BY pp.start_date DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 95,
+    "category": "PAYSLIP",
+    "query": "What was Girinath's salary last month?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_payslip",
+      "payroll_contract"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pp.id, pp.status, pp.end_date, pp.start_date, pc.id, pc.wage, pc.revised_salary_date, pp.net_pay, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id INNER JOIN public.payroll_payslip AS pp ON ee.id = pp.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY pp.start_date DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 96,
+    "category": "PAYSLIP",
+    "query": "What was Girinath's salary three months ago?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_payslip",
+      "payroll_contract"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pp.id, pp.status, pp.end_date, pp.start_date, pc.id, pc.wage, pp.created_at, pc.revised_salary_date, pc.contract_end_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id INNER JOIN public.payroll_payslip AS pp ON ee.id = pp.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY pp.start_date DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 97,
+    "category": "PAYSLIP",
+    "query": "How much did Girinath earn this year?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_contract"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pc.id, pc.wage, ee.gender, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True"
+  },
+  {
+    "idx": 98,
+    "category": "PAYSLIP",
+    "query": "What is Girinath's latest payslip status?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_payslip",
+      "payroll_contract",
+      "payroll_payslip_installment_ids"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pp.id, pp.status, pp.end_date, pp.start_date, ppii.id, pc.id, pc.wage, ppii.payslip_id, ee.marital_status, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_payslip AS pp ON ee.id = pp.employee_id_id INNER JOIN public.payroll_payslip_installment_ids AS ppii ON pp.id = ppii.payslip_id INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY ppii.id DESC NULLS LAST, pp.start_date DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 99,
+    "category": "PAYSLIP",
+    "query": "Has Girinath's payslip been sent to them?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_payslip",
+      "payroll_contract",
+      "payroll_payslip_installment_ids",
+      "horilla_automations_mailautomation_also_sent_to"
+    ],
+    "sql": "SELECT hamast.id, ppii.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pp.id, pp.status, pp.end_date, pp.start_date, pc.id, pc.wage, ppii.payslip_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.horilla_automations_mailautomation_also_sent_to AS hamast ON ee.id = hamast.employee_id INNER JOIN public.payroll_payslip AS pp ON ee.id = pp.employee_id_id INNER JOIN public.payroll_payslip_installment_ids AS ppii ON pp.id = ppii.payslip_id INNER JOIN public.payroll_contract AS pc ON ee.id = pc.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND pc.is_active = True ORDER BY pp.start_date DESC NULLS LAST, ppii.id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 100,
+    "category": "PAYSLIP",
+    "query": "What allowances does Girinath receive?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_allowance",
+      "payroll_allowance_other_conditions",
+      "payroll_allowance_exclude_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_loanaccount"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, paoc.id, pa.id, pa.title, pa.amount, paee.id, pase.id, paoc.allowance_id, pa.rate, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_loanaccount AS pl ON ee.id = pl.employee_id_id INNER JOIN public.payroll_allowance AS pa ON pl.allowance_id_id = pa.id INNER JOIN public.payroll_allowance_other_conditions AS paoc ON pa.id = paoc.allowance_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 101,
+    "category": "PAYSLIP",
+    "query": "What deductions apply to Girinath?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_payslip",
+      "payroll_deduction",
+      "payroll_loanaccount_deduction_ids",
+      "payroll_deduction_other_conditions",
+      "payroll_deduction_exclude_employees",
+      "payroll_deduction_specific_employees",
+      "payroll_loanaccount"
+    ],
+    "sql": "SELECT pldi.id, pdoc.id, pdse.id, pd.id, pd.title, pd.amount, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pdee.id, pp.id, pp.status, pp.end_date, pp.deduction, pp.start_date, pd.rate, pd.employer_rate, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_loanaccount AS pl ON ee.id = pl.employee_id_id INNER JOIN public.payroll_loanaccount_deduction_ids AS pldi ON pl.id = pldi.loanaccount_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.payroll_deduction AS pd ON pdee.deduction_id = pd.id INNER JOIN public.payroll_deduction_other_conditions AS pdoc ON pd.id = pdoc.deduction_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.payroll_payslip AS pp ON ee.id = pp.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%' ORDER BY pp.start_date DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 102,
+    "category": "LOAN",
+    "query": "Does Girinath have an active loan?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_loanaccount"
+    ],
+    "sql": "SELECT pl.id, pl.title, pl.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pl.rate, pl.loan_amount, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_loanaccount AS pl ON ee.id = pl.employee_id_id WHERE (ee.employee_first_name ILIKE '%Girinath%' AND pl.is_active = True) AND ee.is_active = True"
+  },
+  {
+    "idx": 103,
+    "category": "LOAN",
+    "query": "How much loan does Girinath have?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_loanaccount"
+    ],
+    "sql": "SELECT pl.id, pl.title, pl.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pl.loan_amount, pl.rate, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_loanaccount AS pl ON ee.id = pl.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 104,
+    "category": "LOAN",
+    "query": "How much is the monthly installment?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "payroll_loanaccount",
+      "employee_employee",
+      "payroll_payslip_installment_ids",
+      "payroll_loanaccount_deduction_ids",
+      "payroll_deduction"
+    ],
+    "sql": "SELECT pl.id, pl.title, pl.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ppii.id, pl.installments FROM public.payroll_loanaccount AS pl INNER JOIN public.employee_employee AS ee ON pl.employee_id_id = ee.id INNER JOIN public.payroll_loanaccount_deduction_ids AS pldi ON pl.id = pldi.loanaccount_id INNER JOIN public.payroll_deduction AS pd ON pldi.deduction_id = pd.id INNER JOIN public.payroll_payslip_installment_ids AS ppii ON pd.id = ppii.deduction_id ORDER BY ppii.id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 105,
+    "category": "LOAN",
+    "query": "When does the installment start?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "payroll_loanaccount",
+      "employee_employee",
+      "payroll_payslip_installment_ids",
+      "payroll_loanaccount_deduction_ids",
+      "payroll_deduction"
+    ],
+    "sql": "SELECT pl.id, pl.title, pl.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ppii.id, pl.installments, pl.installment_start_date FROM public.payroll_loanaccount AS pl INNER JOIN public.employee_employee AS ee ON pl.employee_id_id = ee.id INNER JOIN public.payroll_loanaccount_deduction_ids AS pldi ON pl.id = pldi.loanaccount_id INNER JOIN public.payroll_deduction AS pd ON pldi.deduction_id = pd.id INNER JOIN public.payroll_payslip_installment_ids AS ppii ON pd.id = ppii.deduction_id ORDER BY ppii.id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 106,
+    "category": "LOAN",
+    "query": "Has the loan been settled?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "loan"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "payroll_loanaccount"
+    ],
+    "sql": "SELECT pl.id, pl.title, pl.settled, pl.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pl.loan_amount, pl.settled_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.payroll_loanaccount AS pl ON ee.id = pl.employee_id_id WHERE ee.employee_first_name ILIKE '%loan%'"
+  },
+  {
+    "idx": 107,
+    "category": "PMS",
+    "query": "What are Girinath's current objectives?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "pms_objective",
+      "pms_employeeobjective",
+      "pms_objective_managers",
+      "pms_objective_assignees",
+      "pms_objective_key_result_id"
+    ],
+    "sql": "SELECT poa.id, po.id, po.title, po.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pe.id, pe.status, pe.end_date, pe.objective, pe.start_date, pom.id, pokri.id, pom.objective_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.pms_objective_assignees AS poa ON ee.id = poa.employee_id INNER JOIN public.pms_objective_managers AS pom ON ee.id = pom.employee_id INNER JOIN public.pms_objective AS po ON pom.objective_id = po.id INNER JOIN public.pms_employeeobjective AS pe ON ee.id = pe.employee_id_id INNER JOIN public.pms_objective_key_result_id AS pokri ON po.id = pokri.objective_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 108,
+    "category": "PMS",
+    "query": "What is the status of Girinath's objectives?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "pms_feedback",
+      "pms_objective",
+      "pms_employeeobjective",
+      "pms_objective_managers",
+      "pms_objective_assignees",
+      "pms_objective_key_result_id"
+    ],
+    "sql": "SELECT poa.id, po.id, po.title, po.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pe.id, pe.status, pe.end_date, pe.objective, pe.start_date, pom.id, pokri.id, pf.id, pf.status, pf.end_date, pf.start_date, ee.marital_status, pom.objective_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.pms_objective_assignees AS poa ON ee.id = poa.employee_id INNER JOIN public.pms_objective_managers AS pom ON ee.id = pom.employee_id INNER JOIN public.pms_objective AS po ON pom.objective_id = po.id INNER JOIN public.pms_employeeobjective AS pe ON ee.id = pe.employee_id_id INNER JOIN public.pms_objective_key_result_id AS pokri ON po.id = pokri.objective_id INNER JOIN public.pms_feedback AS pf ON ee.id = pf.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 109,
+    "category": "PMS",
+    "query": "What is the progress percentage?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "pms_keyresult",
+      "pms_employeeobjective",
+      "pms_employeeobjective_key_result_id"
+    ],
+    "sql": "SELECT pe.id, pe.status, pe.end_date, pe.start_date, pk.id, pk.title, pk.description, pk.progress_type, pe.progress_percentage FROM public.pms_keyresult AS pk INNER JOIN public.pms_employeeobjective_key_result_id AS pekri ON pk.id = pekri.keyresult_id INNER JOIN public.pms_employeeobjective AS pe ON pekri.employeeobjective_id = pe.id"
+  },
+  {
+    "idx": 110,
+    "category": "PMS",
+    "query": "What are Girinath's key results?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "pms_feedback",
+      "pms_keyresult",
+      "pms_employeeobjective",
+      "pms_objective_key_result_id",
+      "pms_employeeobjective_key_result_id",
+      "pms_feedback_employee_key_results_id",
+      "pms_keyresultfeedback",
+      "pms_employeekeyresult",
+      "pms_objective"
+    ],
+    "sql": "SELECT pk.id, pk.title, pk.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pokri.id, pfekri.id, pekri.id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.pms_keyresultfeedback AS pms1 ON ee.id = pms1.employee_id_id INNER JOIN public.pms_employeekeyresult AS pms2 ON pms1.key_result_id_id = pms2.id INNER JOIN public.pms_keyresult AS pk ON pms2.key_result_id_id = pk.id INNER JOIN public.pms_employeeobjective AS pe ON ee.id = pe.employee_id_id INNER JOIN public.pms_objective AS po ON pe.objective_id_id = po.id INNER JOIN public.pms_objective_key_result_id AS pokri ON po.id = pokri.objective_id INNER JOIN public.pms_feedback AS pf ON ee.id = pf.employee_id_id INNER JOIN public.pms_feedback_employee_key_results_id AS pfekri ON pf.id = pfekri.feedback_id INNER JOIN public.pms_employeeobjective_key_result_id AS pekri ON pe.id = pekri.employeeobjective_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 111,
+    "category": "PMS",
+    "query": "What is the progress of each key result?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "pms_keyresult",
+      "pms_employeeobjective",
+      "pms_objective_key_result_id",
+      "pms_employeeobjective_key_result_id"
+    ],
+    "sql": "SELECT pekri.id, pe.id, pe.status, pe.end_date, pe.start_date, pk.id, pk.title, pk.description, pokri.id, pk.progress_type, pokri.keyresult_id, pe.progress_percentage FROM public.pms_keyresult AS pk INNER JOIN public.pms_employeeobjective_key_result_id AS pekri ON pk.id = pekri.keyresult_id INNER JOIN public.pms_employeeobjective AS pe ON pekri.employeeobjective_id = pe.id INNER JOIN public.pms_objective_key_result_id AS pokri ON pk.id = pokri.keyresult_id"
+  },
+  {
+    "idx": 112,
+    "category": "PMS",
+    "query": "Which objectives are incomplete?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "incomplete"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "pms_objective",
+      "pms_employeeobjective",
+      "pms_objective_managers",
+      "pms_objective_assignees",
+      "pms_objective_key_result_id"
+    ],
+    "sql": "SELECT poa.id, po.id, po.title, po.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pe.id, pe.status, pe.end_date, pe.objective, pe.start_date, pom.id, pokri.id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.pms_objective_assignees AS poa ON ee.id = poa.employee_id INNER JOIN public.pms_objective_managers AS pom ON ee.id = pom.employee_id INNER JOIN public.pms_objective AS po ON pom.objective_id = po.id INNER JOIN public.pms_employeeobjective AS pe ON ee.id = pe.employee_id_id INNER JOIN public.pms_objective_key_result_id AS pokri ON po.id = pokri.objective_id WHERE ee.employee_first_name ILIKE '%incomplete%'"
+  },
+  {
+    "idx": 113,
+    "category": "PMS",
+    "query": "Which objectives are completed?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "pms_objective",
+      "pms_feedback",
+      "employee_employee",
+      "pms_employeeobjective",
+      "pms_objective_managers",
+      "pms_objective_assignees",
+      "pms_objective_key_result_id"
+    ],
+    "sql": "SELECT poa.id, po.id, po.title, po.description, pe.id, pe.status, pe.end_date, pe.objective, pe.start_date, pom.id, pokri.id, pf.status FROM public.pms_objective AS po INNER JOIN public.pms_objective_assignees AS poa ON po.id = poa.objective_id INNER JOIN public.pms_objective_managers AS pom ON po.id = pom.objective_id INNER JOIN public.employee_employee AS ee ON pom.employee_id = ee.id INNER JOIN public.pms_feedback AS pf ON ee.id = pf.employee_id_id INNER JOIN public.pms_employeeobjective AS pe ON po.id = pe.objective_id_id INNER JOIN public.pms_objective_key_result_id AS pokri ON po.id = pokri.objective_id WHERE pf.status = 'completed'"
+  },
+  {
+    "idx": 114,
+    "category": "PMS",
+    "query": "What are Girinath's performance goals?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "pms_employeeobjective"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pe.id, pe.status, pe.end_date, pe.start_date, ee.experience, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.pms_employeeobjective AS pe ON ee.id = pe.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 115,
+    "category": "PMS",
+    "query": "What feedback has Girinath received?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "pms_feedback",
+      "pms_feedback_others_id",
+      "pms_feedback_colleague_id",
+      "pms_feedback_subordinate_id",
+      "pms_feedback_question_template_id",
+      "pms_feedback_employee_key_results_id"
+    ],
+    "sql": "SELECT pfqti.id, pfsi.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pfoi.id, pfci.id, pf.id, pf.status, pf.end_date, pf.start_date, pfekri.id, pfoi.feedback_id, pf.created_at, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.pms_feedback AS pf ON ee.id = pf.employee_id_id INNER JOIN public.pms_feedback_question_template_id AS pfqti ON pf.id = pfqti.feedback_id INNER JOIN public.pms_feedback_subordinate_id AS pfsi ON ee.id = pfsi.employee_id INNER JOIN public.pms_feedback_others_id AS pfoi ON ee.id = pfoi.employee_id INNER JOIN public.pms_feedback_colleague_id AS pfci ON ee.id = pfci.employee_id INNER JOIN public.pms_feedback_employee_key_results_id AS pfekri ON pf.id = pfekri.feedback_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 116,
+    "category": "PMS",
+    "query": "Who provided the feedback?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "pms_feedback",
+      "pms_feedback_others_id",
+      "pms_feedback_colleague_id",
+      "pms_feedback_subordinate_id",
+      "pms_feedback_question_template_id",
+      "pms_feedback_employee_key_results_id"
+    ],
+    "sql": "SELECT pfqti.id, pfsi.id, pfoi.id, pfci.id, pf.id, pf.status, pf.end_date, pf.start_date, pfekri.id, pfoi.feedback_id FROM public.pms_feedback AS pf INNER JOIN public.pms_feedback_question_template_id AS pfqti ON pf.id = pfqti.feedback_id INNER JOIN public.pms_feedback_subordinate_id AS pfsi ON pf.id = pfsi.feedback_id INNER JOIN public.pms_feedback_others_id AS pfoi ON pf.id = pfoi.feedback_id INNER JOIN public.pms_feedback_colleague_id AS pfci ON pf.id = pfci.feedback_id INNER JOIN public.pms_feedback_employee_key_results_id AS pfekri ON pf.id = pfekri.feedback_id"
+  },
+  {
+    "idx": 117,
+    "category": "PMS",
+    "query": "What was discussed in Girinath's latest performance meeting?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath",
+      "discussed"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "pms_meetings",
+      "pms_meetingsanswer"
+    ],
+    "sql": "SELECT pm.id, pm.title, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.experience, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.pms_meetingsanswer AS pms1 ON ee.id = pms1.employee_id_id INNER JOIN public.pms_meetings AS pm ON pms1.meeting_id_id = pm.id WHERE ee.employee_first_name ILIKE '%Girinath%' AND ee.employee_first_name ILIKE '%discussed%'"
+  },
+  {
+    "idx": 118,
+    "category": "PMS",
+    "query": "What questions were asked?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "asked"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "pms_feedback",
+      "pms_question",
+      "pms_feedback_question_template_id",
+      "pms_answer"
+    ],
+    "sql": "SELECT pq.id, pq.question, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pfqti.id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.pms_answer AS pa ON ee.id = pa.employee_id_id INNER JOIN public.pms_question AS pq ON pa.question_id_id = pq.id INNER JOIN public.pms_feedback AS pf ON ee.id = pf.employee_id_id INNER JOIN public.pms_feedback_question_template_id AS pfqti ON pf.id = pfqti.feedback_id WHERE ee.employee_first_name ILIKE '%asked%'"
+  },
+  {
+    "idx": 119,
+    "category": "PMS",
+    "query": "What answers did Girinath provide?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "pms_answer",
+      "pms_meetings_answer_employees"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pa.id, pa.answer, pmae.id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.pms_answer AS pa ON ee.id = pa.employee_id_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 120,
+    "category": "PMS",
+    "query": "Show Girinath's performance history.",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.experience, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 121,
+    "category": "PMS",
+    "query": "Has Girinath's performance improved?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ee.experience, ee.employee_profile, ee.employee_first_name FROM public.employee_employee AS ee WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 122,
+    "category": "PMS",
+    "query": "Compare Girinath's current objectives with previous objectives.",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath",
+      "previous",
+      "Compare"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "pms_meetings",
+      "pms_objective",
+      "pms_employeeobjective",
+      "pms_objective_managers",
+      "pms_objective_assignees",
+      "pms_objective_key_result_id",
+      "pms_meetingsanswer"
+    ],
+    "sql": "SELECT poa.id, po.id, po.title, po.description, pm.id, pm.title, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pe.id, pe.status, pe.end_date, pe.objective, pe.start_date, pom.id, pokri.id, pm.company_id_id, pom.objective_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.pms_objective_assignees AS poa ON ee.id = poa.employee_id INNER JOIN public.pms_objective_managers AS pom ON ee.id = pom.employee_id INNER JOIN public.pms_objective AS po ON pom.objective_id = po.id INNER JOIN public.pms_meetingsanswer AS pms1 ON ee.id = pms1.employee_id_id INNER JOIN public.pms_meetings AS pm ON pms1.meeting_id_id = pm.id INNER JOIN public.pms_employeeobjective AS pe ON ee.id = pe.employee_id_id INNER JOIN public.pms_objective_key_result_id AS pokri ON po.id = pokri.objective_id WHERE (ee.employee_first_name ILIKE '%Girinath%' AND ee.employee_first_name ILIKE '%previous%') AND ee.employee_first_name ILIKE '%Compare%'"
+  },
+  {
+    "idx": 123,
+    "category": "ASSET",
+    "query": "What assets are assigned to Girinath?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "asset_asset",
+      "asset_assetassignment",
+      "helpdesk_ticket_assigned_to",
+      "asset_assetassignment_assign_images"
+    ],
+    "sql": "SELECT aa.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ass1.id, aaai.id, htat.id, ass1.assigned_date, aaai.assetassignment_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.asset_asset AS aa ON ee.id = aa.owner_id INNER JOIN public.asset_assetassignment AS ass1 ON ee.id = ass1.assigned_by_employee_id_id INNER JOIN public.asset_assetassignment_assign_images AS aaai ON ass1.id = aaai.assetassignment_id INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ee.id = htat.employee_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 124,
+    "category": "ASSET",
+    "query": "Does Girinath have a laptop?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "asset_assetassignment"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ass1.id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.asset_assetassignment AS ass1 ON ee.id = ass1.assigned_by_employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 125,
+    "category": "ASSET",
+    "query": "What is the laptop asset ID?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "laptop"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "asset_asset",
+      "asset_assetassignment"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ass1.id, aa.id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.asset_assetassignment AS ass1 ON ee.id = ass1.assigned_by_employee_id_id INNER JOIN public.asset_asset AS aa ON ee.id = aa.owner_id WHERE ee.employee_first_name ILIKE '%laptop%'"
+  },
+  {
+    "idx": 126,
+    "category": "ASSET",
+    "query": "What is the asset status?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "asset_asset",
+      "employee_employee",
+      "asset_assetassignment"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ass1.id, aa.id, aa.asset_status FROM public.asset_asset AS aa INNER JOIN public.employee_employee AS ee ON aa.owner_id = ee.id INNER JOIN public.asset_assetassignment AS ass1 ON aa.id = ass1.asset_id_id"
+  },
+  {
+    "idx": 127,
+    "category": "ASSET",
+    "query": "When was it purchased?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "it"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "asset_asset"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, aa.id, aa.asset_purchase_cost, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.asset_asset AS aa ON ee.id = aa.owner_id WHERE ee.employee_first_name ILIKE '%it%'"
+  },
+  {
+    "idx": 128,
+    "category": "ASSET",
+    "query": "What was the purchase cost?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "purchase"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "asset_asset"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, aa.id, aa.asset_purchase_cost, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.asset_asset AS aa ON ee.id = aa.owner_id WHERE ee.employee_first_name ILIKE '%purchase%'"
+  },
+  {
+    "idx": 129,
+    "category": "ASSET",
+    "query": "When does its warranty expire?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "its"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "asset_asset"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, aa.id, aa.warranty_date, ee.experience, aa.warranty_image, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.asset_asset AS aa ON ee.id = aa.owner_id WHERE ee.employee_first_name ILIKE '%its%'"
+  },
+  {
+    "idx": 130,
+    "category": "ASSET",
+    "query": "Which assets assigned to Girinath are expired?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath",
+      "expired"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "asset_asset",
+      "asset_assetassignment",
+      "helpdesk_ticket_assigned_to",
+      "asset_assetassignment_assign_images"
+    ],
+    "sql": "SELECT aa.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ass1.id, aaai.id, htat.id, ass1.assigned_date, aaai.assetassignment_id, ee.experience, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.asset_asset AS aa ON ee.id = aa.owner_id INNER JOIN public.asset_assetassignment AS ass1 ON ee.id = ass1.assigned_by_employee_id_id INNER JOIN public.asset_assetassignment_assign_images AS aaai ON ass1.id = aaai.assetassignment_id INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ee.id = htat.employee_id WHERE ee.employee_first_name ILIKE '%Girinath%' AND ee.employee_first_name ILIKE '%expired%'"
+  },
+  {
+    "idx": 131,
+    "category": "ASSET",
+    "query": "Which assets are expiring soon?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "expiring"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "asset_asset",
+      "asset_assetassignment"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ass1.id, aa.id, aa.asset_tracking_id, ee.experience, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.asset_assetassignment AS ass1 ON ee.id = ass1.assigned_by_employee_id_id INNER JOIN public.asset_asset AS aa ON ee.id = aa.owner_id WHERE ee.employee_first_name ILIKE '%expiring%'"
+  },
+  {
+    "idx": 132,
+    "category": "ASSET",
+    "query": "Who currently owns asset AST-101?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "asset_asset",
+      "employee_employee",
+      "asset_assetassignment"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ass1.id, aa.id, aa.owner_id, ee.is_directly_converted, aa.asset_name FROM public.asset_asset AS aa INNER JOIN public.employee_employee AS ee ON aa.owner_id = ee.id INNER JOIN public.asset_assetassignment AS ass1 ON aa.id = ass1.asset_id_id"
+  },
+  {
+    "idx": 133,
+    "category": "ASSET",
+    "query": "List all assets assigned to employees in Engineering.",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "asset_asset",
+      "employee_employee",
+      "asset_assetassignment",
+      "base_announcement_employees",
+      "helpdesk_ticket_assigned_to",
+      "pms_meetings_answer_employees",
+      "employee_policy_specific_employees",
+      "asset_assetassignment_assign_images",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees"
+    ],
+    "sql": "SELECT bae.id, pdse.id, aa.id, bafe.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ass1.id, epse.id, pdee.id, ade.id, aaai.id, htat.id, pmae.id, paee.id, pase.id, ass1.assigned_date, aaai.assetassignment_id, ass1.assigned_by_employee_id_id FROM public.asset_asset AS aa INNER JOIN public.employee_employee AS ee ON aa.owner_id = ee.id INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.asset_assetassignment AS ass1 ON aa.id = ass1.asset_id_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.asset_assetassignment_assign_images AS aaai ON ass1.id = aaai.assetassignment_id INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ee.id = htat.employee_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id"
+  },
+  {
+    "idx": 134,
+    "category": "ASSET",
+    "query": "Which employee has asset TRK-900?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "asset_asset",
+      "employee_employee",
+      "asset_assetassignment"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ass1.id, aa.id, aa.asset_name FROM public.asset_asset AS aa INNER JOIN public.employee_employee AS ee ON aa.owner_id = ee.id INNER JOIN public.asset_assetassignment AS ass1 ON aa.id = ass1.asset_id_id"
+  },
+  {
+    "idx": 135,
+    "category": "HELPDESK",
+    "query": "What tickets has Girinath raised?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "helpdesk_ticket",
+      "helpdesk_ticket_tags",
+      "helpdesk_ticket_assigned_to"
+    ],
+    "sql": "SELECT ht.id, ht.title, ht.status, ht.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, htat.id, htt.id, htt.ticket_id, ht.priority, ht.raised_on, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.helpdesk_ticket AS ht ON ee.id = ht.employee_id_id INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ee.id = htat.employee_id INNER JOIN public.helpdesk_ticket_tags AS htt ON ht.id = htt.ticket_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 136,
+    "category": "HELPDESK",
+    "query": "What is Girinath's latest ticket?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "helpdesk_ticket",
+      "helpdesk_ticket_tags",
+      "helpdesk_ticket_assigned_to"
+    ],
+    "sql": "SELECT ht.id, ht.title, ht.status, ht.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, htat.id, htt.id, ht.priority, htt.ticket_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.helpdesk_ticket AS ht ON ee.id = ht.employee_id_id INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ee.id = htat.employee_id INNER JOIN public.helpdesk_ticket_tags AS htt ON ht.id = htt.ticket_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 137,
+    "category": "HELPDESK",
+    "query": "Is the ticket resolved?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "helpdesk_ticket",
+      "helpdesk_ticket_tags",
+      "helpdesk_ticket_assigned_to"
+    ],
+    "sql": "SELECT ht.id, ht.title, ht.status, ht.description, htat.id, htt.id, htt.ticket_id, ht.resolved_date FROM public.helpdesk_ticket AS ht INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ht.id = htat.ticket_id INNER JOIN public.helpdesk_ticket_tags AS htt ON ht.id = htt.ticket_id"
+  },
+  {
+    "idx": 138,
+    "category": "HELPDESK",
+    "query": "What is the ticket priority?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "helpdesk_ticket",
+      "helpdesk_ticket_tags",
+      "helpdesk_ticket_assigned_to"
+    ],
+    "sql": "SELECT ht.id, ht.title, ht.status, ht.priority, ht.description, htat.id, htt.id, htt.ticket_id FROM public.helpdesk_ticket AS ht INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ht.id = htat.ticket_id INNER JOIN public.helpdesk_ticket_tags AS htt ON ht.id = htt.ticket_id"
+  },
+  {
+    "idx": 139,
+    "category": "HELPDESK",
+    "query": "What is the deadline?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "helpdesk_ticket"
+    ],
+    "sql": "SELECT ht.id, ht.title, ht.status, ht.deadline, ht.description FROM public.helpdesk_ticket AS ht"
+  },
+  {
+    "idx": 140,
+    "category": "HELPDESK",
+    "query": "When was it raised?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "it"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "helpdesk_ticket"
+    ],
+    "sql": "SELECT ht.id, ht.title, ht.status, ht.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ht.raised_on, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.helpdesk_ticket AS ht ON ee.id = ht.employee_id_id WHERE ee.employee_first_name ILIKE '%it%'"
+  },
+  {
+    "idx": 141,
+    "category": "HELPDESK",
+    "query": "When was it resolved?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "it"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "helpdesk_ticket"
+    ],
+    "sql": "SELECT ht.id, ht.title, ht.status, ht.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, ht.resolved_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.helpdesk_ticket AS ht ON ee.id = ht.employee_id_id WHERE ee.employee_first_name ILIKE '%it%'"
+  },
+  {
+    "idx": 142,
+    "category": "HELPDESK",
+    "query": "Who is handling the ticket?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "handling"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "helpdesk_ticket",
+      "helpdesk_ticket_tags",
+      "helpdesk_ticket_assigned_to"
+    ],
+    "sql": "SELECT ht.id, ht.title, ht.status, ht.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, htat.id, htt.id, htt.ticket_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.helpdesk_ticket AS ht ON ee.id = ht.employee_id_id INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ee.id = htat.employee_id INNER JOIN public.helpdesk_ticket_tags AS htt ON ht.id = htt.ticket_id WHERE ee.employee_first_name ILIKE '%handling%'"
+  },
+  {
+    "idx": 143,
+    "category": "HELPDESK",
+    "query": "How many open tickets does Girinath have?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "helpdesk_ticket",
+      "helpdesk_ticket_tags",
+      "helpdesk_ticket_assigned_to",
+      "recruitment_recruitment_open_positions",
+      "employee_employeeworkinformation",
+      "base_jobposition"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id FROM public.employee_employee AS ee INNER JOIN public.helpdesk_ticket AS ht ON ee.id = ht.employee_id_id INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ee.id = htat.employee_id INNER JOIN public.helpdesk_ticket_tags AS htt ON ht.id = htt.ticket_id INNER JOIN public.employee_employeeworkinformation AS emp1 ON ee.id = emp1.employee_id_id INNER JOIN public.base_jobposition AS bj ON emp1.job_position_id_id = bj.id INNER JOIN public.recruitment_recruitment_open_positions AS rrop ON bj.id = rrop.jobposition_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 144,
+    "category": "HELPDESK",
+    "query": "What is Girinath's unresolved ticket?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "helpdesk_ticket",
+      "helpdesk_ticket_tags",
+      "helpdesk_ticket_assigned_to"
+    ],
+    "sql": "SELECT ht.id, ht.title, ht.status, ht.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, htat.id, htt.id, ht.priority, htt.ticket_id, ht.resolved_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.helpdesk_ticket AS ht ON ee.id = ht.employee_id_id INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ee.id = htat.employee_id INNER JOIN public.helpdesk_ticket_tags AS htt ON ht.id = htt.ticket_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 145,
+    "category": "HELPDESK",
+    "query": "Show Girinath's ticket history.",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "helpdesk_ticket",
+      "helpdesk_ticket_tags",
+      "helpdesk_ticket_assigned_to"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, htat.id, htt.id, ht.id, ht.title, ht.status, ht.description, ht.priority, htt.ticket_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ee.id = htat.employee_id INNER JOIN public.helpdesk_ticket AS ht ON ee.id = ht.employee_id_id INNER JOIN public.helpdesk_ticket_tags AS htt ON ht.id = htt.ticket_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 146,
+    "category": "HELPDESK",
+    "query": "Which employees have unresolved tickets?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "unresolved"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "helpdesk_ticket",
+      "helpdesk_ticket_tags",
+      "base_announcement_employees",
+      "helpdesk_ticket_assigned_to",
+      "pms_meetings_answer_employees",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees"
+    ],
+    "sql": "SELECT ht.id, ht.title, ht.status, ht.description, bae.id, pdse.id, bafe.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, epse.id, pdee.id, ade.id, htat.id, htt.id, pmae.id, paee.id, pase.id, htt.ticket_id, ee.employee_profile, ht.resolved_date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.helpdesk_ticket AS ht ON ee.id = ht.employee_id_id INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ee.id = htat.employee_id INNER JOIN public.helpdesk_ticket_tags AS htt ON ht.id = htt.ticket_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE ee.employee_first_name ILIKE '%unresolved%'"
+  },
+  {
+    "idx": 147,
+    "category": "HELPDESK",
+    "query": "Which department has the most open tickets?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "base_department",
+      "helpdesk_ticket",
+      "employee_employee",
+      "base_department_company_id",
+      "helpdesk_ticket_assigned_to",
+      "base_announcement_department",
+      "recruitment_recruitment_open_positions",
+      "payroll_contract",
+      "base_jobposition"
+    ],
+    "sql": "SELECT COUNT(bd.id) AS count_id, bd.id FROM public.base_department AS bd INNER JOIN public.payroll_contract AS pc ON bd.id = pc.department_id INNER JOIN public.employee_employee AS ee ON pc.employee_id_id = ee.id INNER JOIN public.helpdesk_ticket AS ht ON ee.id = ht.employee_id_id INNER JOIN public.base_announcement_department AS bad ON bd.id = bad.department_id INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ee.id = htat.employee_id INNER JOIN public.base_department_company_id AS bdci ON bd.id = bdci.department_id INNER JOIN public.base_jobposition AS bj ON bd.id = bj.department_id_id INNER JOIN public.recruitment_recruitment_open_positions AS rrop ON bj.id = rrop.jobposition_id WHERE pc.is_active = True GROUP BY bd.id ORDER BY count_id DESC NULLS LAST LIMIT 1"
+  },
+  {
+    "idx": 148,
+    "category": "PROJECT",
+    "query": "Which projects is Girinath working on?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "project_task",
+      "project_project",
+      "project_timesheet",
+      "project_task_task_members",
+      "project_project_members"
+    ],
+    "sql": "SELECT pt.id, pt.title, pt.status, pt.end_date, pt.start_date, pt.description, pp.id, pp.title, pp.status, pp.end_date, pp.start_date, pp.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pro1.id, pro1.status, pro1.description, pt.project_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.project_task_task_members AS pttm ON ee.id = pttm.employee_id INNER JOIN public.project_task AS pt ON pttm.task_id = pt.id INNER JOIN public.project_project_members AS ppm ON ee.id = ppm.employee_id INNER JOIN public.project_project AS pp ON ppm.project_id = pp.id INNER JOIN public.project_timesheet AS pro1 ON ee.id = pro1.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 149,
+    "category": "PROJECT",
+    "query": "What tasks are assigned to Girinath?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "project_task",
+      "project_timesheet",
+      "project_task_task_members",
+      "project_task_task_managers",
+      "helpdesk_ticket_assigned_to",
+      "asset_assetassignment_assign_images",
+      "asset_assetassignment"
+    ],
+    "sql": "SELECT pt.id, pt.title, pt.status, pt.end_date, pt.start_date, pt.description, pttm.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pro1.id, pro1.status, pro1.description, aaai.id, htat.id, pro2.id, pro1.task_id_id, pttm.task_id, aaai.assetassignment_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.project_task_task_members AS pttm ON ee.id = pttm.employee_id INNER JOIN public.project_task AS pt ON pttm.task_id = pt.id INNER JOIN public.project_timesheet AS pro1 ON ee.id = pro1.employee_id_id INNER JOIN public.asset_assetassignment AS aa ON ee.id = aa.assigned_by_employee_id_id INNER JOIN public.asset_assetassignment_assign_images AS aaai ON aa.id = aaai.assetassignment_id INNER JOIN public.helpdesk_ticket_assigned_to AS htat ON ee.id = htat.employee_id INNER JOIN public.project_task_task_managers AS pro2 ON ee.id = pro2.employee_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 150,
+    "category": "PROJECT",
+    "query": "What is the status of the task?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "project_task",
+      "project_project",
+      "project_timesheet",
+      "project_task_task_members",
+      "project_task_task_managers"
+    ],
+    "sql": "SELECT pt.id, pt.title, pt.status, pt.end_date, pt.start_date, pt.description, pttm.id, pp.id, pp.title, pp.status, pp.end_date, pp.start_date, pp.description, pro1.id, pro1.status, pro1.description, pro2.id, pro1.task_id_id FROM public.project_task AS pt INNER JOIN public.project_task_task_members AS pttm ON pt.id = pttm.task_id INNER JOIN public.project_project AS pp ON pt.project_id = pp.id INNER JOIN public.project_timesheet AS pro1 ON pt.id = pro1.task_id_id INNER JOIN public.project_task_task_managers AS pro2 ON pt.id = pro2.task_id"
+  },
+  {
+    "idx": 151,
+    "category": "PROJECT",
+    "query": "What is Girinath's latest timesheet?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "project_timesheet"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pro1.id, pro1.status, pro1.description, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.project_timesheet AS pro1 ON ee.id = pro1.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 152,
+    "category": "PROJECT",
+    "query": "How many hours did Girinath spend on Project Phoenix?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "project_task",
+      "project_project",
+      "project_timesheet",
+      "project_task_task_members",
+      "project_project_members"
+    ],
+    "sql": "SELECT COUNT(ee.id) AS count_id FROM public.employee_employee AS ee INNER JOIN public.project_task_task_members AS pttm ON ee.id = pttm.employee_id INNER JOIN public.project_task AS pt ON pttm.task_id = pt.id INNER JOIN public.project_project_members AS ppm ON ee.id = ppm.employee_id INNER JOIN public.project_project AS pp ON ppm.project_id = pp.id INNER JOIN public.project_timesheet AS pro1 ON ee.id = pro1.employee_id_id WHERE ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 153,
+    "category": "PROJECT",
+    "query": "How much time did Girinath spend this month?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "project_task",
+      "project_timesheet",
+      "project_task_task_members"
+    ],
+    "sql": "SELECT ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pt.id, pt.title, pt.status, pt.end_date, pt.start_date, pt.description, pro1.id, pro1.status, pro1.description, pt.modified_time, pro1.time_spent, pro1.date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.project_task_task_members AS pttm ON ee.id = pttm.employee_id INNER JOIN public.project_task AS pt ON pttm.task_id = pt.id INNER JOIN public.project_timesheet AS pro1 ON ee.id = pro1.employee_id_id WHERE pro1.date >= DATE_TRUNC('MONTH', CURRENT_DATE) AND ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 154,
+    "category": "PROJECT",
+    "query": "What tasks did Girinath work on last week?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "last",
+      "Girinath"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "project_task",
+      "project_timesheet",
+      "project_task_task_members",
+      "project_task_task_managers"
+    ],
+    "sql": "SELECT pt.id, pt.title, pt.status, pt.end_date, pt.start_date, pt.description, pttm.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pro1.id, pro1.status, pro1.description, pro2.id, pro1.task_id_id, pro1.date, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.project_task_task_members AS pttm ON ee.id = pttm.employee_id INNER JOIN public.project_task AS pt ON pttm.task_id = pt.id INNER JOIN public.project_timesheet AS pro1 ON ee.id = pro1.employee_id_id INNER JOIN public.project_task_task_managers AS pro2 ON ee.id = pro2.employee_id WHERE (pro1.date >= DATE_TRUNC('WEEK', CURRENT_DATE - INTERVAL '1 WEEK') AND ee.employee_first_name ILIKE '%last%') AND ee.employee_first_name ILIKE '%Girinath%'"
+  },
+  {
+    "idx": 155,
+    "category": "PROJECT",
+    "query": "Which project consumes the most employee hours?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "project_task",
+      "project_project",
+      "employee_employee",
+      "project_timesheet",
+      "project_task_task_members"
+    ],
+    "sql": "SELECT MAX(pt.sequence) AS max_sequence FROM public.project_task AS pt INNER JOIN public.project_project AS pp ON pt.project_id = pp.id INNER JOIN public.project_task_task_members AS pttm ON pt.id = pttm.task_id INNER JOIN public.employee_employee AS ee ON pttm.employee_id = ee.id INNER JOIN public.project_timesheet AS pro1 ON pt.id = pro1.task_id_id"
+  },
+  {
+    "idx": 156,
+    "category": "PROJECT",
+    "query": "Which employees are working on Project Phoenix?",
+    "success": true,
+    "error": null,
+    "entities": [
+      "working"
+    ],
+    "plan_tables": [
+      "employee_employee",
+      "project_task",
+      "project_project",
+      "project_timesheet",
+      "base_announcement_employees",
+      "pms_meetings_answer_employees",
+      "employee_policy_specific_employees",
+      "payroll_allowance_exclude_employees",
+      "payroll_deduction_exclude_employees",
+      "base_announcement_filtered_employees",
+      "payroll_allowance_specific_employees",
+      "payroll_deduction_specific_employees",
+      "accessibility_defaultaccessibility_employees",
+      "project_task_task_members",
+      "project_project_members"
+    ],
+    "sql": "SELECT bae.id, pt.id, pt.title, pt.status, pt.end_date, pt.start_date, pt.description, pdse.id, bafe.id, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, epse.id, pdee.id, pp.id, pp.title, pp.status, pp.end_date, pp.start_date, pp.description, ade.id, pro1.id, pro1.status, pro1.description, pmae.id, paee.id, pase.id, bae.employee_id, ee.employee_first_name FROM public.employee_employee AS ee INNER JOIN public.project_timesheet AS pro1 ON ee.id = pro1.employee_id_id INNER JOIN public.project_project AS pp ON pro1.project_id_id = pp.id INNER JOIN public.base_announcement_employees AS bae ON ee.id = bae.employee_id INNER JOIN public.project_task_task_members AS pttm ON ee.id = pttm.employee_id INNER JOIN public.project_task AS pt ON pttm.task_id = pt.id INNER JOIN public.payroll_deduction_specific_employees AS pdse ON ee.id = pdse.employee_id INNER JOIN public.base_announcement_filtered_employees AS bafe ON ee.id = bafe.employee_id INNER JOIN public.employee_policy_specific_employees AS epse ON ee.id = epse.employee_id INNER JOIN public.payroll_deduction_exclude_employees AS pdee ON ee.id = pdee.employee_id INNER JOIN public.project_project_members AS ppm ON ee.id = ppm.employee_id INNER JOIN public.accessibility_defaultaccessibility_employees AS ade ON ee.id = ade.employee_id INNER JOIN public.pms_meetings_answer_employees AS pmae ON ee.id = pmae.employee_id INNER JOIN public.payroll_allowance_exclude_employees AS paee ON ee.id = paee.employee_id INNER JOIN public.payroll_allowance_specific_employees AS pase ON ee.id = pase.employee_id WHERE ee.employee_first_name ILIKE '%working%'"
+  },
+  {
+    "idx": 157,
+    "category": "PROJECT",
+    "query": "Who is the project manager?",
+    "success": true,
+    "error": null,
+    "entities": [],
+    "plan_tables": [
+      "project_task",
+      "project_project",
+      "employee_employee",
+      "project_timesheet",
+      "pms_meetings_manager",
+      "project_task_task_members"
+    ],
+    "sql": "SELECT pt.id, pt.title, pt.status, pt.end_date, pt.start_date, pt.description, ee.id, ee.city, ee.email, ee.phone, ee.state, ee.address, ee.country, pp.id, pp.title, pp.status, pp.end_date, pp.start_date, pp.description, pro1.id, pro1.status, pro1.description, pmm.id, pt.project_id FROM public.project_task AS pt INNER JOIN public.project_task_task_members AS pttm ON pt.id = pttm.task_id INNER JOIN public.employee_employee AS ee ON pttm.employee_id = ee.id INNER JOIN public.project_project AS pp ON pt.project_id = pp.id INNER JOIN public.project_timesheet AS pro1 ON pt.id = pro1.task_id_id INNER JOIN public.pms_meetings_manager AS pmm ON ee.id = pmm.employee_id"
+  }
+]

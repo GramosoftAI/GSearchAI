@@ -14,10 +14,77 @@ from sqlalchemy import create_engine, text
 
 logger = logging.getLogger(__name__)
 
+def normalize_query_text(text: str) -> str:
+    """Normalizes Unicode dashes, curly quotes, diameter symbols, and non-breaking spaces to standard ASCII."""
+    if not text:
+        return ""
+    text = str(text)
+    # Replace diameter and Phi symbols (Ø, ø, ⌀, Φ, ϕ) with space
+    text = re.sub(r'[\u00d8\u00f8\u2300\u03a6\u03d5\U0001D719\U0001D6F7]', ' ', text)
+    # Replace en-dash, em-dash, non-breaking hyphen, figure dash, minus sign with ASCII hyphen
+    text = re.sub(r'[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]', '-', text)
+    # Replace curly single quotes with standard ASCII single quote
+    text = re.sub(r'[\u2018\u2019\u201a\u201b\u2032\u2035]', "'", text)
+    # Replace curly double quotes with standard ASCII double quote
+    text = re.sub(r'[\u201c\u201d\u201e\u201f\u2033\u2036]', '"', text)
+    # Replace non-breaking spaces and zero-width spaces with standard space
+    text = re.sub(r'[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000\ufeff\u200b]', ' ', text)
+    # Collapse multiple spaces
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+def _clean_sql_query(sql: str) -> str:
+    """Ensures FROM dataset is present and cleans up malformed aliases."""
+    s = sql.strip().rstrip(';')
+    # Fix malformed alias like 'AS difference BETWEEN highest_and_lowest_MRP'
+    s = re.sub(r'(?i)\bAS\s+difference\s+BETWEEN\s+\w+', 'AS difference', s)
+    # Ensure FROM dataset is present
+    if "FROM dataset" not in s and "FROM dataset" not in s.upper():
+        if re.search(r'(?i)\bWHERE\b', s):
+            s = re.sub(r'(?i)\bWHERE\b', 'FROM dataset WHERE', s, count=1)
+        elif re.search(r'(?i)\bORDER\s+BY\b', s):
+            s = re.sub(r'(?i)\bORDER\s+BY\b', 'FROM dataset ORDER BY', s, count=1)
+        elif re.search(r'(?i)\bGROUP\s+BY\b', s):
+            s = re.sub(r'(?i)\bGROUP\s+BY\b', 'FROM dataset GROUP BY', s, count=1)
+        elif re.search(r'(?i)\bLIMIT\b', s):
+            s = re.sub(r'(?i)\bLIMIT\b', 'FROM dataset LIMIT', s, count=1)
+        else:
+            s += ' FROM dataset'
+    return s + ';'
+
+def build_heuristic_sql(query: str, columns: List[str]) -> str:
+    """Builds a deterministic fuzzy SQL query matching identifiers and keywords from the user prompt."""
+    norm_query = normalize_query_text(query)
+    tokens = re.findall(r'[A-Za-z0-9\-_/]+', norm_query)
+    stop_words = {
+        "this", "is", "my", "for", "oem", "and", "part", "number", "based", "on", 
+        "detail", "details", "give", "me", "the", "exact", "mrp", "product", "name", 
+        "what", "how", "much", "find", "show", "get", "tell", "which", "where", "with",
+        "please", "can", "you", "item", "items", "dataset", "table", "record", "records"
+    }
+    val_tokens = [t for t in tokens if t.lower() not in stop_words and len(t) >= 2]
+    
+    if not val_tokens:
+        return "SELECT * FROM dataset LIMIT 10;"
+        
+    where_clauses = []
+    for token in val_tokens:
+        token_escaped = token.replace("'", "''")
+        col_matches = []
+        for col in columns:
+            col_str = f'"{col}"'
+            col_matches.append(f"CAST({col_str} AS VARCHAR) ILIKE '%{token_escaped}%'")
+        if col_matches:
+            where_clauses.append(f"({' OR '.join(col_matches)})")
+            
+    if where_clauses:
+        return f"SELECT * FROM dataset WHERE {' AND '.join(where_clauses)} LIMIT 20;"
+    return "SELECT * FROM dataset LIMIT 10;"
+
 def parse_json_from_thinking(text: str) -> dict:
     """Strips <think> tags from Qwen/DeepSeek outputs and parses the JSON robustly."""
-    raw_text = text
-    text = text.strip()
+    raw_text = str(text or "")
+    text = raw_text.strip()
     # Remove closed <think>...</think> blocks
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
     # Remove unclosed <think>... blocks if truncated
@@ -30,8 +97,10 @@ def parse_json_from_thinking(text: str) -> dict:
     
     start = text.find('{')
     end = text.rfind('}')
-    if start != -1 and end != -1:
+    if start != -1 and end != -1 and end > start:
         text = text[start:end+1]
+    else:
+        text = ""
         
     fallback_dict = {
         "intents": [],
@@ -634,10 +703,11 @@ class PandasQueryEngine:
         categorical_values: Optional[Dict] = None,
         disambiguation_mode: Literal["prompt_enrichment", "clarify"] = "prompt_enrichment"
     ) -> Optional[str]:
+        query = normalize_query_text(query)
         raw_path = data_path or getattr(self, "data_path", None)
         # Resolve S3/HTTPS URLs to local temp files before DuckDB can read them
         target_path = await self._resolve_to_local_path(raw_path) if raw_path else None
-        paths_to_register = [p for p in (self.all_dataset_paths or ([target_path] if target_path else [])) if p and os.path.exists(p)]
+        paths_to_register = [target_path] if (target_path and os.path.exists(target_path)) else [p for p in (self.all_dataset_paths or []) if p and os.path.exists(p)]
         if not paths_to_register:
             logger.error(f"No valid local dataset path found. raw_path={raw_path!r}, resolved={target_path!r}")
             return "Error: No valid spreadsheet datasets found on server."
@@ -793,6 +863,16 @@ class PandasQueryEngine:
                  "   - When the user asks for MRP, repair kit details, or technical part information (e.g. 'What is the MRP for Part No 29019292JA?'), search across part number and description columns using ILIKE with wildcards (e.g. \"HLAAP SALES PART NO\" ILIKE '%29019292JA%' OR \"HLAAP PART DESCRIPTION\" ILIKE '%29019292JA%' OR LOWER(CAST(dataset AS VARCHAR)) LIKE '%29019292ja%').\n"
                  "   - If the part number or code contains hyphens or mixed alphanumeric strings, search with wildcards for the main core identifier (e.g. ILIKE '%29019292%').\n"
                  "   - Always select relevant columns including Part Number, Description, OEM, MRP, DLP, HSN, and Standard Pack.\n"
+                 "21. SPECIFIC PROPERTY & RECORD LOOKUPS:\n"
+                 "   - When the user asks for a specific attribute of an entity (e.g. 'What is the ArticleNo for PartNo 7803-9636473A?', 'What is the MRP of Part X?', 'What is the salary of John?'), ALWAYS generate a query that selects all columns (`SELECT * FROM dataset WHERE \"PartNo\" ILIKE '%7803-9636473A%' LIMIT 5;`) or includes both the identifier column and the requested property. NEVER select ONLY the isolated target column without the entity key, because downstream verification models require both to establish grounded truth.\n"
+                 "22. DIFFERENCE BETWEEN HIGHEST AND LOWEST / MIN-MAX ARITHMETIC:\n"
+                 "   - When calculating the difference between the highest and lowest of a metric (e.g. 'difference between highest and lowest MRP', 'difference between max and min price/salary'):\n"
+                 "   - ALWAYS generate: SELECT (MAX(TRY_CAST(\"col\" AS DOUBLE)) - MIN(TRY_CAST(\"col\" AS DOUBLE))) AS difference, MAX(TRY_CAST(\"col\" AS DOUBLE)) AS highest_val, MIN(TRY_CAST(\"col\" AS DOUBLE)) AS lowest_val FROM dataset;\n"
+                 "   - If there are multiple candidate price columns (e.g. MRP, New MRP), pick the primary price/MRP column. NEVER write aliases containing SQL keywords like 'AS difference BETWEEN ...'.\n"
+                 "23. DIAMETER, MEASUREMENTS & MULTI-KEYWORD ENTITY FILTERING (e.g. Dia, Diameter, Ø180, clutch set):\n"
+                 "   - In automotive/engineering datasets, 'Dia' stands for diameter and stores values like 'Ø180', 'Ø430', '180mm'.\n"
+                 "   - For highest/lowest diameter (e.g. 'Which product has the highest diameter?'): Extract numeric digits and cast: SELECT * FROM dataset ORDER BY TRY_CAST(regexp_extract(\"Dia\", '[0-9]+') AS DOUBLE) DESC LIMIT 5;\n"
+                 "   - For filtering by diameter and product type (e.g. 'List all Ø180 clutch sets'): Separate distinct attributes using AND across candidate columns: WHERE (\"Dia\" ILIKE '%180%' OR \"Description\" ILIKE '%180%') AND (\"Description\" ILIKE '%clutch%' OR \"Ceekay Part No\" ILIKE '%clutch%'). NEVER combine distinct concepts into a single literal string like '%180%clutch%'.\n"
                  "IMPORTANT: DO NOT generate any <think> tags or internal reasoning steps. Output ONLY valid JSON immediately without any thinking."),
                 ("user", "{question}")
             ])
@@ -800,22 +880,41 @@ class PandasQueryEngine:
             from langchain_core.output_parsers import StrOutputParser
             chain = prompt | self.llm | StrOutputParser() | parse_json_from_thinking
             
-            query_plan_dict = await chain.ainvoke({
-                "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns), 
-                "question": resolved_query
-            })
+            try:
+                query_plan_dict = await chain.ainvoke({
+                    "columns": ", ".join(f'"{c}"' if ' ' in str(c) or not str(c).isalnum() else str(c) for c in columns), 
+                    "question": resolved_query
+                })
+            except Exception as plan_err:
+                logger.warning(f"LLM SQL generation failed: {plan_err}. Generating heuristic SQL query.")
+                query_plan_dict = {
+                    "sql": build_heuristic_sql(resolved_query, columns),
+                    "explanation": "Heuristic match based on query parameters."
+                }
+            
+            # If the LLM defaulted to a generic limit 10 sample query but the user had specific keywords/part numbers, refine it
+            raw_sql = str(query_plan_dict.get("sql", "")).strip()
+            if raw_sql == "SELECT * FROM dataset LIMIT 10;" or not raw_sql:
+                refined_sql = build_heuristic_sql(resolved_query, columns)
+                if "WHERE" in refined_sql:
+                    logger.info(f"Refining default sample query to targeted heuristic SQL: {refined_sql}")
+                    query_plan_dict["sql"] = refined_sql
+                    query_plan_dict["explanation"] = "Targeted match on query identifiers."
             query_plan = DuckDBSemanticQuery(**query_plan_dict)
             
-            sql_query = query_plan.sql.strip().rstrip(";") + ";"
+            sql_query = _clean_sql_query(query_plan.sql)
             
             # 4. DETERMINISTIC COLUMN AUTO-QUOTING (Layer 1 Protection)
             # Automatically wrap multi-word or special column names in double quotes if left unquoted by the LLM
             for col in sorted(columns, key=lambda c: len(str(c)), reverse=True):
                 col_str = str(col)
                 if ' ' in col_str or not col_str.isalnum():
-                    pattern = r'(?<!["\'\w])' + re.escape(col_str) + r'(?!["\'\w])'
-                    sql_query = re.sub(pattern, f'"{col_str}"', sql_query)
+                    quoted = f'"{col_str}"'
+                    if quoted not in sql_query:
+                        pattern = r'(?<!["\w])' + re.escape(col_str) + r'(?!["\w])'
+                        sql_query = re.sub(pattern, quoted, sql_query)
             
+            sql_query = _clean_sql_query(sql_query)
             logger.info(f"Generated DuckDB SQL: {sql_query} | Explanation: {query_plan.explanation}")
             
             
@@ -829,8 +928,9 @@ class PandasQueryEngine:
             col_names = []
             
             def _execute_sql(sql_str):
+                cleaned_sql = _clean_sql_query(sql_str)
                 with engine.connect() as conn:
-                    res = conn.execute(text(sql_str))
+                    res = conn.execute(text(cleaned_sql))
                     return res.fetchall(), list(res.keys())
                     
             failed_sql_query = sql_query
@@ -862,7 +962,7 @@ class PandasQueryEngine:
                         "error": str(e)
                     })
                     repaired_plan = DuckDBSemanticQuery(**repaired_dict)
-                    sql_query = repaired_plan.sql.strip().rstrip(";") + ";"
+                    sql_query = _clean_sql_query(repaired_plan.sql)
                     logger.info(f"Self-Healed DuckDB SQL: {sql_query} | Explanation: {repaired_plan.explanation}")
                     
                     sec_err_repair = validate_sql_security(sql_query)
@@ -906,13 +1006,14 @@ class PandasQueryEngine:
                          "You are an enterprise DuckDB SQL expert. The previous SQL query returned 0 rows because the WHERE filter was too strict or queried the wrong column.\n"
                          "CRITICAL RECOVERY RULES:\n"
                          "1. Rewrite the DuckDB SELECT query on table 'dataset' using case-insensitive partial string matching (ILIKE or LOWER(\"col\") LIKE '%val%') so matching rows are found.\n"
-                         "2. If searching for an entity or movie title, check across candidate text columns using OR (e.g., LOWER(\"Title\") LIKE '%val%' OR LOWER(\"Overview\") LIKE '%val%').\n"
-                         "3. Omit apostrophes and punctuation by inserting wildcards between words (e.g. '%ron%gone%wrong%').\n"
-                         "4. PARENTHESES RULE: Any OR-grouped conditions combined with a shared AND filter\n"
-                         "   MUST be explicitly parenthesized. SQL evaluates AND before OR, so\n"
-                         "   \"A OR B AND C\" silently becomes \"A OR (B AND C)\" — almost never what's intended.\n"
-                         "   WRONG:  WHERE col1 LIKE '%x%' OR col2 LIKE '%x%' AND col3 LIKE '%y%'\n"
-                         "   RIGHT:  WHERE (col1 LIKE '%x%' OR col2 LIKE '%x%') AND col3 LIKE '%y%'\n\n"
+                          "2. If searching for an entity or movie title, check across candidate text columns using OR (e.g., LOWER(\"Title\") LIKE '%val%' OR LOWER(\"Overview\") LIKE '%val%').\n"
+                          "3. If searching for multiple keywords (e.g. diameter 180 and clutch set), separate with AND across candidate columns (e.g. (Dia ILIKE '%180%' OR Description ILIKE '%180%') AND Description ILIKE '%clutch%').\n"
+                          "4. Omit hyphens, apostrophes, and punctuation by inserting wildcards between alphanumeric tokens (e.g. '%7803%9636473%a%', '%ron%gone%wrong%'). Select all columns (`SELECT * FROM dataset ...`).\n"
+                          "5. PARENTHESES RULE: Any OR-grouped conditions combined with a shared AND filter\n"
+                          "   MUST be explicitly parenthesized. SQL evaluates AND before OR, so\n"
+                          "   \"A OR B AND C\" silently becomes \"A OR (B AND C)\" — almost never what's intended.\n"
+                          "   WRONG:  WHERE col1 LIKE '%x%' OR col2 LIKE '%x%' AND col3 LIKE '%y%'\n"
+                          "   RIGHT:  WHERE (col1 LIKE '%x%' OR col2 LIKE '%x%') AND col3 LIKE '%y%'\n\n"
                          "Available columns in 'dataset':\n{columns}\n\n"
                          "Return ONLY valid JSON with 'sql' and 'explanation' without markdown fences."),
                         ("user",
@@ -925,7 +1026,7 @@ class PandasQueryEngine:
                         "sql": sql_query
                     })
                     fuzzy_plan = DuckDBSemanticQuery(**fuzzy_dict)
-                    sql_query = fuzzy_plan.sql.strip().rstrip(";") + ";"
+                    sql_query = _clean_sql_query(fuzzy_plan.sql)
                     
                     def _has_unparenthesized_or_and(sql: str) -> bool:
                         where_clause = sql.split("WHERE", 1)[-1] if "WHERE" in sql.upper() else sql
@@ -945,7 +1046,6 @@ class PandasQueryEngine:
                                 if re.search(r'\bOR\b', part, re.IGNORECASE) and "(" not in part:
                                     and_parts[i] = f" ({part.strip()}) "
                             sql_query = f"{parts[0]} WHERE {' AND '.join(and_parts)}"
-                            
                     logger.info(f"Layer 3 Healed DuckDB SQL: {sql_query} | Explanation: {fuzzy_plan.explanation}")
                     
                     rows, col_names = await asyncio.to_thread(_execute_sql, sql_query)
@@ -973,7 +1073,7 @@ class PandasQueryEngine:
                                 query_plan.explanation = "Used fuzzy semantic keyword search across all columns."
                 except Exception as l4_err:
                     logger.warning(f"Layer 4 programmatic fallback failed: {l4_err}")
-                    
+
             if not rows:
                 return f"Error: {query_plan.explanation}\nNo records matched your query. Not present in dataset."
             return self._format_table_results(rows, col_names)

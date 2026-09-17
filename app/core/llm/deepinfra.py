@@ -26,11 +26,35 @@ from ..config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Global rate limiter (max 25 concurrent API calls)
-_embedding_semaphore = asyncio.Semaphore(25)
+# Global rate limiter (per-loop dynamic semaphore to prevent cross-loop deadlocks)
+_semaphores = {}
 
-# Persistent HTTP client for embedding API (reused across batch calls)
-_embedding_http_client: httpx.AsyncClient = None
+def _get_embedding_semaphore() -> asyncio.Semaphore:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop not in _semaphores:
+        _semaphores[loop] = asyncio.Semaphore(25)
+    return _semaphores[loop]
+
+
+# Persistent HTTP client for embedding API (reused per event loop)
+_embedding_http_clients = {}
+
+def _get_embedding_http_client(timeout: float) -> httpx.AsyncClient:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    client = _embedding_http_clients.get(loop)
+    if client is None or client.is_closed:
+        client = httpx.AsyncClient(
+            timeout=timeout,
+            limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
+        )
+        _embedding_http_clients[loop] = client
+    return client
 
 # Global embedding cache (text_hash -> embedding vector)
 # With LRU eviction to prevent unbounded memory growth
@@ -142,7 +166,7 @@ class DeepInfraEmbeddingClient:
         }
 
         # RATE LIMIT GUARD (prevent API throttling)
-        async with _embedding_semaphore:
+        async with _get_embedding_semaphore():
             # Retry logic with exponential backoff
             last_error = None
             for attempt in range(self.max_retries):
@@ -151,16 +175,10 @@ class DeepInfraEmbeddingClient:
                         f"API request attempt {attempt + 1}/{self.max_retries}"
                     )
 
-                    global _embedding_http_client
-                    if _embedding_http_client is None or _embedding_http_client.is_closed:
-                        _embedding_http_client = httpx.AsyncClient(
-                            timeout=self.timeout,
-                            limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)
-                        )
+                    client = _get_embedding_http_client(self.timeout)
                     
                     import time
                     t0 = time.perf_counter()
-                    client = _embedding_http_client
                     response = await client.post(
                         self.base_url, headers=headers, json=payload
                     )
@@ -300,7 +318,7 @@ class DeepInfraEmbeddingClient:
         batch_size = 50
 
         async def _embed_batch(chunk: List[str], b_idx: int):
-            async with _embedding_semaphore:
+            async with _get_embedding_semaphore():
                 headers = {
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
@@ -310,17 +328,10 @@ class DeepInfraEmbeddingClient:
                     "input": chunk,
                 }
                 
-                global _embedding_http_client
-                if _embedding_http_client is None or _embedding_http_client.is_closed:
-                    _embedding_http_client = httpx.AsyncClient(
-                        timeout=self.timeout,
-                        limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)
-                    )
-                
                 last_error = None
                 for attempt in range(self.max_retries):
                     try:
-                        client = _embedding_http_client
+                        client = _get_embedding_http_client(self.timeout)
                         import time
                         t0 = time.perf_counter()
                         response = await client.post(self.base_url, headers=headers, json=payload)
@@ -359,9 +370,8 @@ class DeepInfraEmbeddingClient:
                         logger.debug(f"Retrying batch in {wait_time}s...")
                         await asyncio.sleep(wait_time)
                 
-                logger.warning(f" Batch API failed ({last_error}). Falling back to concurrent item-by-item embedding generation for chunk of {len(chunk)} items.")
-                item_results = await asyncio.gather(*[self.generate_embedding(item_text) for item_text in chunk])
-                return b_idx, item_results, sum(max(1, len(t) // 4) for t in chunk)
+                logger.warning(f" Batch API failed ({last_error}). Triggering immediate graceful fallback.")
+                raise last_error or Exception("Batch embedding failed")
 
         batches = [to_embed_texts[i:i+batch_size] for i in range(0, len(to_embed_texts), batch_size)]
         batch_results = await asyncio.gather(*[_embed_batch(chunk, idx) for idx, chunk in enumerate(batches)])

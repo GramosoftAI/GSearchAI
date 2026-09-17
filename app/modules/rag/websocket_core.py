@@ -78,13 +78,13 @@ async def run_unified_rag_websocket_loop(
     enable_memory: bool = True
 ) -> None:
     """
-    Channel-agnostic execution core.
+    Channel-agnostic execution core for WebSockets.
     """
+    from .service import execute_rag
+
     channel = getattr(adapter, "channel", "websocket")
-    memory_api_url = f"{resolve_memory_api_base_url()}/api/v1/memory"
-    
     active_session_id = session_id
-    
+
     while True:
         try:
             raw_payload = await adapter.receive(websocket)
@@ -99,55 +99,10 @@ async def run_unified_rag_websocket_loop(
 
         if not active_session_id and request.session_id:
             active_session_id = request.session_id
-        session = None
-        if active_session_id:
-            session = await chat_service.chat_repo.get_session_by_id(active_session_id)
-            
-        if not session:
-            session = await chat_service.chat_repo.create_session(
-                agent_id=agent_id, user_id=user_id
-            )
-            active_session_id = str(session.id)
-            
-        # Send session start if needed? The widget expects a session_id back.
-        # It's better if we just proceed. Embed formatters don't typically send session_id in the loop event,
-        # but widget js might need it. We will handle session initialization outside this loop if required.
 
-        user_msg = await chat_service.chat_repo.add_message(
-            session_id=active_session_id, role="user", content=request.query
-        )
-        await db.commit()
+        async def _forward_event(event: LoopEvent):
+            await adapter.send(websocket, event)
 
-        response_buffer = []
-        collected_sources = []
-        
-        episodic_guidance = ""
-        is_feedback_only = False
-        is_history_query = False
-        router_category = None
-        
-        # 0. Fast-path for greetings
-        import re
-        import random
-        clean_query = request.query.strip().lower()
-        if re.fullmatch(r"hi|hello|hey|good morning|good evening|good afternoon|greetings|howdy|what's up", clean_query):
-            greetings = [
-                "Hello! How can I assist you today?",
-                "Hi there! What can I help you with?",
-                "Greetings! How may I be of service?",
-                "Hello! It's nice to meet you. Is there something I can help you with or would you like to know more about our services?",
-                "Hi! I'm here to help. What's on your mind?"
-            ]
-            ack = random.choice(greetings)
-            await chat_service.chat_repo.add_message(
-                session_id=active_session_id, role="assistant", content=ack, metadata={"is_greeting": True}
-            )
-            await db.commit()
-            await adapter.send(websocket, LoopEvent(type="token", text=ack))
-            await adapter.send(websocket, LoopEvent(type="done"))
-            continue
-
-        start_time = time.perf_counter()
         try:
             async def _fetch_chat_history():
                 if session.message_count > 1:
@@ -285,88 +240,10 @@ async def run_unified_rag_websocket_loop(
                 sources=collected_sources,
                 response_text=full_response
             )
-
-            # 6. DB Persistence
-            assistant_msg = None
-            try:
-                assistant_msg = await chat_service.chat_repo.add_message(
-                    session_id=active_session_id,
-                    role="assistant",
-                    content=full_response,
-                    metadata={
-                        "sources": collected_sources,
-                        "status": "complete",
-                        "escalation_detected": is_escalated,
-                        "channel": channel,
-                    },
-                )
-                await db.commit()
-            except Exception as db_err:
-                logger.warning(f"Failed to add message on active db transaction, attempting rollback and retry: {db_err}")
-                try:
-                    await db.rollback()
-                    assistant_msg = await chat_service.chat_repo.add_message(
-                        session_id=active_session_id,
-                        role="assistant",
-                        content=full_response,
-                        metadata={
-                            "sources": collected_sources,
-                            "status": "complete",
-                            "escalation_detected": is_escalated,
-                            "channel": channel,
-                        },
-                    )
-                    await db.commit()
-                except Exception as retry_err:
-                    logger.error(f"Failed to persist assistant message after rollback: {retry_err}")
-
-            # 6. Memory API Persistence
-            if enable_memory:
-                async with httpx.AsyncClient() as client:
-                    try:
-                        await client.post(
-                            f"{memory_api_url}/save-turn",
-                            json={
-                                "query": request.query,
-                                "ai_response": full_response,
-                                "session_id": active_session_id,
-                                "agent_id": agent_id,
-                                "user_id": user_id,
-                                "tenant_id": tenant_id,
-                                "metadata": {"router_category": router_category},
-                            },
-                            timeout=3.0,
-                        )
-                    except Exception as e:
-                        logger.warning(f"memory-api save-turn failed: {e}")
-
-            # 7. Knowledge Flywheel Background Sync
-            if enable_memory and collected_sources:
-                top_chunk_id = collected_sources[0].get("chunk_id") if isinstance(collected_sources[0], dict) else getattr(collected_sources[0], "chunk_id", None)
-                kb_id = kb_ids[0] if kb_ids else None
-                if top_chunk_id and kb_id:
-                    from ..chats.knowledge_service import ChatKnowledgeService
-                    import asyncio
-                    asyncio.create_task(ChatKnowledgeService.run_sync_background(
-                        tenant_id=tenant_id,
-                        session_id=active_session_id,
-                        kb_id=kb_id,
-                        chunk_id=top_chunk_id,
-                        user_message=request.query,
-                        assistant_message=full_response
-                    ))
-
-            # 8. Analytics Query Logging (Removed redundant logging block, now handled entirely by RAG service layer)
-
-            await adapter.send(websocket, LoopEvent(type="done"))
-
         except WebSocketDisconnect:
-            await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, "disconnect")
             return
-
         except Exception as e:
             logger.exception("unified_rag_loop_failure", extra={"tenant_id": tenant_id, "agent_id": agent_id})
-            await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, str(e), channel=channel)
             try:
                 await adapter.send_error(websocket, "internal_error")
             except Exception:
@@ -375,3 +252,4 @@ async def run_unified_rag_websocket_loop(
                 await adapter.send(websocket, LoopEvent(type="done", escalation_detected=False))
             except Exception:
                 pass
+

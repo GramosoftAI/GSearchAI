@@ -3028,6 +3028,48 @@ class KnowledgeBaseService:
 
                         continue
 
+                    # Calculate SHA-256 file hash for deduplication
+                    import hashlib
+                    file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+                    # Deduplication check across KnowledgeBase
+                    from sqlalchemy import select, or_, and_
+                    from app.modules.knowledge_bases.models import KnowledgeBase
+
+                    dup_stmt = select(KnowledgeBase).where(
+                        KnowledgeBase.tenant_id == self.tenant_id,
+                        KnowledgeBase.is_active == True,
+                        KnowledgeBase.id != uuid.UUID(kb_id),
+                        or_(
+                            KnowledgeBase.file_hash == file_hash,
+                            and_(
+                                KnowledgeBase.file_hash.is_(None),
+                                or_(
+                                    KnowledgeBase.name == f"{filename} (google drive)",
+                                    KnowledgeBase.name == filename,
+                                    KnowledgeBase.parsed_path == filename
+                                )
+                            )
+                        )
+                    )
+                    dup_res = await self.db.execute(dup_stmt)
+                    existing_dup = dup_res.scalars().first()
+
+                    if existing_dup:
+                        logger.warning(f"[DUPLICATE_SKIPPED] File '{filename}' (hash: {file_hash}) already exists in KB '{existing_dup.name}' ({existing_dup.id}). Skipping ingestion.")
+                        if not existing_dup.file_hash:
+                            existing_dup.file_hash = file_hash
+                            self.db.add(existing_dup)
+                            await self.db.commit()
+
+                        partial_failures.append({
+                            "file": filename,
+                            "stage": "deduplication",
+                            "status": "duplicate_skipped",
+                            "error": f"File '{filename}' already uploaded. Duplicates are not allowed."
+                        })
+                        continue
+
                     
 
                     # Determine ingestion path based on MIME type
@@ -3228,6 +3270,18 @@ class KnowledgeBaseService:
                                 files_synced += 1
                                 synced_filenames.append(filename)
 
+                                # Persist file_hash on KnowledgeBase for future deduplication
+                                from sqlalchemy import update
+                                await self.db.execute(
+                                    update(KnowledgeBase)
+                                    .where(KnowledgeBase.id == uuid.UUID(kb_id))
+                                    .values(
+                                        name=f"{filename} (google drive)",
+                                        file_hash=file_hash
+                                    )
+                                )
+                                await self.db.commit()
+
                                 
 
                     # 3. Post-Process Neo4j Directory Graph Relations
@@ -3292,6 +3346,23 @@ class KnowledgeBaseService:
                 )
             except Exception as final_name_err:
                 logger.warning(f"Failed to update final KB name: {final_name_err}")
+
+            if files_synced == 0 and any(pf.get("status") == "duplicate_skipped" for pf in partial_failures):
+                dup_files = [pf["file"] for pf in partial_failures if pf.get("status") == "duplicate_skipped"]
+                # Clean up empty placeholder KB that had 0 chunks
+                try:
+                    await self.delete_kb(kb_id)
+                except Exception as del_err:
+                    logger.warning(f"Failed to delete empty duplicate KB {kb_id}: {del_err}")
+
+                return format_error(
+                    f"File(s) already uploaded: {', '.join(dup_files)}. Duplicates are not allowed.",
+                    meta={
+                        "status": "duplicate_skipped",
+                        "duplicate_files": dup_files,
+                        "partial_failures": partial_failures
+                    }
+                )
 
             return format_success(
 
@@ -3403,6 +3474,8 @@ class KnowledgeBaseService:
             
             files_synced = 0
             folders_synced = 0
+            synced_filenames = []
+            partial_failures = []
 
             # Selective generator logic mirroring Google Drive
             if file_ids or folder_ids:
@@ -3433,7 +3506,7 @@ class KnowledgeBaseService:
 
                         children = await connector.list_directory(current_fid)
                         for c in children:
-                            if c.get("is_folder"):
+                            if c.get("mimeType") == "application/vnd.google-apps.folder":
                                 folders_to_process.append(c["id"])
                             else:
                                 all_file_ids.add(c["id"])
@@ -3496,6 +3569,48 @@ class KnowledgeBaseService:
                         logger.error(f"Failed to download bytes for file {filename}: {download_err}")
                         continue
                     
+                    # Calculate SHA-256 file hash for deduplication
+                    import hashlib
+                    file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+                    # Deduplication check across KnowledgeBase
+                    from sqlalchemy import select, or_, and_
+                    from app.modules.knowledge_bases.models import KnowledgeBase
+
+                    dup_stmt = select(KnowledgeBase).where(
+                        KnowledgeBase.tenant_id == self.tenant_id,
+                        KnowledgeBase.is_active == True,
+                        KnowledgeBase.id != uuid.UUID(kb_id),
+                        or_(
+                            KnowledgeBase.file_hash == file_hash,
+                            and_(
+                                KnowledgeBase.file_hash.is_(None),
+                                or_(
+                                    KnowledgeBase.name == f"{filename} (sharepoint)",
+                                    KnowledgeBase.name == filename,
+                                    KnowledgeBase.parsed_path == filename
+                                )
+                            )
+                        )
+                    )
+                    dup_res = await self.db.execute(dup_stmt)
+                    existing_dup = dup_res.scalars().first()
+
+                    if existing_dup:
+                        logger.warning(f"[DUPLICATE_SKIPPED] File '{filename}' (hash: {file_hash}) already exists in KB '{existing_dup.name}' ({existing_dup.id}). Skipping SharePoint ingestion.")
+                        if not existing_dup.file_hash:
+                            existing_dup.file_hash = file_hash
+                            self.db.add(existing_dup)
+                            await self.db.commit()
+
+                        partial_failures.append({
+                            "file": filename,
+                            "stage": "deduplication",
+                            "status": "duplicate_skipped",
+                            "error": f"File '{filename}' already uploaded. Duplicates are not allowed."
+                        })
+                        continue
+
                     # Direct binary to parsing logic
                     if mime_type == "text/csv" or "spreadsheet" in mime_type or filename.endswith((".csv", ".xlsx", ".xls")):
                         logger.info(f"Piping {filename} to tabular excel/csv ingestion service")
@@ -3507,6 +3622,18 @@ class KnowledgeBaseService:
                         )
                         if ingest_res.get("success"):
                             files_synced += 1
+                            synced_filenames.append(filename)
+
+                            from sqlalchemy import update
+                            await self.db.execute(
+                                update(KnowledgeBase)
+                                .where(KnowledgeBase.id == uuid.UUID(kb_id))
+                                .values(
+                                    name=f"{filename} (sharepoint)",
+                                    file_hash=file_hash
+                                )
+                            )
+                            await self.db.commit()
                     else:
                         text = ""
                         try:
@@ -3549,10 +3676,23 @@ class KnowledgeBaseService:
                             logger.info(f"Piping extracted text of {filename} to standard RAG pipeline")
                             ingest_res = await self.ingest_document(
                                 kb_id=kb_id,
-                                document_text=text
+                                document_text=text,
+                                source=f"{filename} (sharepoint)"
                             )
                             if ingest_res.get("success"):
                                 files_synced += 1
+                                synced_filenames.append(filename)
+
+                                from sqlalchemy import update
+                                await self.db.execute(
+                                    update(KnowledgeBase)
+                                    .where(KnowledgeBase.id == uuid.UUID(kb_id))
+                                    .values(
+                                        name=f"{filename} (sharepoint)",
+                                        file_hash=file_hash
+                                    )
+                                )
+                                await self.db.commit()
                                 
                     if parents and files_synced > 0:
                         parent_id = parents[0]
@@ -3573,6 +3713,43 @@ class KnowledgeBaseService:
                             "sync_start_time": sync_start_timestamp
                         })
             
+            if synced_filenames:
+                final_kb_name = f"{synced_filenames[0]} (sharepoint)" if len(synced_filenames) == 1 else f"{synced_filenames[0]} + {len(synced_filenames) - 1} files (sharepoint)"
+            else:
+                final_kb_name = "SharePoint Knowledge"
+
+            try:
+                pg_kb_final = await self.repository.get_by_id(kb_id)
+                if pg_kb_final:
+                    pg_kb_final.name = final_kb_name
+                    self.db.add(pg_kb_final)
+                    await self.db.commit()
+                await self.neo4j_repo.execute_write(
+                    """
+                    MATCH (kb:KnowledgeBase {id: $kb_id, tenant_id: $tenant_id})
+                    SET kb.name = $new_name
+                    """,
+                    {"kb_id": kb_id, "tenant_id": str(self.tenant_id), "new_name": final_kb_name}
+                )
+            except Exception as final_name_err:
+                logger.warning(f"Failed to update final KB name: {final_name_err}")
+
+            if files_synced == 0 and any(pf.get("status") == "duplicate_skipped" for pf in partial_failures):
+                dup_files = [pf["file"] for pf in partial_failures if pf.get("status") == "duplicate_skipped"]
+                try:
+                    await self.delete_kb(kb_id)
+                except Exception as del_err:
+                    logger.warning(f"Failed to delete empty duplicate KB {kb_id}: {del_err}")
+
+                return format_error(
+                    f"File(s) already uploaded: {', '.join(dup_files)}. Duplicates are not allowed.",
+                    meta={
+                        "status": "duplicate_skipped",
+                        "duplicate_files": dup_files,
+                        "partial_failures": partial_failures
+                    }
+                )
+            
             return format_success(
                 {
                     "success": True,
@@ -3587,7 +3764,6 @@ class KnowledgeBaseService:
         except Exception as e:
             logger.error(f" SharePoint synchronization failed: {e}", exc_info=True)
             return format_error(f"Failed to synchronize SharePoint: {str(e)}")
-
 
 
     async def sync_gmail_source(self, kb_id: str, sync_req: dict) -> dict:

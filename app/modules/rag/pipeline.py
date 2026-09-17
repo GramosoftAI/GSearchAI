@@ -696,6 +696,8 @@ class RAGPipeline:
         kb_ids = filtered_kb_ids
 
         # Preserve the original query as an immutable reference throughout this pipeline run
+        from app.modules.rag.pandas_engine import normalize_query_text
+        query = normalize_query_text(query)
         original_query = query
         corrected = getattr(analysis.metadata, "corrected_query", None)
         if corrected and corrected.lower().strip() != original_query.lower().strip():
@@ -704,11 +706,32 @@ class RAGPipeline:
             )
             query = corrected
 
+        # STAGE 0.5: EARLY EXIT FOR TABLE ANALYTICS (Using QueryAnalyzer & Pipeline Router)
+        is_tabular_query = getattr(analysis, "is_tabular", False) or (analysis and getattr(analysis, "intent", None) and analysis.intent.name in ("TABLE", "TABLE_ANALYTICS"))
+        
+        if not is_tabular_query and kb_ids and self.db:
+            try:
+                from app.modules.knowledge_bases.models import KnowledgeBase
+                from sqlalchemy import select
+                clean_uuids = [UUID(str(k)) if not isinstance(k, UUID) else k for k in kb_ids]
+                stmt = select(KnowledgeBase.description).where(
+                    KnowledgeBase.id.in_(clean_uuids),
+                    KnowledgeBase.is_active == True,
+                    KnowledgeBase.tenant_id == self.tenant_id
+                )
+                kb_check_res = await self.db.execute(stmt)
+                kb_check_rows = kb_check_res.fetchall()
+                if kb_check_rows and all(getattr(r, 'description', '') == 'excel_parquet' for r in kb_check_rows):
+                    logger.info("   -> All target KBs are excel_parquet spreadsheets. Forcing SQL Table Analytics interception.")
+                    is_tabular_query = True
+            except Exception as e:
+                logger.warning(f"Failed checking KB excel_parquet status for early tabular routing: {e}")
+
         # Log Authoritative Routing Decision
-        selected_routing_path = "SQL_TABLE_ANALYTICS" if getattr(analysis, "is_tabular", False) else "HYBRID_VECTOR_GRAPH_RAG"
+        selected_routing_path = "SQL_TABLE_ANALYTICS" if is_tabular_query else "HYBRID_VECTOR_GRAPH_RAG"
         logger.info(
             f"RAG ROUTER DECISION | intent={getattr(analysis.intent, 'name', 'UNKNOWN')} | "
-            f"is_tabular={getattr(analysis, 'is_tabular', False)} | selected_path={selected_routing_path}"
+            f"is_tabular={is_tabular_query} | selected_path={selected_routing_path}"
         )
         # Determine 3 Retrieval Routing Modes: VECTOR_ONLY, SQL_ONLY, PARALLEL
         is_tabular_intent = getattr(analysis, "is_tabular", False)
@@ -3093,12 +3116,35 @@ Respond ONLY as JSON:
   "no_match": false
 }}"""
 
+            from app.modules.rag.pandas_engine import normalize_query_text
+            query = normalize_query_text(query)
             from app.modules.rag.schema_utils import get_schema_columns
+            from app.core.parquet_ingester import ParquetIngester
             candidate_manifest = []
             for r in kb_rows:
                 ds = getattr(r, 'dataset_schema', None)
                 cv = getattr(r, 'categorical_values', None)
                 cols = get_schema_columns(ds, cv)
+                if not cols and getattr(r, 'description', '') == 'excel_parquet':
+                    dataset_name = getattr(r, 'parsed_path', None) or getattr(r, 'name', None)
+                    if dataset_name:
+                        active_sheets = ParquetIngester.get_active_datasets(dataset_name)
+                        all_sheet_cols = []
+                        try:
+                            import pyarrow.parquet as pq
+                            for sp in active_sheets:
+                                try:
+                                    schema = pq.read_schema(sp)
+                                    for cn in schema.names:
+                                        if cn not in all_sheet_cols and cn != '_sheet_name':
+                                            all_sheet_cols.append(cn)
+                                except Exception as e:
+                                    logger.warning(f"Failed to read parquet schema for manifest: {e}")
+                        except Exception as imp_err:
+                            logger.warning(f"Failed importing pyarrow: {imp_err}")
+                        if all_sheet_cols:
+                            cols = all_sheet_cols
+
                 sampled_vals = cv or {}
                 candidate_manifest.append({
                     "kb_id": str(r.id),
@@ -3106,7 +3152,7 @@ Respond ONLY as JSON:
                     "source_type": getattr(r, 'description', None) or getattr(r, 'source', None),
                     "columns": cols,
                     "sampled_values": sampled_vals,
-                    "schema_known": bool(cols)
+                    "schema_known": bool(cols or getattr(r, 'dataset_schema', None))
                 })
 
             router_prompt = _build_router_prompt(candidate_manifest, query)
@@ -3198,10 +3244,16 @@ Respond ONLY as JSON:
         )
 
         # Re-assign kb_rows
-        kb_rows = [r for r in kb_rows if str(r.id) in matched_kb_ids]
-        kb_ids = matched_kb_ids  # Fix: ensure downstream SQL params use the filtered list
-        excel_kb_rows = [r for r in kb_rows if getattr(r, 'description', '') == 'excel_parquet']
-        non_excel_rows = [r for r in kb_rows if getattr(r, 'description', '') != 'excel_parquet']
+        # If all candidate KBs are excel_parquet spreadsheets, preserve all of them so DuckDB searches across all attached spreadsheets
+        all_are_excel = all(getattr(r, 'description', '') == 'excel_parquet' for r in kb_rows)
+        if all_are_excel:
+            excel_kb_rows = [r for r in kb_rows if getattr(r, 'description', '') == 'excel_parquet']
+            non_excel_rows = []
+        else:
+            kb_rows = [r for r in kb_rows if str(r.id) in matched_kb_ids]
+            kb_ids = matched_kb_ids  # Fix: ensure downstream SQL params use the filtered list
+            excel_kb_rows = [r for r in kb_rows if getattr(r, 'description', '') == 'excel_parquet']
+            non_excel_rows = [r for r in kb_rows if getattr(r, 'description', '') != 'excel_parquet']
         
         routing_context_list = []
         for m in router_result.get("matches", []):
@@ -3222,21 +3274,30 @@ Respond ONLY as JSON:
             logger.info(f" {len(excel_kb_rows)} excel_parquet KB(s) detected! Resolving local parquet via ParquetIngester.")
             from .pandas_engine import PandasQueryEngine
             active_paths = []
+            valid_excel_rows = []
             for ekb in excel_kb_rows:
                 dataset_name = getattr(ekb, 'parsed_path', None) or getattr(ekb, 'name', None)
                 if dataset_name:
-                    p = ParquetIngester.get_active_dataset(dataset_name)
-                    if p:
-                        logger.info(f" Resolved parquet: {p}")
-                        active_paths.append(p)
+                    sheet_paths = ParquetIngester.get_active_datasets(dataset_name)
+                    if sheet_paths:
+                        for sp in sheet_paths:
+                            logger.info(f" Resolved sheet parquet for {ekb.name}: {sp}")
+                            active_paths.append(sp)
+                            valid_excel_rows.append(ekb)
                     else:
-                        logger.warning(f" No active parquet found for dataset_name={dataset_name!r}")
+                        p = ParquetIngester.get_active_dataset(dataset_name)
+                        if p:
+                            logger.info(f" Resolved parquet for {ekb.name}: {p}")
+                            active_paths.append(p)
+                            valid_excel_rows.append(ekb)
+                        else:
+                            logger.warning(f" No active parquet found for dataset_name={dataset_name!r}")
 
             if active_paths:
                 engine = PandasQueryEngine(active_paths[0], all_dataset_paths=active_paths)
                 query_str = "PANDAS PandasQueryEngine.execute_query"
-                all_csv_results = []
-                for ekb, path in zip(excel_kb_rows, active_paths):
+                
+                async def _query_single_sheet(ekb, path):
                     try:
                         res = await engine.execute_query(
                             query, 
@@ -3244,16 +3305,29 @@ Respond ONLY as JSON:
                             dataset_schema=getattr(ekb, 'dataset_schema', None), 
                             categorical_values=getattr(ekb, 'categorical_values', None)
                         )
-                        if res and "No valid spreadsheet" not in res:
-                            kb_label = ekb.name or path
-                            all_csv_results.append(f"[Source: {kb_label}]\n{res}")
+                        if res and "No valid spreadsheet" not in res and "No records matched" not in res and "0 rows" not in res.lower():
+                            lines = [line.strip() for line in res.strip().split('\n') if line.strip()]
+                            has_valid_val = any(not line.endswith(': NULL') and not line.endswith(': null') and ': ' in line for line in lines)
+                            if has_valid_val or not any(': NULL' in line for line in lines):
+                                kb_label = ekb.name or path
+                                return f"[Source: {kb_label}]\n{res}"
+                            else:
+                                logger.info(f" Dataset {ekb.name} ({path}) returned only NULL placeholder values.")
                         else:
-                            logger.warning(f" PandasQueryEngine returned empty/error for {path}: {res}")
+                            logger.info(f" Dataset {ekb.name} ({path}) returned 0 matching rows or empty.")
                     except Exception as csv_err:
                         logger.error(f"PandasQueryEngine failed for {path}: {csv_err}", exc_info=True)
+                    return None
+
+                sheet_tasks = [_query_single_sheet(ekb, path) for ekb, path in zip(valid_excel_rows, active_paths)]
+                raw_results = await asyncio.gather(*sheet_tasks)
+                all_csv_results = [r for r in raw_results if r]
+
                 if all_csv_results:
                     await log_attempt(len(all_csv_results))
                     return "\n\n".join(all_csv_results)
+                else:
+                    return f"No records matched your query across {len(valid_excel_rows)} attached spreadsheets."
             else:
                 logger.warning(" No active parquet files resolved for excel_parquet KBs. Cannot answer tabular query.")
             await log_attempt(0)

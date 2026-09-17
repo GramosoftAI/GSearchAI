@@ -6,7 +6,8 @@ import Header from "../components/layout/Header";
 import { Drawer } from "antd";
 import { useStore } from "../hooks/useStore";
 import { usePathname, useRouter } from "next/navigation";
-import { getCookie } from "../config/cookies";
+import { getCookie, deleteCookie, isTokenExpired } from "../config/cookies";
+import { toast } from "react-hot-toast";
 import Loader from "../components/provider/Loder";
 
 export default function DashboardLayout({
@@ -24,12 +25,25 @@ export default function DashboardLayout({
   const [authorized, setAuthorized] = useState(false);
 
   useEffect(() => {
-    const token = getCookie("AUTH_TOKEN");
-    if (!token) {
-      router.push("/login");
-    } else {
-      setAuthorized(true);
-    }
+    let hasRedirected = false;
+    const checkAuth = () => {
+      const token = getCookie("AUTH_TOKEN");
+      if (!token || isTokenExpired(token)) {
+        if (!hasRedirected) {
+          hasRedirected = true;
+          deleteCookie("AUTH_TOKEN");
+          setAuthorized(false);
+          toast.error("Session expired. Please log in again.");
+          router.push("/login");
+        }
+      } else {
+        setAuthorized(true);
+      }
+    };
+
+    checkAuth();
+    const interval = setInterval(checkAuth, 3000);
+    return () => clearInterval(interval);
   }, [pathname, router]);
 
   useEffect(() => {

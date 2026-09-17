@@ -414,6 +414,7 @@ Choose exactly one of the following intents:
 - ENTITY_CONNECTION: Relationship between two things
 - SOCIAL: Greetings, thanks, or small talk
 - EXTRACTIVE: Strict exact value retrieval without generation (e.g., "Give me the GSTIN", "What is the invoice number and engine number")
+- TABLE_ANALYTICS: Querying tabular data, spreadsheet records, numbers, counts, calculations, product prices, MRP, inventory
 - GRAPH_COMPLETION: General default.
 
 If the intent is EXTRACTIVE, you MUST also provide a list of exactly which entities the user is requesting in snake_case (e.g. ["engine_number", "gstin"]).

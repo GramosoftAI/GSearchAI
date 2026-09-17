@@ -36,6 +36,7 @@ from app.modules.jobs.models import *
 from app.modules.chats.models import ChatSession, ChatMessage
 from app.modules.personalities.models import Personality
 from app.modules.connectors.google.models import GmailMessage, GmailSyncState
+from app.modules.integrations.slack.models import SlackConnection, SlackEvent
 
 target_metadata = Base.metadata
 

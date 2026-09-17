@@ -1697,12 +1697,14 @@ async def _background_scrape_and_ingest_detached(
             logger.warning(f"[Background Job] KB {kb_id} -> Scraped with partial failures: {len(documents)} succeeded, {len(failed_urls)} failed/timed out: {failed_urls}")
         
         if not documents:
-            logger.error(f"[Background Job] KB {kb_id} -> No extractable text content returned. Cleaning up KnowledgeBase.")
+            failed_list_str = f" ({', '.join(failed_urls)})" if failed_urls else ""
+            err_msg = f"No extractable text content returned from the selected URL(s){failed_list_str}"
+            logger.error(f"[Background Job] KB {kb_id} -> {err_msg}. Cleaning up KnowledgeBase.")
             async with AsyncSessionLocal() as db:
                 kb_service = KnowledgeBaseService(db, tenant_id)
                 await kb_service.delete_kb(kb_id, user_id=user_id)
                 job_service = JobService(db, tenant_id)
-                await job_service.update_job_progress(job_id, status="failed", progress=100, current_step="Failed", error_message="No extractable text content returned", kb_id=kb_id)
+                await job_service.update_job_progress(job_id, status="failed", progress=100, current_step="Failed", error_message=err_msg, kb_id=kb_id)
             return
 
         async with AsyncSessionLocal() as db:
@@ -1820,7 +1822,9 @@ async def ingest_selected_url_links(
             job_id = str(job_result["data"]["job"].id)
 
             kb_service = KnowledgeBaseService(db, tenant_id)
-            kb_name = f"{request_data.urls[0]} (Selected Links)"
+            raw_url = request_data.urls[0]
+            truncated_url = (raw_url[:180] + "...") if len(raw_url) > 180 else raw_url
+            kb_name = f"{truncated_url} (Selected Links)"
             kb_request = KBCreate(
                 name=kb_name,
                 agent_id=uuid.UUID(agent_id),
@@ -1829,7 +1833,9 @@ async def ingest_selected_url_links(
             )
             kb_result = await kb_service.create_knowledge_base(user_id, kb_request)
             if not kb_result.get("success"):
-                raise HTTPException(status_code=500, detail="Failed to create KnowledgeBase entry")
+                err_detail = kb_result.get("error") or kb_result.get("message") or "Failed to create KnowledgeBase entry"
+                logger.error(f"[URL_SELECT_INGEST] KB creation failed: {err_detail}")
+                raise HTTPException(status_code=500, detail=f"Failed to create KnowledgeBase entry: {err_detail}")
 
             kb_id = str(kb_result["data"]["kb"].id)
             agent_name = agent_result["data"]["agent"]["name"]

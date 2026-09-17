@@ -85,6 +85,12 @@ vector_extracted/
 scratch*.py
 scratch_mod*.py
 test_chunk*.py
+old_service.py
+test_widget.html
+remote_responses_log.json
+*.patch
+diff*.patch
+diff*.txt
 
 # ==========================================================
 # Documentation / Analysis (Local Only)
