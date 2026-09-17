@@ -61,6 +61,33 @@ class SchemaGraph:
                                 relationship_type=RelationshipType.MANY_TO_ONE,
                             )
                         )
+        pub_s = schema.get_schema("public")
+        if pub_s:
+            implicit_links = [
+                ("attendance_attendanceactivity", "employee_id_id", "employee_employee", "id"),
+                ("attendance_attendanceactivity", "attendance_id_id", "attendance_attendance", "id"),
+                ("attendance_attendancelatecomeearlyout", "employee_id_id", "employee_employee", "id"),
+                ("attendance_attendancelatecomeearlyout", "attendance_id_id", "attendance_attendance", "id"),
+            ]
+            for src_t, src_c, tgt_t, tgt_c in implicit_links:
+                if src_t in pub_s.tables and tgt_t in pub_s.tables:
+                    s_tbl = pub_s.tables[src_t]
+                    if src_c in s_tbl.columns:
+                        rel_key = f"public.{src_t}->public.{tgt_t}:implicit_{src_t}_{src_c}"
+                        if rel_key not in seen_keys:
+                            seen_keys.add(rel_key)
+                            all_rels.append(
+                                RelationshipSchema(
+                                    source_schema="public",
+                                    source_table=src_t,
+                                    source_columns=[src_c],
+                                    target_schema="public",
+                                    target_table=tgt_t,
+                                    target_columns=[tgt_c],
+                                    foreign_key_name=f"implicit_{src_t}_{src_c}",
+                                    relationship_type=RelationshipType.MANY_TO_ONE,
+                                )
+                            )
         instance = cls(all_rels)
         if fp:
             cls._GRAPH_CACHE[fp] = instance

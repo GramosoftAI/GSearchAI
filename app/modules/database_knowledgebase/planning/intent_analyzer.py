@@ -167,10 +167,11 @@ class QueryIntentAnalyzer:
         (r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\b", "CALENDAR_MONTH", lambda m: m.group(1).lower()),
     ]
 
-    # Ranking patterns (e.g. "top 5", "first 10", "highest spending", "most frequently")
-    TOP_N_PATTERN = re.compile(r"\btop\s+(\d+)\b", re.IGNORECASE)
-    FIRST_N_PATTERN = re.compile(r"\bfirst\s+(\d+)\b", re.IGNORECASE)
-    LIMIT_N_PATTERN = re.compile(r"\blimit\s+(\d+)\b", re.IGNORECASE)
+    # Ranking patterns (e.g. "top 5", "top five", "first 10", "highest spending", "most frequently")
+    _NUM_OR_WORD = r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+    TOP_N_PATTERN = re.compile(rf"\btop\s+{_NUM_OR_WORD}\b", re.IGNORECASE)
+    FIRST_N_PATTERN = re.compile(rf"\bfirst\s+{_NUM_OR_WORD}\b", re.IGNORECASE)
+    LIMIT_N_PATTERN = re.compile(rf"\blimit\s+{_NUM_OR_WORD}\b", re.IGNORECASE)
 
     # Comparison / predicate patterns
     PRICE_GT_PATTERN = re.compile(r"\b(above|greater than|more than|>)\s*\$?(\d+(?:\.\d+)?)\b", re.IGNORECASE)
@@ -188,23 +189,50 @@ class QueryIntentAnalyzer:
         temporals: List[ExtractedTemporalConstraint] = []
         predicates: List[ExtractedPredicate] = []
 
-        for match in cls.DATE_PATTERN.finditer(query):
-            date_str = match.group(1)
+        range_match = re.search(r"\b(?:between|from)\s+(\d{4}-\d{2}-\d{2})\s+(?:and|to)\s+(\d{4}-\d{2}-\d{2})\b", query, re.IGNORECASE)
+        if range_match:
+            d_start, d_end = range_match.group(1), range_match.group(2)
             temporals.append(
                 ExtractedTemporalConstraint(
-                    constraint_type="EXACT_DATE",
-                    value=date_str,
-                    raw_match=match.group(0),
+                    constraint_type="DATE_RANGE",
+                    value=(d_start, d_end),
+                    raw_match=range_match.group(0),
                 )
             )
             predicates.append(
                 ExtractedPredicate(
-                    target_concept="date",
-                    operator="=",
-                    value=date_str,
-                    raw_match=match.group(0),
+                    target_concept="date_range_start",
+                    operator=">=",
+                    value=d_start,
+                    raw_match=d_start,
                 )
             )
+            predicates.append(
+                ExtractedPredicate(
+                    target_concept="date_range_end",
+                    operator="<=",
+                    value=d_end,
+                    raw_match=d_end,
+                )
+            )
+        else:
+            for match in cls.DATE_PATTERN.finditer(query):
+                date_str = match.group(1)
+                temporals.append(
+                    ExtractedTemporalConstraint(
+                        constraint_type="EXACT_DATE",
+                        value=date_str,
+                        raw_match=match.group(0),
+                    )
+                )
+                predicates.append(
+                    ExtractedPredicate(
+                        target_concept="date",
+                        operator="=",
+                        value=date_str,
+                        raw_match=match.group(0),
+                    )
+                )
 
         for match in cls.YEAR_PATTERN.finditer(query):
             # Avoid matching year inside YYYY-MM-DD
@@ -236,23 +264,91 @@ class QueryIntentAnalyzer:
         first_match = cls.FIRST_N_PATTERN.search(q_lower)
         limit_match = cls.LIMIT_N_PATTERN.search(q_lower)
 
+        most_superlative_match = re.search(
+            r"\bmost\s+(experienced|experininced|senior|active|recent|expensive|valuable|profitable|tenured)\b",
+            q_lower
+        )
+        most_hours_match = re.search(r"\b(?:worked|spent|had)\s+(?:the\s+)?most\s+hours\b|\bmost\s+hours\b", q_lower)
+        least_hours_match = re.search(r"\b(?:worked|spent|had)\s+(?:the\s+)?least\s+hours\b|\bleast\s+hours\b", q_lower)
+        joined_earliest_match = re.search(
+            r"\b(?:joined|joining|join|came|arrived)\s+(?:the\s+company\s+)?(?:earliest|first)\b|\bearliest\s+(?:joined|joining|join|starter|employee)\b",
+            q_lower
+        )
+        highest_exp_match = re.search(r"\b(?:highest|maximum|most)\s+experience\b", q_lower)
+        senior_match = re.search(r"\b(?:most\s+senior|senior\s+most|senior-most)\b", q_lower)
+
+        def _resolve_limit(m_val: str) -> int:
+            return cls.WORD_TO_NUM.get(m_val.lower(), int(m_val) if m_val.isdigit() else 1)
+
+        least_exp_match = re.search(r"\b(?:least|lowest)\s+experience\b|\b(?:least\s+experienced|lowest\s+experienced)\b", q_lower)
         if top_match:
             ranking = ExtractedRanking(
                 direction=OrderDirection.DESC,
-                limit=int(top_match.group(1)),
+                limit=_resolve_limit(top_match.group(1)),
                 raw_match=top_match.group(0),
             )
         elif first_match:
             ranking = ExtractedRanking(
                 direction=OrderDirection.ASC,
-                limit=int(first_match.group(1)),
+                limit=_resolve_limit(first_match.group(1)),
                 raw_match=first_match.group(0),
             )
         elif limit_match:
             ranking = ExtractedRanking(
                 direction=OrderDirection.ASC,
-                limit=int(limit_match.group(1)),
+                limit=_resolve_limit(limit_match.group(1)),
                 raw_match=limit_match.group(0),
+            )
+        elif most_hours_match:
+            ranking = ExtractedRanking(
+                direction=OrderDirection.DESC,
+                limit=1,
+                target_metric="at_work_second",
+                raw_match=most_hours_match.group(0),
+            )
+        elif least_hours_match:
+            ranking = ExtractedRanking(
+                direction=OrderDirection.ASC,
+                limit=1,
+                target_metric="at_work_second",
+                raw_match=least_hours_match.group(0),
+            )
+        elif most_superlative_match or senior_match:
+            m_text = (most_superlative_match or senior_match).group(0)
+            if any(w in q_lower for w in ("doj", "date of joining", "joining date", "joined")):
+                ranking = ExtractedRanking(
+                    direction=OrderDirection.ASC,
+                    limit=1,
+                    target_metric="date_joining",
+                    raw_match=m_text,
+                )
+            else:
+                ranking = ExtractedRanking(
+                    direction=OrderDirection.DESC,
+                    limit=1,
+                    target_metric="experience",
+                    raw_match=m_text,
+                )
+        elif joined_earliest_match:
+            ranking = ExtractedRanking(
+                direction=OrderDirection.ASC,
+                limit=1,
+                target_metric="date_joining",
+                raw_match=joined_earliest_match.group(0),
+            )
+        elif highest_exp_match:
+            ranking = ExtractedRanking(
+                direction=OrderDirection.DESC,
+                limit=1,
+                target_metric="experience",
+                raw_match=highest_exp_match.group(0),
+            )
+        elif least_exp_match:
+            ranking = ExtractedRanking(
+                direction=OrderDirection.ASC,
+                limit=1,
+                target_metric="experience",
+                raw_match=least_exp_match.group(0),
             )
         elif "highest" in q_lower or "most frequently" in q_lower or "spent the most" in q_lower or "selling the most" in q_lower:
             ranking = ExtractedRanking(
@@ -269,16 +365,23 @@ class QueryIntentAnalyzer:
 
         # 3. Extract Aggregations
         aggregations: List[ExtractedAggregation] = []
+        is_ranking_query = ranking is not None and ranking.limit is not None
         # If query has an explicit top-N ranking limit (e.g. "top 5 highest paid employees"),
         # words like "top" and "highest" are ranking/ordering criteria, not aggregate projections!
         if not (ranking and ranking.limit and ranking.limit > 1):
             for pat, agg_func in cls.AGG_PATTERNS:
                 for match in re.finditer(pat, q_lower):
+                    m_word = match.group(0).lower()
                     # Do not treat "top" as MAX if it was part of "top <N>"
-                    if agg_func == AggregateFunction.MAX and match.group(0).lower() == "top" and top_match:
+                    if agg_func == AggregateFunction.MAX and m_word == "top" and top_match:
                         continue
-                    # Do not treat "most" as MAX if it is part of "most recent" (temporal intent)
-                    if agg_func == AggregateFunction.MAX and match.group(0).lower() == "most" and "most recent" in q_lower:
+                    # Do not treat "most" as MAX if it is part of "most recent" (temporal intent) or superlative ranking
+                    if agg_func == AggregateFunction.MAX and m_word == "most" and ("most recent" in q_lower or most_superlative_match or senior_match or most_hours_match or is_ranking_query):
+                        continue
+                    if agg_func == AggregateFunction.MIN and m_word == "least" and (least_hours_match or least_exp_match or is_ranking_query):
+                        continue
+                    # Do not treat "highest" as MAX if part of ranking (e.g. highest experience, highest salary with who)
+                    if agg_func == AggregateFunction.MAX and m_word == "highest" and (highest_exp_match or (is_ranking_query and "by" not in q_lower and "per" not in q_lower)):
                         continue
                     aggregations.append(
                         ExtractedAggregation(
@@ -296,7 +399,7 @@ class QueryIntentAnalyzer:
                 ]
             elif any(a.function == AggregateFunction.SUM and a.raw_match.lower() == "total" for a in aggregations):
                 # If query mentions "total" but no financial/monetary/numeric terms, it is counting entities (e.g. "total candidates")
-                has_numeric_metric = any(m in q_lower for m in ("expenditure", "spending", "payroll", "salary", "wage", "amount", "budget", "revenue", "cost", "price", "point", "points", "hour", "hours", "balance", "days"))
+                has_numeric_metric = any(m in q_lower for m in ("expenditure", "spending", "payroll", "salary", "wage", "amount", "budget", "revenue", "cost", "price", "point", "points", "hour", "hours", "second", "seconds", "minute", "minutes", "duration", "balance", "days"))
                 if not has_numeric_metric:
                     aggregations = [
                         ExtractedAggregation(function=AggregateFunction.COUNT, raw_match="total") if (a.function == AggregateFunction.SUM and a.raw_match.lower() == "total") else a
@@ -307,10 +410,11 @@ class QueryIntentAnalyzer:
             if any(a.function == AggregateFunction.COUNT and a.raw_match.lower() == "how many" for a in aggregations):
                 if re.search(r"\bhow many\s+(?:years\s+(?:of\s+)?)?experience\b", q_lower) or re.search(r"\bhow many\s+children\b", q_lower):
                     aggregations = [a for a in aggregations if not (a.function == AggregateFunction.COUNT and a.raw_match.lower() == "how many")]
-                elif re.search(r"\bhow many\s+hours\b", q_lower):
-                    # "how many hours" is a SUM of worked duration, not record COUNT
+                elif re.search(r"\bhow many\s+(?:hours|minutes|seconds)\b", q_lower):
+                    # "how many hours/minutes/seconds" is duration, not record COUNT
                     aggregations = [a for a in aggregations if not (a.function == AggregateFunction.COUNT and a.raw_match.lower() == "how many")]
-                    aggregations.append(ExtractedAggregation(function=AggregateFunction.SUM, target_concept="hours", raw_match="how many hours"))
+                    if not any(w in q_lower for w in ("short", "shortage", "difference", "remain", "less")):
+                        aggregations.append(ExtractedAggregation(function=AggregateFunction.SUM, target_concept="hours", raw_match="how many hours"))
 
             # Overtime queries: "how much overtime", "total overtime", or "most overtime" -> SUM
             if any(w in q_lower for w in ("how much overtime", "total overtime", "overtime worked", "most overtime")) and not any(a.function == AggregateFunction.SUM and a.target_concept == "overtime" for a in aggregations):
@@ -325,28 +429,104 @@ class QueryIntentAnalyzer:
                 if not any(a.target_concept == "late" for a in aggregations):
                     aggregations.append(ExtractedAggregation(function=AggregateFunction.COUNT, target_concept="late", raw_match="late"))
 
-        # 4. Extract Predicates (predicates initialized earlier to preserve exact date predicates)
-        gt_match = cls.PRICE_GT_PATTERN.search(q_lower)
-        if gt_match:
+        # Duration matching: e.g. "did not complete 8 hours", "less than 8 hours", "more than 8 hours"
+        duration_lt_match = re.search(r"\b(?:less\s+than|under|did\s+not\s+complete|did\s+not\s+work|below|<)\s+(\d+(?:\.\d+)?)\s*hours?\b", q_lower)
+        duration_gt_match = re.search(r"\b(?:more\s+than|over|above|greater\s+than|>)\s+(\d+(?:\.\d+)?)\s*hours?\b", q_lower)
+
+        # Experience matching: e.g. "more than 5 years of experience", "experience > 5"
+        exp_gt_match = re.search(r"\b(?:more\s+than|greater\s+than|over|above|>)\s+(\d+(?:\.\d+)?)\s*(?:years?(?:\s+of)?)?\s*experience\b|\bexperience\s*(?:greater\s+than|more\s+than|above|>)\s*(\d+(?:\.\d+)?)\b", q_lower)
+        exp_lt_match = re.search(r"\b(?:less\s+than|under|below|<)\s+(\d+(?:\.\d+)?)\s*(?:years?(?:\s+of)?)?\s*experience\b|\bexperience\s*(?:less\s+than|under|below|<)\s*(\d+(?:\.\d+)?)\b", q_lower)
+        if exp_gt_match:
+            exp_val = float(exp_gt_match.group(1) or exp_gt_match.group(2))
             predicates.append(
                 ExtractedPredicate(
-                    target_concept="amount/price",
+                    target_concept="experience",
                     operator=">",
-                    value=float(gt_match.group(2)),
-                    raw_match=gt_match.group(0),
+                    value=exp_val,
+                    raw_match=exp_gt_match.group(0),
+                )
+            )
+        if exp_lt_match:
+            exp_val = float(exp_lt_match.group(1) or exp_lt_match.group(2))
+            predicates.append(
+                ExtractedPredicate(
+                    target_concept="experience",
+                    operator="<",
+                    value=exp_val,
+                    raw_match=exp_lt_match.group(0),
                 )
             )
 
-        lt_match = cls.PRICE_LT_PATTERN.search(q_lower)
-        if lt_match:
+        if any(w in q_lower for w in ("validated attendance", "attendance is validated", "have validated attendance", "with validated attendance")):
             predicates.append(
                 ExtractedPredicate(
-                    target_concept="amount/price",
-                    operator="<",
-                    value=float(lt_match.group(2)),
-                    raw_match=lt_match.group(0),
+                    target_concept="validated",
+                    operator="=",
+                    value=True,
+                    raw_match="validated",
                 )
             )
+        
+        if duration_lt_match:
+            predicates.append(
+                ExtractedPredicate(
+                    target_concept="worked_hours",
+                    operator="<",
+                    value=float(duration_lt_match.group(1)),
+                    raw_match=duration_lt_match.group(0),
+                )
+            )
+        if duration_gt_match:
+            predicates.append(
+                ExtractedPredicate(
+                    target_concept="worked_hours",
+                    operator=">",
+                    value=float(duration_gt_match.group(1)),
+                    raw_match=duration_gt_match.group(0),
+                )
+            )
+
+        # Missing clock-out / null handling
+        if any(w in q_lower for w in ("missing clock-out", "missing clock out", "no clock-out", "no clock out", "without clock out", "without clock-out", "forgot to clock out", "did not clock out")):
+            predicates.append(
+                ExtractedPredicate(
+                    target_concept="missing_clock_out",
+                    operator="IS NULL",
+                    value=None,
+                    raw_match="missing clock-out",
+                )
+            )
+
+        # Financial predicates: strictly guard against extracting generic counts/quantities as price
+        has_financial_term = any(w in q_lower for w in ("salary", "wage", "pay", "cost", "price", "budget", "amount", "earning", "compensation", "revenue", "dollar", "$", "inr", "rs", "eur", "gbp"))
+        if has_financial_term:
+            gt_match = cls.PRICE_GT_PATTERN.search(q_lower)
+            if gt_match:
+                post_str = q_lower[gt_match.end():].lstrip()
+                is_non_price_unit = re.match(r"^(hours?|hrs?|minutes?|mins?|seconds?|secs?|days?|weeks?|months?|years?|times?|requests?|tickets?|people|employees)\b", post_str)
+                if not is_non_price_unit and not any(p.target_concept == "worked_hours" for p in predicates):
+                    predicates.append(
+                        ExtractedPredicate(
+                            target_concept="amount/price",
+                            operator=">",
+                            value=float(gt_match.group(2)),
+                            raw_match=gt_match.group(0),
+                        )
+                    )
+
+            lt_match = cls.PRICE_LT_PATTERN.search(q_lower)
+            if lt_match:
+                post_str = q_lower[lt_match.end():].lstrip()
+                is_non_price_unit = re.match(r"^(hours?|hrs?|minutes?|mins?|seconds?|secs?|days?|weeks?|months?|years?|times?|requests?|tickets?|people|employees)\b", post_str)
+                if not is_non_price_unit and not any(p.target_concept == "worked_hours" for p in predicates):
+                    predicates.append(
+                        ExtractedPredicate(
+                            target_concept="amount/price",
+                            operator="<",
+                            value=float(lt_match.group(2)),
+                            raw_match=lt_match.group(0),
+                        )
+                    )
 
         status_match = cls.STATUS_PATTERN.search(q_lower)
         if status_match and status_match.group(1).lower() not in {"the", "a", "an", "this", "that", "each", "all", "our", "their", "its"}:
@@ -733,10 +913,11 @@ class QueryIntentAnalyzer:
                 direction = OrderDirection.DESC if superlative in ("most", "highest", "maximum") else OrderDirection.ASC
                 ranking = ExtractedRanking(direction=direction, limit=1, raw_match=superlative)
         elif who_group_match:
-            grouping_required = True
-            grouping_concept = "employee"
             superlative = who_group_match.group(1).lower()
             direction = OrderDirection.DESC if superlative in ("most", "highest", "maximum") else OrderDirection.ASC
+            if any(w in q_lower for w in ("overtime", "hours", "late", "leaves", "absent", "times")):
+                grouping_required = True
+                grouping_concept = "employee"
             ranking = ExtractedRanking(direction=direction, limit=1, raw_match=superlative)
         elif aggregations and ("each" in q_lower or "per" in q_lower or "frequently" in q_lower):
             each_match = re.search(r"\beach\s+([a-zA-Z0-9_]+)\b", q_lower)

@@ -35,7 +35,6 @@ class QueryPlanner:
     @classmethod
     def _generate_alias(cls, table_name: str, used_aliases: Set[str]) -> str:
         """Generate a short, deterministic table alias."""
-        # Common database abbreviation mappings
         presets = {
             "customers": "c",
             "orders": "o",
@@ -44,6 +43,19 @@ class QueryPlanner:
             "payments": "pay",
             "users": "u",
             "items": "i",
+            "employee_employee": "ee",
+            "employee_employeeworkinformation": "ewi",
+            "employee_workinformation": "ewi",
+            "payroll_contract": "pc",
+            "payroll_payslip": "pp",
+            "base_department": "bd",
+            "base_jobposition": "bjp",
+            "base_jobrole": "bjr",
+            "attendance_attendance": "att",
+            "leave_leaverequest": "llr",
+            "leave_availableleave": "lal",
+            "asset_asset": "aa",
+            "asset_assetassignment": "aaa",
         }
         if table_name.lower() in presets and presets[table_name.lower()] not in used_aliases:
             return presets[table_name.lower()]
@@ -194,11 +206,15 @@ class QueryPlanner:
             "amount": {"spending", "spend", "cost", "value", "price", "expenditure"},
             "hours_worked": {"hours", "duration", "time", "worktime", "worked_hour", "worked", "working"},
             "hour": {"hours", "duration", "time", "worktime", "worked_hour", "worked", "working"},
+            "at_work_second": {"second", "seconds", "working seconds", "working time", "worked seconds", "hours", "duration", "worktime", "worked_hour", "worked", "working"},
+            "experience": {"experience", "experienced", "years", "seniority"},
             "points": {"bonus", "points", "point", "awarded"},
             "available_days": {"balance", "leave", "days", "available", "time off", "leaves"},
             "days": {"balance", "leave", "days", "available", "time off", "leaves"},
             "rating": {"score", "grade", "review", "satisfaction"},
             "overtime": {"overtime", "ot", "extra hours", "overtime_second"},
+            "overtime_second": {"overtime", "ot", "extra hours", "overtime_second", "overtime seconds"},
+            "approved_overtime_second": {"approved overtime", "approved ot", "approved_overtime_second"},
         }
         synonym_matches: List[Tuple[str, str]] = []
         for alias, c_name, tbl, col in numeric_candidates:
@@ -216,6 +232,14 @@ class QueryPlanner:
         if len(all_matches) == 1:
             return all_matches[0]
         elif len(all_matches) > 1:
+            # 0. Canonical numeric columns preferred for duration and overtime
+            canonical_cols = {"at_work_second", "overtime_second", "approved_overtime_second", "experience"}
+            canon_matches = [m for m in all_matches if m[1].lower() in canonical_cols]
+            if len(canon_matches) == 1:
+                return canon_matches[0]
+            elif len(canon_matches) > 1:
+                all_matches = canon_matches
+
             # 1. Prefer core column over prefix/qualifier variants (e.g. "wage" over "initial_wage", "worked_hour" over "minimum_hour")
             core_matches = [
                 m for m in all_matches
@@ -511,7 +535,8 @@ class QueryPlanner:
             "project_project": {"project", "projects"},
             "project_task": {"task", "tasks"},
             "project_timesheet": {"timesheet", "timesheets", "time spent"},
-            "attendance_attendance": {"attendance", "check in", "clock in", "check out", "clock out", "punch", "worked", "work", "working", "checkin", "checkout", "clockin", "clockout", "overtime"},
+            "attendance_attendance": {"attendance", "check in", "clock in", "check out", "clock out", "punch", "worked", "work", "working", "checkin", "checkout", "clockin", "clockout", "overtime", "arrive", "arrived", "arrival", "depart", "departed", "departure", "entered", "exited", "clock"},
+            "attendance_attendanceactivity": {"activity", "activities", "sessions", "session", "clock activity", "punch activity"},
             "attendance_attendancelatecomeearlyout": {"late", "early", "early out", "late come", "leave early", "late arrivals", "arrival", "arrivals"},
             "leave_leaverequest": {"leave", "vacation", "absence", "absent", "absenteeism", "time off", "requested", "leaves"},
         }
@@ -631,18 +656,22 @@ class QueryPlanner:
 
         # Check explicit domain keywords first to avoid random token collisions from all_table_plans
         explicit_target_table = None
-        if any(w in q_lower for w in ("deduction", "deductions")):
+        if any(w in q_lower for w in ("attendance percentage", "percentage of employees", "percentage", "rate")) and any(w in q_lower for w in ("work", "hours", "attendance", "completed", "working")):
+            explicit_target_table = "attendance_attendance"
+        elif any(w in q_lower for w in ("deduction", "deductions")):
             explicit_target_table = "payroll_deduction"
         elif any(w in q_lower for w in ("payslip", "pay slip", "salary slip")):
             explicit_target_table = "payroll_payslip"
         elif any(w in q_lower for w in ("salary", "wage", "contract")):
             explicit_target_table = "payroll_contract"
+        elif any(w in q_lower for w in ("activity", "activities", "sessions", "session", "punch activity")):
+            explicit_target_table = "attendance_attendanceactivity"
         elif any(w in q_lower for w in ("early out", "leave early", "late come", "late arrival", "late arrivals")) or ("late" in q_tokens and "latest" not in q_tokens) or ("early" in q_tokens):
             explicit_target_table = "attendance_attendancelatecomeearlyout"
-        elif any(w in q_lower for w in ("attendance", "check in", "clock in", "check out", "clock out", "punch", "worked", "working", "work", "hours", "checkin", "checkout", "clockin", "clockout", "overtime")):
+        elif any(w in q_lower for w in ("attendance", "check in", "clock in", "check out", "clock out", "punch", "worked", "working", "work", "hours", "checkin", "checkout", "clockin", "clockout", "overtime", "arrive", "arrived", "arrival", "arrivals", "depart", "departed", "departure", "departures", "clock")):
             explicit_target_table = "attendance_attendance"
-        elif any(w in q_lower for w in ("vacation", "absence", "absent", "absenteeism", "time off", "on leave", "leave request", "leave balance", "sick leave", "casual leave")) or ("leave" in q_tokens and not any(w in q_lower for w in ("leave early", "early leave", "left early"))):
-            if any(w in q_lower for w in ("balance", "available", "remaining")):
+        elif any(w in q_lower for w in ("vacation", "absence", "absent", "absenteeism", "time off", "on leave", "leave request", "leave balance", "sick leave", "casual leave")) or ("leave" in q_tokens and not any(w in q_lower for w in ("leave early", "early leave", "left early", "arrive", "arrived", "arrival", "arrivals", "depart", "departed", "departure", "when did", "what time", "clock", "punch", "hours", "worked", "working"))):
+            if not any(w in q_lower for w in ("leave request", "leave requests", "requested")) and any(w in q_lower for w in ("leave balance", "available leave", "remaining leave", "balance", "available days")):
                 explicit_target_table = "leave_availableleave"
             else:
                 explicit_target_table = "leave_leaverequest"
@@ -653,8 +682,16 @@ class QueryPlanner:
         elif any(w in q_lower for w in ("employee", "employees", "staff", "person", "people", "member", "members", "who", "highest-paid", "lowest-paid")):
             explicit_target_table = "employee_employee"
 
-        # Anchor table takes highest precedence as primary table
-        if anchor_alias:
+        # Anchor table takes highest precedence as primary table UNLESS an explicit specific sub-table is targeted (e.g. activity, attendance, deduction, loan)
+        if explicit_target_table and explicit_target_table != "employee_employee" and not any(w in q_lower for w in ("all employees in", "list all employees", "list employees")):
+            target_alias = _get_or_create_table_alias(explicit_target_table, role="PRIMARY")
+            if target_alias:
+                primary_alias = target_alias
+            elif anchor_alias:
+                primary_alias = anchor_alias
+            else:
+                primary_alias = all_table_plans[0].alias if all_table_plans else "t"
+        elif anchor_alias:
             primary_alias = anchor_alias
         elif explicit_target_table and not any(w in q_lower for w in ("all employees in", "list all employees", "list employees")):
             target_alias = _get_or_create_table_alias(explicit_target_table, role="PRIMARY")
@@ -754,14 +791,14 @@ class QueryPlanner:
         has_payslip_intent = any(w in q_lower for w in ("payslip", "pay slip", "salary slip", "pay stub", "paystub", "last paid", "net pay", "gross pay", "basic pay"))
         has_leave_intent = (
             any(w in q_lower for w in ("vacation", "time off", "absence", "absent", "absenteeism", "on leave", "leave request", "leave balance", "leave days", "sick leave", "casual leave", "parental leave", "maternity leave"))
-            or ("leave" in q_words and not any(w in q_lower for w in ("leave early", "early leave", "left early")))
+            or ("leave" in q_words and not any(w in q_lower for w in ("leave early", "early leave", "left early", "arrive", "arrived", "arrival", "arrivals", "depart", "departed", "departure", "when did", "what time", "clock", "punch", "hours", "worked", "working")))
         )
         has_shift_intent = any(w in q_lower for w in ("shift", "shifts", "rotatingshift", "schedule", "roster"))
         has_dept_intent = any(w in q_lower for w in ("department", "dept"))
         has_pos_intent = any(w in q_lower for w in ("position", "designation", "role", "job", "work type", "hybrid", "remote", "permanent", "contractual", "intern", "probation"))
         has_manager_intent = any(w in q_lower for w in ("manager", "report", "head", "lead"))
         has_att_intent = (
-            any(w in q_lower for w in ("attendance", "check in", "clock in", "check out", "clock out", "punch", "worked", "working", "checkin", "checkout", "clockin", "clockout", "overtime", "early out", "early arrivals", "late arrivals", "late come", "leave early"))
+            any(w in q_lower for w in ("attendance", "check in", "clock in", "check out", "clock out", "punch", "worked", "working", "checkin", "checkout", "clockin", "clockout", "clock-in", "clock-out", "check-in", "check-out", "punch-in", "punch-out", "in time", "out time", "arrival time", "exit time", "departure", "overtime", "early out", "early arrivals", "late arrivals", "late come", "leave early", "arrive", "arrived", "arrival", "depart", "departed", "short of", "shortage", "at work", "hours", "hour", "activity", "activities", "sessions", "session", "punch activity", "percentage"))
             or ("work" in q_words and "work type" not in q_lower and "work information" not in q_lower)
             or ("late" in q_words and "latest" not in q_words)
             or ("early" in q_words)
@@ -778,8 +815,8 @@ class QueryPlanner:
         has_project_intent = (
             (
                 any(w in q_lower for w in ("project", "projects", "task", "tasks", "timesheet", "timesheets"))
-                or ("hours" in q_lower and any(w in q_lower for w in ("spend", "spent", "work on", "worked on")))
-                or ("time" in q_lower and any(w in q_lower for w in ("spend", "spent")))
+                or ("hours" in q_lower and any(w in q_lower for w in ("spend", "spent", "work on", "worked on")) and not any(w in q_lower for w in ("at work", "work hour", "attendance", "work on 20")))
+                or ("time" in q_lower and any(w in q_lower for w in ("spend", "spent")) and not any(w in q_lower for w in ("at work", "work time", "attendance")))
             )
             and not has_onboarding_intent
         )
@@ -793,6 +830,8 @@ class QueryPlanner:
         has_bonus_intent = any(w in q_lower for w in ("bonus", "incentive"))
         has_holiday_intent = any(w in q_lower for w in ("holiday", "holidays"))
         has_badge_intent = any(w in q_lower for w in ("badge", "award"))
+        has_doj_intent = any(w in q_lower for w in ("doj", "date of joining", "joining date", "joined earliest", "earliest joined", "joined the company earliest")) or (getattr(analysis.ranking, "target_metric", None) == "date_joining")
+        has_exp_intent = any(w in q_lower for w in ("experience", "experienced", "experininced", "senior", "tenure")) or (getattr(analysis.ranking, "target_metric", None) == "experience")
 
         DISALLOWED_AUX_SUFFIXES = (
             "_exclude_employees",
@@ -860,6 +899,11 @@ class QueryPlanner:
                             return new_alias
             return None
 
+        if has_doj_intent:
+            doj_work_alias = _ensure_canonical_table("employee_employeeworkinformation")
+            if doj_work_alias:
+                needed_aliases.add(doj_work_alias)
+
         active_target_aliases: Set[str] = {primary_alias}
         if anchor_alias:
             active_target_aliases.add(anchor_alias)
@@ -874,7 +918,7 @@ class QueryPlanner:
                 active_target_aliases.add(a)
             elif has_pos_intent and t_name in ("base_jobposition", "base_jobrole", "base_worktype", "employee_employeeworkinformation", "employee_employee"):
                 active_target_aliases.add(a)
-            elif (has_dept_intent or has_pos_intent or has_manager_intent) and "workinformation" in t_name:
+            elif (has_dept_intent or has_pos_intent or has_manager_intent or has_doj_intent) and "workinformation" in t_name:
                 active_target_aliases.add(a)
             elif has_shift_intent and ("shift" in t_name or "workinformation" in t_name or "employee_employee" in t_name):
                 active_target_aliases.add(a)
@@ -885,10 +929,10 @@ class QueryPlanner:
                     active_target_aliases.add(a)
                 elif "overtime" in q_lower and "overtime" in t_name:
                     active_target_aliases.add(a)
-                elif "activity" in q_lower and "activity" in t_name:
+                elif any(w in q_lower for w in ("activity", "activities", "session", "sessions", "punch activity")) and "activity" in t_name:
                     active_target_aliases.add(a)
             elif has_leave_intent:
-                is_leave_balance = any(w in q_lower for w in ("balance", "available", "remaining", "have", "sick", "annual", "carry", "compensatory", "types"))
+                is_leave_balance = any(w in q_lower for w in ("leave balance", "available leave", "remaining leave", "balance", "available days", "carry forward", "compensatory"))
                 if is_leave_balance and t_name in ("leave_availableleave", "leave_leavetype", "employee_employee"):
                     active_target_aliases.add(a)
                 elif not is_leave_balance and t_name in ("leave_leaverequest", "leave_leavetype", "employee_employee"):
@@ -1047,6 +1091,10 @@ class QueryPlanner:
                     late_a = _ensure_canonical_table("attendance_attendancelatecomeearlyout")
                     if late_a:
                         active_target_aliases.add(late_a)
+                elif any(w in q_lower for w in ("activity", "activities", "session", "sessions", "punch activity")):
+                    act_a = _ensure_canonical_table("attendance_attendanceactivity")
+                    if act_a:
+                        active_target_aliases.add(act_a)
                 else:
                     att_a = _ensure_canonical_table("attendance_attendance")
                     if att_a:
@@ -1056,7 +1104,8 @@ class QueryPlanner:
                     if emp_a:
                         active_target_aliases.add(emp_a)
             elif has_leave_intent:
-                is_leave_balance = any(w in q_lower for w in ("balance", "available", "remaining", "have", "sick", "annual", "carry", "compensatory", "types"))
+                is_leave_request = any(w in q_lower for w in ("leave request", "leave requests", "requested leave", "applied leave"))
+                is_leave_balance = not is_leave_request and any(w in q_lower for w in ("leave balance", "available leave", "remaining leave", "balance", "available days", "carry forward", "compensatory", "how many days of leave"))
                 if is_leave_balance:
                     leave_a = _ensure_canonical_table("leave_availableleave")
                 else:
@@ -1097,6 +1146,7 @@ class QueryPlanner:
         ALLOWED_ATTENDANCE_TABLES = {
             "attendance_attendance",
             "attendance_attendancelatecomeearlyout",
+            "attendance_attendanceactivity",
             "employee_employee",
             "employee_employeeworkinformation",
             "base_department",
@@ -1339,7 +1389,7 @@ class QueryPlanner:
 
         is_email_auth = any(w in q_lower for w in ("email", "mail address", "send email", "email address", "where can i email"))
         is_dob_auth = any(w in q_lower for w in ("dob", "birth", "birthday", "born", "age", "how old"))
-        is_exp_auth = any(w in q_lower for w in ("experience", "how many years of experience", "exp"))
+        is_exp_auth = any(w in q_lower for w in ("experience", "experienced", "experininced", "senior", "tenure", "how many years of experience", "exp")) or (getattr(analysis.ranking, "target_metric", None) == "experience")
         is_gender_auth = any(w in q_lower for w in ("gender", "sex"))
         is_marital_auth = any(w in q_lower for w in ("marital", "married", "single", "spouse", "marriage"))
         is_children_auth = any(w in q_lower for w in ("children", "kids", "child", "dependents"))
@@ -1531,6 +1581,8 @@ class QueryPlanner:
                             should_project = True
                         elif c_low == "department" and "base_department" not in [alias_to_table[a].table_name.lower() for a in needed_aliases]:
                             should_project = True
+                        elif c_low == "date_joining" and has_doj_intent:
+                            should_project = True
                     else:
                         # Non-bridge tables: Minimal Human & Domain Identifiers
                         if t_low == "employee_employee":
@@ -1559,6 +1611,10 @@ class QueryPlanner:
                             elif c_low in ("address", "city", "state", "country") and is_loc_auth:
                                 should_project = True
                             elif c_low == "is_active" and "active" in q_lower:
+                                should_project = True
+
+                        elif t_low == "employee_employeeworkinformation":
+                            if c_low == "date_joining" and has_doj_intent:
                                 should_project = True
 
                         elif t_low == "base_department":
@@ -1686,8 +1742,8 @@ class QueryPlanner:
                                 should_project = True
 
                         elif t_low == "attendance_attendance":
-                            is_in_ask = any(k in q_lower for k in ("check in", "clock in", "checkin", "clockin"))
-                            is_out_ask = any(k in q_lower for k in ("check out", "clock out", "checkout", "clockout"))
+                            is_in_ask = any(k in q_lower for k in ("check in", "clock in", "checkin", "clockin", "clock-in", "check-in", "punch-in", "in time", "arrival time", "entry time", "arrive", "arrived", "arrival"))
+                            is_out_ask = any(k in q_lower for k in ("check out", "clock out", "checkout", "clockout", "clock-out", "check-out", "punch-out", "out time", "exit time", "departure", "depart", "departed", "leave", "left"))
                             if is_in_ask and not is_out_ask:
                                 if c_low in ("attendance_date", "attendance_clock_in"):
                                     should_project = True
@@ -1698,13 +1754,17 @@ class QueryPlanner:
                                 should_project = True
                             elif c_low == "attendance_day" and "day" in q_lower:
                                 should_project = True
-                            elif c_low in ("at_work_second", "attendance_worked_hour") and any(k in q_lower for k in ("hour", "hours", "work", "worked", "working")):
+                            elif c_low in ("at_work_second", "attendance_worked_hour") and any(k in q_lower for k in ("hour", "hours", "work", "worked", "working", "short", "shortage", "minute", "second", "duration")):
                                 should_project = True
                             elif c_low in ("overtime_second", "attendance_overtime") and "overtime" in q_lower:
                                 should_project = True
 
                         elif t_low == "attendance_attendancelatecomeearlyout":
                             if c_low in ("type", "created_at", "modified_time"):
+                                should_project = True
+
+                        elif t_low == "attendance_attendanceactivity":
+                            if c_low in ("clock_in", "clock_out", "clock_in_date", "attendance_date", "in_datetime", "out_datetime"):
                                 should_project = True
 
                         elif t_low == "project_project":
@@ -1791,6 +1851,8 @@ class QueryPlanner:
                         if r_col == "email" and not is_email_auth:
                             continue
                         if r_col in ("dob", "date_of_birth") and not is_dob_auth:
+                            continue
+                        if r_col == "gender" and not is_gender_auth:
                             continue
                         # Q08 fix: 'experience' must not be projected when the intent is about asset
                         # expiry/expiring — the entity resolver false-positively matches 'exp' inside 'expired'.
@@ -2111,21 +2173,57 @@ class QueryPlanner:
                                     )
                                     break
                             elif p.target_concept == "overtime":
-                                if "attendance" in tbl.table_name.lower() and c_lower in ("overtime_second", "attendance_overtime"):
-                                    matched_alias = alias
-                                    matched_col = c_name
-                                    if c_lower == "overtime_second":
+                                if "attendance" in tbl.table_name.lower():
+                                    ot_col = next((c for c in tbl.columns if c.lower() == "overtime_second"), None)
+                                    if ot_col:
+                                        matched_alias = alias
+                                        matched_col = ot_col
                                         p.operator = ">"
                                         p.value = 0
-                                    else:
+                                        break
+                                    elif c_lower == "attendance_overtime":
+                                        matched_alias = alias
+                                        matched_col = c_name
                                         p.operator = "!="
                                         p.value = "00:00"
+                                        break
+                            elif p.target_concept == "missing_clock_out":
+                                if "attendance" in tbl.table_name.lower() and c_lower in ("attendance_clock_out", "clock_out"):
+                                    matched_alias = alias
+                                    matched_col = c_name
+                                    p.operator = "IS NULL"
+                                    p.value = None
+                                    break
+                            elif p.target_concept == "worked_hours":
+                                if tbl.table_name.lower() == "attendance_attendance" and c_lower == "at_work_second":
+                                    matched_alias = alias
+                                    matched_col = c_name
+                                    if p.value is not None:
+                                        val = float(p.value)
+                                        p.value = int(val * 3600) if val <= 100 else int(val)
                                     break
                             elif p.target_concept == "leave_status":
                                 if "leave" in tbl.table_name.lower() and c_lower == "status":
                                     matched_alias = alias
                                     matched_col = c_name
                                     p.value = "approved"
+                                    break
+                            elif p.target_concept == "experience":
+                                if c_lower == "experience":
+                                    matched_alias = alias
+                                    matched_col = c_name
+                                    if p.value is not None:
+                                        try:
+                                            p.value = float(p.value)
+                                        except Exception:
+                                            pass
+                                    break
+                            elif p.target_concept == "validated":
+                                if c_lower in ("attendance_validated", "is_validated", "validated"):
+                                    matched_alias = alias
+                                    matched_col = c_name
+                                    p.operator = "="
+                                    p.value = True
                                     break
                             elif p.target_concept == "shift_early":
                                 if "shift" in tbl.table_name.lower() and c_lower == "start_time":
@@ -2373,6 +2471,9 @@ class QueryPlanner:
             if any(w in q_lower for w in ("early out", "leave early", "early leave", "late come", "late arrival", "late arrivals")) or ("late" in q_tokens and "latest" not in q_tokens) or ("early" in q_tokens):
                 if any(alias_to_table[a].table_name.lower() == "attendance_attendancelatecomeearlyout" for a in needed_aliases):
                     needed_aliases = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ("attendance_attendancelatecomeearlyout", "employee_employee")}
+            elif any(w in q_lower for w in ("activity", "activities", "session", "sessions", "punch activity")):
+                if any(alias_to_table[a].table_name.lower() == "attendance_attendanceactivity" for a in needed_aliases):
+                    needed_aliases = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ("attendance_attendanceactivity", "employee_employee")}
             elif any(w in q_lower for w in ("absent", "absenteeism")):
                 needed_aliases = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ("leave_leaverequest", "leave_leavetype", "employee_employee", "base_department", "employee_employeeworkinformation")}
 
@@ -2552,6 +2653,9 @@ class QueryPlanner:
             if any(w in q_lower for w in ("early out", "leave early", "early leave", "late come", "late arrival", "late arrivals")) or ("late" in q_tokens and "latest" not in q_tokens) or ("early" in q_tokens):
                 if any(alias_to_table[a].table_name.lower() == "attendance_attendancelatecomeearlyout" for a in needed_aliases):
                     needed_aliases = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ("attendance_attendancelatecomeearlyout", "employee_employee")}
+            elif any(w in q_lower for w in ("activity", "activities", "session", "sessions", "punch activity")):
+                if any(alias_to_table[a].table_name.lower() == "attendance_attendanceactivity" for a in needed_aliases):
+                    needed_aliases = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ("attendance_attendanceactivity", "employee_employee")}
             elif any(w in q_lower for w in ("absent", "absenteeism")):
                 needed_aliases = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ("leave_leaverequest", "leave_leavetype", "employee_employee", "base_department", "employee_employeeworkinformation")}
 
@@ -2619,8 +2723,23 @@ class QueryPlanner:
                     rank_target = proj.output_alias or f"{proj.table_alias}.{proj.column_name}"
                     break
             if not rank_target:
+                target_metric = getattr(analysis.ranking, "target_metric", None)
+                if target_metric:
+                    for proj in projections:
+                        if proj.column_name.lower() == target_metric.lower():
+                            rank_target = f"{proj.table_alias}.{proj.column_name}"
+                            break
+                    if not rank_target:
+                        for a in needed_aliases:
+                            tbl = alias_to_table.get(a)
+                            if tbl and target_metric.lower() in {c.lower() for c in tbl.columns}:
+                                actual_c = next(c for c in tbl.columns if c.lower() == target_metric.lower())
+                                rank_target = f"{a}.{actual_c}"
+                                projections.append(ColumnProjectionPlan(table_alias=a, column_name=actual_c, aggregation=AggregateFunction.NONE))
+                                break
+            if not rank_target:
                 for proj in projections:
-                    if proj.column_name in {"salary", "budget", "total_amount", "amount", "price", "unit_price", "created_at"}:
+                    if proj.column_name in {"at_work_second", "attendance_worked_hour", "date_joining", "experience", "salary", "wage", "basic_salary", "budget", "total_amount", "amount", "price", "unit_price", "created_at"}:
                         rank_target = f"{proj.table_alias}.{proj.column_name}"
                         break
             if not rank_target and projections:
@@ -2678,6 +2797,24 @@ class QueryPlanner:
                 dedup_gb.append(g)
         group_by = dedup_gb
 
+        # Check for HAVING filter on leave requests or similar counts:
+        # e.g., "List employees who have more than 1 leave request."
+        plan_having = None
+        m_leave_cnt = re.search(r"\b(?:more\s+than|greater\s+than|>)\s+(\d+)\s+(?:leave\s+requests?|leaves?)\b", q_lower)
+        if m_leave_cnt:
+            cnt_val = int(m_leave_cnt.group(1))
+            emp_alias = next((a for a in active_table_aliases if alias_to_table[a].table_name.lower() == "employee_employee"), None)
+            llr_alias = next((a for a in active_table_aliases if alias_to_table[a].table_name.lower() == "leave_leaverequest"), None)
+            if emp_alias and llr_alias:
+                projections = [
+                    ColumnProjectionPlan(table_alias=emp_alias, column_name="employee_first_name", aggregation=AggregateFunction.NONE),
+                    ColumnProjectionPlan(table_alias=emp_alias, column_name="employee_last_name", aggregation=AggregateFunction.NONE),
+                    ColumnProjectionPlan(table_alias=llr_alias, column_name=f"COUNT({llr_alias}.id)", output_alias="leave_request_count", aggregation=AggregateFunction.NONE),
+                ]
+                group_by = [f"{emp_alias}.id", f"{emp_alias}.employee_first_name", f"{emp_alias}.employee_last_name"]
+                plan_having = f"COUNT({llr_alias}.id) > {cnt_val}"
+                order_by = [OrderByPlan(expression="leave_request_count", direction=OrderDirection.DESC)]
+
         # Intent Promotion / Demotion:
         plan_intent = analysis.intent
         if len(table_plans) > 1 and len(join_plans) > 0 and plan_intent == IntentType.SELECT_POINT:
@@ -2706,6 +2843,7 @@ class QueryPlanner:
             joins=join_plans,
             predicates=predicates,
             group_by=group_by,
+            having=plan_having,
             order_by=order_by,
             limit=limit,
             confidence=plan_confidence,
@@ -2977,23 +3115,53 @@ class QueryPlanner:
                         order_by.insert(0, OrderByPlan(expression=f"{alias}.{date_col}", direction=OrderDirection.DESC))
                     limit = 1
 
-        # F. Attendance Percentage (Fail Closed)
-        if any(w in q_low for w in ("attendance percentage", "attendance rate", "percentage of attendance")):
-            projections = []
-            return predicates, order_by, limit, projections
-
-        # G. Worked Hours (attendance_attendance)
-        if any(w in q_low for w in ("how many hours", "hours did", "hours worked")) or ("hours" in q_low and any(w in q_low for w in ("work", "worked", "working"))):
+        # F. Attendance Percentage
+        if any(w in q_low for w in ("attendance percentage", "attendance rate", "percentage of attendance", "percentage of employees", "percentage")):
             att_alias = next((a for a in needed_aliases if alias_to_table[a].table_name.lower() == "attendance_attendance"), None)
+            if not att_alias and "attendance_attendance" in [tbl.table_name.lower() for tbl in alias_to_table.values()]:
+                att_alias = next((a for a, tbl in alias_to_table.items() if tbl.table_name.lower() == "attendance_attendance"), None)
             if att_alias:
+                sec_thresh = 28800
+                m_hrs = re.search(r"(\d+)\s*(?:hours|hrs|hour)", q_low)
+                if m_hrs:
+                    sec_thresh = int(m_hrs.group(1)) * 3600
+                col_expr = f"ROUND(COUNT(CASE WHEN at_work_second >= {sec_thresh} THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2)"
                 projections = [
                     ColumnProjectionPlan(
                         table_alias=att_alias,
-                        column_name="SUM(at_work_second) / 3600.0",
-                        output_alias="worked_hours",
+                        column_name=col_expr,
+                        output_alias="percentage_completed",
                         aggregation=AggregateFunction.NONE,
                     )
                 ]
+                order_by = []
+                limit = 1
+                return predicates, order_by, limit, projections
+
+        # G. Worked Hours (attendance_attendance)
+        if (
+            any(w in q_low for w in ("how many hours", "hours did", "hours worked", "working seconds", "worked seconds", "total working seconds", "average working hours", "working hours", "average working"))
+            or ("hours" in q_low and any(w in q_low for w in ("work", "worked", "working")))
+            or ("second" in q_low and any(w in q_low for w in ("work", "worked", "working")))
+        ):
+            att_alias = next((a for a in needed_aliases if alias_to_table[a].table_name.lower() == "attendance_attendance"), None)
+            if att_alias:
+                is_agg = any(w in q_low for w in ("how many", "total", "sum", "average", "avg", "how much", "amount of"))
+                if is_agg:
+                    func_str = "AVG" if ("average" in q_low or "avg" in q_low) else "SUM"
+                    if "second" in q_low:
+                        col_str = f"{func_str}(at_work_second)"
+                        alias_str = "avg_working_seconds" if func_str == "AVG" else "total_working_seconds"
+                    else:
+                        col_str = f"{func_str}(at_work_second) / 3600.0"
+                        alias_str = "avg_worked_hours" if func_str == "AVG" else "total_worked_hours"
+                    att_proj = ColumnProjectionPlan(
+                        table_alias=att_alias,
+                        column_name=col_str,
+                        output_alias=alias_str,
+                        aggregation=AggregateFunction.NONE,
+                    )
+                    projections = [att_proj]
                 if "today" in q_low and not any(p.table_alias == att_alias and p.column_name == "attendance_date" for p in predicates):
                     predicates.append(
                         PredicatePlan(
@@ -3014,6 +3182,93 @@ class QueryPlanner:
                             logical_operator="AND",
                         )
                     )
+
+        # H0. DOJ & Experience Ranking Guard (Deterministic HRMS Domain Rules)
+        has_doj_ranking = any(w in q_low for w in ("doj", "date of joining", "joining date", "joined earliest", "earliest joined", "joined the company earliest")) or (getattr(analysis.ranking, "target_metric", None) == "date_joining")
+        has_exp_ranking = any(w in q_low for w in ("most experienced", "most experininced", "highest experience", "most senior", "senior-most", "senior most", "least experienced", "lowest experience", "least senior")) or (getattr(analysis.ranking, "target_metric", None) == "experience")
+
+        if has_doj_ranking:
+            work_alias = next((a for a in needed_aliases if alias_to_table[a].table_name.lower() == "employee_employeeworkinformation"), None)
+            emp_alias = next((a for a in needed_aliases if alias_to_table[a].table_name.lower() == "employee_employee"), primary_alias)
+            if work_alias:
+                # Ensure date_joining is projected
+                if not any(p.table_alias == work_alias and p.column_name == "date_joining" for p in projections):
+                    projections.append(
+                        ColumnProjectionPlan(
+                            table_alias=work_alias,
+                            column_name="date_joining",
+                            aggregation=AggregateFunction.NONE,
+                        )
+                    )
+                # Ensure employee human identifiers are projected
+                if not any(p.table_alias == emp_alias and p.column_name == "employee_first_name" for p in projections):
+                    projections.insert(0, ColumnProjectionPlan(table_alias=emp_alias, column_name="employee_first_name", aggregation=AggregateFunction.NONE))
+                if not any(p.table_alias == emp_alias and p.column_name == "employee_last_name" for p in projections):
+                    projections.insert(1, ColumnProjectionPlan(table_alias=emp_alias, column_name="employee_last_name", aggregation=AggregateFunction.NONE))
+
+                # Strip any inadvertent aggregations and clear group_by
+                projections = [p for p in projections if p.aggregation in (AggregateFunction.NONE, None)]
+                group_by = []
+
+                # If asking for least experience / newest joiners, sort DESC (later date = less experience)
+                is_least = any(w in q_low for w in ("least", "lowest", "newest", "latest", "recent", "junior"))
+                doj_dir = OrderDirection.DESC if is_least else OrderDirection.ASC
+
+                order_by = [
+                    OrderByPlan(expression=f"{work_alias}.date_joining", direction=doj_dir, nulls_last=True),
+                    OrderByPlan(expression=f"{emp_alias}.id", direction=OrderDirection.ASC, nulls_last=False),
+                ]
+                if limit is None or limit > 1:
+                    if not any(w in q_low for w in ("top", "first", "limit", "all")):
+                        limit = 1
+
+        elif has_exp_ranking:
+            emp_alias = next((a for a in needed_aliases if alias_to_table[a].table_name.lower() == "employee_employee"), None)
+            work_alias = next((a for a in needed_aliases if alias_to_table[a].table_name.lower() == "employee_employeeworkinformation"), None)
+
+            # Use employee_employee (ee) for experience if available, fallback to work information (ewi)
+            exp_tbl_alias = emp_alias if emp_alias else work_alias
+            tie_alias = emp_alias if emp_alias else (work_alias if work_alias else primary_alias)
+
+            if exp_tbl_alias:
+                if not any(p.table_alias == exp_tbl_alias and p.column_name == "experience" for p in projections):
+                    projections.append(
+                        ColumnProjectionPlan(
+                            table_alias=exp_tbl_alias,
+                            column_name="experience",
+                            aggregation=AggregateFunction.NONE,
+                        )
+                    )
+                name_alias = emp_alias or primary_alias
+                if not any(p.table_alias == name_alias and p.column_name == "employee_first_name" for p in projections):
+                    projections.insert(0, ColumnProjectionPlan(table_alias=name_alias, column_name="employee_first_name", aggregation=AggregateFunction.NONE))
+                if not any(p.table_alias == name_alias and p.column_name == "employee_last_name" for p in projections):
+                    projections.insert(1, ColumnProjectionPlan(table_alias=name_alias, column_name="employee_last_name", aggregation=AggregateFunction.NONE))
+
+                projections = [p for p in projections if p.aggregation in (AggregateFunction.NONE, None)]
+                group_by = []
+
+                is_least = any(w in q_low for w in ("least", "lowest", "junior"))
+                exp_dir = OrderDirection.ASC if is_least else OrderDirection.DESC
+
+                order_by = [
+                    OrderByPlan(expression=f"{exp_tbl_alias}.experience", direction=exp_dir, nulls_last=True),
+                    OrderByPlan(expression=f"{tie_alias}.id", direction=OrderDirection.ASC, nulls_last=False),
+                ]
+                if limit is None or limit > 1:
+                    if not any(w in q_low for w in ("top", "first", "limit", "all")):
+                        limit = 1
+
+        # Guard against grammatical stopwords / domain terms erroneously injected as employee names
+        STOPWORD_NAMES = {
+            "based", "doj", "experience", "senior", "criteria", "according",
+            "their", "theirs", "dentify", "identify", "his", "her", "its", "our",
+            "employee", "employees", "staff", "person", "joining", "date",
+        }
+        predicates = [
+            p for p in predicates
+            if not (p.column_name == "employee_first_name" and str(p.value).lower().strip("%'") in STOPWORD_NAMES)
+        ]
 
         # H. Overtime Aggregation & Ranking
         if "overtime" in q_low:
@@ -3215,7 +3470,7 @@ class QueryPlanner:
             if dept_alias and lea_alias:
                 projections = [
                     ColumnProjectionPlan(table_alias=dept_alias, column_name="department", aggregation=AggregateFunction.NONE),
-                    ColumnProjectionPlan(table_alias=lea_alias, column_name="SUM(CAST(NULLIF(requested_days, '') AS NUMERIC))", output_alias="total_absent_days", aggregation=AggregateFunction.NONE),
+                    ColumnProjectionPlan(table_alias=lea_alias, column_name="SUM(CAST(NULLIF(CAST(requested_days AS TEXT), '') AS NUMERIC))", output_alias="total_absent_days", aggregation=AggregateFunction.NONE),
                 ]
                 order_by = [OrderByPlan(expression="total_absent_days", direction=OrderDirection.DESC)]
                 limit = 1
@@ -3302,7 +3557,7 @@ class QueryPlanner:
                     projections = [
                         ColumnProjectionPlan(
                             table_alias=lea_alias,
-                            column_name="SUM(CAST(NULLIF(requested_days, '') AS NUMERIC))",
+                            column_name="SUM(CAST(NULLIF(CAST(requested_days AS TEXT), '') AS NUMERIC))",
                             output_alias="absent_days",
                             aggregation=AggregateFunction.NONE,
                         )

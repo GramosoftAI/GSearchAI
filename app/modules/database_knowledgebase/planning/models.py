@@ -93,6 +93,7 @@ class OrderByPlan(BaseModel):
 
     expression: str = Field(..., min_length=1, description="Column or alias or aggregate expression")
     direction: OrderDirection = Field(default=OrderDirection.ASC, description="ASC or DESC")
+    nulls_last: Optional[bool] = Field(default=None, description="Explicit NULLS LAST (True) or standard ordering")
 
 
 class QueryPlanIR(BaseModel):
@@ -112,6 +113,7 @@ class QueryPlanIR(BaseModel):
     joins: List[JoinPlan] = Field(default_factory=list, description="Approved relational joins")
     predicates: List[PredicatePlan] = Field(default_factory=list, description="Filtering conditions")
     group_by: List[str] = Field(default_factory=list, description="GROUP BY column aliases or expressions")
+    having: Optional[str] = Field(default=None, description="Optional HAVING filtering expression")
     order_by: List[OrderByPlan] = Field(default_factory=list, description="ORDER BY sorting items")
     limit: Optional[int] = Field(default=None, ge=1, le=1000, description="Safety row limit")
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Planner confidence score")

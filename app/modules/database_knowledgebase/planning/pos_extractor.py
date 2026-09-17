@@ -31,10 +31,12 @@ class POSCandidateExtractor:
         # SQL / Query conversational commands
         "select", "show", "list", "get", "find", "fetch", "display", "tell", "give",
         "which", "what", "who", "whom", "whose", "where", "when", "why", "how",
-        # Determiners, quantifiers, and articles
+        # Determiners, quantifiers, articles, and pronouns
         "the", "a", "an", "all", "any", "some", "every", "each", "both", "either",
         "neither", "this", "that", "these", "those", "my", "your", "his", "her",
-        "its", "our", "their", "me", "us", "them", "him",
+        "its", "our", "their", "me", "us", "them", "him", "he", "she", "they",
+        "it", "i", "we", "you", "hers", "theirs", "ours", "yours", "myself",
+        "himself", "herself", "themselves",
         # Comparatives, relational operators, and prepositions
         "more", "less", "than", "greater", "lesser", "higher", "lower", "above",
         "below", "under", "over", "equal", "between", "after", "before", "of",
