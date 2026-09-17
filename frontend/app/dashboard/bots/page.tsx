@@ -20,9 +20,7 @@ import { SYSTEM_PROMPT } from "./text";
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
-const { Option } = Select;
 
-// ─── Agent Card Component ─────────────────────────────────────────────────────
 type AgentListResponse = {
   data?: {
     agents?: Agent[];
@@ -42,7 +40,7 @@ function AgentCard({ agent, onManage, onSettings, onClick }: {
       className="group relative overflow-hidden bg-[var(--app-surface)] border border-[var(--app-border)] rounded-[32px] transition-all duration-500 hover:shadow-[0_20px_50px_rgba(40,93,145,0.08)] hover:-translate-y-1 cursor-pointer"
       styles={{ body: { padding: 32 } }}
     >
-      {/* Visual Accent */}
+      
       <div className="absolute top-0 right-0 w-32 h-32 bg-[#0fb5a1]/5 rounded-bl-[100px] -mr-10 -mt-10 transition-all duration-500 group-hover:scale-150 group-hover:bg-[#0fb5a1]/10" />
 
       <Flex vertical gap={24}>
@@ -102,7 +100,7 @@ function AgentCard({ agent, onManage, onSettings, onClick }: {
   );
 }
 
-// ─── Empty State Component ────────────────────────────────────────────────────
+
 function EmptyState({ onDeploy }: { onDeploy: () => void }) {
   return (
     <Flex vertical align="center" justify="center" className="min-h-[60vh] py-20 animate-in fade-in duration-1000">
@@ -138,7 +136,6 @@ function EmptyState({ onDeploy }: { onDeploy: () => void }) {
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
 export default function BotsPage() {
   const router = useRouter();
   const { agents, fetchAgents, isLoading: loading } = useAgents();
@@ -167,7 +164,7 @@ export default function BotsPage() {
   const [form] = Form.useForm();
   const [manageForm] = Form.useForm();
 
-  // NEW: State for handling agent search
+  
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [checkingKb, setCheckingKb] = useState(false);
   const [noKbModalOpen, setNoKbModalOpen] = useState(false);
@@ -244,7 +241,7 @@ export default function BotsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getcreateAgent, deleteRes]);
 
-  // NEW: Filter agents dynamically based on search query
+  
   const filteredAgents = useMemo(() => {
     if (!agents) return [];
     return agents.filter((agent: any) =>
@@ -345,7 +342,7 @@ export default function BotsPage() {
 
   return (
     <div className="w-full p-4 md:p-10 relative">
-      {/* Creation Modal */}
+    
       <Modal
         title={
           <Title level={4} className="!m-0 !text-[var(--app-text)] !font-black tracking-tight">
@@ -415,7 +412,7 @@ export default function BotsPage() {
         </Form>
       </Modal>
 
-      {/* Details Modal */}
+      
       <Modal
         title={
           <Flex align="center" gap={12}>
@@ -467,13 +464,13 @@ export default function BotsPage() {
 
           <div className="p-4 bg-[var(--app-surface-muted)] rounded-2xl border border-[var(--app-border)]">
             <Flex vertical gap={16}>
-              {/* Header with Icon */}
+              
               <Flex align="center" gap={8} className="text-[#0fb5a1]">
                 <IdcardOutlined className="text-xs" />
                 <Text className="font-extrabold uppercase tracking-wider text-[9.5px] text-[var(--app-text-soft)]">Internal Identifiers</Text>
               </Flex>
               
-              {/* ID Section */}
+             
               <div className="flex flex-col gap-2 px-4 py-3.5 bg-[var(--app-surface)] rounded-xl border border-[var(--app-border)]/40 relative">
                 <Text className="text-[9px] font-black text-[var(--app-text-soft)] uppercase tracking-wider leading-none m-0">Agent ID</Text>
                 <Text 
@@ -484,7 +481,7 @@ export default function BotsPage() {
                 </Text>
               </div>
 
-              {/* Tenant ID Section */}
+              
               <div className="flex flex-col gap-2 px-4 py-3.5 bg-[var(--app-surface)] rounded-xl border border-[var(--app-border)]/40 relative">
                 <Text className="text-[9px] font-black text-[var(--app-text-soft)] uppercase tracking-wider leading-none m-0">Tenant ID</Text>
                 <Text 
@@ -499,7 +496,7 @@ export default function BotsPage() {
         </div>
       </Modal>
 
-      {/* No Knowledge Base Modal */}
+      
       <Modal
         title={
           <Flex align="center" gap={12}>
@@ -536,7 +533,7 @@ export default function BotsPage() {
         </div>
       </Modal>
 
-      {/* Manage/Edit Modal */}
+      
       <Modal
         title={
           <Flex align="center" gap={12}>
@@ -633,12 +630,12 @@ export default function BotsPage() {
         </Form>
       </Modal>
 
-      {/* Main Content Area */}
+     
       {agents.length > 0 ? (
         <Flex vertical gap={48}>
-          {/* Main Top Header Bar */}
+          
           <Row justify="space-between" align="bottom" gutter={[16, 24]}>
-            {/* Header Content */}
+            
             <Col xs={24} lg={10} xl={12}>
               <Title level={1} className="!m-0 !text-[var(--app-text)] !font-black !text-4xl md:!text-5xl tracking-tighter">
                 {userName ? `${userName}'s` : "Your"} AI Squad
@@ -648,10 +645,10 @@ export default function BotsPage() {
               </Text>
             </Col>
 
-            {/* Action Bar Corner (Search + Deploy) */}
+            
             <Col xs={24} lg={14} xl={12}>
               <div className="flex flex-col sm:flex-row items-center gap-3 justify-end w-full">
-                {/* Search Input Bar Column */}
+               
                 <div className="w-full sm:flex-1 min-w-[200px]">
                   <Input
                     placeholder="Search agents by name..."
@@ -662,7 +659,7 @@ export default function BotsPage() {
                     className="h-14 w-full !rounded-2xl !bg-[var(--app-surface)] !border-[var(--app-border)] font-bold text-[var(--app-text)] shadow-sm hover:!border-[#0fb5a1]/50 focus:!border-[#0fb5a1]"
                   />
                 </div>
-                {/* Deploy Button Column */}
+                
                 <div className="w-full sm:w-auto sm:shrink-0 min-w-[140px]">
                   <Button
                     type="primary"
@@ -678,9 +675,9 @@ export default function BotsPage() {
             </Col>
           </Row>
 
-          {/* Cards Grid Architecture */}
+          
           <Row gutter={[32, 32]}>
-            {/* MODIFIED: Renders dynamically filtered list instead of absolute base agents */}
+            
             {filteredAgents.map((agent, i) => {
               const fullAgent = agentresp?.find((x: any) => x.id === agent.id) || agent;
               const resolvedPersonality = getAgentPersonality(agent.name);
@@ -700,7 +697,7 @@ export default function BotsPage() {
               );
             })}
 
-            {/* New Agent Skeleton Card */}
+            
             <Col xs={24} sm={24} md={24} lg={12} xl={8}>
               <div
                 onClick={() => setIsModalOpen(true)}
@@ -718,7 +715,7 @@ export default function BotsPage() {
         <EmptyState onDeploy={() => setIsModalOpen(true)} />
       )}
 
-      {/* Loading Overlay */}
+      
       {(loading || deleting || updating || checkingKb) && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent backdrop-blur-md transition-all duration-500">
           <div className="relative flex flex-col items-center gap-4 animate-in zoom-in-95 duration-500">

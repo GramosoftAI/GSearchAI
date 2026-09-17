@@ -104,7 +104,7 @@ class DatabaseAnswerSynthesisService:
         # 2. Deterministic Fast-Path Decision Gate (Eligible -> Formatter -> Verifier -> Fast-Path Answer)
         # Skipped if an explicit custom generator was injected for specialized test or workflow evaluation
         if not self._has_custom_generator:
-            fast_path_answer = self._try_deterministic_fast_path(user_query, evidence)
+            fast_path_answer = self._try_deterministic_fast_path(user_query, evidence, use_llm=use_llm)
             if fast_path_answer is not None:
                 elapsed_ms = (time.perf_counter() - t0) * 1000.0
                 fast_path_answer.generation_metadata["total_synthesis_time_ms"] = round(elapsed_ms, 2)
@@ -212,6 +212,7 @@ class DatabaseAnswerSynthesisService:
         self,
         user_query: str,
         evidence: EvidenceModel,
+        use_llm: bool = True,
     ) -> Optional[GroundedDatabaseAnswer]:
         """
         Evaluate if query result satisfies strict criteria for deterministic formatting.
@@ -238,7 +239,7 @@ class DatabaseAnswerSynthesisService:
 
         q_lower = user_query.lower()
 
-        # Pattern 1: Empty Results (row_count == 0)
+        # Pattern 1: Empty Results (row_count == 0) - Always deterministic
         if evidence.row_count == 0:
             candidate_text = DeterministicFormatter.format_empty(user_query, evidence)
             answer_type = AnswerType.EMPTY
@@ -257,28 +258,31 @@ class DatabaseAnswerSynthesisService:
                 answer_type = AnswerType.SCALAR
             fast_path_type = "SINGLE_SCALAR"
 
-        # Pattern 3: Simple Ranking List (e.g. "Top 5 ...")
-        elif any(k in q_lower for k in ["top 5", "top 10", "ranking", "highest spending"]) and evidence.row_count <= 10:
-            name_col = next((c for c in evidence.columns if any(k in c.lower() for k in ["name", "customer", "product", "employee"])), None)
-            val_col = next((c for c in evidence.columns if any(k in c.lower() for k in ["amount", "spending", "total", "price", "revenue", "salary"])), None)
-            if name_col and val_col:
-                raw_text = DeterministicFormatter.format_ranking(user_query, evidence, label_col=name_col, value_col=val_col)
-                candidate_text = DeterministicFormatter.apply_truncation_disclaimer(raw_text, evidence.truncated)
-                answer_type = AnswerType.RANKING
-                fast_path_type = "RANKING_LIST"
+        # Pattern 3 & 4: ONLY if use_llm is False!
+        # When use_llm=True, single-row records (multi-column) and multi-row records
+        # MUST be synthesized by the LLM into a direct, conversational natural answer to the specific user question,
+        # avoiding raw column dumps (e.g. employee profile, badge id, gender).
+        elif not use_llm:
+            if any(k in q_lower for k in ["top 5", "top 10", "ranking", "highest spending"]) and evidence.row_count <= 10:
+                name_col = next((c for c in evidence.columns if any(k in c.lower() for k in ["name", "customer", "product", "employee"])), None)
+                val_col = next((c for c in evidence.columns if any(k in c.lower() for k in ["amount", "spending", "total", "price", "revenue", "salary"])), None)
+                if name_col and val_col:
+                    raw_text = DeterministicFormatter.format_ranking(user_query, evidence, label_col=name_col, value_col=val_col)
+                    candidate_text = DeterministicFormatter.apply_truncation_disclaimer(raw_text, evidence.truncated)
+                    answer_type = AnswerType.RANKING
+                    fast_path_type = "RANKING_LIST"
 
-        # Pattern 4: Tabular / Entity Listing (1 <= row_count <= max_fast_path_rows)
-        elif 1 <= evidence.row_count <= self.max_fast_path_rows:
-            if evidence.row_count == 1 and len(evidence.columns) > 1:
-                raw_text = DeterministicFormatter.format_single_row(user_query, evidence)
-                candidate_text = DeterministicFormatter.apply_truncation_disclaimer(raw_text, evidence.truncated)
-                answer_type = AnswerType.SINGLE_ROW
-                fast_path_type = "SINGLE_ENTITY"
-            else:
-                raw_text = DeterministicFormatter.format_table(user_query, evidence, max_display_rows=50)
-                candidate_text = DeterministicFormatter.apply_truncation_disclaimer(raw_text, evidence.truncated)
-                answer_type = AnswerType.MULTI_ROW
-                fast_path_type = "TABULAR_RESULT"
+            elif 1 <= evidence.row_count <= self.max_fast_path_rows:
+                if evidence.row_count == 1 and len(evidence.columns) > 1:
+                    raw_text = DeterministicFormatter.format_single_row(user_query, evidence)
+                    candidate_text = DeterministicFormatter.apply_truncation_disclaimer(raw_text, evidence.truncated)
+                    answer_type = AnswerType.SINGLE_ROW
+                    fast_path_type = "SINGLE_ENTITY"
+                else:
+                    raw_text = DeterministicFormatter.format_table(user_query, evidence, max_display_rows=50)
+                    candidate_text = DeterministicFormatter.apply_truncation_disclaimer(raw_text, evidence.truncated)
+                    answer_type = AnswerType.MULTI_ROW
+                    fast_path_type = "TABULAR_RESULT"
 
         if candidate_text is None:
             return None

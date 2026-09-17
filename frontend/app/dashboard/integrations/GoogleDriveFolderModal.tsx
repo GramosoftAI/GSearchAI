@@ -12,7 +12,6 @@ import {
   HomeOutlined,
   LoadingOutlined,
 } from "@ant-design/icons";
-import {useSession } from "next-auth/react";
 
 interface Props {
   open: boolean;
@@ -397,7 +396,6 @@ export default function GoogleDriveFolderModal({
           onClick={() => toggleItem(item)}
           onDoubleClick={() => item.isFolder && openFolder(item)}
         >
-          {/* Checkbox */}
           <div
             className={`gd-checkbox ${selected ? "gd-checkbox--checked" : ""}`}
             onClick={(e) => {
@@ -408,7 +406,6 @@ export default function GoogleDriveFolderModal({
             {selected && <CheckOutlined style={{ fontSize: 11 }} />}
           </div>
 
-          {/* Expand toggle for folders */}
           {item.isFolder && (
             <div
               className="gd-expand"
@@ -431,7 +428,6 @@ export default function GoogleDriveFolderModal({
             </div>
           )}
 
-          {/* Icon */}
           <div className="gd-icon">
             {item.isFolder ? (
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -449,10 +445,8 @@ export default function GoogleDriveFolderModal({
             )}
           </div>
 
-          {/* Name */}
           <span className="gd-name">{item.name}</span>
 
-          {/* Open folder hint */}
           {item.isFolder && (
             <span className="gd-hint" onDoubleClick={() => openFolder(item)}>
               Double-click to open
@@ -460,7 +454,6 @@ export default function GoogleDriveFolderModal({
           )}
         </div>
 
-        {/* Inline children */}
         {isExpanded &&
           children.map((child) => renderItem(child, depth + 1))}
       </div>
@@ -745,10 +738,9 @@ export default function GoogleDriveFolderModal({
         title={null}
         closable
       >
-        {/* Header */}
+        
         <div className="gd-header">
           <div className="gd-drive-logo">
-            {/* Google Drive logo colors */}
             <svg width="28" height="24" viewBox="0 0 87.3 78" fill="none">
               <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3L27.5 53H0c0 1.55.4 3.1 1.2 4.5z" fill="#0066DA"/>
               <path d="M43.65 25L29.9 1.4c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0-1.2 4.5h27.5z" fill="#00AC47"/>
@@ -761,7 +753,6 @@ export default function GoogleDriveFolderModal({
           </div>
         </div>
 
-        {/* Search */}
         <div className="gd-search-bar">
           <Input
             value={search}
@@ -772,7 +763,6 @@ export default function GoogleDriveFolderModal({
           />
         </div>
 
-        {/* Breadcrumb */}
         <div className="gd-breadcrumb">
           <span className="gd-crumb" onClick={navigateToRoot}>
             <HomeOutlined />
@@ -792,7 +782,6 @@ export default function GoogleDriveFolderModal({
           ))}
         </div>
 
-        {/* Column header */}
         <div className="gd-col-header">
           <div
             className={`gd-checkbox ${isAllSelected ? "gd-checkbox--checked" : ""}`}
@@ -807,7 +796,6 @@ export default function GoogleDriveFolderModal({
           <span style={{ paddingRight: 4 }}>Action</span>
         </div>
 
-        {/* File list */}
         <div className="gd-list">
           {loading ? (
             <div className="gd-empty">
@@ -831,7 +819,6 @@ export default function GoogleDriveFolderModal({
           )}
         </div>
 
-        {/* Footer */}
         <div className="gd-footer">
           <div className="gd-selection-info">
             {totalSelected > 0 ? (

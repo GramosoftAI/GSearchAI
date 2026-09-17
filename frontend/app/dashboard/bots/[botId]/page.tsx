@@ -24,7 +24,7 @@ export default function AgentDetailPage() {
     return (
         <Flex vertical gap={24} style={{ maxWidth: '75%', marginBottom: 40 }}>
 
-            {/* Header */}
+           
             <Flex gap={8} align="center">
                 <Button
                     type="text"
@@ -48,7 +48,7 @@ export default function AgentDetailPage() {
                 </Flex>
             ) : (
                 <Flex vertical gap={20}>
-                    {/* Icon + Status */}
+                    
                     <Flex align="center" gap={16}>
                         <Flex
                             align="center"
@@ -73,13 +73,13 @@ export default function AgentDetailPage() {
                         </div>
                     </Flex>
 
-                    {/* Description */}
+                   
                     <div>
                         <Text strong style={{ color: '#fff', display: 'block', marginBottom: 4 }}>Description</Text>
                         <Text style={{ color: '#9ca3af' }}>{agent.description ?? "No description"}</Text>
                     </div>
 
-                    {/* System Prompt */}
+                    
                     <div>
                         <Text strong style={{ color: '#fff', display: 'block', marginBottom: 4 }}>System Prompt</Text>
                         <div style={{
@@ -95,7 +95,7 @@ export default function AgentDetailPage() {
                         </div>
                     </div>
 
-                    {/* Personality */}
+                    
                     <div>
                         <Text strong style={{ color: '#fff', display: 'block', marginBottom: 8 }}>Personality</Text>
                         <span style={{
@@ -110,7 +110,7 @@ export default function AgentDetailPage() {
                         </span>
                     </div>
 
-                    {/* Capabilities */}
+                    
                     <div>
                         <Text strong style={{ color: '#fff', display: 'block', marginBottom: 8 }}>Capabilities</Text>
                         <Flex vertical gap={8}>

@@ -16,21 +16,18 @@ import { User, UpdateUserPayload } from "@/app/features/users/types";
 const { Title, Text } = Typography;
 
 export default function AdminUsersPage() {
-  // Pagination & Filtering state
+  
   const [skip, setSkip] = useState(0);
   const [limit, setLimit] = useState(10);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Edit modal state
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
 
-  // API Hooks
   const [getUsers, usersData, loadingUsers] = useGetUsersApi();
   const [updateUser, , updatingUser] = useUpdateUserApi();
   const [deleteUser, , deletingUser] = useDeleteUserApi();
 
-  // Fetch users from API
   const fetchUsers = () => {
     getUsers({
       params: {
@@ -40,13 +37,11 @@ export default function AdminUsersPage() {
     });
   };
 
-  // Trigger fetch when pagination parameters change
   useEffect(() => {
     fetchUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [skip, limit]);
 
-  // Derived user lists and total count
   const rawUsersList = useMemo(() => {
     if (Array.isArray(usersData)) {
       return usersData;
@@ -72,7 +67,6 @@ export default function AdminUsersPage() {
     return rawUsersList.length;
   }, [usersData, rawUsersList]);
 
-  // Local filtering based on search query
   const filteredUsers = useMemo(() => {
     if (!searchQuery) return rawUsersList;
     const query = searchQuery.toLowerCase();
@@ -86,7 +80,6 @@ export default function AdminUsersPage() {
     });
   }, [rawUsersList, searchQuery]);
 
-  // Edit Actions
   const handleEditClick = (user: User) => {
     setSelectedUser(user);
     setEditModalOpen(true);
@@ -101,11 +94,10 @@ export default function AdminUsersPage() {
     if (response) {
       setEditModalOpen(false);
       setSelectedUser(null);
-      fetchUsers(); // Refresh the list
+      fetchUsers();
     }
   };
 
-  // Delete Actions
   const handleDeleteClick = (user: User) => {
     Modal.confirm({
       title: "Delete User Account?",
@@ -124,13 +116,12 @@ export default function AdminUsersPage() {
           path: `/${user.id}`,
         });
         if (response) {
-          fetchUsers(); // Refresh the list
+          fetchUsers();
         }
       },
     });
   };
 
-  // Pagination change handler
   const handlePaginationChange = (page: number, pageSize: number) => {
     setLimit(pageSize);
     setSkip((page - 1) * pageSize);
@@ -139,7 +130,6 @@ export default function AdminUsersPage() {
   return (
     <div className="w-full max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8 pb-24 relative min-h-screen">
       <Flex vertical gap={40}>
-        {/* Top Header Block */}
         <Row justify="space-between" align="middle" gutter={[16, 24]}>
           <Col xs={24} md={18}>
             <Flex align="center" gap={12}>
@@ -180,7 +170,6 @@ export default function AdminUsersPage() {
           </Col>
         </Row>
 
-        {/* User Table Component */}
         <UserTable
           users={filteredUsers}
           loading={loadingUsers}
@@ -195,7 +184,6 @@ export default function AdminUsersPage() {
         />
       </Flex>
 
-      {/* User Edit Modal */}
       <UserEditModal
         open={editModalOpen}
         onCancel={() => {

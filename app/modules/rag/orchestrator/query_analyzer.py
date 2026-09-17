@@ -92,6 +92,10 @@ class QueryAnalyzer:
             if re.search(r'\b(serial\s*number|part\s*number|part\s*no|partno|article\s*no|articleno|article\s*number|sr\s*no|sr\.\s*no|sl\s*no|sl\.\s*no|item\s*code|hsn\s*code|model\s*number|product\s*code|product\s*details|details\s+for|details\s+of)\b', q_strip, re.IGNORECASE):
                 is_tabular_override = True
 
+        # Prevent forced tabular routing if the user explicitly mentions document/file/pdf
+        if re.search(r'\b(in the document|in this document|in the pdf|in this pdf|in the file|in this file|this document|the document|the file|this file)\b', q_strip, re.IGNORECASE):
+            is_tabular_override = False
+
         kb_context_section = f"\n[ACTIVE KNOWLEDGE BASES CONTEXT & SCHEMA VOCABULARY]\nThe user is searching across these knowledge bases. Use the provided column names and sample categorical values to resolve ambiguous terms and identify structured tabular queries:\n{kb_context}\n" if kb_context else ""
         
         chat_history_section = ""

@@ -65,7 +65,7 @@
     const buttonAlign = config.button_align || script.getAttribute("data-button-align") || "right";
     const showButtonText = (config.show_button_text !== undefined && config.show_button_text !== null) ? config.show_button_text : (script.getAttribute("data-show-button-text") === "true");
     const buttonText = config.button_text || script.getAttribute("data-button-text") || "";
-    const initialMessage = config.initial_message || script.getAttribute("data-initial-message") || "";
+    const initialMessage = config.initial_message || script.getAttribute("data-initial-message") || "Hi! I'm your AI Support Agent. How can I help you today?";
     const displaySources = (config.display_sources !== undefined && config.display_sources !== null) ? config.display_sources : (script.getAttribute("data-display-sources") || "true");
     const allowDownloads = (config.allow_downloads !== undefined && config.allow_downloads !== null) ? config.allow_downloads : (script.getAttribute("data-allow-downloads") || "false");
     const displayCopy = (config.display_copy !== undefined && config.display_copy !== null) ? config.display_copy : (script.getAttribute("data-display-copy") || "true");

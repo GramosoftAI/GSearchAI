@@ -712,7 +712,10 @@ function WidgetContent() {
   const agentLabel = agentLabelParam !== null ? agentLabelParam : "Agent";
   const botAvatar = searchParams.get("botAvatar") || "";
   const buttonIcon = searchParams.get("buttonIcon") || "";
-  const initialMessageParam = searchParams.get("initialMessage") || "";
+  const initialMessageParam = searchParams.get("initialMessage");
+  const initialMessage = (initialMessageParam !== null && initialMessageParam !== undefined && initialMessageParam.trim() !== "")
+    ? initialMessageParam
+    : "Hi! I'm your AI Support Agent. How can I help you today?";
   const displaySources = searchParams.get("displaySources") !== "false";
   const displayCopy = searchParams.get("displayCopy") !== "false";
   const displayFeedback = searchParams.get("displayFeedback") !== "false";
@@ -789,10 +792,11 @@ function WidgetContent() {
   };
   const bufferRef = useRef("");
   const [messages, setMessages] = useState<Message[]>(() => {
-    if (initialMessageParam) {
-      return [{ role: "assistant", content: initialMessageParam, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }];
-    }
-    return [];
+    return [{
+      role: "assistant",
+      content: initialMessage,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+    }];
   });
   const [agentSources, setAgentSources] = useState<any[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
@@ -1399,6 +1403,14 @@ function WidgetContent() {
 
   const ws = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const isAtBottomRef = useRef(true);
+  const chatContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const handleScroll = useCallback(() => {
+    if (!chatContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
+    isAtBottomRef.current = scrollHeight - scrollTop - clientHeight <= 100;
+  }, []);
 
   const initialQuerySentRef = useRef(false);
   const pendingQueryRef = useRef("");
@@ -1533,6 +1545,7 @@ function WidgetContent() {
           bufferRef.current = "";
           queryStartTimeRef.current = Date.now();
           currentResponseTimeRef.current = null;
+          isAtBottomRef.current = true;
           setMessages((prev) => [...prev, { role: "user", content: query, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }]);
           setIsTyping(true);
           startTypingTimeout();
@@ -1599,7 +1612,9 @@ function WidgetContent() {
   }, []);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (isAtBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: isTyping ? "auto" : "smooth" });
+    }
   }, [messages, isTyping]);
 
   useEffect(() => {
@@ -1842,6 +1857,7 @@ function WidgetContent() {
     pendingQueryRef.current = "";
     queryStartTimeRef.current = null;
     currentResponseTimeRef.current = null;
+    isAtBottomRef.current = true;
     setMessages(
       initialMessageParam
         ? [{ role: "assistant", content: initialMessageParam, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }]
@@ -1858,6 +1874,7 @@ function WidgetContent() {
     bufferRef.current = ""; // reset old response
     queryStartTimeRef.current = Date.now();
     currentResponseTimeRef.current = null;
+    isAtBottomRef.current = true;
     setMessages((prev) => [...prev, { role: "user", content: message, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }]);
     setIsTyping(true);
     startTypingTimeout();
@@ -1898,6 +1915,7 @@ function WidgetContent() {
     bufferRef.current = "";
     queryStartTimeRef.current = Date.now();
     currentResponseTimeRef.current = null;
+    isAtBottomRef.current = true;
     setIsTyping(true);
     startTypingTimeout();
 
@@ -2316,6 +2334,8 @@ function WidgetContent() {
           </div>
         ) : (
           <div
+            ref={chatContainerRef}
+            onScroll={handleScroll}
             style={{
               flex: 1,
               overflowY: "auto",
@@ -2735,8 +2755,12 @@ function WidgetContent() {
                             }
                             if (userMessageIndex !== -1) {
                               const prevUserMsg = messages[userMessageIndex];
+                              lastUserQueryRef.current = prevUserMsg.content;
                               resetStreaming();
                               bufferRef.current = "";
+                              queryStartTimeRef.current = Date.now();
+                              currentResponseTimeRef.current = null;
+                              isAtBottomRef.current = true;
                               setIsTyping(true);
                               startTypingTimeout();
                               setMessages(messages.slice(0, userMessageIndex + 1));

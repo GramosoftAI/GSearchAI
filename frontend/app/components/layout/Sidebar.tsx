@@ -25,8 +25,8 @@ type MenuItem = {
 export const menuItems: MenuItem[] = [
   { label: "Bots", icon: FaRobot, path: "/dashboard/bots" },
   { label: "Knowledge Base", icon: FaDatabase, path: "/dashboard/knowledge-base" },
-  { label: "Database Knowledge", icon: BsDatabaseFillGear, path: "/dashboard/database-knowledge" },
   { label: "Knowledge Files", icon: FaFileAlt, path: "/dashboard/knowledge-base-files" },
+  { label: "Database Knowledge", icon: BsDatabaseFillGear, path: "/dashboard/database-knowledge" },
   { label: "Graph View", icon: GoGraph, path: "/dashboard/graph" },
   { label: "Conversations", icon: FiMessageSquare, path: "/dashboard/conversation" },
   { label: "Analytics", icon: FaChartBar, path: "/dashboard/analytics" },

@@ -1,24 +1,19 @@
 "use client";
 
-import { Flex, Typography, Button, Input, Tooltip, Avatar, Drawer, Grid, Upload, message, Spin, Table, Dropdown, Modal, Radio } from "antd";
+import { Flex, Typography, Button, Input, Tooltip, Avatar, Drawer, Grid, Upload, message, Spin,  Dropdown, Modal, Radio } from "antd";
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { LuBot, LuHistory, LuSearch, LuPlus, LuPaperclip, LuFileText, LuDownload, LuBookOpen, LuBell, LuSettings, LuSparkles, LuGlobe, LuArrowRight } from "react-icons/lu";
+import { LuBot, LuSearch, LuPaperclip, LuFileText, LuDownload, LuSparkles,  LuArrowRight } from "react-icons/lu";
 import { SiCrowdsource } from "react-icons/si";
-import { FaBrain } from "react-icons/fa";
+
 import {
   FiUser,
-  FiSend,
-  FiMoreVertical,
   FiTrash2,
   FiX,
   FiCopy,
   FiEdit2,
   FiThumbsUp,
   FiThumbsDown,
-  FiUpload,
   FiRotateCw,
-  FiMoreHorizontal,
-  FiMic,
   FiMenu,
 } from "react-icons/fi";
 import { MdBarChart as MdBarChartIcon } from "react-icons/md";
@@ -26,7 +21,6 @@ import { PiGraphLight } from "react-icons/pi";
 import { useSession } from "next-auth/react";
 import { getCookie } from "../../config/cookies";
 import { AUTH_COOKIE_KEY, API_BASE_URL } from "../../config/config";
-import AgentList from "../../components/ui/AgentList";
 import OnboardingTour from "../../components/ui/OnboardingTour";
 import type { TourStep } from "../../components/ui/OnboardingTour";
 import useAxios from "../../hooks/useAxios";
@@ -38,7 +32,6 @@ import { marked } from "marked";
 
 const { Text, Title } = Typography;
 
-// ─── Types ───────────────────────────────────────────────────────────────────
 type SourceMetadata = {
   id: string;
   chunk_id?: string;
@@ -90,7 +83,7 @@ type ChatSession = {
 
 type Agents = { id: string; name: string } | null;
 
-// ─── API Helpers ──────────────────────────────────────────────────────────────
+
 
 function authHeaders() {
   return {
@@ -114,8 +107,6 @@ async function fetchSessions(agent: Agents): Promise<ChatSession[]> {
 }
 
 
-// Fetch full session detail (with per-message message_id) from backend
-// Endpoint: GET /chats/{agentId}/sessions/{sessionId}
 async function fetchSessionMessages(agentId: string, sessionId: string): Promise<any[]> {
   try {
     const res = await fetch(`${API_BASE_URL}/chats/${agentId}/sessions/${sessionId}`, {
@@ -189,10 +180,9 @@ function parsePythonDict(str: string): any {
 
     const char = str[i];
 
-    // Parse String
     if (char === "'" || char === '"') {
       const quoteChar = char;
-      i++; // skip quote
+      i++; 
       let val = "";
       while (i < len) {
         if (str[i] === "\\") {
@@ -208,7 +198,7 @@ function parsePythonDict(str: string): any {
             i++;
           }
         } else if (str[i] === quoteChar) {
-          i++; // skip close quote
+          i++; 
           return val;
         } else {
           val += str[i];
@@ -218,9 +208,8 @@ function parsePythonDict(str: string): any {
       return val;
     }
 
-    // Parse Object / Dict
     if (char === "{") {
-      i++; // skip '{'
+      i++;
       const obj: any = {};
       while (i < len) {
         skipWhitespace();
@@ -233,12 +222,12 @@ function parsePythonDict(str: string): any {
         if (str[i] !== ":") {
           return obj;
         }
-        i++; // skip ':'
+        i++;
         const val = parseValue();
         obj[key] = val;
         skipWhitespace();
         if (str[i] === ",") {
-          i++; // skip ','
+          i++; 
         }
       }
       return obj;
@@ -246,7 +235,7 @@ function parsePythonDict(str: string): any {
 
     // Parse List
     if (char === "[") {
-      i++; // skip '['
+      i++; 
       const arr: any[] = [];
       while (i < len) {
         skipWhitespace();
@@ -258,7 +247,7 @@ function parsePythonDict(str: string): any {
         arr.push(val);
         skipWhitespace();
         if (str[i] === ",") {
-          i++; // skip ','
+          i++; 
         }
       }
       return arr;
@@ -475,8 +464,7 @@ function useProgressLabel(isLoading: boolean) {
   return label;
 }
 
-// Classify a source by its extension / URL pattern
-// If the source object has a kb_id it's always a downloadable file (clickable)
+
 function getSourceType(source: string, kb_id?: string): 'url' | 'pdf' | 'excel' | 'csv' | 'image' | 'text' {
   const s = source.toLowerCase();
   if (s.startsWith('http://') || s.startsWith('https://') || s.includes('www.')) return 'url';
@@ -484,12 +472,11 @@ function getSourceType(source: string, kb_id?: string): 'url' | 'pdf' | 'excel' 
   if (s.endsWith('.xls') || s.endsWith('.xlsx')) return 'excel';
   if (s.endsWith('.csv')) return 'csv';
   if (s.endsWith('.png') || s.endsWith('.jpg') || s.endsWith('.jpeg') || s.endsWith('.gif') || s.endsWith('.webp')) return 'image';
-  // If kb_id is present, this is a real file in the KB — default to pdf behavior (clickable)
+  
   if (kb_id) return 'pdf';
   return 'text';
 }
 
-// Extract source references from answer text to filter backend sources
 function extractCitedFilenames(text: string): string[] {
   const regex = /(?:\[Source:\s*([^\]]+)\]|\(Source:\s*([^)]+)\))/gi;
   const filenames = new Set<string>();
@@ -582,7 +569,7 @@ const GSearchLogoAvatar = ({ size = 32 }: { size?: number }) => {
   );
 };
 
-// Helper functions for parsing and rendering messages with custom styles for bold headings and clickable links
+
 const renderBoldText = (text: string, key: any, isUser: boolean) => {
   if (!text) return null;
   const boldRegex = /(\*\*[^*]+(?:\*\*|\*)|\*[^*]+(?:\*\*|\*))/g;
@@ -676,7 +663,6 @@ const parseBlocks = (content: string): Block[] => {
     const line = lines[i];
     const trimmed = line.trim();
 
-    // 1. Check for Code Block start
     if (trimmed.startsWith('```')) {
       if (currentLines.length > 0) {
         blocks.push({ type: 'text', lines: [...currentLines] });
@@ -685,7 +671,7 @@ const parseBlocks = (content: string): Block[] => {
 
       const lang = trimmed.slice(3).trim();
       const codeLines: string[] = [];
-      i++; // move past the opening ```
+      i++;
 
       while (i < lines.length && !lines[i].trim().startsWith('```')) {
         codeLines.push(lines[i]);
@@ -700,11 +686,11 @@ const parseBlocks = (content: string): Block[] => {
         }
       });
 
-      i++; // move past the closing ```
+      i++; 
       continue;
     }
 
-    // 2. Check for Table start
+    
     if ((trimmed.startsWith('|') || trimmed.includes('|')) && i + 1 < lines.length) {
       const nextLine = lines[i + 1].trim();
       const isDelimiter = nextLine.includes('|') && nextLine.includes('-') && /^\|?(?:\s*:?-+:?\s*\|?)+\s*$/.test(nextLine);
@@ -727,7 +713,7 @@ const parseBlocks = (content: string): Block[] => {
         });
 
         const rows: string[][] = [];
-        i += 2; // skip header and delimiter
+        i += 2; 
 
         while (i < lines.length) {
           const rowLine = lines[i];
@@ -746,7 +732,7 @@ const parseBlocks = (content: string): Block[] => {
               continue;
             }
           }
-          break; // Non-table line ends the table block
+          break; 
         }
 
         blocks.push({
@@ -913,7 +899,7 @@ export default function ChatPlaygroundPage() {
   const [messages, setMessages] = useState<any>([]);
   const [showSources, setShowSources] = useState(true);
 
-  // Selector states
+  
   const botsCache = useStore((state) => state.botsCache);
   const [activeMode, setActiveMode] = useState<'search' | 'agent'>('agent');
   const [selectedModel, setSelectedModel] = useState<'Flash' | 'Pro' | 'Ultra'>('Flash');
@@ -921,7 +907,7 @@ export default function ChatPlaygroundPage() {
   const searchRef = useRef<HTMLInputElement>(null);
   const [agentSearch, setAgentSearch] = useState<string>("");
 
-  // Feedback states
+  
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [feedbackMessageId, setFeedbackMessageId] = useState<string | null>(null);
   const [selectedReason, setSelectedReason] = useState<string>("Incorrect Answer");
@@ -961,7 +947,6 @@ export default function ChatPlaygroundPage() {
   const [input, setInput] = useState("");
   const [streamingText, setStreamingText] = useState("");
 
-  // ─── Onboarding Tour States ────────────────────────────────────────────────
   const [tourActive, setTourActive] = useState(false);
   const [tourStep, setTourStep] = useState(0);
 
@@ -1001,11 +986,9 @@ export default function ChatPlaygroundPage() {
   }, []);
 
   useEffect(() => {
-    // If the tour is active, we are on Step 1, and agent gets selected, auto-advance to Step 2
     if (tourActive && tourStep === 0 && agent?.id) {
       setTourStep(1);
     }
-    // If the tour is active and we are on Step 2, ensure sidebar is open to show the connection indicator
     if (tourActive && tourStep === 1) {
       setDesktopSidebarOpen(true);
       if (!screen.md) {
@@ -1017,6 +1000,15 @@ export default function ChatPlaygroundPage() {
   const [wsStatus, setWsStatus] = useState<"connecting" | "open" | "closed" | "error">("closed");
   const [getAgents] = useAxios<AgentListResponse>({ endpoint: "GETAGENTLIST", hideErrorMsg: true });
   const bottomRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement | null>(null);
+  const isAtBottomRef = useRef(true);
+
+  const handleScroll = () => {
+    if (!chatContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
+    isAtBottomRef.current = scrollHeight - scrollTop - clientHeight <= 120;
+  };
+
   const ws = useRef<WebSocket | null>(null);
   const streamingTextRef = useRef<string>("");
   const streamingMessageIdRef = useRef<string | null>(null);
@@ -1033,11 +1025,8 @@ export default function ChatPlaygroundPage() {
   const lastUserQueryRef = useRef<string>("");
   const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null);
   const [tempEditText, setTempEditText] = useState("");
-  // File Upload State Tracker
   const [attachedFile, setAttachedFile] = useState<UploadFile | null>(null);
 
-
-  // Left Drawer Sources States
   const [isSourcesDrawerOpen, setIsSourcesDrawerOpen] = useState(false);
   const [activeSources, setActiveSources] = useState<SourceMetadata[]>([]);
   const [agentSources, setAgentSources] = useState<any[]>([]);
@@ -1049,7 +1038,6 @@ export default function ChatPlaygroundPage() {
 
   const progressLabel = useProgressLabel(isTyping && !stripThinking(streamingText).trim());
 
-  // New states for parsed previews and Excel rendering
   const [sourcesDrawerPreviewTab, setSourcesDrawerPreviewTab] = useState<"parsed" | "original">("original");
   const [parsedTextContent, setParsedTextContent] = useState("");
   const [parsedTextLoading, setParsedTextLoading] = useState(false);
@@ -1096,15 +1084,12 @@ export default function ChatPlaygroundPage() {
     }));
   }
 
-  // ─── Persistence Logic ──────────────────────────────────────────────────────
   useEffect(() => {
     getAgents(undefined, async (payload) => {
       const agents = payload?.data?.agents ?? [];
       setBotsCache(agents);
       const list = mapAgentsToList(agents);
       setAgentList(list);
-
-      // Parse URL parameters on load
       if (typeof window !== "undefined") {
         const params = new URLSearchParams(window.location.search);
         const urlAgentId = params.get("agentId") || params.get("agent_id");
@@ -1115,7 +1100,6 @@ export default function ChatPlaygroundPage() {
           if (matchedAgent) {
             setAgent({ id: matchedAgent.id, name: matchedAgent.name });
 
-            // Fetch sessions for this agent
             const data = await fetchSessions(matchedAgent);
             setSessions(data);
 
@@ -1140,7 +1124,6 @@ export default function ChatPlaygroundPage() {
                 setMessages(deduplicateMessages(mappedMessages));
               }
             } else {
-              // Start a new session (show "New chat" by default on agent load)
               const newSessionId = `session_${Date.now()}`;
               const newSession: any = {
                 id: newSessionId,
@@ -1158,7 +1141,6 @@ export default function ChatPlaygroundPage() {
           }
         }
 
-        // Default path: if no agentId is specified in URL, start empty (as requested)
         setAgent(null);
         setSessions([]);
         setMessages([]);
@@ -1182,7 +1164,6 @@ export default function ChatPlaygroundPage() {
 
       if (shouldLoadLatestOnFetch) {
         setShouldLoadLatestOnFetch(false);
-        // Always start with a new empty session when selecting/switching agent
         startNewChat(agent, data);
       }
     })();
@@ -1192,7 +1173,6 @@ export default function ChatPlaygroundPage() {
     };
   }, [agent?.id, initialLoadDone, shouldLoadLatestOnFetch]);
 
-  // Fetch agent sources whenever the agent changes
   useEffect(() => {
     if (!agent?.id) {
       setAgentSources([]);
@@ -1204,7 +1184,6 @@ export default function ChatPlaygroundPage() {
     })();
   }, [agent?.id]);
 
-  // URL Search Parameters Syncer Effect
   useEffect(() => {
     if (!initialLoadDone) return;
 
@@ -1226,7 +1205,6 @@ export default function ChatPlaygroundPage() {
     }
   }, [agent?.id, currentSessionId, initialLoadDone]);
 
-  // ─── WebSocket Logic ────────────────────────────────────────────────────────
 
   const connectWs = useCallback(function connectSocket() {
     if (!agent?.id) return;
@@ -1244,7 +1222,6 @@ export default function ChatPlaygroundPage() {
 
     setWsStatus("connecting");
 
-    // Professionally construct the WS base URL to inherit the API path (e.g., /api/v1)
     let wsBaseUrl = API_BASE_URL.replace(/^http/, "ws").replace(/\/$/, "");
     if (process.env.NEXT_PUBLIC_WS_URL) {
       const cleanWsHost = process.env.NEXT_PUBLIC_WS_URL.replace(/\/$/, "");
@@ -1328,7 +1305,7 @@ export default function ChatPlaygroundPage() {
           streamingMessageIdRef.current = parsedId;
         }
 
-        // Accumulate sources from any WebSocket packet
+        
         let incomingSources: SourceMetadata[] = [];
         if (Array.isArray(data.sources)) {
           incomingSources = data.sources;
@@ -1363,14 +1340,12 @@ export default function ChatPlaygroundPage() {
           if (wsSourcesRef.current.length > 0) {
             const matchedSources = wsSourcesRef.current.filter((src: any) => matchesCitation(src, citedFilenames));
 
-            // If we found specific matches, use them. Else, fallback to all backend sources.
             if (matchedSources.length > 0) {
               finalSources = matchedSources;
             } else {
               finalSources = [...wsSourcesRef.current];
             }
           } else if (citedFilenames.length > 0) {
-            // Fallback: create mock sources from parsed names if backend didn't send metadata
             finalSources = citedFilenames.map(name => ({
               id: '',
               source: name,
@@ -1378,6 +1353,7 @@ export default function ChatPlaygroundPage() {
             } as SourceMetadata));
           }
 
+          const measuredResponseTime = lastResponseTimeSecRef.current || undefined;
           if (accumulated) {
             setMessages((prev: any) => [
               ...prev,
@@ -1390,7 +1366,7 @@ export default function ChatPlaygroundPage() {
                   hour: "2-digit",
                   minute: "2-digit",
                 }),
-                responseTime: lastResponseTimeSecRef.current || undefined
+                responseTime: measuredResponseTime
               },
             ]);
           }
@@ -1418,7 +1394,6 @@ export default function ChatPlaygroundPage() {
                 currentSessionIdRef.current = finalSessionId;
               }
 
-              // Robust retry logic to fetch correct message IDs from detail endpoint
               let rawMsgs: any[] = [];
               let attempts = 0;
               while (attempts < 5) {
@@ -1444,7 +1419,7 @@ export default function ChatPlaygroundPage() {
                       msg.responseTime ??
                       msg.latency ??
                       existingMsg?.responseTime ??
-                      ((isLastAssistant && lastResponseTimeSecRef.current !== null) ? lastResponseTimeSecRef.current : undefined);
+                      (isLastAssistant ? (measuredResponseTime ?? lastResponseTimeSecRef.current ?? undefined) : undefined);
 
                     return {
                       id: msgId,
@@ -1540,10 +1515,11 @@ export default function ChatPlaygroundPage() {
   }, [connectWs]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingText]);
+    if (isAtBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: isTyping ? "auto" : "smooth" });
+    }
+  }, [messages, streamingText, isTyping]);
 
-  // ─── Actions ───────────────────────────────────────────────────────────────
 
   const startNewChat = (selectedAgent: { id: string; name: string }, currentSessionsList?: ChatSession[]) => {
     if (currentSessionId && currentSessionId.startsWith("session_") && messages.length === 0 && agent?.id === selectedAgent.id) {
@@ -1554,6 +1530,7 @@ export default function ChatPlaygroundPage() {
       connectWs();
     }
     resetChatStates();
+    isAtBottomRef.current = true;
 
     const newSessionId = `session_${Date.now()}`;
     const newSession: any = {
@@ -1575,11 +1552,11 @@ export default function ChatPlaygroundPage() {
       connectWs();
     }
     resetChatStates();
+    isAtBottomRef.current = true;
 
     setCurrentSessionId(session.id);
     currentSessionIdRef.current = session.id;
 
-    // Fetch real message_id values from session detail endpoint
     const agentId = session.agent_id || session.agentId;
     let rawMessages: any[] = session.messages || [];
     if (agentId && !session.id.startsWith("session_")) {
@@ -1619,19 +1596,16 @@ export default function ChatPlaygroundPage() {
   const deleteSession = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
 
-    // Optimistically update local session list
     setSessions(prev => prev.filter(s => s.id !== id));
 
     if (currentSessionId === id) {
       setCurrentSessionId(null);
       currentSessionIdRef.current = null;
       setMessages([]);
-      // Keep the agent selected, DO NOT set it to null!
     }
 
     try {
       const token = getCookie(AUTH_COOKIE_KEY);
-      // Attempt standard session deletion endpoint
       const res = await fetch(`${API_BASE_URL}/chats/sessions/${id}`, {
         method: "DELETE",
         headers: {
@@ -1696,12 +1670,16 @@ export default function ChatPlaygroundPage() {
     const updatedMessages = messages.slice(0, userMessageIndex + 1);
     setMessages(updatedMessages);
 
+    let targetSessionId = currentSessionId;
+    activeQuerySessionIdRef.current = targetSessionId;
+    currentSessionIdRef.current = targetSessionId;
     queryStartTimeRef.current = Date.now();
     lastResponseTimeSecRef.current = null;
+    isAtBottomRef.current = true;
     ws.current?.send(JSON.stringify({
       query: userMsg.content,
       file: userMsg.file ? { name: userMsg.file.name, type: userMsg.file.type } : null,
-      session_id: currentSessionId && !currentSessionId.startsWith("session_") ? currentSessionId : null,
+      session_id: targetSessionId && !targetSessionId.startsWith("session_") ? targetSessionId : null,
       embed: false
     }));
 
@@ -1729,7 +1707,7 @@ export default function ChatPlaygroundPage() {
       });
   };
 
-  // Process files dynamically before upload triggers
+  
   const handleBeforeUpload = (file: UploadFile) => {
     const isValidSize = (file.size ?? 0) / 1024 / 1024 < 25; // 25MB limit
     if (!isValidSize) {
@@ -1737,7 +1715,7 @@ export default function ChatPlaygroundPage() {
       return Upload.LIST_IGNORE;
     }
 
-    // Formulate dynamic object properties for UI preview rendering
+    
     file.url = URL.createObjectURL(file as any);
     setAttachedFile(file);
     return false; // Stop auto post action upload handling
@@ -1792,7 +1770,7 @@ export default function ChatPlaygroundPage() {
       });
     }
 
-    // Build payload structure containing optional file metrics
+    
     let payloadFile: any = undefined;
     if (attachedFile) {
       payloadFile = {
@@ -1805,6 +1783,7 @@ export default function ChatPlaygroundPage() {
     queryStartTimeRef.current = Date.now();
     lastResponseTimeSecRef.current = null;
     lastUserQueryRef.current = trimmed;
+    isAtBottomRef.current = true;
     setMessages((prev: any) => [...prev, {
       role: "user",
       content: trimmed,
@@ -1812,7 +1791,7 @@ export default function ChatPlaygroundPage() {
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }]);
 
-    // Dispatch structural data to active micro-orchestration node
+   
     ws.current?.send(JSON.stringify({
       query: trimmed,
       file: payloadFile ? { name: payloadFile.name, type: payloadFile.type } : null,
@@ -1821,7 +1800,7 @@ export default function ChatPlaygroundPage() {
     }));
 
     setInput("");
-    setAttachedFile(null); // Clear dock frame tracking parameters
+    setAttachedFile(null); 
     streamingTextRef.current = "";
     streamingMessageIdRef.current = null;
     wsSourcesRef.current = [];
@@ -1856,6 +1835,7 @@ export default function ChatPlaygroundPage() {
 
     queryStartTimeRef.current = Date.now();
     lastResponseTimeSecRef.current = null;
+    isAtBottomRef.current = true;
     streamingTextRef.current = "";
     streamingMessageIdRef.current = null;
     wsSourcesRef.current = [];
@@ -1900,7 +1880,6 @@ export default function ChatPlaygroundPage() {
       }
     }
 
-    // 1. If name contains "(Selected Links)", open URL directly
     const rawName = matchedKb?.name || src.name || src.source || "";
     if (rawName.includes("(Selected Links)")) {
       const urlPart = rawName.split("(Selected Links)")[0].trim();
@@ -1912,7 +1891,6 @@ export default function ChatPlaygroundPage() {
 
     const stype = getSourceType(src.source, kbId);
 
-    // 2. If it is text source, do nothing
     if (stype === 'text') {
       return;
     }
@@ -1925,7 +1903,7 @@ export default function ChatPlaygroundPage() {
       return;
     }
 
-    // Open a blank tab synchronously to prevent popups from being blocked after async calls
+    
     const newWindow = window.open('', '_blank');
     if (!newWindow) {
       message.error('Popup blocked. Please allow popups for this site.');
@@ -1939,7 +1917,7 @@ export default function ChatPlaygroundPage() {
         const filename = getCleanFileName(src);
         const fullSourceStr = `${src.source || ''} ${src.name || ''} ${src.file_name || ''} ${src.title || ''} ${src.s3_path || ''} ${src.url || ''} ${filename}`.toLowerCase();
 
-        // 1. Fetch blob to determine content type and parse binary spreadsheets
+        
         const blobRes = await fetch(blobUrl);
         const blob = await blobRes.blob();
         const contentType = blob.type.toLowerCase();
@@ -1973,7 +1951,7 @@ export default function ChatPlaygroundPage() {
           iframe.style.border = 'none';
           newWindow.document.body.appendChild(iframe);
         } else if (isCSV || isExcel) {
-          // Parse spreadsheet array buffer using xlsx
+          
           try {
             const arrayBuffer = await blob.arrayBuffer();
             const XLSX = await import("xlsx");
@@ -2212,7 +2190,7 @@ export default function ChatPlaygroundPage() {
         message.error('Unable to open file preview');
       }
     } else {
-      // Text citation / other fallback
+     
       const filename = getFileName(src.source);
       const citationText = src.text || src.source || 'No citation text available.';
 
@@ -2264,16 +2242,17 @@ export default function ChatPlaygroundPage() {
   const handleSaveEdit = (index: number) => {
     if (!tempEditText.trim() || !agent?.id || wsStatus !== "open" || isTyping) return;
 
-    // 1. Logic Fix: Edited message-oda cut panni, pazhaya bot responses-ai remove panniduvom
+    
     const updatedMessages = messages.slice(0, index + 1);
 
-    // 2. Ippo edit panna message-ai mattrum update pannuvom
+    
     updatedMessages[index].content = tempEditText.trim();
     setMessages(updatedMessages);
 
-    // 3. Edit mode-ai close seiyavum
+   
     setEditingMessageIndex(null);
 
+    
     queryStartTimeRef.current = Date.now();
     lastResponseTimeSecRef.current = null;
     ws.current?.send(JSON.stringify({
@@ -2451,7 +2430,7 @@ export default function ChatPlaygroundPage() {
       nameForFallback.endsWith(".doc") ||
       nameForFallback.endsWith(".txt");
 
-    // Set active tab default based on parsed capability
+    
     const defaultTab = isParsedType ? "original" : "parsed";
     setSourcesDrawerPreviewTab(defaultTab);
     setParsedTextContent("");
@@ -2469,7 +2448,7 @@ export default function ChatPlaygroundPage() {
       }
       setSourcesDrawerPreviewUrl("");
 
-      // 1. If it is a parsed type, fetch clean text content
+     
       if (isParsedType) {
         try {
           setParsedTextLoading(true);
@@ -2483,14 +2462,14 @@ export default function ChatPlaygroundPage() {
         }
       }
 
-      // 2. Fetch binary preview file using Blob URL Strategy
+     
       const blobUrl = await getFilePreview(source.kb_id);
       setSourcesDrawerPreviewUrl(blobUrl);
 
       const name = getFileName(source.source).toLowerCase();
       const fullSourceStr = `${source.source || ''} ${source.name || ''} ${source.file_name || ''} ${source.title || ''} ${source.s3_path || ''} ${name}`.toLowerCase();
 
-      // Fetch blob to determine content type and parse binary spreadsheets
+      
       const blobRes = await fetch(blobUrl);
       const blob = await blobRes.blob();
       const contentType = blob.type.toLowerCase();
@@ -2513,7 +2492,7 @@ export default function ChatPlaygroundPage() {
         excelArrayBufferRef.current = arrayBuffer;
 
         const XLSX = await import("xlsx");
-        // 1. Read sheet names first (extremely fast!)
+       
         const workbook = XLSX.read(arrayBuffer, { type: "array", bookSheets: true });
         setExcelSheetNames(workbook.SheetNames);
 
@@ -2521,7 +2500,7 @@ export default function ChatPlaygroundPage() {
           const firstSheet = workbook.SheetNames[0];
           setActiveExcelSheet(firstSheet);
 
-          // 2. Parse only the active sheet on load (skips all other sheets)
+          
           const partialWorkbook = XLSX.read(arrayBuffer, {
             type: "array",
             sheets: [firstSheet],
@@ -2569,7 +2548,7 @@ export default function ChatPlaygroundPage() {
     }
   }, [parsedTextContent]);
 
-  // Search query filters the messages within the active conversation instead of sidebar sessions
+  
   const displayedMessages = React.useMemo(() => {
     if (!searchQuery) return messages;
     const query = searchQuery.toLowerCase();
@@ -2588,8 +2567,8 @@ export default function ChatPlaygroundPage() {
     });
 
     return (
-      <div className="w-full h-full flex flex-col bg-[var(--app-surface-muted)]/80 backdrop-blur-md overflow-hidden">
-        {/* Syncing Status Switch on the top-left of the sidebar */}
+      <div className="w-full h-full flex flex-col bg-[var(--app-surface-muted)] overflow-hidden">
+       
         <div id="tour-sidebar-connection-status" className="p-4 border-b border-[var(--app-border)]/40 flex items-center justify-between shrink-0 select-none bg-[var(--app-surface-muted)]">
           <Flex align="center" gap={6} className="min-w-0">
             <span className={`w-2 h-2 rounded-full shrink-0 ${wsStatus === "open" ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
@@ -2599,7 +2578,7 @@ export default function ChatPlaygroundPage() {
           </Flex>
         </div>
 
-        {/* New Chat Button */}
+        
         <div className="px-4 py-3 shrink-0">
           <button
             onClick={() => {
@@ -2617,7 +2596,7 @@ export default function ChatPlaygroundPage() {
           </button>
         </div>
 
-        {/* Chats History Section */}
+        
         <div className="flex-1 flex flex-col min-h-0 px-2">
           <div className="px-3 py-2 flex items-center justify-between">
             <span className="text-[10px] font-extrabold uppercase tracking-widest text-[var(--app-text-muted)] ">
@@ -2720,7 +2699,7 @@ export default function ChatPlaygroundPage() {
         .typing-dot:nth-child(2) { animation-delay: 0.2s; }
         .typing-dot:nth-child(3) { animation-delay: 0.4s; }
       `}</style>
-      {/* Desktop Left Sidebar */}
+      
       {screen.md && (
         <div
           className="h-full border-r border-[var(--app-border)]/40 flex flex-col bg-[var(--app-surface-muted)] shrink-0 transition-all duration-300 overflow-hidden"
@@ -2730,13 +2709,14 @@ export default function ChatPlaygroundPage() {
         </div>
       )}
 
-      {/* Mobile Left Sidebar Drawer */}
+     
       {!screen.md && (
         <Drawer
+          zIndex={10000}
           placement="left"
           onClose={() => setMobileSidebarOpen(false)}
           open={mobileSidebarOpen}
-          style={{ width: 260 }}
+          width={260}
           closeIcon={null}
           styles={{
             body: { padding: 0, background: 'var(--app-surface-muted)', height: '100%' }
@@ -2746,14 +2726,14 @@ export default function ChatPlaygroundPage() {
         </Drawer>
       )}
 
-      {/* Main Chat Container */}
+      
       <Flex vertical className="flex-1 h-full overflow-hidden relative bg-transparent">
 
-        {/* Top Header */}
+        
         <div className="w-full px-4 md:px-8 py-3 border-b border-[var(--app-border)]/40 backdrop-blur-md bg-[var(--app-surface)]/50 sticky top-0 z-40 transition-all shrink-0">
           <Flex justify="space-between" align="center" className="gap-2 w-full">
 
-            {/* Left side: Hamburger and Logo */}
+            
             <Flex align="center" gap={4} className="min-w-0">
               <Button
                 type="text"
@@ -2780,7 +2760,6 @@ export default function ChatPlaygroundPage() {
               </Flex>
             </Flex>
 
-            {/* Right side: Guide Button & Show Sources Switch */}
             <Flex align="center" gap={12} className="shrink-0 select-none">
               <Button
                 type="text"
@@ -2806,8 +2785,12 @@ export default function ChatPlaygroundPage() {
           </Flex>
         </div>
 
-        {/* Conversation Stream */}
-        <div className="flex-1 overflow-y-auto px-4 md:px-12 py-6 md:py-10 space-y-6 custom-scrollbar bg-dots-pattern">
+       
+        <div 
+          ref={chatContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto px-4 md:px-12 py-6 md:py-10 space-y-6 custom-scrollbar bg-dots-pattern"
+        >
           {messages.length === 0 && !isTyping && (
             <Flex vertical align="center" justify="center" className="h-full select-none my-auto space-y-4">
               <h1 className="m-0 text-[var(--app-text)] font-extrabold text-xl sm:text-2xl md:text-4xl tracking-tight text-center max-w-xl px-4 animate-in fade-in duration-500">
@@ -2864,7 +2847,7 @@ export default function ChatPlaygroundPage() {
                         : "bg-[var(--app-surface-muted)] text-[var(--app-text)] rounded-tl-none border-[var(--app-border)]/40 font-normal"
                         }`}
                     >
-                      {/* Dynamic File Rendering UI Framework */}
+                      
                       <div className={`absolute -bottom-10 left-0 right-0 pt-3 transition-all duration-200 flex gap-2 z-20 ${isUser ? "opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto" : "opacity-100 pointer-events-auto"}`}>
                         <Tooltip title="Copy message" placement="bottom">
                           <button
@@ -2887,20 +2870,18 @@ export default function ChatPlaygroundPage() {
                           </Tooltip>
                         ) : (
                           <>
-                            <Tooltip title={isTyping ? "Generation in progress" : "Helpful"} placement="bottom">
+                            <Tooltip title="Helpful" placement="bottom">
                               <button
-                                onClick={() => !isTyping && handleThumbsUp(msg.id)}
-                                disabled={isTyping}
-                                className={`p-2 transition-colors ${isTyping ? "text-gray-400 cursor-not-allowed opacity-40" : `cursor-pointer hover:opacity-80 ${msg.feedback === "thumbs_up" ? "text-emerald-500 font-bold" : "text-[var(--app-text)] font-bold"}`}`}
+                                onClick={() => handleThumbsUp(msg.id)}
+                                className={`p-2 transition-colors cursor-pointer hover:opacity-80 ${msg.feedback === "thumbs_up" ? "text-emerald-500 font-bold" : "text-[var(--app-text)] font-bold"}`}
                               >
                                 <FiThumbsUp size={16} strokeWidth={msg.feedback === "thumbs_up" ? 2.5 : 2} fill="none" />
                               </button>
                             </Tooltip>
-                            <Tooltip title={isTyping ? "Generation in progress" : "Not helpful"} placement="bottom">
+                            <Tooltip title="Not helpful" placement="bottom">
                               <button
-                                onClick={() => !isTyping && handleThumbsDown(msg.id)}
-                                disabled={isTyping}
-                                className={`p-2 transition-colors ${isTyping ? "text-gray-400 cursor-not-allowed opacity-40" : `cursor-pointer hover:opacity-80 ${msg.feedback === "thumbs_down" ? "text-rose-500 font-bold" : "text-[var(--app-text)] font-bold"}`}`}
+                                onClick={() => handleThumbsDown(msg.id)}
+                                className={`p-2 transition-colors cursor-pointer hover:opacity-80 ${msg.feedback === "thumbs_down" ? "text-rose-500 font-bold" : "text-[var(--app-text)] font-bold"}`}
                               >
                                 <FiThumbsDown size={16} strokeWidth={msg.feedback === "thumbs_down" ? 2.5 : 2} fill="none" />
                               </button>
@@ -2979,7 +2960,7 @@ export default function ChatPlaygroundPage() {
                           className={`text-xs md:text-sm leading-relaxed font-medium ${!isUser ? "text-[var(--app-text)]" : ""}`}
                           style={isUser ? { color: "#ffffff", WebkitTextFillColor: "#ffffff", fontWeight: "bold" } : undefined}
                         >
-                          {/* Inline Editing Mode checking */}
+                          
                           {editingMessageIndex === i ? (
                             <div className="flex flex-col gap-3 my-2 animate-in fade-in duration-200">
                               <Input.TextArea
@@ -3151,14 +3132,14 @@ export default function ChatPlaygroundPage() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Floating Input Dock Footer */}
+        
         <div className="px-4 md:px-12 pb-4 pt-2 bg-gradient-to-t from-[var(--app-surface)] via-[var(--app-surface)] to-transparent border-t-0 z-30 shrink-0">
 
-          {/* Mode switch and search above input card */}
+         
           <div className="flex justify-between items-center px-1 mb-2 w-full select-none gap-3">
-            {/* Search & Agent Switcher unified container */}
+            
             <div className="flex items-center gap-1 bg-[#eef6f8] dark:bg-[#131e31] p-1 rounded-full border border-[var(--app-border)]/40 shadow-sm">
-              {/* Slot 1: Search Pill or Search Input */}
+              
               {activeMode === 'search' ? (
                 <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-[#0f172a] shadow-sm w-52 sm:w-64 transition-all duration-200">
                   <LuSearch size={12} className="shrink-0 text-[#0fb5a1] dark:text-[#34d399]" />
@@ -3184,7 +3165,7 @@ export default function ChatPlaygroundPage() {
                 </button>
               )}
 
-              {/* Slot 2: Agent Pill (stays as pill button, selector is rendered below inside the input card) */}
+              
               <button
                 onClick={() => setActiveMode('agent')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-black tracking-tight transition-all duration-200 cursor-pointer border-none bg-transparent outline-none ${activeMode === 'agent'
@@ -3197,7 +3178,7 @@ export default function ChatPlaygroundPage() {
               </button>
             </div>
 
-            {/* Mode Shift Shortcut - hidden on mobile view */}
+           
             <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-[var(--app-text-soft)]/60 font-bold ml-auto">
               <span>Mode shift:</span>
               <kbd className="px-1.5 py-0.5 rounded bg-[var(--app-border)]/50 border border-[var(--app-border)] text-[9px] font-black">Ctrl</kbd>
@@ -3205,10 +3186,10 @@ export default function ChatPlaygroundPage() {
             </div>
           </div>
 
-          {/* Large Unified Input Card with dynamic theme color borders */}
+          
           <div id="tour-chat-input-card" className="bg-white dark:bg-[#0b0f19] border-2 border-[#0fb5a1]/30 dark:border-[#0fb5a1]/40 rounded-3xl p-3 shadow-lg transition-all focus-within:border-[#0fb5a1] focus-within:ring-4 focus-within:ring-[#0fb5a1]/10 flex flex-col gap-2 overflow-hidden">
 
-            {/* Real-time Dynamic Upload Preview Attachment Frame */}
+            
             {attachedFile && (
               <div className="px-3 pt-2 pb-1 animate-in fade-in duration-200">
                 <div className="inline-flex align-center gap-3 bg-[var(--app-surface)] border border-[var(--app-border)]/80 p-2.5 rounded-xl relative group shadow-sm max-w-xs">
@@ -3235,7 +3216,7 @@ export default function ChatPlaygroundPage() {
               </div>
             )}
 
-            {/* Input Text Area */}
+           
             <div className="w-full">
               <Input.TextArea
                 ref={chatInputRef}
@@ -3250,9 +3231,9 @@ export default function ChatPlaygroundPage() {
               />
             </div>
 
-            {/* Input Row Actions Bottom Bar */}
+           
             <Flex align="center" justify="space-between" className="w-full pt-1.5 border-t border-[var(--app-border)]/10">
-              {/* Left actions */}
+              
               <Flex align="center" gap={8} className="min-w-0">
                 <Upload
                   beforeUpload={handleBeforeUpload}
@@ -3270,7 +3251,7 @@ export default function ChatPlaygroundPage() {
                   </Tooltip>
                 </Upload>
 
-                {/* Conditionally show Styled Robot Capsule Dropdown trigger for Selecting Custom Agent inside input card when mode is agent */}
+               
                 {activeMode === 'agent' && (
                   <Dropdown
                     menu={{
@@ -3322,9 +3303,9 @@ export default function ChatPlaygroundPage() {
                 )}
               </Flex>
 
-              {/* Right actions */}
+             
               <Flex align="center" gap={12} className="shrink-0">
-                {/* Circular Send Arrow button */}
+                
                 <Tooltip title={isTyping ? "Generation in progress" : "Press Enter to send"} placement="topRight">
                   <button
                     onClick={handleSend}
@@ -3353,7 +3334,7 @@ export default function ChatPlaygroundPage() {
       <Drawer
         title={
           <Flex align="center" gap={8}>
-            {/* <LuBookOpen className="text-[#0fb5a1]" size={18} /> */}
+            
             <SiCrowdsource />
             <span className="font-extrabold text-sm text-[var(--app-text)]">Source Documents</span>
           </Flex>
@@ -3368,12 +3349,13 @@ export default function ChatPlaygroundPage() {
           setSourcesDrawerPreviewUrl("");
         }}
         open={isSourcesDrawerOpen}
-        style={{ width: 750, height: "100vh" }}
+        width={750}
+        height="100vh"
         styles={{
           body: { padding: 0, background: "var(--app-surface)", display: "flex", height: "100%" },
         }}
       >
-        {/* Left List Pane */}
+        
         <div style={{ width: "240px", borderRight: "1px solid var(--app-border)", height: "100%", overflowY: "auto", padding: "16px" }} className="space-y-2">
           <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--app-text-soft)] block mb-3">
             Citations
@@ -3409,7 +3391,7 @@ export default function ChatPlaygroundPage() {
           </div>
         )}
 
-        {/* Right Preview Pane */}
+        
         <div style={{ flex: 1, height: "100%", overflowY: "auto", padding: "20px", display: "flex", flexDirection: "column", background: "var(--app-surface-muted)" }}>
           {sourcesDrawerPreviewLoading ? (
             <Flex vertical align="center" justify="center" gap={12} className="h-full">
@@ -3420,7 +3402,7 @@ export default function ChatPlaygroundPage() {
             </Flex>
           ) : selectedSourceForPreview ? (
             <div className="w-full h-full flex flex-col justify-start">
-              {/* Header and Toggle Controls */}
+              
               <Flex vertical gap={12} className="mb-4 bg-[var(--app-surface)] p-4 rounded-xl border border-[var(--app-border)]/40 shadow-sm shrink-0">
                 <Flex justify="space-between" align="center" className="min-w-0 gap-4">
                   <Text className="text-xs font-bold text-[var(--app-text)] truncate flex-1">
@@ -3433,7 +3415,7 @@ export default function ChatPlaygroundPage() {
                   )}
                 </Flex>
 
-                {/* Tab Switcher for parsed contents */}
+                
                 {(selectedSourceForPreview.content_type === "parsed" ||
                   selectedSourceForPreview.parsed_path !== undefined ||
                   getFileName(selectedSourceForPreview.source).toLowerCase().endsWith(".pdf") ||
@@ -3464,10 +3446,10 @@ export default function ChatPlaygroundPage() {
                   )}
               </Flex>
 
-              {/* Preview Body Container */}
+             
               <div className="flex-1 w-full bg-[var(--app-surface)] rounded-xl border border-[var(--app-border)]/40 overflow-hidden relative shadow-sm" style={{ minHeight: "450px" }}>
                 {sourcesDrawerPreviewTab === "parsed" ? (
-                  /* Extracted Clean Text Tab */
+                 
                   <div className="w-full h-full flex flex-col justify-start">
                     {parsedTextLoading ? (
                       <Flex vertical align="center" justify="center" gap={12} className="h-full my-auto py-20">
@@ -3486,7 +3468,7 @@ export default function ChatPlaygroundPage() {
                     )}
                   </div>
                 ) : (
-                  /* Original Document Tab */
+                  
                   <div className="w-full h-full flex flex-col justify-start overflow-hidden">
                     {sourcesDrawerPreviewType === "pdf" && sourcesDrawerPreviewUrl && (
                       <iframe
@@ -3509,7 +3491,7 @@ export default function ChatPlaygroundPage() {
 
                     {(sourcesDrawerPreviewType === "excel" || sourcesDrawerPreviewType === "csv") && excelSheetNames.length > 0 && (
                       <div className="w-full h-full flex flex-col overflow-hidden bg-[var(--app-surface)]">
-                        {/* Excel Multi-sheet Switcher */}
+                        
                         {sourcesDrawerPreviewType === "excel" && excelSheetNames.length > 1 && (
                           <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
                             {excelSheetNames.map(sheetName => {
@@ -3559,7 +3541,7 @@ export default function ChatPlaygroundPage() {
                           </div>
                         )}
 
-                        {/* Spreadsheet Grid */}
+                        
                         <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
                           {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
                             (() => {
@@ -3599,7 +3581,7 @@ export default function ChatPlaygroundPage() {
                                     </table>
                                   </div>
 
-                                  {/* Pagination footer */}
+                                 
                                   {totalPages > 1 && (
                                     <div className="flex items-center justify-between p-3 border border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 select-none rounded-xl">
                                       <span className="text-xs text-[var(--app-text-soft)] font-bold">
@@ -3669,7 +3651,7 @@ export default function ChatPlaygroundPage() {
             </div>
           ) : (
             <Flex vertical align="center" justify="center" className="h-full opacity-40">
-              {/* <LuBookOpen size={48} className="text-[#0fb5a1] mb-3" /> */}
+            
               <SiCrowdsource />
               <Text className="font-bold text-xs uppercase tracking-widest text-[var(--app-text-muted)]">
                 Select a document to preview
@@ -3679,7 +3661,7 @@ export default function ChatPlaygroundPage() {
         </div>
       </Drawer>
 
-      {/* Thumbs Down Feedback Modal */}
+      
       <Modal
         title={<span className="text-[var(--app-text)] font-extrabold">Provide Feedback</span>}
         open={feedbackModalOpen}

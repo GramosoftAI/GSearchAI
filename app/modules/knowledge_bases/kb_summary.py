@@ -80,5 +80,9 @@ async def generate_kb_summary_embedding(kb_id: str, db) -> None:
         
     except Exception as e:
         logger.error(f"Failed to generate summary embedding for KB {kb_id}: {e}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         # Re-raise so caller can handle/log it properly
         raise

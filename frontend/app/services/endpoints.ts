@@ -110,7 +110,7 @@ export const endpoints = {
     method: methods.delete,
   },
   USER_COSTS: {
-    url: "/analytics/governance/costs/users",
+    url: "/analytics/token-usage",
     method: methods.get,
   },
   URL_DISCOVER: {
@@ -120,23 +120,6 @@ export const endpoints = {
   URL_SELECT: {
     url: "/agents",
     method: methods.post,
-  },
-  // ── Widget Embed Config CRUD (new full-config system) ────────────────────
-  LIST_EMBED_CONFIGS: {
-    url: "/embed/configs",
-    method: methods.get,
-  },
-  GET_EMBED_CONFIG: {
-    url: "/embed/configs",  // append /{agent_id} at call site
-    method: methods.get,
-  },
-  SAVE_EMBED_CONFIG: {
-    url: "/embed/configs",
-    method: methods.post,
-  },
-  DELETE_EMBED_CONFIG: {
-    url: "/embed/configs",  // append /{agent_id} at call site
-    method: methods.delete,
   },
   GET_WIDGET_CONFIG: {
     url: "/embed/configs",

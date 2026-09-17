@@ -230,7 +230,7 @@ export default function GraphViewPage() {
     }));
   }
 
-  // Window resize sync for safe client UI changes
+  
   useEffect(() => {
     if (typeof window === "undefined") return;
     setWindowWidth(window.innerWidth);
@@ -239,7 +239,7 @@ export default function GraphViewPage() {
     return () => window.removeEventListener("resize", handleWinResize);
   }, []);
 
-  // Element resize logic with clean const bindings
+  
   useEffect(() => {
     if (!containerRef.current) return;
     const resizeObserver = new ResizeObserver((entries) => {
@@ -352,7 +352,7 @@ export default function GraphViewPage() {
 
   return (
     <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 24, padding:isMobile ? "20px" : "40px" }}>
-      {/* Top Bar Layout Layer */}
+      
       <div style={{ 
         display: "flex", 
         flexDirection: isMobile ? "column" : "row",
@@ -386,7 +386,7 @@ export default function GraphViewPage() {
         </div>
       </div>
 
-      {/* Primary Split View Grid Layer */}
+      
       <div
         style={{
           display: "grid",
@@ -400,7 +400,7 @@ export default function GraphViewPage() {
           overflow: "hidden"
         }}
       >
-        {/* Left Interactive Graph Module */}
+       
         <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
           <div
             style={{
@@ -612,7 +612,7 @@ export default function GraphViewPage() {
           </div>
         </div>
 
-        {/* Right Inspection Drawer / Sidebar */}
+        
         <aside 
           style={{ 
             borderLeft: isTablet ? "none" : "1px solid var(--app-border)", 
@@ -626,7 +626,7 @@ export default function GraphViewPage() {
             maxHeight: isTablet ? "none" : dimensions.height + 53 
           }}
         >
-          {/* Legend Config */}
+         
           <div>
             <Text strong style={{ fontSize: 11, color: "var(--app-text-soft)", letterSpacing: "0.05em", display: "block", marginBottom: 12 }}>
               NODE TYPES
@@ -678,7 +678,6 @@ export default function GraphViewPage() {
                 </Title>
               </div>
 
-              {/* Attributes Card Stack */}
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {Object.entries(selectedNode.properties).map(([key, value]) => (
                   <div key={key} style={{ background: "var(--app-surface)", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--app-border)" }}>
@@ -692,7 +691,7 @@ export default function GraphViewPage() {
                 ))}
               </div>
 
-              {/* Edge/Link Data */}
+              
               {selectedLinks.length > 0 && (
                 <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 10 }}>
                   <Text strong style={{ fontSize: 11, color: "var(--app-text-soft)", letterSpacing: "0.05em" }}>

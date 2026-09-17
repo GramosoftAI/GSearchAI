@@ -212,18 +212,56 @@ class CandidateSQLGenerator:
             query = query.where(cond)
 
         # 5. Group By
+        has_aggregations = any(
+            proj.aggregation != AggregateFunction.NONE
+            or any(proj.column_name.strip().upper().startswith(fn) for fn in ("SUM(", "AVG(", "COUNT(", "MIN(", "MAX(", "ROUND(", "COALESCE("))
+            or "/" in proj.column_name
+            for proj in plan.projections
+        )
+        scalar_projections = [
+            proj for proj in plan.projections
+            if proj.aggregation == AggregateFunction.NONE
+            and not any(proj.column_name.strip().upper().startswith(fn) for fn in ("SUM(", "AVG(", "COUNT(", "MIN(", "MAX(", "ROUND(", "COALESCE("))
+            and "/" not in proj.column_name
+        ]
+        if has_aggregations and scalar_projections and not plan.group_by:
+            # Auto-populate missing GROUP BY with all scalar projections to ensure valid SQL execution
+            plan.group_by = [f"{p.table_alias}.{p.column_name}" for p in scalar_projections]
+            logger.info(
+                f"Auto-populated missing GROUP BY in SQL compiler with scalar projections: {plan.group_by}"
+            )
+
         group_by_cols = list(plan.group_by)
+        # If there are no aggregations, a GROUP BY clause is not needed and causes SQL errors when ordering by unprojected columns
+        if not has_aggregations and getattr(plan.intent, "value", str(plan.intent)) not in ("SELECT_AGGREGATE", "SELECT_GROUP_BY"):
+            group_by_cols = []
+
         if group_by_cols:
             non_agg_cols = [
                 f"{proj.table_alias}.{proj.column_name}"
-                for proj in plan.projections
-                if proj.aggregation == AggregateFunction.NONE
-                and not any(proj.column_name.strip().upper().startswith(fn) for fn in ("SUM(", "AVG(", "COUNT(", "MIN(", "MAX(", "ROUND(", "COALESCE("))
-                and "/" not in proj.column_name
+                for proj in scalar_projections
             ]
             for col_str in non_agg_cols:
                 if col_str not in group_by_cols and col_str.split(".")[-1] not in group_by_cols:
                     group_by_cols.append(col_str)
+
+            # Output aliases of aggregate projections
+            agg_aliases = {
+                proj.output_alias.lower()
+                for proj in plan.projections
+                if proj.output_alias and (
+                    proj.aggregation not in (AggregateFunction.NONE, None)
+                    or any(proj.column_name.strip().upper().startswith(fn) for fn in ("SUM(", "COUNT(", "AVG(", "MIN(", "MAX(", "ROUND(", "COALESCE("))
+                )
+            }
+            # Ensure any non-aggregate columns appearing in ORDER BY are also included in GROUP BY (Postgres requirement)
+            for o in plan.order_by:
+                expr_str = o.expression.strip()
+                if expr_str.lower() in agg_aliases:
+                    continue
+                if not any(expr_str.upper().startswith(fn) for fn in ("SUM(", "COUNT(", "AVG(", "MIN(", "MAX(", "ROUND(", "COALESCE(")):
+                    if expr_str not in group_by_cols and expr_str.split(".")[-1] not in group_by_cols:
+                        group_by_cols.append(expr_str)
 
         for g_expr_str in group_by_cols:
             parts = g_expr_str.split(".")
@@ -233,10 +271,20 @@ class CandidateSQLGenerator:
                 g_col = exp.column(g_expr_str)
             query = query.group_by(g_col)
 
+        # 5.5 HAVING clause
+        having_expr = plan.having or (plan.metadata.get("having_clause") if hasattr(plan, "metadata") and plan.metadata else None)
+        if having_expr:
+            try:
+                having_ast = sqlglot.parse_one(having_expr, read="postgres")
+                query = query.having(having_ast)
+            except Exception as e:
+                logger.warning(f"Failed to compile having in generator: {e}")
+
         # 6. Order By
         for o in plan.order_by:
             expr_str = o.expression.strip()
             desc = o.direction.value.upper() == "DESC"
+            nulls_last = getattr(o, "nulls_last", None)
             if any(expr_str.upper().startswith(fn) for fn in ("SUM(", "COUNT(", "AVG(", "MIN(", "MAX(", "ROUND(")):
                 try:
                     o_expr = sqlglot.parse_one(expr_str, read="postgres")
@@ -248,7 +296,13 @@ class CandidateSQLGenerator:
                     o_expr = exp.column(parts[1], table=parts[0])
                 else:
                     o_expr = exp.column(expr_str)
-            query = query.order_by(exp.Ordered(this=o_expr, desc=desc))
+
+            if nulls_last is True and not desc:
+                # Explicitly render ASC NULLS LAST for PostgreSQL
+                col_name = o_expr.sql(dialect="postgres")
+                query = query.order_by(exp.var(f"{col_name} ASC NULLS LAST"))
+            else:
+                query = query.order_by(exp.Ordered(this=o_expr, desc=desc))
 
         # 7. Limit
         if plan.limit:
@@ -293,6 +347,15 @@ class CandidateSQLGenerator:
         Generate candidate SQL for the given plan.
         Tries LLM if enabled; falls back to deterministic AST compilation.
         """
+        # Fast-path deterministic compilation for authoritative domain calculations (percentage, having, aggregations)
+        if plan and plan.confidence >= 0.90 and any(
+            any(p.column_name.strip().upper().startswith(fn) for fn in ("ROUND(", "COUNT(", "SUM(", "AVG(", "COALESCE("))
+            for p in plan.projections
+        ):
+            deterministic_sql = cls.compile_plan_to_sql(plan)
+            if deterministic_sql:
+                return deterministic_sql
+
         if use_llm:
             try:
                 from app.core.llm.deepinfra_llm import DeepInfraLLMClient
@@ -313,6 +376,14 @@ class CandidateSQLGenerator:
                 if response_text:
                     sql_candidate = cls._extract_sql_from_response(response_text)
                     if sql_candidate:
+                        # Fix common LLM dialect confusion: MySQL IF() -> PostgreSQL CASE WHEN
+                        if re.search(r"\bIF\s*\(", sql_candidate, re.IGNORECASE):
+                            sql_candidate = re.sub(
+                                r"\bIF\s*\((.*?),(.*?),(.*?)\)",
+                                r"CASE WHEN \1 THEN \2 ELSE \3 END",
+                                sql_candidate,
+                                flags=re.IGNORECASE,
+                            )
                         return sql_candidate
             except Exception as e:
                 logger.warning(f"LLM candidate SQL generation failed, falling back to deterministic compiler: {e}")

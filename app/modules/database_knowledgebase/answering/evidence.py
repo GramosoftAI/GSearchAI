@@ -72,7 +72,18 @@ class EvidenceExtractor:
                 dec = DecimalCalculator.to_decimal(val)
                 if dec is not None:
                     cls._add_number_variants(str_val, supported_numbers)
-                    numeric_columns.setdefault(col, []).append(val)
+                    # Only collect for arithmetic aggregation if not an identifier, code, or contact column
+                    c_low = col.lower()
+                    is_id_col = (
+                        c_low in ("id", "postal_code", "zip", "zip_code", "year", "phone", "mobile", "telephone", "emergency_contact", "badge_id", "pin", "ssn")
+                        or c_low.endswith("_id")
+                        or c_low.endswith("_code")
+                        or c_low.endswith("_phone")
+                        or c_low.endswith("_contact")
+                        or c_low.endswith("_number")
+                    )
+                    if not is_id_col:
+                        numeric_columns.setdefault(col, []).append(val)
                 else:
                     # Treat text values as supported entities/data
                     if len(str_val) > 0 and len(str_val) < 200:

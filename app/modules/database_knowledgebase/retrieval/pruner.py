@@ -4,7 +4,7 @@ Prunes large canonical schemas into minimal, compact, and token-bounded sub-sche
 suitable for downstream LLMs, with prompt-injection security encapsulation.
 """
 
-from typing import Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from ..schemas.canonical import (
     DatabaseSchema,
     SchemaInfo,
@@ -29,6 +29,7 @@ class SchemaPruner:
         selected_scores: Dict[str, TableRetrievalScore],
         active_relationships: List[RelationshipSchema],
         top_k_columns_per_table: int = 25,
+        glossary_entries: Optional[Dict[Tuple[str, str], Any]] = None,
     ) -> Tuple[List[TableSchema], List[RelationshipSchema], str]:
         """
         Produce pruned TableSchema list, relevant relationships, and untrusted XML boundary text.
@@ -130,9 +131,26 @@ class SchemaPruner:
                 if col.is_foreign_key:
                     flags.append("FK")
                 flag_str = f" [{', '.join(flags)}]" if flags else ""
+                
+                extra_attrs = ""
+                if glossary_entries:
+                    g_entry = glossary_entries.get((tbl.table_name, c_name))
+                    if g_entry and getattr(g_entry, "is_published", False) is True:
+                        desc = getattr(g_entry, "business_description", "") or ""
+                        syns = getattr(g_entry, "synonyms", []) or []
+                        role = getattr(g_entry, "semantic_role", "") or ""
+                        if desc:
+                            desc_clean = desc.replace('"', '&quot;')
+                            extra_attrs += f' description="{desc_clean}"'
+                        if syns:
+                            syns_str = ", ".join(syns).replace('"', '&quot;')
+                            extra_attrs += f' synonyms="{syns_str}"'
+                        if role:
+                            extra_attrs += f' role="{role}"'
+
                 col_comment = f" -- {col.comment}" if col.comment else ""
                 raw_xml_parts.append(
-                    f"    <column name=\"{c_name}\" type=\"{col.raw_data_type}\"{flag_str}/>{col_comment}"
+                    f"    <column name=\"{c_name}\" type=\"{col.raw_data_type}\"{flag_str}{extra_attrs}/>{col_comment}"
                 )
 
             for fk in tbl.foreign_keys:

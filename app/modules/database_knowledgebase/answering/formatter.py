@@ -63,6 +63,12 @@ class DeterministicFormatter:
             return f"The lowest value recorded is {val_str}."
         elif any(k in q_lower for k in ["average", "avg"]) or any(k in c_lower for k in ["avg", "average"]):
             return f"The average value is {val_str}."
+        elif any(k in q_lower for k in ["overtime"]) or any(k in c_lower for k in ["overtime"]):
+            if "second" in q_lower or "second" in c_lower:
+                return f"The total overtime is {val_str} seconds."
+            return f"The total overtime is {val_str}."
+        elif any(k in q_lower for k in ["working seconds", "seconds"]) or any(k in c_lower for k in ["seconds", "at_work_second"]):
+            return f"The total working seconds is {val_str}."
         elif any(k in q_lower for k in ["total", "sum"]) or any(k in c_lower for k in ["sum", "total"]):
             return f"The total is {val_str}."
 
@@ -148,11 +154,14 @@ class DeterministicFormatter:
             if k.endswith("_sum") and v is not None:
                 raw_col = k[:-4]
                 col_name = raw_col.replace("_", " ").title()
-                # Skip primary key, foreign key, postal codes, and identifiers from arithmetic totals
+                # Skip primary key, foreign key, postal codes, contacts, and identifiers from arithmetic totals
                 if (
-                    raw_col.lower() in ("id", "postal_code", "zip", "zip_code", "year")
+                    raw_col.lower() in ("id", "postal_code", "zip", "zip_code", "year", "phone", "mobile", "telephone", "emergency_contact", "badge_id", "pin", "ssn")
                     or raw_col.lower().endswith("_id")
                     or raw_col.lower().endswith("_code")
+                    or raw_col.lower().endswith("_phone")
+                    or raw_col.lower().endswith("_contact")
+                    or raw_col.lower().endswith("_number")
                 ):
                     continue
                 dec = DecimalCalculator.to_decimal(v)
