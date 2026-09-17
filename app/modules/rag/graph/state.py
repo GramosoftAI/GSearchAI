@@ -47,6 +47,7 @@ class GraphState(TypedDict):
     
     # Tabular
     tabular_results: Optional[str]
+    tabular_sources: Optional[List[str]]
     used_sql_fallback: bool
 
     # ==========================================

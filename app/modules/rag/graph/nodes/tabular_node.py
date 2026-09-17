@@ -1,4 +1,5 @@
 import logging
+import time
 from app.modules.rag.graph.state import GraphState
 from app.modules.rag.pandas_engine import PandasQueryEngine
 from app.core.config import get_settings
@@ -60,17 +61,24 @@ async def tabular_node(state: GraphState) -> GraphState:
                 "used_sql_fallback": False
             }
 
+    t0 = time.perf_counter()
     try:
         from app.modules.rag.pandas_engine import PandasQueryEngine
         
         # Initialize pandas engine with the active dataset paths (or None to auto-discover)
         engine = PandasQueryEngine(all_dataset_paths=active_paths if active_paths else None)
+        t_init = time.perf_counter() - t0
+        logger.info(f"[TIMING] PandasQueryEngine initialization took {t_init:.3f}s")
         
         # Execute table analytics
+        t1 = time.perf_counter()
         res = await engine.execute_query(query)
+        t_exec = time.perf_counter() - t1
+        logger.info(f"[TIMING] PandasQueryEngine.execute_query took {t_exec:.3f}s")
         
         return {
             "tabular_results": str(res),
+            "tabular_sources": [getattr(kb, "name", "Spreadsheet") for kb in active_kbs],
             "used_sql_fallback": True
         }
     except Exception as e:

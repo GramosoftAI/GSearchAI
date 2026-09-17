@@ -20,9 +20,7 @@ async def retrieval_node(state: GraphState) -> GraphState:
     tenant_id = state["tenant_id"]
     query = state["query"]
     
-    # We fetch the embedding from the cache (primed in init_node)
-    query_embedding = await EmbeddingGenerator.generate_embedding_with_usage(query, is_query=True)
-    
+
     try:
         async with get_db_with_tenant(tenant_id) as db:
             pipeline = RAGPipeline(tenant_id, db=db)
@@ -38,6 +36,9 @@ async def retrieval_node(state: GraphState) -> GraphState:
                     }
             else:
                 resolved_kb_ids = state.get("kb_ids", [])
+
+            # We fetch the embedding from the cache (primed in init_node)
+            query_embedding = await EmbeddingGenerator.generate_embedding_with_usage(query, is_query=True)
 
             # We leverage the existing _retrieve_and_rank method from pipeline but split it logically.
             res = await pipeline.query(

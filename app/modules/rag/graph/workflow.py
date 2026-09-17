@@ -43,12 +43,13 @@ def build_rag_graph() -> StateGraph:
     # 2. Add Edges
     workflow.set_entry_point("init_node")
     
-    # Branching from init: Memory runs in parallel with KB Resolution
-    workflow.add_edge("init_node", "memory_node")
+    # Init goes straight to KB Resolution
     workflow.add_edge("init_node", "kb_resolution_node")
     
     # Since nodes no-op if not applicable based on state, we can unconditionally branch
-    # from kb_resolution to both tabular and retrieval to keep graph topology simple.
+    # from kb_resolution to memory, tabular, and retrieval to keep graph topology simple.
+    # By starting memory_node here, it shares the same superstep as retrieval_node, truly parallelizing them.
+    workflow.add_edge("kb_resolution_node", "memory_node")
     workflow.add_edge("kb_resolution_node", "tabular_node")
     workflow.add_edge("kb_resolution_node", "retrieval_node")
     

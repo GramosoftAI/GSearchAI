@@ -1,4 +1,5 @@
 import logging
+import time
 from app.modules.rag.graph.state import GraphState
 
 logger = logging.getLogger(__name__)
@@ -140,6 +141,7 @@ async def generation_node(state: GraphState) -> dict:
     - Includes memory guidance if provided by the memory node.
     - Handles [Source: Knowledge Graph] citation rules.
     """
+    t_entry = time.perf_counter()
     if state.get("requires_clarification"):
         logger.info("[GENERATION] Skipping LLM generation because clarification is required.")
         return {"generation": ""}
@@ -164,12 +166,21 @@ async def generation_node(state: GraphState) -> dict:
     reranked_chunks = state.get("reranked_chunks") or state.get("retrieved_chunks") or []
     context_text = ""
     for c in reranked_chunks:
+        raw_source = getattr(c, "source", "") or getattr(c, "metadata", {}).get("source", "Unknown Document")
+        filename = raw_source.split("/")[-1]
         content = getattr(c, "content", "") or getattr(c, "text", "")
-        context_text += f"{content}\n\n"
+        # Enforce max chunk length to prevent LLM prefill bottlenecks (massive stories)
+        if len(content) > 2500:
+            content = content[:2500] + "... [truncated for brevity]"
+        context_text += f"Document: {filename}\n{content}\n\n"
         
     tabular_results = state.get("tabular_results", "")
+    tabular_sources = state.get("tabular_sources", [])
     if tabular_results:
-        context_text += f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS]\n{tabular_results}\n"
+        if tabular_sources:
+            context_text += f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS]\nDocuments: {', '.join(tabular_sources)}\n{tabular_results}\n"
+        else:
+            context_text += f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS]\n{tabular_results}\n"
 
     # Streaming Generation
     from app.core.llm.deepinfra_llm import DeepInfraLLMClient
@@ -185,6 +196,10 @@ async def generation_node(state: GraphState) -> dict:
     full_answer = []
     stream_queue = state.get("stream_queue")
     
+    t_start = time.perf_counter()
+    logger.info(f"[TIMING] generation_node prompt assembly took {t_start - t_entry:.3f}s")
+    ttft_logged = False
+    
     try:
         async for chunk in llm_client.stream_answer(
             query=query,
@@ -194,10 +209,17 @@ async def generation_node(state: GraphState) -> dict:
             agent_persona=agent_persona,
             enable_thinking=False,
         ):
+            if not ttft_logged:
+                t_ttft = time.perf_counter()
+                logger.info(f"[TIMING] generation_node TTFT (Time To First Token): {t_ttft - t_start:.3f}s")
+                ttft_logged = True
+            
             full_answer.append(chunk)
             if stream_queue is not None:
                 await stream_queue.put(chunk)
     finally:
+        t_end = time.perf_counter()
+        logger.info(f"[TIMING] generation_node full stream duration: {t_end - t_start:.3f}s")
         # Ensure sentinel is sent to stream_queue even if streaming errors or aborts
         if stream_queue is not None:
             await stream_queue.put(None)
@@ -214,9 +236,14 @@ async def generation_node(state: GraphState) -> dict:
         
     for c in reranked_chunks:
         raw_source = getattr(c, "source", "") or getattr(c, "metadata", {}).get("source", "Unknown Document")
-        clean_name = raw_source.split("/")[-1].replace(".pdf", "").replace("_", " ")
+        clean_name = raw_source.split("/")[-1]
         if clean_name not in sources:
             sources.append(clean_name)
+            
+    tabular_sources = state.get("tabular_sources", [])
+    for ts in tabular_sources:
+        if ts not in sources:
+            sources.append(ts)
             
     return {
         "system_prompt": system_prompt,

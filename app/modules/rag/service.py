@@ -1165,14 +1165,13 @@ class RAGService:
                                         if not candidates:
                                             candidates = csv_scores
                                         clarification_payload = _build_csv_disambiguation_payload(
-                                            candidates, reason="missing_implied_columns"
+                                            candidates, reason="semantic_match_ambiguity"
                                         )
                                         logger.info(
-                                            f"[TELEMETRY] [DISAMBIGUATION_TRIGGERED] reason=missing_implied_columns, "
+                                            f"[TELEMETRY] [DISAMBIGUATION_BYPASSED] reason=semantic_match_ambiguity, "
                                             f"candidates={[c['filename'] for c in clarification_payload['candidates']]}"
                                         )
-                                        yield json.dumps(clarification_payload)
-                                        return
+                                        pass
 
                                     # Ambiguity Condition 1: Multiple CSV probe hits
                                     if len(csv_probe_hits) >= 2:
@@ -1180,11 +1179,10 @@ class RAGService:
                                             csv_probe_hits, reason="multi_entity_probe_hit"
                                         )
                                         logger.info(
-                                            f"[TELEMETRY] [DISAMBIGUATION_TRIGGERED] reason=multi_entity_probe_hit, "
+                                            f"[TELEMETRY] [DISAMBIGUATION_BYPASSED] reason=multi_entity_probe_hit, "
                                             f"candidates={[c['filename'] for c in clarification_payload['candidates']]}"
                                         )
-                                        yield json.dumps(clarification_payload)
-                                        return
+                                        pass
 
                                     # Ambiguity Condition 2: Relative dominance margin gap < 0.20
                                     if csv_scores:
@@ -1203,11 +1201,10 @@ class RAGService:
                                                     close_candidates, reason="score_gap_ambiguity"
                                                 )
                                                 logger.info(
-                                                    f"[TELEMETRY] [DISAMBIGUATION_TRIGGERED] reason=score_gap_ambiguity, "
+                                                    f"[TELEMETRY] [DISAMBIGUATION_BYPASSED] reason=score_gap_ambiguity, "
                                                     f"relative_gap={relative_gap:.2f}, candidates={[c['filename'] for c in clarification_payload['candidates']]}"
                                                 )
-                                                yield json.dumps(clarification_payload)
-                                                return
+                                                pass
                                 # --- END CSV DISAMBIGUATION FLOW ---
 
                                 final_winners = [s for s in kb_scores if s["total_score"] == max_total]
@@ -2081,10 +2078,11 @@ class RAGService:
                                     close_candidates, reason="score_gap_ambiguity"
                                 )
                                 logger.info(
-                                    f"[TELEMETRY] [DISAMBIGUATION_TRIGGERED] reason=score_gap_ambiguity, "
+                                    f"[TELEMETRY] [DISAMBIGUATION_BYPASSED] reason=score_gap_ambiguity, "
                                     f"relative_gap={relative_gap:.2f}, candidates={[c['filename'] for c in clarification_payload['candidates']]}"
                                 )
-                                return clarification_payload
+                                # bypass clarification and use top score
+                                pass
 
             active_paths = []
             for ek in excel_kbs:
@@ -3120,7 +3118,7 @@ async def execute_rag(
             async with httpx.AsyncClient() as client:
                 try:
                     resp = await client.post(
-                        f"{memory_api_url}/process-turn",
+                        f"{memory_api_url.rstrip('/')}/api/v1/memory/process-turn",
                         json={
                             "query": query,
                             "session_id": active_session_id,
@@ -3128,7 +3126,7 @@ async def execute_rag(
                             "user_id": default_user_id,
                             "tenant_id": tenant_id,
                         },
-                        timeout=2.0,
+                        timeout=1.0,
                     )
                     if resp.status_code == 200:
                         return resp.json()
@@ -3185,7 +3183,7 @@ async def execute_rag(
                         async with httpx.AsyncClient() as client:
                             try:
                                 await client.post(
-                                    f"{memory_api_url}/save-turn",
+                                    f"{memory_api_url.rstrip('/')}/api/v1/memory/save-turn",
                                     json={
                                         "query": query,
                                         "ai_response": ack,
@@ -3292,7 +3290,7 @@ async def execute_rag(
         async with httpx.AsyncClient() as client:
             try:
                 await client.post(
-                    f"{memory_api_url}/save-turn",
+                    f"{memory_api_url.rstrip('/')}/api/v1/memory/save-turn",
                     json={
                         "query": query,
                         "ai_response": full_response,

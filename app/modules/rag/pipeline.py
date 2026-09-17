@@ -713,6 +713,7 @@ class RAGPipeline:
             try:
                 from app.modules.knowledge_bases.models import KnowledgeBase
                 from sqlalchemy import select
+                from uuid import UUID
                 clean_uuids = [UUID(str(k)) if not isinstance(k, UUID) else k for k in kb_ids]
                 stmt = select(KnowledgeBase.description).where(
                     KnowledgeBase.id.in_(clean_uuids),
@@ -736,6 +737,8 @@ class RAGPipeline:
         # Determine 3 Retrieval Routing Modes: VECTOR_ONLY, SQL_ONLY, PARALLEL
         is_tabular_intent = getattr(analysis, "is_tabular", False)
         intent_conf = getattr(analysis, "confidence", 0.0)
+        if intent_conf is None:
+            intent_conf = 0.0
         
         # Check presence of actual parquet/excel KBs
         has_excel_kbs = any(meta.get("description") == "excel_parquet" for meta in self._kb_metadata.values() if str(meta.get("id", "")) in original_kb_ids or True)
@@ -898,7 +901,7 @@ class RAGPipeline:
             WEIGHT_KEYWORD = 1.0
             WEIGHT_VECTOR = 1.0
             WEIGHT_EXACT_MATCH = 3.0
-            TOP_N = 15
+            TOP_N = 10
 
             # Convert analysis metadata to dictionary for RetrievalTasks
             meta_dict = {}
@@ -1413,10 +1416,10 @@ class RAGPipeline:
                         else:
                             other_items.append((cid, score))
                 
-                    # Reserve up to 4 slots for top narrative items
-                    num_narrative = min(len(narrative_items), 4)
+                    # Reserve up to TOP_N slots for top narrative items, but max 4
+                    num_narrative = min(len(narrative_items), min(4, TOP_N))
                     guaranteed_narrative = narrative_items[:num_narrative]
-                    remaining_quota = TOP_N - len(guaranteed_narrative)
+                    remaining_quota = max(0, TOP_N - len(guaranteed_narrative))
                 
                     # Combine remaining narrative and other items by score
                     remaining_candidates = narrative_items[num_narrative:] + other_items
@@ -1448,72 +1451,75 @@ class RAGPipeline:
                 
                     # === DEEPINFRA RERANKER INTEGRATION ===
                     if getattr(get_settings(), "model_reranker", None) and len(final_chunks) > 1:
-                        try:
-                            logger.info("[RERANK] Starting DeepInfra LLM Reranking on top RRF chunks...")
-                            from app.core.llm.deepinfra_llm import get_llm_client
-                            llm = await get_llm_client()
+                        if (final_chunks[0].rrf_score / (final_chunks[1].rrf_score or 0.001)) > 2.0:
+                            logger.info("[RERANK] Clear winner detected in RRF scores (skipped_reranking=true). Skipping LLM reranking.")
+                        else:
+                            try:
+                                logger.info("[RERANK] Starting DeepInfra LLM Reranking on top RRF chunks...")
+                                from app.core.llm.deepinfra_llm import get_llm_client
+                                llm = await get_llm_client()
+                            
+                                # Extract texts
+                                doc_texts = [c.text for c in final_chunks]
+                            
+                                # Call API with explicit timeout
+                                reranked_results = await asyncio.wait_for(
+                                    llm.rerank_documents(
+                                        query=original_query,
+                                        documents=doc_texts,
+                                        top_n=min(len(doc_texts), 10),
+                                        model=get_settings().model_reranker,
+                                        tenant_id=self.tenant_id,
+                                        user_id=user_id
+                                    ),
+                                    timeout=10.0
+                                )
                         
-                            # Extract texts
-                            doc_texts = [c.text for c in final_chunks]
-                        
-                            # Call API with explicit timeout
-                            reranked_results = await asyncio.wait_for(
-                                llm.rerank_documents(
-                                    query=original_query,
-                                    documents=doc_texts,
-                                    top_n=min(len(doc_texts), 10),
-                                    model=get_settings().model_reranker,
-                                    tenant_id=self.tenant_id,
-                                    user_id=user_id
-                                ),
-                                timeout=10.0
-                            )
-                        
-                            # Reorder final_chunks based on reranker results
-                            import math
-                            new_final_chunks = []
-                            seen_cids = set()
-                            for rank, r in enumerate(reranked_results):
-                                orig_idx = r.get("original_index")
-                                if orig_idx is not None and orig_idx < len(final_chunks):
-                                    chunk = final_chunks[orig_idx]
-                                    raw_score = r.get("relevance_score", 0.0)
-                                    chunk.reranker_raw_score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
-                                    if isinstance(raw_score, (int, float)):
-                                        if raw_score > 1.0 or raw_score < 0.0:
-                                            prob = 1.0 / (1.0 + math.exp(-max(-20.0, min(20.0, raw_score))))
+                                # Reorder final_chunks based on reranker results
+                                import math
+                                new_final_chunks = []
+                                seen_cids = set()
+                                for rank, r in enumerate(reranked_results):
+                                    orig_idx = r.get("original_index")
+                                    if orig_idx is not None and orig_idx < len(final_chunks):
+                                        chunk = final_chunks[orig_idx]
+                                        raw_score = r.get("relevance_score", 0.0)
+                                        chunk.reranker_raw_score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
+                                        if isinstance(raw_score, (int, float)):
+                                            if raw_score > 1.0 or raw_score < 0.0:
+                                                prob = 1.0 / (1.0 + math.exp(-max(-20.0, min(20.0, raw_score))))
+                                            else:
+                                                prob = raw_score
                                         else:
-                                            prob = raw_score
-                                    else:
-                                        prob = 0.95 - (rank * 0.01)
+                                            prob = 0.95 - (rank * 0.01)
                                 
-                                    normalized_score = max(0.0, min(1.0, float(prob)))
-                                    logger.info(f"[RERANKER_DEBUG] rank={rank} cid={chunk.chunk_id} raw_score={raw_score} (type={type(raw_score).__name__}) -> normalized={normalized_score:.4f} snippet={repr(chunk.text[:60]) if getattr(chunk, 'text', None) else 'None'}")
-                                    chunk.reranker_score = normalized_score
-                                    chunk.final_relevance_score = normalized_score
-                                    chunk.hybrid_score = normalized_score
-                                    chunk.reason = "LLM_RERANKED"
-                                    new_final_chunks.append(chunk)
-                                    seen_cids.add(chunk.chunk_id)
+                                        normalized_score = max(0.0, min(1.0, float(prob)))
+                                        logger.info(f"[RERANKER_DEBUG] rank={rank} cid={chunk.chunk_id} raw_score={raw_score} (type={type(raw_score).__name__}) -> normalized={normalized_score:.4f} snippet={repr(chunk.text[:60]) if getattr(chunk, 'text', None) else 'None'}")
+                                        chunk.reranker_score = normalized_score
+                                        chunk.final_relevance_score = normalized_score
+                                        chunk.hybrid_score = normalized_score
+                                        chunk.reason = "LLM_RERANKED"
+                                        new_final_chunks.append(chunk)
+                                        seen_cids.add(chunk.chunk_id)
 
-                            # Preserving narrative quota: if any narrative chunk (<90000) was in pre-reranked final_chunks but dropped by top_n, preserve it.
-                            # Clearly document meaning: Assign narrative chunk a score relative to lowest reranked item so it cannot outrank verified reranked signal.
-                            min_reranked_score = min((c.final_relevance_score for c in new_final_chunks), default=0.50)
-                            for orig_chunk in final_chunks:
-                                if orig_chunk.chunk_id not in seen_cids and getattr(orig_chunk, "position", 99999) < 90000:
-                                    orig_chunk.reason = "LLM_RERANKED_NARRATIVE_PRESERVED"
-                                    orig_chunk.reranker_raw_score = None
-                                    orig_chunk.reranker_score = None
-                                    narrative_score = min_reranked_score * 0.85
-                                    orig_chunk.final_relevance_score = narrative_score
-                                    orig_chunk.hybrid_score = narrative_score
-                                    new_final_chunks.append(orig_chunk)
-                                    seen_cids.add(orig_chunk.chunk_id)
+                                # Preserving narrative quota: if any narrative chunk (<90000) was in pre-reranked final_chunks but dropped by top_n, preserve it.
+                                # Clearly document meaning: Assign narrative chunk a score relative to lowest reranked item so it cannot outrank verified reranked signal.
+                                min_reranked_score = min((c.final_relevance_score for c in new_final_chunks), default=0.50)
+                                for orig_chunk in final_chunks:
+                                    if orig_chunk.chunk_id not in seen_cids and getattr(orig_chunk, "position", 99999) < 90000:
+                                        orig_chunk.reason = "LLM_RERANKED_NARRATIVE_PRESERVED"
+                                        orig_chunk.reranker_raw_score = None
+                                        orig_chunk.reranker_score = None
+                                        narrative_score = min_reranked_score * 0.85
+                                        orig_chunk.final_relevance_score = narrative_score
+                                        orig_chunk.hybrid_score = narrative_score
+                                        new_final_chunks.append(orig_chunk)
+                                        seen_cids.add(orig_chunk.chunk_id)
 
-                            final_chunks = new_final_chunks
-                            logger.info(f"[RERANK] Successfully reranked top {len(final_chunks)} chunks using LLM (Narrative Preserved).")
-                        except Exception as e:
-                            logger.error(f"[RERANK] LLM Reranking failed, falling back to pure RRF: {e}")
+                                final_chunks = new_final_chunks
+                                logger.info(f"[RERANK] Successfully reranked top {len(final_chunks)} chunks using LLM (Narrative Preserved).")
+                            except Exception as e:
+                                logger.error(f"[RERANK] LLM Reranking failed, falling back to pure RRF: {e}")
                 
                     # Check and incorporate parallel SQL results if parallel branch was executed
                     parallel_sql_context = ""
