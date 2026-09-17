@@ -112,7 +112,7 @@ async def rag_websocket(
     """
     WebSocket endpoint for real-time RAG chat with standalone memory API integration.
     """
-    print("----------------------------------rag websocket called",token,"----------------------------------------------------------------------")
+    logger.info(f"[WS_CONNECT] agent_id={agent_id} token_present={bool(token and token not in ('null', 'undefined'))}")
     # 1. ACCEPT HANDSHAKE IMMEDIATELY
     await websocket.accept()
 

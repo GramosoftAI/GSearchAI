@@ -21,7 +21,7 @@ def resolve_memory_api_base_url() -> str:
         return env_host.rstrip("/")
     return "http://127.0.0.1:4917"
 
-async def _persist_partial(db, chat_service, session_id, user_id, query, response_buffer, reason: str) -> None:
+async def _persist_partial(db, chat_service, session_id, user_id, query, response_buffer, reason: str, channel: str = "websocket") -> None:
     try:
         try:
             await db.rollback()
@@ -35,6 +35,7 @@ async def _persist_partial(db, chat_service, session_id, user_id, query, respons
                 "sources": [],
                 "status": "partial_failure",
                 "failure_reason": reason,
+                "channel": channel,
             },
         )
         await db.commit()
@@ -50,7 +51,12 @@ def _rag_chunk_to_loop_event(chunk: str) -> LoopEvent:
             if parsed.get("type") == "metadata":
                 return LoopEvent(type="sources", sources=parsed.get("sources", []), triplets=parsed.get("triplets", []))
             elif parsed.get("type") == "clarification_needed":
-                return LoopEvent(type="clarification_needed", text=parsed.get("plain_text_fallback"), clarification=parsed)
+                return LoopEvent(
+                    type="clarification_needed", 
+                    text=parsed.get("plain_text_fallback"), 
+                    clarification=parsed,
+                    candidates=parsed.get("candidates")
+                )
             elif "error" in parsed:
                 return LoopEvent(type="error", error_detail=parsed["error"])
     except (json.JSONDecodeError, TypeError):
@@ -143,38 +149,12 @@ async def run_unified_rag_websocket_loop(
 
         start_time = time.perf_counter()
         try:
-            # 1. Memory API Triage & Chat History Fetching (Parallel)
-            async def _fetch_memory_triage():
-                if enable_memory:
-                    async with httpx.AsyncClient() as client:
-                        try:
-                            resp = await client.post(
-                                f"{memory_api_url}/process-turn",
-                                json={
-                                    "query": request.query,
-                                    "session_id": active_session_id,
-                                    "agent_id": agent_id,
-                                    "user_id": user_id,
-                                    "tenant_id": tenant_id,
-                                },
-                                timeout=2.0,
-                            )
-                            if resp.status_code == 200:
-                                return resp.json()
-                        except Exception as e:
-                            logger.warning(f"memory-api process-turn unreachable/slow: {e}")
-                return {}
-
             async def _fetch_chat_history():
                 if session.message_count > 1:
                     return await chat_service.chat_repo.get_recent_messages(
                         session_id=active_session_id, count=10
                     )
                 return []
-
-            import asyncio
-            # START MEMORY TASK IN BACKGROUND CONCURRENTLY
-            memory_task = asyncio.create_task(_fetch_memory_triage())
             
             # Await ONLY chat history synchronously
             memory_messages = await _fetch_chat_history()
@@ -194,88 +174,104 @@ async def run_unified_rag_websocket_loop(
                 )
 
 
-            # 4. RAG Streamer -> internal LoopEvents
+            # 4. LangGraph Execution & Streaming
             has_error = False
             msg_metadata = {"status": "complete"}
-            async for chunk in rag_service.stream_rag_answer(
-                query=original_query,
-                agent_id=agent_id,
-                kb_id=kb_ids,
-                user_id=user_id,
-                session_id=active_session_id,
-                chat_history=chat_history_str,
-                skip_search=False,
-                top_k=request.top_k,
-                max_depth=request.max_depth,
-                memory_task=memory_task,
-                target_kb_id=request.target_kb_id
-            ):
-                if chunk.startswith("{"):
+            response_buffer = []
+            collected_sources = []
+            
+            from app.modules.rag.graph.workflow import build_rag_graph
+            import asyncio
+            
+            stream_queue = asyncio.Queue()
+            
+            initial_state = {
+                "query": original_query,
+                "original_query": original_query,
+                "tenant_id": tenant_id,
+                "agent_id": agent_id,
+                "session_id": active_session_id,
+                "user_id": user_id,
+                "kb_ids": kb_ids,
+                "chat_history": chat_history_str,
+                "skip_search": False,
+                "top_k": request.top_k,
+                "max_depth": request.max_depth,
+                "stream_queue": stream_queue
+            }
+            
+            # Fetch target_kb_id if explicitly requested
+            if getattr(request, "target_kb_id", None):
+                initial_state["target_kb_id"] = request.target_kb_id
+                
+            graph = build_rag_graph().compile()
+            graph_task = asyncio.create_task(graph.ainvoke(initial_state))
+            
+            # Watchdog: ensure sentinel None is queued if graph_task dies prematurely
+            def _on_graph_done(t):
+                if t.cancelled() or t.exception():
                     try:
-                        parsed = json.loads(chunk)
-                        if parsed.get("type") == "clarification_needed":
-                            plain_fallback = parsed.get("plain_text_fallback", "Please choose a file.")
-                            response_buffer.append(plain_fallback)
-                            msg_metadata["clarification"] = parsed
-                            await adapter.send(
-                                websocket, 
-                                LoopEvent(
-                                    type="clarification_needed", 
-                                    text=plain_fallback, 
-                                    clarification=parsed
-                                )
-                            )
-                            break
-                        elif parsed.get("type") == "feedback_bypass":
-                            ack = parsed["ack"]
-                            router_category = parsed.get("router_category")
-                            async with httpx.AsyncClient() as client:
-                                try:
-                                    await client.post(
-                                        f"{memory_api_url}/save-turn",
-                                        json={
-                                            "query": request.query,
-                                            "ai_response": ack,
-                                            "session_id": active_session_id,
-                                            "agent_id": agent_id,
-                                            "user_id": user_id,
-                                            "tenant_id": tenant_id,
-                                            "is_feedback_only": True,
-                                            "metadata": {"router_category": router_category},
-                                        },
-                                        timeout=3.0,
-                                    )
-                                except Exception:
-                                    pass
-                            response_buffer.append(ack)
-                            msg_metadata["feedback_turn"] = True
-                            await adapter.send(websocket, LoopEvent(type="token", text=ack))
-                            break
-                        elif parsed.get("type") == "history_bypass":
-                            history_prompt = parsed["history_prompt"]
-                            try:
-                                full_response_text = await rag_service.llm_client.generate_cloud(prompt=history_prompt)
-                                response_buffer.append(full_response_text)
-                                msg_metadata.update({"memory_used": True, "direct_history_recall": True})
-                                await adapter.send(websocket, LoopEvent(type="token", text=full_response_text))
-                                break
-                            except Exception as e:
-                                has_error = True
-                                await adapter.send_error(websocket, str(e))
-                                break
-                    except (json.JSONDecodeError, TypeError):
+                        stream_queue.put_nowait(None)
+                    except Exception:
                         pass
+            graph_task.add_done_callback(_on_graph_done)
 
-                event = _rag_chunk_to_loop_event(chunk)
-                if event.type == "token":
-                    response_buffer.append(event.text)
-                elif event.type == "sources":
-                    collected_sources = event.sources
-                elif event.type == "error":
-                    has_error = True
-                    await adapter.send_error(websocket, event.error_detail)
+            # Consumer Loop for LLM Tokens with watchdog protection
+            final_state = {}
+            while True:
+                if stream_queue.empty() and graph_task.done():
                     break
-                await adapter.send(websocket, event)
+
+                get_task = asyncio.create_task(stream_queue.get())
+                done, _ = await asyncio.wait(
+                    [graph_task, get_task],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+
+                if get_task in done:
+                    chunk = get_task.result()
+                    if chunk is None:
+                        break
+                    response_buffer.append(chunk)
+                    await adapter.send(websocket, LoopEvent(type="token", text=chunk))
+                elif graph_task in done:
+                    get_task.cancel()
+                    # Drain any tokens that were already pushed to the queue
+                    while not stream_queue.empty():
+                        chunk = stream_queue.get_nowait()
+                        if chunk is None:
+                            break
+                        response_buffer.append(chunk)
+                        await adapter.send(websocket, LoopEvent(type="token", text=chunk))
+                    break
+                
+            try:
+                final_state = await graph_task
+            except Exception as e:
+                has_error = True
+                logger.error(f"[LANGGRAPH] Execution failed: {e}", exc_info=True)
+                await adapter.send_error(websocket, str(e))
+                final_state = {}
+                
+            if final_state.get("requires_clarification"):
+                parsed = final_state["clarification_payload"]
+                plain_fallback = parsed.get("message", "Please choose a file.")
+                response_buffer.append(plain_fallback)
+                msg_metadata["clarification"] = parsed
+                await adapter.send(
+                    websocket, 
+                    LoopEvent(
+                        type="clarification_needed", 
+                        text=plain_fallback, 
+                        clarification=parsed,
+                        candidates=parsed.get("candidates")
+                    )
+                )
+                
+            if final_state.get("sources"):
+                sources_payload = [{"source": s} for s in final_state["sources"]]
+                collected_sources = sources_payload
+                await adapter.send(websocket, LoopEvent(type="sources", sources=sources_payload, triplets=[]))
 
             full_response = "".join(response_buffer)
 

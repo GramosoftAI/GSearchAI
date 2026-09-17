@@ -35,6 +35,7 @@ class QueryMetadata(BaseModel):
     vector_subquery: Optional[str] = Field(None, description="Extracted sub-query meant for unstructured document/text data with pronouns resolved.")
     query_embedding: Optional[List[float]] = Field(None, description="Cached embedding of the query")
     structured_queries: List[str] = Field(default_factory=list, description="A list of structured/rephrased queries to try in order.")
+    implied_columns: List[str] = Field(default_factory=list, description="List of semantically required fields/columns (e.g. 'salary', 'age', 'department') that MUST exist for this query to be answerable.")
     target_kb_id: Optional[str] = Field(None, description="Explicitly targeted Knowledge Base ID from fast-routing gate")
 
 
@@ -44,19 +45,49 @@ class AnalysisResult(BaseModel):
     is_tabular: bool = Field(False, description="Set to true if query asks for data likely stored in structured tabular format/spreadsheet. Set to false for text/PDF lookup or conversational greetings.")
     confidence: float
     reasoning: str
+    heuristic_fallback_used: bool = Field(False, description="True if emergency fallback defaults were used without successful semantic classification.")
 
 class QueryAnalyzer:
     """
-    Analyzes queries to determine strict enterprise intents and extracts deterministic metadata.
-    Replaces simplistic query routing with deep query understanding.
+    Compatibility wrapper delegating to FastQueryAnalyzer.
+    Maintains 100% backward compatibility for existing callers.
     """
-    
+    def __init__(self):
+        from app.modules.rag.orchestrator.fast_query_analyzer import FastQueryAnalyzer
+        self._fast_analyzer = FastQueryAnalyzer()
+        self.llm_client = DeepInfraLLMClient.get_instance()
+
+    async def analyze_query(
+        self,
+        query: str,
+        kb_context: str = "",
+        chat_history: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None
+    ) -> AnalysisResult:
+        return await self._fast_analyzer.analyze_query(
+            query=query,
+            kb_context=kb_context,
+            chat_history=chat_history,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            session_id=session_id
+        )
+
+
+class QueryAnalyzerLegacy:
+    """
+    LEGACY REFERENCE IMPLEMENTATION:
+    Preserved for debugging and benchmark comparisons.
+    Uses monolithic multi-task LLM prompt (max_tokens=1024, timeout=4.5s).
+    """
     def __init__(self):
         self.llm_client = DeepInfraLLMClient.get_instance()
         
     async def analyze_query(self, query: str, kb_context: str = "", chat_history: Optional[str] = None, tenant_id: Optional[str] = None, user_id: Optional[str] = None, session_id: Optional[str] = None) -> AnalysisResult:
         """
-        Uses LLM to extract intent and metadata in a single pass.
+        Uses LLM to extract intent and metadata in a single pass (Legacy).
         """
         q_strip = query.strip()
         # Fast-Path 1: Simple greetings & casual chat (0 ms overhead, no LLM call needed!)
@@ -111,6 +142,9 @@ If the query is composite (asking multiple distinct questions where some apply t
 CRITICAL TASK: KEYWORD EXTRACTION
 You must extract the most critical entities, nouns, and domain markers from the query into the `keywords` array in the metadata. Do NOT drop contextual nouns (like "hiking", "bicycle", "employee", "company name") even if the question is primarily about numbers or pricing. These keywords are used to route the search to the correct domain.
 
+CRITICAL TASK: IMPLIED COLUMNS EXTRACTION
+If the query asks for structured or analytical data (e.g., "what is his salary", "average age", "department roster"), extract the conceptual column names that MUST exist in the dataset to answer the query into `implied_columns` (e.g., ["salary"], ["age"], ["department"]). Do NOT hallucinate specific column names, just extract the core concepts requested. If none, return an empty array.
+
 INTENTS:
 - FACT: Direct lookup of a single fact or entity.
 - CALCULATION: Requires math.
@@ -137,6 +171,7 @@ Return ONLY valid JSON:
     "corrected_query": "Who is Jon Snow?",
     "tabular_subquery": null,
     "vector_subquery": null,
+    "implied_columns": [],
     "structured_queries": [
       "Who is Jon Snow?",
       "Can you explain who the character Jon Snow is?",
@@ -163,6 +198,7 @@ JSON:
     "corrected_query": "tell me about arun and what is his salary from the 1st CSV file",
     "tabular_subquery": "What is Arun's salary from the 1st CSV file?",
     "vector_subquery": "Tell me about Arun.",
+    "implied_columns": ["salary"],
     "structured_queries": [
       "Tell me about Arun and find his salary in the first CSV file.",
       "What details are available about Arun, and what is his salary in the CSV?",
@@ -263,6 +299,7 @@ QUERY:
                     corrected_query=metadata_dict.get("corrected_query"),
                     tabular_subquery=metadata_dict.get("tabular_subquery"),
                     vector_subquery=metadata_dict.get("vector_subquery"),
+                    implied_columns=metadata_dict.get("implied_columns", []),
                     structured_queries=metadata_dict.get("structured_queries", [])
                 )
 
@@ -289,12 +326,15 @@ QUERY:
                     # Heuristic Fallback Rewrite: check for pinned KB
                     fallback_query = q_strip
                     if session_id:
-                        from app.modules.rag.file_router.router import _SESSION_PINNED_KBS
-                        pinned = _SESSION_PINNED_KBS.get(session_id)
-                        if pinned:
-                            pinned_name = pinned.get("name")
-                            fallback_query = f"{q_strip} {pinned_name}"
-                            logger.info(f"QueryAnalyzer timeout: Appended pinned KB '{pinned_name}' to fallback query.")
+                        try:
+                            from app.modules.rag.service import _doc_session_store
+                            pinned = await _doc_session_store.get_pin(str(tenant_id), session_id)
+                            if pinned:
+                                pinned_name = pinned.get("name")
+                                fallback_query = f"{q_strip} {pinned_name}"
+                                logger.info(f"QueryAnalyzer timeout: Appended pinned KB '{pinned_name}' to fallback query.")
+                        except Exception as p_e:
+                            logger.error(f"Failed to get pinned KB for heuristic fallback: {p_e}")
                     
                     # Fallback path: treat as SUMMARY/FACT heuristically so request isn't blocked
                     return AnalysisResult(

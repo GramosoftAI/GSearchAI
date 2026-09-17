@@ -197,8 +197,11 @@ class Settings(BaseSettings):
     deepinfra_api_url: str = "https://api.deepinfra.com/v1/openai"
 
     # --- Primary Model Stack ---
-    model_embedding: str = "Qwen/Qwen3-Embedding-8B"
-    embedding_dimension: int = 4096
+    model_embedding: str = "BAAI/bge-large-en-v1.5"
+    embedding_dimension: int = 1024
+    embedding_warmup_enabled: bool = True
+    embedding_warmup_delay_seconds: float = 1.0
+    embedding_warmup_timeout_seconds: float = 15.0
 
     model_intent: str = "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
     max_tokens_intent: int = 512
@@ -222,6 +225,9 @@ class Settings(BaseSettings):
 
     model_vision: str = "meta-llama/Llama-3.2-11B-Vision-Instruct"
     max_tokens_vision: int = 1024
+    
+    model_tabular: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    max_tokens_tabular: int = 2048
 
     # --- Budget Fallbacks ---
     fallback_mode: bool = False
@@ -365,6 +371,8 @@ class Settings(BaseSettings):
 
     triplet_retrieval_top_k: int = 15  # Triplets to retrieve during RAG query
 
+    enable_server_side_triplet_cosine: bool = True  # Phase 2: Experimental server-side Neo4j cosine similarity for TripletRetriever
+
     use_personal_memory: bool = False  # Phase 5: Enable user-specific personalization (Mem0 Pattern)
 
 
@@ -387,6 +395,9 @@ class Settings(BaseSettings):
     max_similar_per_chunk: int = 5  # Cap edges per chunk to keep graph clean
 
     noisy_words_min_score_threshold: float = 0.3
+    # Relevance filtering: reranker score floor under which candidate chunks are classified as ambient noise
+    # and bypassed if knowledge graph triplets are present as clean evidence
+    rag_graph_noise_floor: float = 0.10
 
 
 

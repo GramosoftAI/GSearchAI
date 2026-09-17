@@ -12,7 +12,7 @@ from typing import Optional, Callable, List, Dict, Any, Tuple
 from uuid import UUID
 import asyncio
 import hashlib
-import random
+import copy
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 from urllib.parse import urlparse
@@ -41,6 +41,12 @@ logger = logging.getLogger(__name__)
 def clean_source_name(source: str) -> str:
     if not source:
         return "Unknown Source"
+    source = source.strip()
+    suffix = ""
+    if " (Selected Links)" in source:
+        suffix = " (Selected Links)"
+        source = source.replace(" (Selected Links)", "").strip()
+
     if ":" in source and not source.startswith("http"):
         parts = source.split(":", 1)
         source = parts[1].strip()
@@ -48,13 +54,15 @@ def clean_source_name(source: str) -> str:
     try:
         parsed = urlparse(source)
         if parsed.scheme and parsed.netloc:
-            path_part = os.path.basename(parsed.path)
+            path_part = os.path.basename(parsed.path.rstrip("/"))
             if path_part:
-                return path_part
+                return f"{path_part}{suffix}"
+            return f"{parsed.netloc}{suffix}"
     except Exception:
         pass
 
-    return os.path.basename(source)
+    base = os.path.basename(source)
+    return f"{base}{suffix}" if base else f"Unknown Source{suffix}"
 
 
 _rag_cache = {}
@@ -242,6 +250,83 @@ class CSVSessionPinStore:
 
 _csv_session_store = CSVSessionPinStore()
 
+class QueryIntentSessionStore(CSVSessionPinStore):
+    """
+    Manages session-pinned structured intents to aid in query rewriting.
+    Inherits Redis and memory fallback from CSVSessionPinStore.
+    """
+    def _make_key(self, tenant_id: str, session_id: str) -> str:
+        return f"query_intent:{tenant_id}:{session_id}"
+
+    async def set_intent(
+        self,
+        tenant_id: str,
+        session_id: Optional[str],
+        intent_data: dict,
+        ttl_seconds: int = 600
+    ) -> None:
+        if not session_id:
+            return
+        key = self._make_key(tenant_id, session_id)
+        data = {
+            "intent_data": intent_data,
+            "created_at": time.time(),
+        }
+        redis_client = await self._get_redis()
+        if redis_client:
+            try:
+                await redis_client.set(key, json.dumps(data), ex=ttl_seconds)
+                return
+            except Exception as e:
+                logger.warning(f"[QueryIntentSessionStore] Redis set failed: {e}")
+
+        async with self._lock:
+            self._memory_store[key] = {
+                "data": data,
+                "expires_at": time.time() + ttl_seconds
+            }
+
+_intent_session_store = QueryIntentSessionStore()
+
+class DocumentSessionPinStore(CSVSessionPinStore):
+    """
+    Manages session-pinned Document knowledge bases.
+    Inherits Redis and memory fallback from CSVSessionPinStore.
+    """
+    def _make_key(self, tenant_id: str, session_id: str) -> str:
+        return f"doc_pin:{tenant_id}:{session_id}"
+
+    async def set_pin(
+        self,
+        tenant_id: str,
+        session_id: Optional[str],
+        kb_id: str,
+        name: str,
+        ttl_seconds: int = 600
+    ) -> None:
+        if not session_id:
+            return
+        key = self._make_key(tenant_id, session_id)
+        data = {
+            "kb_id": str(kb_id),
+            "name": name,
+            "created_at": time.time(),
+        }
+        redis_client = await self._get_redis()
+        if redis_client:
+            try:
+                await redis_client.set(key, json.dumps(data), ex=ttl_seconds)
+                return
+            except Exception as e:
+                logger.warning(f"[DocumentSessionPinStore] Redis set failed: {e}")
+
+        async with self._lock:
+            self._memory_store[key] = {
+                "data": data,
+                "expires_at": time.time() + ttl_seconds
+            }
+
+_doc_session_store = DocumentSessionPinStore()
 
 def is_csv_kb(kb) -> bool:
     """Returns True if the knowledge base represents a CSV file."""
@@ -416,45 +501,7 @@ class RAGService:
                 f"Failed to log analytics for stream (Tenant: {self.tenant_id}, User: {user_id}, Session: {session_id}): {ae}"
             )
 
-    def _filter_relevant_chunks(self, context) -> int:
-        """
-        Applies scale-aware relevance filtering to context.chunks to prevent context poisoning/hallucination.
-        Seamlessly handles both RRF scores (~0.001-0.033) and Vector/Legacy scores (0.0-1.0+) by using
-        a scale-independent relative cutoff (15% of top chunk score), automatically preventing static
-        threshold mismatch bugs when legacy env vars are present.
-        Returns the number of dropped chunks.
-        """
-        if not context or not getattr(context, "chunks", None):
-            return 0
 
-        import os
-        original_count = len(context.chunks)
-        max_score = max((getattr(c, "hybrid_score", 0.0) for c in context.chunks), default=0.0)
-        if max_score <= 0.0:
-            return 0
-
-        # Relative cutoff threshold (15% of highest chunk score)
-        relative_ratio = 0.15
-        cutoff = max_score * relative_ratio
-
-        env_val = os.getenv("RAG_MIN_RELEVANCE_SCORE")
-        if env_val is not None:
-            try:
-                env_score = float(env_val)
-                # Only use absolute env threshold if it does not exceed top candidate score (prevents scale mismatch)
-                if 0.0 < env_score <= max_score:
-                    cutoff = env_score
-            except ValueError:
-                pass
-
-        context.chunks = [c for c in context.chunks if getattr(c, "hybrid_score", 0.0) >= cutoff]
-        dropped = original_count - len(context.chunks)
-        if dropped > 0:
-            logger.info(
-                f"Relevance Filter (Scale-Aware): Top score = {max_score:.4f}, "
-                f"Cutoff = {cutoff:.4f}. Dropped {dropped} low-relevance chunks."
-            )
-        return dropped
 
     async def _log_query_analytics_safely(
         self,
@@ -516,42 +563,157 @@ class RAGService:
 
     def _filter_relevant_chunks(self, context) -> int:
         """
-        Applies scale-aware relevance filtering to context.chunks to prevent context poisoning/hallucination.
-        Seamlessly handles both RRF scores (~0.001-0.033) and Vector/Legacy scores (0.0-1.0+) by using
-        a scale-independent relative cutoff (15% of top chunk score), automatically preventing static
-        threshold mismatch bugs when legacy env vars are present.
-        Returns the number of dropped chunks.
+        Authoritative, scale-aware relevance filter for context.chunks.
+        
+        Dynamically inspects candidate score sources (reranker probability vs. RRF / vector similarity)
+        and applies appropriate filtering:
+        - Relative confidence thresholding (top candidate relative ratio)
+        - Absolute floor enforcement (respecting RAG_MIN_RELEVANCE_SCORE safely without score scale mixing)
+        - Controlled zero-context protection: If all candidates would be dropped, evaluates underlying evidence
+          (e.g., retrieval agreement, vector similarity, exact match) before discarding. If reliable evidence
+          exists, retains the top candidate with diagnostic logging; if candidates are truly noise, allows
+          zero return.
         """
         if not context or not getattr(context, "chunks", None):
             return 0
 
         import os
         original_count = len(context.chunks)
-        max_score = max((getattr(c, "hybrid_score", 0.0) for c in context.chunks), default=0.0)
+        if original_count == 0:
+            return 0
+
+        # Determine score source and score values
+        # Check if chunks have reranker_score populated
+        has_reranker = any(getattr(c, "reranker_score", None) is not None for c in context.chunks)
+        has_final_score = any(getattr(c, "final_relevance_score", None) is not None for c in context.chunks)
+
+        score_source = "reranker_score" if has_reranker else ("final_relevance_score" if has_final_score else "hybrid_score")
+
+        def get_chunk_score(c):
+            if has_reranker and getattr(c, "reranker_score", None) is not None:
+                return float(c.reranker_score)
+            if has_final_score and getattr(c, "final_relevance_score", None) is not None:
+                return float(c.final_relevance_score)
+            return float(getattr(c, "hybrid_score", 0.0) or 0.0)
+
+        scores = [get_chunk_score(c) for c in context.chunks]
+        max_score = max(scores, default=0.0)
+        min_score = min(scores, default=0.0)
+        avg_score = sum(scores) / len(scores) if scores else 0.0
+
         if max_score <= 0.0:
             return 0
 
-        # Relative cutoff threshold (15% of highest chunk score)
+        # Dynamic threshold calculation
+        # Relative ratio: supporting chunks must be within 15% of top candidate's score
         relative_ratio = 0.15
-        cutoff = max_score * relative_ratio
+        relative_cutoff = max_score * relative_ratio
+        effective_threshold = relative_cutoff
 
         env_val = os.getenv("RAG_MIN_RELEVANCE_SCORE")
+        env_score = None
         if env_val is not None:
             try:
                 env_score = float(env_val)
-                # Only use absolute env threshold if it does not exceed top candidate score (prevents scale mismatch)
-                if 0.0 < env_score <= max_score:
-                    cutoff = env_score
             except ValueError:
-                pass
+                env_score = None
 
-        context.chunks = [c for c in context.chunks if getattr(c, "hybrid_score", 0.0) >= cutoff]
-        dropped = original_count - len(context.chunks)
-        if dropped > 0:
-            logger.info(
-                f"Relevance Filter (Scale-Aware): Top score = {max_score:.4f}, "
-                f"Cutoff = {cutoff:.4f}. Dropped {dropped} low-relevance chunks."
+        if env_score is not None:
+            if has_reranker:
+                # When reranker is present, model probability distribution can have top values in 0.10 - 0.50
+                # If top candidate exceeds env_score, use relative cutoff.
+                # If top candidate is below env_score, apply env_score as absolute floor.
+                if max_score < env_score:
+                    effective_threshold = env_score
+                else:
+                    effective_threshold = max_score * relative_ratio
+            else:
+                # Pure RRF / vector scores: RRF scores are naturally ~0.001 - 0.05
+                # Never compare raw RRF scores directly against an absolute reranker threshold like 0.50
+                if max_score < 0.10:
+                    # Pure RRF scale: use relative cutoff
+                    effective_threshold = max_score * relative_ratio
+                else:
+                    if max_score < env_score:
+                        effective_threshold = env_score
+                    else:
+                        effective_threshold = max_score * relative_ratio
+
+        retained = [c for c in context.chunks if get_chunk_score(c) >= effective_threshold]
+        fallback_used = False
+        fallback_reason = "none"
+
+        # Controlled zero-context protection:
+        # If all candidates were filtered out (original_count > 0 and len(retained) == 0),
+        # evaluate available confidence signals before declaring catastrophic zero-context.
+        if len(retained) == 0 and original_count > 0:
+            top_chunk = max(context.chunks, key=get_chunk_score)
+            top_vector = getattr(top_chunk, "vector_score", 0.0) or getattr(top_chunk, "embedding_similarity", 0.0) or 0.0
+            top_exact = getattr(top_chunk, "exact_score", 0.0) or 0.0
+            top_triplet = getattr(top_chunk, "triplet_score", 0.0) or 0.0
+            top_keyword = getattr(top_chunk, "keyword_score", 0.0) or 0.0
+            top_score_val = get_chunk_score(top_chunk)
+
+            # Evaluate meaningful retrieval evidence:
+            # 1. Semantic similarity is solid (vector_score >= 0.40)
+            # 2. Exact match hit exists (exact_score > 0)
+            # 3. Multiple retrieval sources agreed (e.g. vector + keyword/triplet)
+            # 4. Reranker assigned non-trivial probability above ambient noise (> 0.02)
+            sources_agreed = sum([
+                1 if top_vector > 0.35 else 0,
+                1 if top_exact > 0 else 0,
+                1 if top_keyword > 0 else 0,
+                1 if top_triplet > 0 else 0
+            ])
+
+            has_knowledge_graph = bool(
+                getattr(context, "triplets", None) or getattr(context, "triplet_context", None)
             )
+
+            if top_vector >= 0.40:
+                fallback_used = True
+                fallback_reason = f"strong_vector_similarity_{top_vector:.3f}"
+            elif top_exact > 0:
+                fallback_used = True
+                fallback_reason = "exact_match_present"
+            elif sources_agreed >= 2:
+                fallback_used = True
+                fallback_reason = f"retrieval_agreement_count_{sources_agreed}"
+            elif has_reranker and top_score_val >= 0.02:
+                # If the knowledge graph already contains relevant factual triplets,
+                # do not gamble on noise-level chunk fallback that poisons the prompt.
+                from app.core.config import get_settings
+                graph_noise_floor = getattr(get_settings(), "rag_graph_noise_floor", 0.10)
+                if has_knowledge_graph and top_score_val < graph_noise_floor:
+                    fallback_used = False
+                    fallback_reason = f"bypassed_for_graph_triplets_reranker_{top_score_val:.4f}"
+                else:
+                    fallback_used = True
+                    fallback_reason = f"reranker_confidence_above_noise_{top_score_val:.4f}"
+
+            if fallback_used:
+                retained = [top_chunk]
+
+        context.chunks = retained
+        dropped = original_count - len(context.chunks)
+
+        # Retrieval agreement diagnostics
+        agreement_info = ""
+        if original_count > 0:
+            best_vector = max(context.chunks, key=lambda c: getattr(c, "vector_score", 0.0) or getattr(c, "embedding_similarity", 0.0) or 0.0, default=None)
+            best_rrf = max(context.chunks, key=lambda c: getattr(c, "rrf_score", 0.0) or 0.0, default=None)
+            agreement_info = (
+                f" vector_top_chunk={getattr(best_vector, 'chunk_id', 'none')}"
+                f" rrf_top_chunk={getattr(best_rrf, 'chunk_id', 'none')}"
+            )
+
+        logger.info(
+            f"[RELEVANCE_FILTER] before={original_count} after={len(retained)} removed={dropped} "
+            f"score_source={score_source} max_score={max_score:.4f} min_score={min_score:.4f} "
+            f"avg_score={avg_score:.4f} threshold={effective_threshold:.4f} "
+            f"fallback_used={fallback_used} fallback_reason={fallback_reason}{agreement_info}"
+        )
+
         return dropped
 
     async def stream_rag_answer(
@@ -614,6 +776,25 @@ class RAGService:
                 )
                 yield json.dumps({"error": f"Unauthorized: Knowledge Base {target_kb_id} does not belong to this agent"})
                 return
+                
+            # ============= QUERY REWRITE (CONTEXTUALIZATION) =============
+            last_intent_context = None
+            if session_id:
+                intent_pin = await _intent_session_store.get_pin(self.tenant_id, session_id)
+                if intent_pin and "intent_data" in intent_pin:
+                    last_intent_context = intent_pin["intent_data"]
+
+            if chat_history or last_intent_context:
+                from app.modules.rag.orchestrator.query_rewriter import QueryRewriter
+                rewriter = QueryRewriter()
+                query = await rewriter.rewrite(
+                    current_query=query,
+                    chat_history=chat_history,
+                    last_intent_context=last_intent_context,
+                    tenant_id=self.tenant_id,
+                    user_id=user_id
+                )
+                short_query = query[:50] + "..." if len(query) > 50 else query
 
             effective_target_kb_id = str(target_kb_id) if target_kb_id else None
             if not effective_target_kb_id and session_id:
@@ -729,12 +910,26 @@ class RAGService:
             logger.info(f"[TRACE_E2E] [ENTRY] QueryAnalyzer.analyze_query - Input: '{short_query}'")
             # Step 2 Latency Fix: Gather QueryAnalyzer and original Query Embedding concurrently
             analysis_task = asyncio.create_task(analyzer.analyze_query(query, kb_context=kb_context, chat_history=chat_history, tenant_id=self.tenant_id, user_id=user_id, session_id=session_id))
-            embed_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(query))
+            embed_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(query, is_query=True))
             
             analysis, embed_res = await asyncio.gather(analysis_task, embed_task)
             analyzer_latency = time.time() - analyzer_start
             logger.info(f"[TRACE_E2E] [EXIT] QueryAnalyzer + Embed (Concurrent) - Output: {getattr(analysis, 'intent', 'Unknown')} - Latency: {analyzer_latency:.2f}s")
             logger.info(f"TELEMETRY: QueryAnalyzer + Embed completed in {analyzer_latency:.2f}s")
+            
+            # Store structured intent for future conversational context
+            if session_id and hasattr(analysis, "metadata"):
+                intent_data = {
+                    "is_tabular": getattr(analysis, "is_tabular", False),
+                    "intent": getattr(analysis.intent, "name", "UNKNOWN") if analysis.intent else "UNKNOWN",
+                    "keywords": analysis.metadata.keywords,
+                    "target_kb_id": analysis.metadata.target_kb_id
+                }
+                # Add subquery context if available
+                if getattr(analysis.metadata, "tabular_subquery", None):
+                    intent_data["tabular_subquery"] = analysis.metadata.tabular_subquery
+                    
+                await _intent_session_store.set_intent(self.tenant_id, session_id, intent_data)
 
             # ============= HYBRID RAG: ENTERPRISE SCHEMA-AWARE ROUTING =============
             hybrid_merge_context = ""
@@ -864,6 +1059,39 @@ class RAGService:
                                 # Re-eval max after tiebreaker
                                 max_total = max(s["total_score"] for s in kb_scores)
                                 
+                                # --- COLUMN-EXISTENCE GATING ---
+                                from app.modules.rag.schema_utils import get_schema_columns
+                                implied_cols = getattr(analysis.metadata, "implied_columns", [])
+                                force_disambiguation = False
+                                
+                                if implied_cols:
+                                    top_scorers = [s for s in kb_scores if s["total_score"] == max_total]
+                                    for s in kb_scores:
+                                        ds = getattr(s["kb"], "dataset_schema", None)
+                                        cv = getattr(s["kb"], "categorical_values", None)
+                                        kb_cols = [str(c).lower() for c in get_schema_columns(ds, cv)]
+                                        
+                                        has_all = True
+                                        for ic in implied_cols:
+                                            ic_lower = ic.lower()
+                                            if not any(ic_lower in kc or kc in ic_lower for kc in kb_cols):
+                                                has_all = False
+                                                break
+                                        s["has_implied_cols"] = has_all
+                                        
+                                    top_scorer_has_cols = any(s["has_implied_cols"] for s in top_scorers)
+                                    
+                                    if not top_scorer_has_cols:
+                                        logger.warning(f"[COLUMN_GATING] Top scored KB(s) missing implied columns: {implied_cols}")
+                                        valid_alternatives = [s for s in kb_scores if s["has_implied_cols"]]
+                                        if len(valid_alternatives) == 1:
+                                            valid_alternatives[0]["total_score"] = max_total + 10
+                                            max_total = valid_alternatives[0]["total_score"]
+                                            logger.info(f"[COLUMN_GATING] Re-ranking to single valid alternative: {valid_alternatives[0]['name']}")
+                                        else:
+                                            logger.info(f"[COLUMN_GATING] {len(valid_alternatives)} valid alternatives. Forcing disambiguation.")
+                                            force_disambiguation = True
+                                
                                 # --- ENTITY PRESENCE PROBE FALLBACK ---
                                 MIN_BASELINE = 4
                                 probe_hits = []
@@ -926,9 +1154,25 @@ class RAGService:
                                 csv_kbs = [kb for kb in excel_kbs if is_csv_kb(kb)]
                                 is_cross_file = is_cross_file_query(query)
 
-                                if len(csv_kbs) >= 2 and not is_cross_file:
+                                if (len(csv_kbs) >= 2 and not is_cross_file) or force_disambiguation:
                                     csv_scores = [s for s in kb_scores if s["kb"] in csv_kbs]
                                     csv_probe_hits = [h for h in probe_hits if h["kb"] in csv_kbs]
+
+                                    # Ambiguity Condition 0: Column Gating forced disambiguation
+                                    if force_disambiguation:
+                                        # Use all valid alternatives (or all KBs if none valid) as candidates
+                                        candidates = [s for s in csv_scores if s.get("has_implied_cols", False)]
+                                        if not candidates:
+                                            candidates = csv_scores
+                                        clarification_payload = _build_csv_disambiguation_payload(
+                                            candidates, reason="missing_implied_columns"
+                                        )
+                                        logger.info(
+                                            f"[TELEMETRY] [DISAMBIGUATION_TRIGGERED] reason=missing_implied_columns, "
+                                            f"candidates={[c['filename'] for c in clarification_payload['candidates']]}"
+                                        )
+                                        yield json.dumps(clarification_payload)
+                                        return
 
                                     # Ambiguity Condition 1: Multiple CSV probe hits
                                     if len(csv_probe_hits) >= 2:
@@ -991,7 +1235,10 @@ class RAGService:
                                     query, ds, cv, paths
                                 )
                         
-                        if strict_schema_overlap:
+                        from app.modules.rag.schema_utils import DOC_SIGNALS
+                        query_has_doc_signal = any(sig in query.lower() for sig in DOC_SIGNALS)
+
+                        if strict_schema_overlap and not query_has_doc_signal:
                             overlap = True
                             if best_kb:
                                 # Ensure downstream pipeline queries only this specific KB
@@ -1035,7 +1282,7 @@ class RAGService:
                 s_names = locals().get('schema_name_terms', set())
                 
                 # Pre-strip the tabular subquery to drop non-schema clauses
-                import re
+
                 clauses = re.split(r'\s+and\s+|\s*,\s*', tabular_subquery.lower())
                 valid_clauses = []
                 analytic_verbs = {"average", "total", "sum", "count", "list", "how many", "max", "min"}
@@ -1050,7 +1297,7 @@ class RAGService:
                 stripped_tabular = " and ".join(valid_clauses) if valid_clauses else tabular_subquery
                 logger.info(f"Stripped composite tabular query: {tabular_subquery} -> {stripped_tabular}")
 
-                import copy
+                # Create a deep copy for vector pipeline
                 vec_analysis = copy.deepcopy(analysis)
                 vec_analysis.is_tabular = False 
                 
@@ -1260,6 +1507,14 @@ class RAGService:
                 logger.warning(f"Failed fetching active ontology for RAG prompt: {e}")
                 ontology_rules_str = ""
     
+            # Determine if tabular/CSV rules are needed
+            tabular_rules = ""
+            if excel_kbs or (doc_kbs and any(is_csv_kb(k) for k in doc_kbs)):
+                tabular_rules = """
+    - TRANSACTION CLASSIFICATION: Categorize transactions strictly:
+      * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
+      * Debit (Withdrawal/Outgoing/Payment): ATM withdrawals, payments to merchants, fees, taxes, outgoing transfers."""
+
             injected_system_prompt = f"""
     [PERSONALITY MODE: STRICT]
     
@@ -1308,10 +1563,7 @@ class RAGService:
     - Mention the relevant source at the end.
     - Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
     - Be concise. Focus strictly on direct answers and avoid filler.
-    - NEVER include internal relevance scores or confidence numbers (e.g. "(relevance: 0.65)", "(relevance: 0.58)", or "score: 0.61") in your output text. Relevance scores are for internal search ranking only and must never be shown to the user.
-    - TRANSACTION CLASSIFICATION: Categorize transactions strictly:
-      * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
-      * Debit (Withdrawal/Outgoing/Payment): ATM withdrawals, payments to merchants, fees, taxes, outgoing transfers.
+    - NEVER include internal relevance scores or confidence numbers (e.g. "(relevance: 0.65)", "(relevance: 0.58)", or "score: 0.61") in your output text. Relevance scores are for internal search ranking only and must never be shown to the user.{tabular_rules}
     
     ==================================================
     FORMATTING RULES
@@ -1328,10 +1580,11 @@ class RAGService:
     - NEVER include [Source: ...] for greetings, introduction messages, or general chitchat.
     
     2. DOCUMENT CONTENT & ACCURATE CITATIONS:
-    - Cite a source ONLY IF information from retrieved document/data chunks was ACTUALLY USED to answer the user's specific question.
-    - Cite ONLY the specific filename(s) from which relevant facts were extracted.
+    - Cite a source ONLY IF information from retrieved document/data chunks or Knowledge Graph was ACTUALLY USED to answer the user's specific question.
+    - If the answer came from document chunks, cite ONLY the specific filename(s) from which relevant facts were extracted.
     - Single Source: If the answer came from only one document (e.g. ARUN_N.pdf), cite ONLY that single document: [Source: ARUN_N.pdf]. Do NOT list other unused files.
     - Multi Source: If the answer combined information from multiple documents, list only those specific documents: [Source: file1.pdf, file2.pdf].
+    - Knowledge Graph: If the answer came exclusively from the Knowledge Graph relationships without document chunks, cite: [Source: Knowledge Graph].
     - Deduplicate sources so each unique filename appears ONLY ONCE.
     - Format the citation at the very end of your response on its own single line:
       [Source: filename1, filename2]
@@ -1341,7 +1594,7 @@ class RAGService:
     ==================================================
     <grounded answer>
     
-    [Source: <only include source file(s) actually used to answer document questions>]
+    [Source: <only include source file(s) or Knowledge Graph actually used to answer document/graph questions>]
     """.strip()
     
             agent_persona = {
@@ -1374,6 +1627,8 @@ class RAGService:
                             session_id=session_id,
                             top_k=top_k,
                             max_depth=max_depth,
+                            analysis=analysis,
+                            query_embedding_tuple=embed_res if 'embed_res' in locals() else None,
                         ),
                         timeout=_RAG_TIMEOUT_SECONDS,
                     )
@@ -1620,6 +1875,7 @@ class RAGService:
                 yield chunk
                 
             complete_answer = "".join(full_answer).strip()
+            logger.info(f"[RAG_STREAM_COMPLETE] Generated Answer:\n{complete_answer}")
             if not complete_answer:
                 fallback_msg = "I'm sorry, but I don't have that specific information in my current knowledge base. Please try a related query or provide additional context."
                 logger.info(f"[RAG_STREAM] LLM returned empty string. Yielding fallback message.")
@@ -1978,6 +2234,14 @@ class RAGService:
             except Exception as mem_err:
                 logger.warning(f"Memory guidance fetch failed in generate_answer: {mem_err}")
 
+        # Determine if tabular/CSV rules are needed
+        tabular_rules = ""
+        if excel_kbs or (doc_kbs and any(is_csv_kb(k) for k in doc_kbs)):
+            tabular_rules = """
+- TRANSACTION CLASSIFICATION: Categorize transactions strictly:
+  * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
+  * Debit (Withdrawal/Outgoing/Payment): ATM withdrawals, payments to merchants, fees, taxes, outgoing transfers."""
+
         injected_system_prompt = f"""
 [PERSONALITY MODE: STRICT]
 
@@ -2023,10 +2287,7 @@ If retrieved passages conflict, state the conflict. Do not resolve it yourself.
   "I couldn't find it."
 - Mention the relevant source at the end.
 - Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
-- Be concise. Focus strictly on direct answers and avoid filler.
-- TRANSACTION CLASSIFICATION: Categorize transactions strictly:
-  * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
-  * Debit (Withdrawal/Outgoing/Payment): ATM withdrawals, payments to merchants, fees, taxes, outgoing transfers.
+- Be concise. Focus strictly on direct answers and avoid filler.{tabular_rules}
 
 ==================================================
 FORMATTING RULES
@@ -2042,10 +2303,11 @@ SOURCE CITATION RULES (STRICT)
 - NEVER include [Source: ...] for greetings, introduction messages, or general chitchat.
 
 2. DOCUMENT CONTENT & ACCURATE CITATIONS:
-- Cite a source ONLY IF information from retrieved document/data chunks was ACTUALLY USED to answer the user's specific question.
-- Cite ONLY the specific filename(s) from which relevant facts were extracted.
+- Cite a source ONLY IF information from retrieved document/data chunks or Knowledge Graph was ACTUALLY USED to answer the user's specific question.
+- If the answer came from document chunks, cite ONLY the specific filename(s) from which relevant facts were extracted.
 - Single Source: If the answer came from only one document (e.g. ARUN_N.pdf), cite ONLY that single document: [Source: ARUN_N.pdf]. Do NOT list other unused files.
 - Multi Source: If the answer combined information from multiple documents, list only those specific documents: [Source: file1.pdf, file2.pdf].
+- Knowledge Graph: If the answer came exclusively from the Knowledge Graph relationships without document chunks, cite: [Source: Knowledge Graph].
 - Deduplicate sources so each unique filename appears ONLY ONCE.
 - Format the citation at the very end of your response on its own single line:
   [Source: filename1, filename2]
@@ -2055,7 +2317,7 @@ RESPONSE FORMAT
 ==================================================
 <grounded answer>
 
-[Source: <only include source file(s) actually used to answer document questions>]
+[Source: <only include source file(s) or Knowledge Graph actually used to answer document/graph questions>]
 """.strip()
 
         agent_persona = {
@@ -2112,12 +2374,14 @@ RESPONSE FORMAT
                     user_id=user_id,
                     top_k=top_k,
                     max_depth=max_depth,
+                    analysis=analysis,
+                    query_embedding_tuple=embed_res if 'embed_res' in locals() else None
                 ),
                 timeout=_RAG_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
             try:
-                query_embedding = await EmbeddingGenerator.generate_embedding(query)
+                query_embedding = await EmbeddingGenerator.generate_embedding(query, is_query=True)
                 seed_chunks = await self.pipeline._retrieve_seed_chunks(
                     kb_ids=kb_ids,
                     query_embedding=query_embedding,
@@ -2489,7 +2753,14 @@ RESPONSE FORMAT
         if hybrid_merge_context:
             context_text += f"{hybrid_merge_context}\n" + "=" * 60 + "\n"
 
-        for i, chunk in enumerate(context.chunks, 1):
+        # Ensure highest-confidence chunks appear first in the prompt to prevent lost-in-the-middle degradation
+        sorted_chunks = sorted(
+            context.chunks,
+            key=lambda c: getattr(c, "hybrid_score", 0.0),
+            reverse=True
+        )
+
+        for i, chunk in enumerate(sorted_chunks, 1):
             s3_path = getattr(chunk, "s3_path", None)
             source_val = chunk.source or s3_path
             source_info = clean_source_name(source_val) if source_val else "Unknown Source"

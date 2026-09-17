@@ -94,16 +94,24 @@ class EmbeddingGenerator:
 
 
 
+    # Simple in-memory cache for exact-match queries across requests
+
+    _query_cache: dict[str, tuple[List[float], int]] = {}
+
+    _cache_max_size: int = 1000
+
+
+
     @staticmethod
-    async def generate_embedding(text: str) -> List[float]:
+    async def generate_embedding(text: str, is_query: bool = False) -> List[float]:
         """
         Generate embedding for text using feature flag for Phase switching.
         """
-        vector, _ = await EmbeddingGenerator.generate_embedding_with_usage(text)
+        vector, _ = await EmbeddingGenerator.generate_embedding_with_usage(text, is_query=is_query)
         return vector
 
     @staticmethod
-    async def generate_embedding_with_usage(text: str) -> tuple[List[float], int]:
+    async def generate_embedding_with_usage(text: str, request_id: str = "unknown", is_query: bool = False) -> tuple[List[float], int]:
         """
         Generate embedding for text, returning (embedding vector, token count).
         """
@@ -119,6 +127,16 @@ class EmbeddingGenerator:
         if not text or len(text.strip()) == 0:
             return [0.0] * settings.embedding_dimension, 0
 
+        # BGE models require a specific prefix for retrieval queries
+        if is_query and "bge" in getattr(settings, "model_embedding", "").lower():
+            if not text.startswith("Represent this sentence"):
+                text = f"Represent this sentence for searching relevant passages: {text}"
+
+        cache_key = text.lower().strip()
+        if cache_key in EmbeddingGenerator._query_cache:
+            logger.info(f"[EMBEDDING_CACHE_HIT] request_id={request_id} (text length: {len(text)})")
+            return EmbeddingGenerator._query_cache[cache_key]
+
         try:
             if settings.use_real_embeddings:
                 import time
@@ -126,8 +144,30 @@ class EmbeddingGenerator:
                 t0 = time.perf_counter()
                 result = await client.generate_embedding_with_usage(text)
                 t1 = time.perf_counter()
-                if t1 - t0 > 10.0:
-                    logger.warning(f"HIGH LATENCY: DeepInfra embedding call took {t1 - t0:.2f}s")
+                dur_s = t1 - t0
+                dur_ms = round(dur_s * 1000.0, 2)
+                
+                logger.info(
+                    f"[QUERY_EMBEDDING] request_id={request_id} model={client.model} "
+                    f"generated_once=true latency_ms={dur_ms}"
+                )
+                
+                warm_state = "warm" if dur_ms < 2000.0 else "cold"
+                logger.info(
+                    f"[EMBEDDING_LATENCY] request_id={request_id} latency_ms={dur_ms} "
+                    f"status=200 warm_state={warm_state}"
+                )
+                
+                if dur_ms >= 2000.0:
+                    logger.warning(
+                        f"[EMBEDDING_COLD_START] request_id={request_id} latency_ms={dur_ms} "
+                        f"threshold_ms=2000 possible_provider_cold_start=true"
+                    )
+                
+                # Add to cache
+                if len(EmbeddingGenerator._query_cache) >= EmbeddingGenerator._cache_max_size:
+                    EmbeddingGenerator._query_cache.clear()
+                EmbeddingGenerator._query_cache[cache_key] = result
                 return result
             else:
                 logger.debug(

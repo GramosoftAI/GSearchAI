@@ -11,9 +11,7 @@ AMBIGUITY_GAP = 0.10
 MIN_BASELINE = 0.60
 DOMINANCE_GAP = 0.10
 
-# Module-level dictionary to persist KB pinning across router instantiations
-# Key: session_id, Value: {"kb_id": str, "name": str}
-_SESSION_PINNED_KBS: Dict[str, Dict[str, str]] = {}
+
 
 class FileRouter:
     def __init__(self, tenant_id: str, db: Any = None):
@@ -140,18 +138,37 @@ class FileRouter:
                         
         # 3. Session Pinning logic
         if session_id:
+            from app.modules.rag.service import _doc_session_store
+            
             if final_result.is_confident_match and len(final_result.matched_kb_ids) == 1:
                 kb_id = final_result.matched_kb_ids[0]
                 kb_name = kb_metadata.get(kb_id, {}).get("name", kb_id)
-                _SESSION_PINNED_KBS[session_id] = {"kb_id": kb_id, "name": kb_name}
+                await _doc_session_store.set_pin(self.tenant_id, session_id, kb_id, kb_name)
                 logger.info(f"[FileRouter] Pinned KB {kb_name} ({kb_id}) for session {session_id}")
             elif not final_result.is_confident_match:
-                pinned_kb = _SESSION_PINNED_KBS.get(session_id)
+                pinned_kb = await _doc_session_store.get_pin(self.tenant_id, session_id)
                 if pinned_kb and pinned_kb["kb_id"] in candidate_kb_ids:
-                    logger.info(f"[FileRouter] Match was not confident. Falling back to previously pinned KB {pinned_kb['name']} ({pinned_kb['kb_id']}) for session {session_id}")
-                    final_result.is_confident_match = True
-                    final_result.matched_kb_ids = [pinned_kb["kb_id"]]
-                    final_result.reason += f" -> Overridden by session pinned KB {pinned_kb['kb_id']}"
+                    # ----- START TRACE LOGGING FOR GAP DERIVATION -----
+                    if semantic_matches:
+                        top_score = semantic_matches[0].score
+                        pinned_score = next((m.score for m in semantic_matches if m.kb_id == pinned_kb["kb_id"]), 0.0)
+                        gap = top_score - pinned_score
+                        
+                        if gap >= 0.080:
+                            logger.info(f"[SCORE_GAP_TRACE] session={session_id} | gap={gap:.3f} >= 0.080. Dropping pin.")
+                            await _doc_session_store.clear_pin(self.tenant_id, session_id)
+                            # final_result remains as-is (confident match on top_match, or not)
+                        elif gap >= 0.030:
+                            logger.info(f"[SCORE_GAP_TRACE] session={session_id} | gap={gap:.3f} in disambiguation band. Asking user.")
+                            final_result.is_confident_match = False
+                            # Disambiguation between new top match and pinned match
+                            final_result.matched_kb_ids = [semantic_matches[0].kb_id, pinned_kb["kb_id"]]
+                            final_result.reason += f" -> Ambiguous switch. Prompting disambiguation between {semantic_matches[0].kb_id} and {pinned_kb['kb_id']}"
+                        else:
+                            logger.info(f"[SCORE_GAP_TRACE] session={session_id} | gap={gap:.3f} < 0.030. Holding pin.")
+                            final_result.is_confident_match = True
+                            final_result.matched_kb_ids = [pinned_kb["kb_id"]]
+                            final_result.reason += f" -> Overridden by session pinned KB {pinned_kb['kb_id']}"
+                    # ----- END TRACE LOGGING -----
                     
         return final_result
-

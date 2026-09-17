@@ -234,8 +234,11 @@ class VectorEngine(BaseEngine):
                         query_embedding = task.metadata_filters.get("query_embedding")
                     else:
                         query_embedding = getattr(task.metadata_filters, "query_embedding", None)
-                if not query_embedding:
-                    query_embedding = await EmbeddingGenerator.generate_embedding(task.query)
+                if query_embedding:
+                    logger.info("[QUERY_EMBEDDING] reused=true component=vector_retrieval")
+                else:
+                    logger.info("[QUERY_EMBEDDING] generated_once=false component=vector_retrieval (fallback generation)")
+                    query_embedding = await EmbeddingGenerator.generate_embedding(task.query, is_query=True)
 
                 top_k = getattr(task, "top_k", 15)
                 candidate_limit = max(top_k, 15)
@@ -335,16 +338,19 @@ class VectorEngine(BaseEngine):
                         analyzer_keywords = getattr(task.metadata_filters, "keywords", [])
                 
                 # Explode multi-word keywords to catch partial matches in filenames (e.g. '5-day hike' -> 'hike')
+                from app.modules.rag.scoring.term_frequency import STOPWORDS
                 exploded_keywords = set()
                 for kw in analyzer_keywords:
-                    exploded_keywords.add(kw.lower())
+                    kw_lower = kw.lower()
+                    if kw_lower not in STOPWORDS:
+                        exploded_keywords.add(kw_lower)
                     for w in kw.split():
                         clean_w = ''.join(c for c in w if c.isalnum()).lower()
-                        if len(clean_w) > 3:
+                        if len(clean_w) > 3 and clean_w not in STOPWORDS:
                             exploded_keywords.add(clean_w)
                 
                 if not exploded_keywords:
-                    exploded_keywords = {w.lower() for w in task.query.split() if len(w) > 4 and w.isalnum()}
+                    exploded_keywords = {w.lower() for w in task.query.split() if len(w) > 4 and w.isalnum() and w.lower() not in STOPWORDS}
                     
                 logger.info(f"[BOOST_CHECK] task_id={task.task_id} analyzer_keywords={analyzer_keywords} exploded_keywords={exploded_keywords}")
                 

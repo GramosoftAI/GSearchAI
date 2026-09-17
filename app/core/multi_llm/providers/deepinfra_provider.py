@@ -110,7 +110,7 @@ class DeepInfraProvider(LLMProvider):
     async def embed(self, texts: List[str]) -> List[List[float]]:
         # Need a default model for embeddings if not provided, assuming request.model would come here, 
         # but this takes only texts. In reality config or passed parameter should dictate.
-        embed_model = os.environ.get("MODEL_EMBEDDING", "Qwen/Qwen3-Embedding-8B")
+        embed_model = os.environ.get("MODEL_EMBEDDING", "BAAI/bge-large-en-v1.5")
         payload = {
             "model": embed_model, 
             "input": texts

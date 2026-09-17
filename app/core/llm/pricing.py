@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 # Default model and provider settings
 DEFAULT_PROVIDER = "deepinfra"
 DEFAULT_MODEL = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
-DEFAULT_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-8B"
+DEFAULT_EMBEDDING_MODEL = "BAAI/bge-large-en-v1.5"
 DEFAULT_EMBEDDING_PRICE_PER_1M = 0.010
 
 # Set of known provider prefixes for parsing provider-qualified model strings

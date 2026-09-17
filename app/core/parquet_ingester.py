@@ -297,11 +297,15 @@ class ParquetIngester:
         if not dataset_name:
             return None
 
+        if os.path.isabs(dataset_name) and os.path.exists(dataset_name):
+            return dataset_name
+            
         if not os.path.isabs(output_dir):
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             output_dir = os.path.join(base_dir, output_dir)
 
-        clean_key = dataset_name.strip()
+        # Extract only the filename, handling mixed slashes just in case
+        clean_key = os.path.basename(dataset_name.strip().replace('/', os.sep).replace('\\', os.sep))
         if clean_key.lower().endswith(('.csv', '.xlsx', '.xls', '.parquet')):
             clean_key = os.path.splitext(clean_key)[0]
 

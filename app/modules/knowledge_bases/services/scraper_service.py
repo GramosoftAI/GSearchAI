@@ -61,7 +61,7 @@ class GCrawlConfig:
     LINK_DISCOVERY_TIMEOUT: int = 180
     SCRAPE_TIMEOUT: int = 1200
     POLL_INTERVAL: int = 2
-    MAX_PAGES: int = 50
+    MAX_PAGES: int = 100
     RETRY_COUNT: int = 6
     BACKOFF_FACTOR: int = 2
 
@@ -210,7 +210,7 @@ def filter_links(
     urls: List[str],
     root_url: str,
     crawl_type: str = "all",
-    max_pages: int = 50
+    max_pages: int = 100
 ) -> List[str]:
     """
     Applies business filtering rules: domain matching, deduplication, URL normalization,

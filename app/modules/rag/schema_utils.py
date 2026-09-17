@@ -69,8 +69,25 @@ def calculate_schema_overlap_score(query: str, dataset_schema: Optional[Dict[str
                     elif len(v_lower) > 3 and v_lower in query_lower:
                         categorical_match_count += 1
                         
-    generic_match_count = len(query_terms & (schema_col_terms | schema_name_terms))
+    all_schema_terms = schema_col_terms | schema_name_terms
+    generic_match_count = 0
+    for qt in query_terms:
+        if qt in all_schema_terms:
+            generic_match_count += 1
+        elif len(qt) > 3 and qt.endswith('ies') and qt[:-3] + 'y' in all_schema_terms:
+            generic_match_count += 1
+        elif len(qt) > 2 and qt.endswith('es') and qt[:-2] in all_schema_terms:
+            generic_match_count += 1
+        elif len(qt) > 2 and qt.endswith('s') and qt[:-1] in all_schema_terms:
+            generic_match_count += 1
+            
     return (categorical_match_count, generic_match_count)
+
+DOC_SIGNALS = [
+    "in the document", "in the pdf", "policy", "manual", "according to", "clause", "article",
+    "guideline", "section", "paragraph", "doc mentions", "pdf mentions", "what is", "fuzzing",
+    "definition", "explain", "describe", "benefits", "limitations", "categories", "approaches"
+]
 
 def evaluate_schema_overlap(
     query: str, 
@@ -85,28 +102,45 @@ def evaluate_schema_overlap(
         (strict_schema_overlap: bool, reason: str, is_tabular: bool)
     """
     try:
+        query_lower = query.lower()
+        query_terms = set(re.findall(r'[a-zA-Z0-9]+', query_lower))
+
+        # Semantic/document queries should NOT be hijacked by coincidental schema column matches
+        has_doc_signal = any(sig in query_lower for sig in DOC_SIGNALS)
+        
         name = active_paths[0] if active_paths else None
         term_overlap = calculate_schema_overlap_score(query, dataset_schema, categorical_values, name)
         total_term_overlap = term_overlap[0] + term_overlap[1]
-        query_terms = set(re.findall(r'[a-zA-Z0-9]+', query.lower()))
         
         # Expanded Part No / Alphanumeric ID Regex (e.g. 29019292JA, EMP1006, APDA-102, MSS013002)
-        has_id_regex = bool(re.search(r'\b[a-zA-Z0-9_-]{5,}\b', query)) and (bool(re.search(r'\d', query)) and bool(re.search(r'[a-zA-Z]', query)))
+        # Must be within a single token that contains BOTH letters and digits
+        all_tokens = re.findall(r'\b[a-zA-Z0-9_-]{4,15}\b', query)
+        doc_code_prefixes = ("IR", "RFC", "ISO", "IEEE", "NIST", "SP", "SEC", "DOC", "PUB")
+        valid_id_tokens = [
+            tok for tok in all_tokens
+            if any(c.isalpha() for c in tok) and any(c.isdigit() for c in tok)
+            and not any(tok.upper().startswith(p) for p in doc_code_prefixes)
+        ]
+        has_id_regex = bool(valid_id_tokens)
         
         # Domain keywords indicating spreadsheet/tabular entity queries
-        tabular_domain_kws = {"mrp", "part", "price", "hsn", "sku", "item", "kit", "repair", "cost", "details", "list", "edition", "oem", "model"}
+        tabular_domain_kws = {"mrp", "part", "price", "hsn", "sku", "item", "kit", "repair", "cost", "details", "list", "edition", "oem", "model", "salary", "employee", "payroll", "wage"}
         has_domain_kw = bool(query_terms & tabular_domain_kws)
         
-        # Analytic verbs
-        analytic_verbs = {"average", "total", "sum", "count", "list", "how many", "max", "min", "which", "what", "find", "get", "show"}
+        # Concrete Analytic verbs for tabular aggregations (avoiding generic "what", "which")
+        analytic_verbs = {"average", "avg", "total", "sum", "count", "how many", "max", "min", "highest", "lowest"}
         has_analytic_verb = bool(query_terms & analytic_verbs)
+
+        if has_doc_signal and not (has_id_regex or has_domain_kw or term_overlap[0] > 0):
+            return False, "document_semantic_signals_predominate", False
         
-        # Final decision logic
+        # Final decision logic:
+        # Require categorical match OR specific ID OR explicit tabular domain keyword + match OR true analytical aggregation verb
         strict_schema_overlap = (
             term_overlap[0] > 0 or # Explicit categorical match is an instant win
             (term_overlap[1] >= 1 and has_id_regex) or # Looking up specific row by Part No / ID
-            (term_overlap[1] >= 1 and has_domain_kw) or # Specific tabular domain inquiry (e.g. MRP, part, price)
-            (term_overlap[1] >= 2 and has_analytic_verb) # Multiple column matches with analytical intent
+            (term_overlap[1] >= 1 and has_domain_kw) or # Specific tabular domain inquiry (e.g. MRP, part, price, salary)
+            (term_overlap[1] >= 2 and has_analytic_verb and not has_doc_signal) # True analytical aggregation on multiple columns
         )
         
         if strict_schema_overlap:
