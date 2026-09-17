@@ -10,5 +10,6 @@ class LoopEvent(BaseModel):
     escalation_detected: Optional[bool] = None
     message_id: Optional[str] = None
     clarification: Optional[Dict[str, Any]] = None
+    candidates: Optional[List[Dict[str, Any]]] = None
 
 

@@ -98,6 +98,7 @@ class EntityValueResolver:
         "friday", "monday", "tuesday", "wednesday", "thursday", "saturday", "sunday",
         "morning", "evening", "night", "week", "month", "year", "daily", "weekly", "monthly", "quarterly", "yearly", "hourly",
         "who", "whose", "whom", "what", "which", "where", "when", "why", "how",
+        "time", "spend", "spent", "work", "worked", "working", "recorded", "hours", "hour", "clock", "clock-in", "clock-out", "check-in", "check-out", "punch", "punch-in", "punch-out",
         "is", "are", "was", "were", "do", "does", "did", "have", "has", "had", "be", "been", "being",
         "can", "could", "will", "would", "shall", "should", "may", "might", "must",
         "give", "tell", "show", "list", "find", "get", "fetch", "display", "check", "verify", "me", "us", "them", "him", "her",
@@ -121,6 +122,10 @@ class EntityValueResolver:
         "it", "its", "laptop", "laptops", "purchase", "purchased", "warranty", "expire", "expired", "expiring", "expiration", "bought",
         "late", "early", "arrival", "arrivals", "absent", "absenteeism", "checkin", "checkout", "clockin", "clockout", "out", "in", "check", "clock", "cost", "soon",
         "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
+        "based", "doj", "dob", "criteria", "according", "sort", "sorted", "order", "ordered", "experience", "experienced", "experininced", "senior", "junior", "tenure", "duration", "earliest", "longest",
+        "their", "theirs", "his", "her", "my", "your", "yours", "our", "ours", "identify", "dentify",
+        "he", "she", "they", "we", "you", "i", "arrive", "arrived", "depart", "departed", "departure", "departures", "enter", "entered", "exit", "exited", "leaves", "left",
+        "validated", "invalidated", "validation",
     }
 
     @classmethod

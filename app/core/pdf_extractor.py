@@ -112,9 +112,8 @@ class PDFExtractor:
             import io
             import pandas as pd
             
-            # Find Markdown tables: consecutive lines starting with | or tab-separated lines
             # First, look for standard Markdown tables
-            md_table_pattern = re.compile(r'((?:^[ \t]*\|.*?\|[ \t]*(?:\n|$))+)', re.MULTILINE)
+            md_table_pattern = re.compile(r'((?:^[ \t]*\|.*\|[ \t]*$\n?)+)', re.MULTILINE)
             md_table_matches = list(md_table_pattern.finditer(raw_markdown))
             
             if md_table_matches:

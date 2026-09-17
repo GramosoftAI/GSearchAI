@@ -9,6 +9,14 @@ TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 _term_freq_cache = {}
 
+STOPWORDS = {
+    "with", "this", "that", "what", "would", "which", "where", "when", "there", "their", "about", 
+    "could", "should", "these", "those", "from", "have", "been", "were", "they", "will", "your", 
+    "them", "some", "into", "upon", "only", "other", "also", "very", "than", "then", "because", 
+    "while", "after", "before", "most", "such", "both", "each", "under", "through", "just", 
+    "same", "much", "even", "does", "doesn", "doing"
+}
+
 async def get_kb_doc_frequency(kb_id: str, db) -> dict:
     """
     Returns {stemmed_token: number_of_chunks_containing_it} for a KB.
@@ -52,7 +60,7 @@ def invalidate_kb_doc_frequency(kb_id: str):
     """
     _term_freq_cache.pop(str(kb_id), None)
 
-def idf_discount(term: str, doc_freq: dict, floor: float = 0.15) -> float:
+def idf_discount(term: str, doc_freq: dict, floor: float = 0.05) -> float:
     """
     Returns a multiplier in (floor, 1.0].
     """

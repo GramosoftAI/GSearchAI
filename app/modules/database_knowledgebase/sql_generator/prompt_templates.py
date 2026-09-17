@@ -26,7 +26,20 @@ STRICT CONSTRAINTS:
 6. Select descriptive and requested columns (e.g. first/last names, cities, states, countries, dates, titles, metrics) needed to directly and informatively answer the user query.
 7. MINIMAL & RELEVANT JOINS: Only join tables strictly necessary to satisfy the user query. Do NOT join 1-to-many child tables (such as employee_projects, employee_contacts, employee_addresses, attendance, payroll) unless the user query explicitly requests project, contact, address, attendance, or payroll data.
 8. PREVENT DUPLICATE ROWS: When querying primary entities (like employees), do NOT cause duplicate parent rows via 1-to-many joins; use LEFT JOIN or SELECT DISTINCT when necessary.
-9. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text.
+9. GROUP BY CONSISTENCY: Whenever any aggregation function (SUM, AVG, MIN, MAX, COUNT) is present alongside non-aggregated columns in SELECT, EVERY single non-aggregated column in the SELECT clause MUST be explicitly included in the GROUP BY clause.
+10. CANONICAL DURATION & NUMERIC COMPARISONS:
+    - ALWAYS use integer `at_work_second` for working time comparisons, filters, SUM, and AVG (1 hr = 3600s, 6 hrs = 21600s, 8 hrs = 28800s, 10 hrs = 36000s).
+      Example: "worked more than 8 hours" -> `at_work_second > 28800`.
+      Example: "worked less than 6 hours" -> `at_work_second < 21600`.
+    - Columns `attendance_worked_hour`, `minimum_hour`, and `attendance_overtime` are VARCHAR display strings (e.g. '09:58', '08:00'). NEVER use them with arithmetic or comparison operators (<, >, <=, >=, SUM, AVG). ALWAYS use `at_work_second` or `overtime_second` instead.
+    - ALWAYS use `overtime_second` or `approved_overtime_second` for overtime calculations (e.g. "more than 10 hours overtime" -> `overtime_second > 36000`).
+    - NEVER compare VARCHAR columns against numerical float or integer values.
+11. POSTGRESQL SYNTAX ONLY (NO MYSQL FUNCTIONS):
+    - NEVER use MySQL `IF(condition, val1, val2)`. In PostgreSQL, ALWAYS use standard SQL `CASE WHEN condition THEN val1 ELSE val2 END`.
+    - For conditional aggregations / percentages (e.g. "% completing 8 hours"):
+      Use: `ROUND(COUNT(CASE WHEN at_work_second >= 28800 THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2)`.
+    - For null checks, use `column IS NULL` or `column IS NOT NULL` (never `IFNULL()` or `ISNULL()`; use standard `COALESCE()`).
+12. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text.
 """
 
     @classmethod
@@ -87,5 +100,10 @@ Remember: Output ONLY the SQL query inside a ```sql ... ``` block."""
 
 {schema_xml}
 
-Output ONLY the corrected SQL query inside a ```sql ... ``` block."""
+Remember:
+- NEVER use the MySQL `IF()` function. In PostgreSQL, ALWAYS use standard SQL `CASE WHEN condition THEN val1 ELSE val2 END`.
+- For conditional aggregations / percentages, use `ROUND(COUNT(CASE WHEN at_work_second >= 28800 THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2)`.
+- If combining aggregates (SUM, AVG, MIN, MAX, COUNT) with scalar columns, include ALL scalar columns in GROUP BY.
+- Use canonical integer `at_work_second` for working time comparisons (e.g. at_work_second < 28800 for 8 hours). Never do arithmetic on VARCHAR duration columns.
+- Output ONLY the corrected SQL query inside a ```sql ... ``` block."""
         return prompt

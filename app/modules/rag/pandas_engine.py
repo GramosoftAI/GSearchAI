@@ -4,6 +4,7 @@ import tempfile
 import os
 import re
 import json
+import asyncio
 from typing import Optional, Dict, Literal, List, Tuple, Any
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
@@ -614,7 +615,8 @@ class PandasQueryEngine:
         formatted = ""
         if len(rows) == 1 and len(col_names) == 1:
             val = rows[0][0]
-            formatted += f"**{val}**"
+            col = col_names[0]
+            formatted += f"**{col}**: {val}"
         elif len(rows) == 1:
             parts = []
             for k, v in zip(col_names, rows[0]):
@@ -715,7 +717,7 @@ class PandasQueryEngine:
         logger.info(f"Acquiring pooled DuckDB engine on dataset(s): {target_path} | total_paths: {len(paths_to_register)}")
         engine = None
         try:
-            import asyncio
+
             engine, columns, acq_ms = await asyncio.to_thread(get_pooled_duckdb_engine, paths_to_register)
             logger.info(f"[TELEMETRY] DuckDB engine acquisition completed in {acq_ms:.2f}ms")
 
@@ -837,8 +839,8 @@ class PandasQueryEngine:
                  "11. Output ONLY valid JSON matching the schema with 'sql' and 'explanation'.\n"
                  "12. In your 'explanation' string, NEVER use the words 'error', 'errors', 'exception', or 'fail' (use 'issues' or 'problems' instead).\n"
                  "13. For extracting YEAR, MONTH, or date parts from timestamp columns, ALWAYS cast to timestamp first: EXTRACT(YEAR FROM TRY_CAST(\"col\" AS TIMESTAMP)).\n"
-                 "14. NO PROXY METRICS: If the user asks for analytical/aggregate calculations (e.g. 'average age', 'total wholesale price', 'count by CEO') on columns that DO NOT EXIST in the schema, DO NOT hallucinate or substitute an unrelated column to estimate it (e.g. DO NOT use 'Hire Date' to calculate 'Age'). You MUST generate exactly: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset. NOTE: This rule applies ONLY to aggregate/analytical queries, NOT to entity record lookups (see Rule 19).\n"
-                 "15. STRING FILTERING & ENTITY MATCHING: When filtering string columns (e.g. employee names, IDs, departments in WHERE clauses), NEVER use exact '=' or 'LOWER(col) = ...' with mismatching case. Instead, ALWAYS use case-insensitive matching using the ILIKE operator (e.g., \"Employee ID\" ILIKE 'EMP1005' or \"Employee Name\" ILIKE '%Matthew%') so that case differences or spacing never cause zero results.\n"
+                 "14. STRICT COLUMN FIDELITY: You MUST NOT substitute, infer, or calculate a requested metric using a semantically different column if the requested column does not exist. For example, if the query asks for 'Age' and there is no 'Age' column, NEVER repurpose 'Hire Date' (e.g., CURRENT_YEAR - Hire_Date) as a stand-in for age. Legitimate derivations (e.g., calculating 'Tenure' or 'Years of Service' from 'Hire Date') are perfectly fine, but substituting for a missing concept is strictly forbidden. If a required concept is missing, you MUST generate exactly: SELECT 'Not present in dataset' AS info WHERE FALSE; with explanation stating the information is not present in the dataset.\n"
+                 "15. STRING FILTERING & ENTITY MATCHING: When filtering string columns (e.g. employee names, IDs, departments in WHERE clauses), use case-insensitive matching (ILIKE). However, BE VERY CAREFUL with wildcards (%) on exact categorical values like 'Male' or 'Female'. If you use ILIKE '%male%', it will incorrectly match 'female' because 'female' contains 'male'. For exact categorical values, use exact case-insensitive matches without wildcards: UPPER(\"Gender\") = 'MALE' or \"Gender\" ILIKE 'male'. Use wildcards (ILIKE '%name%') ONLY for partial name or description searches.\n"
                  "16. COMPARATIVE & SUPERLATIVE QUERIES: When the user asks to compare two or more entities (e.g. 'who has higher salary', 'compare the salary of both', 'who is better', 'who earns more', 'which has better'):\n"
                  "   - If the query mentions 'both', 'all', or does not specify explicit employee names, DO NOT filter with WHERE name = 'both'. Instead, select all rows from dataset and ORDER BY the comparison metric DESC (e.g., SELECT * FROM dataset ORDER BY TRY_CAST(\"Salary\" AS DOUBLE) DESC LIMIT 10;).\n"
                  "   - Select all relevant columns (name, department, salary, hire date, etc.) so the response synthesizer has full structured comparison data.\n"

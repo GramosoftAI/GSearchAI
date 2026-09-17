@@ -159,14 +159,39 @@ class TextChunker:
     @staticmethod
     def chunk_text(text: str, chunk_size: int, overlap_size: int) -> List[str]:
         """Helper to chunk normal text preserving sentences and block formatting."""
-        chunks = []
-        if len(text) <= chunk_size:
-            return [text.strip()]
-
         # Split by double newlines to preserve blocks, then by sentences
         # We use a non-consuming split for sentences and standard split for blocks where we don't mind losing the exact whitespace
-        blocks = [b.strip() for b in re.split(r"\n\n+", text) if b.strip()]
-        
+        raw_blocks = [b.strip() for b in re.split(r"\n\n+", text) if b.strip()]
+
+        # Deduplicate blocks: collapse consecutive identical blocks and repeated carousel/DOM block sequences
+        blocks: List[str] = []
+        i = 0
+        n = len(raw_blocks)
+        while i < n:
+            # 1. Single consecutive duplicate collapse
+            if blocks and raw_blocks[i] == blocks[-1]:
+                i += 1
+                continue
+            
+            # 2. Sequence repeat collapse (e.g. repeated carousel card series from DOM scraping)
+            matched_k = 0
+            max_k = min(len(blocks), n - i)
+            for k in range(max_k, 1, -1):
+                if blocks[-k:] == raw_blocks[i:i+k]:
+                    matched_k = k
+                    break
+            if matched_k > 0:
+                i += matched_k
+                continue
+
+            blocks.append(raw_blocks[i])
+            i += 1
+
+        deduped_text = "\n\n".join(blocks)
+        if len(deduped_text) <= chunk_size:
+            return [deduped_text.strip()] if deduped_text.strip() else []
+
+        chunks = []
         current_chunk = ""
         current_blocks = []
 

@@ -127,6 +127,18 @@ class RetrievedChunk:
 
 
 
+    # Phase 1 Score Contract
+    vector_score: float = 0.0
+    keyword_score: float = 0.0
+    exact_score: float = 0.0
+    triplet_score: float = 0.0
+    rrf_score: float = 0.0
+    reranker_raw_score: Optional[float] = None
+    reranker_score: Optional[float] = None
+    final_relevance_score: float = 0.0
+
+
+
     reason: str = ""  # Why this chunk was retrieved (SIMILAR, ENTITY, NEXT, Seed)
 
     domain_matched: bool = False  # Set by vector_engine if KB matches query
@@ -581,7 +593,7 @@ class RAGPipeline:
             analyzer_task = asyncio.create_task(_return_analysis())
             
         if query_embedding_tuple is None:
-            embedding_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(focused_query))
+            embedding_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(focused_query, is_query=True))
         else:
             async def _return_emb(): return query_embedding_tuple
             embedding_task = asyncio.create_task(_return_emb())
@@ -635,9 +647,10 @@ class RAGPipeline:
 
         doc_signals = [
             "in the document", "in the pdf", "policy", "manual", "according to", "clause", "article",
-            "guideline", "section", "paragraph", "doc mentions", "pdf mentions"
+            "guideline", "section", "paragraph", "doc mentions", "pdf mentions", "what is", "fuzzing",
+            "definition", "explain", "describe", "benefits", "limitations", "categories", "approaches"
         ]
-        generic_cols = {"name", "date", "id", "type", "status", "data", "info", "value", "text", "description"}
+        generic_cols = {"name", "date", "id", "type", "status", "data", "info", "value", "text", "description", "category", "approach"}
 
         if not any(sig in focused_query.lower() for sig in doc_signals):
             all_schema_cols = set()
@@ -656,7 +669,7 @@ class RAGPipeline:
                 if col and len(col) > 2 and col not in generic_cols and (col in q_lower or col.replace("_", " ") in q_lower)
             ]
 
-            analytical_pattern = r'\b(what is|find|get|give me|show|calculate|sum|average|count|total|min|max|highest|lowest)\b'
+            analytical_pattern = r'\b(calculate|sum|average|count|total|min|max|highest|lowest)\b'
             has_analytical_phrase = bool(re.search(analytical_pattern, q_lower))
 
             if matched_non_generic_cols or (has_analytical_phrase and any(col in q_lower for col in all_schema_cols if col not in generic_cols)):
@@ -720,61 +733,82 @@ class RAGPipeline:
             f"RAG ROUTER DECISION | intent={getattr(analysis.intent, 'name', 'UNKNOWN')} | "
             f"is_tabular={is_tabular_query} | selected_path={selected_routing_path}"
         )
+        # Determine 3 Retrieval Routing Modes: VECTOR_ONLY, SQL_ONLY, PARALLEL
+        is_tabular_intent = getattr(analysis, "is_tabular", False)
+        intent_conf = getattr(analysis, "confidence", 0.0)
+        
+        # Check presence of actual parquet/excel KBs
+        has_excel_kbs = any(meta.get("description") == "excel_parquet" for meta in self._kb_metadata.values() if str(meta.get("id", "")) in original_kb_ids or True)
+        candidate_kbs = [kbid for kbid, meta in self._kb_metadata.items() if kbid in original_kb_ids and meta.get("description") == "excel_parquet"]
 
-        if is_tabular_query:
-            logger.info(f"   -> Intercepting query for SQL Table Analytics engine! (intent={getattr(analysis.intent, 'name', 'UNKNOWN')}, is_tabular=True)")
-            try:
-                target_kb_id = getattr(analysis.metadata, "target_kb_id", None) if analysis and getattr(analysis, "metadata", None) else None
-                
-                # Identify tabular candidates to cascade through using the pre-fetched _kb_metadata
-                candidate_kbs = [kbid for kbid, meta in self._kb_metadata.items() if kbid in original_kb_ids and meta.get("description") == "excel_parquet"]
-                cascade_kb_ids = []
-                if target_kb_id:
-                    cascade_kb_ids.append(target_kb_id)
-                for k in candidate_kbs:
-                    if str(k) != target_kb_id and str(k) not in cascade_kb_ids:
-                        cascade_kb_ids.append(str(k))
-                cascade_kb_ids = cascade_kb_ids[:3] # Cap at 3 to prevent latency bloat
-                
-                table_results = None
-                for i, kbid in enumerate(cascade_kb_ids):
-                    logger.info(f"   -> [SQL Cascade {i+1}/{len(cascade_kb_ids)}] Executing Table Analytics for KB: {kbid}")
-                    table_results = await self._execute_table_analytics(query, kb_ids, target_kb_id=kbid)
-                    
-                    if table_results is None or (isinstance(table_results, str) and "not present in dataset" in table_results.lower()):
-                        logger.info(f"   -> [SQL Cascade {i+1}/{len(cascade_kb_ids)}] returned 0 rows or not present.")
-                        continue
-                    elif "Error executing SQL" not in table_results and "Error:" not in table_results:
-                        return RAGContext(
-                            query=query,
-                            chunks=[],
-                            entity_mentions={},
-                            total_tokens=0,
-                            triplet_context=f"### Table Analytics Results\n\n{table_results}",
-                            search_type="TABLE_ANALYTICS"
-                        )
-                    else:
-                        logger.error(f"   -> [SQL Cascade {i+1}/{len(cascade_kb_ids)}] completely failed: {table_results}")
-                        continue
-                        
-                # If we exhausted the cascade or hit consistent errors
-                if table_results is None or (isinstance(table_results, str) and "not present in dataset" in table_results.lower()):
-                    logger.warning(f"   -> SQL Table Analytics cascade exhausted (0 rows). Falling back to RRF vector search.")
+        # Check if query has unambiguous doc signals
+        doc_signals_detected = any(sig in focused_query.lower() for sig in doc_signals)
+
+        if not has_excel_kbs or not candidate_kbs or doc_signals_detected or not is_tabular_intent:
+            retrieval_mode = "VECTOR_ONLY"
+            routing_reason = "high_vector_confidence" if doc_signals_detected or not is_tabular_intent else "no_tabular_kbs_available"
+        elif is_tabular_intent and intent_conf >= 0.85:
+            retrieval_mode = "SQL_ONLY"
+            routing_reason = "high_sql_confidence"
+        else:
+            retrieval_mode = "PARALLEL"
+            routing_reason = "ambiguous_query"
+
+        logger.info(
+            f"[RETRIEVAL_ROUTING] mode={retrieval_mode} reason={routing_reason} "
+            f"sql_confidence={intent_conf if is_tabular_intent else 0.0:.2f} vector_confidence={1.0 - intent_conf if is_tabular_intent else 1.0:.2f}"
+        )
+
+        async def _execute_sql_cascade() -> Optional[str]:
+            target_kb_id = getattr(analysis.metadata, "target_kb_id", None) if analysis and getattr(analysis, "metadata", None) else None
+            cascade_kb_ids = []
+            if target_kb_id:
+                cascade_kb_ids.append(target_kb_id)
+            for k in candidate_kbs:
+                if str(k) != target_kb_id and str(k) not in cascade_kb_ids:
+                    cascade_kb_ids.append(str(k))
+            cascade_kb_ids = cascade_kb_ids[:3] # Cap at 3 to prevent latency bloat
+            
+            table_res = None
+            for i, kbid in enumerate(cascade_kb_ids):
+                logger.info(f"   -> [SQL Cascade {i+1}/{len(cascade_kb_ids)}] Executing Table Analytics for KB: {kbid}")
+                table_res = await self._execute_table_analytics(query, kb_ids, target_kb_id=kbid)
+                if table_res is None or (isinstance(table_res, str) and "not present in dataset" in table_res.lower()):
+                    logger.info(f"   -> [SQL Cascade {i+1}/{len(cascade_kb_ids)}] returned 0 rows or not present.")
+                    continue
+                elif "Error executing SQL" not in str(table_res) and "Error:" not in str(table_res):
+                    return str(table_res)
                 else:
-                    logger.error(f"   -> SQL Table Analytics cascade failed with persistent errors. Falling back to RRF vector search.")
-                
-                # Preserve FileRouter's scoped KB list instead of restoring ALL KBs.
-                # FileRouter already ran and confidently matched the correct KB(s).
-                kb_ids = original_kb_ids
+                    logger.error(f"   -> [SQL Cascade {i+1}/{len(cascade_kb_ids)}] failed: {table_res}")
+                    continue
+            return None
+
+        # STAGE 0.5: EXECUTION BRANCHING (SQL_ONLY vs VECTOR_ONLY vs PARALLEL)
+        if retrieval_mode == "SQL_ONLY":
+            logger.info("   -> Executing SQL_ONLY path...")
+            try:
+                sql_results = await _execute_sql_cascade()
+                if sql_results:
+                    return RAGContext(
+                        query=query,
+                        chunks=[],
+                        entity_mentions={},
+                        total_tokens=0,
+                        triplet_context=f"### Table Analytics Results\n\n{sql_results}",
+                        search_type="TABLE_ANALYTICS"
+                    )
+                logger.warning("   -> SQL_ONLY returned 0 rows. Seamlessly falling back to Vector retrieval.")
                 sql_cascade_fell_through = True
-                pass # allow it to fall through to RRF
             except Exception as e:
-                logger.error(f"   -> SQL Table Analytics completely failed: {e}. Falling back to RRF vector search.", exc_info=True)
+                logger.error(f"   -> SQL_ONLY failed: {e}. Falling back to Vector retrieval.", exc_info=True)
                 if self.db:
                     await self.db.rollback()
-                kb_ids = original_kb_ids
                 sql_cascade_fell_through = True
-                pass # allow it to fall through to RRF
+
+        parallel_sql_task: Optional[asyncio.Task] = None
+        if retrieval_mode == "PARALLEL":
+            logger.info("   -> Launching SQL and Vector retrieval in PARALLEL...")
+            parallel_sql_task = asyncio.create_task(_execute_sql_cascade())
 
         # Gather structured queries. If none, default to corrected/original query.
         structured_queries = getattr(analysis.metadata, "structured_queries", [])
@@ -851,7 +885,7 @@ class RAGPipeline:
                 query_embedding_val, emb_tokens = await embedding_task
             else:
                 from app.core.embeddings import EmbeddingGenerator
-                query_embedding_val, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(current_query)
+                query_embedding_val, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(current_query, is_query=True)
             
             analysis.metadata.query_embedding = query_embedding_val
             
@@ -889,99 +923,55 @@ class RAGPipeline:
 
             # 0. Section Ranking
             async def _run_section_ranking():
-                is_tabular = meta_dict.get("is_tabular") or getattr(analysis, "is_tabular", False)
-                sql_fell_through = meta_dict.get("_sql_cascade_fell_through", False)
-                if is_tabular and not sql_fell_through:
-                    logger.info("Skipping SectionRanker for tabular query (SQL path active).")
-                    return []
-                if sql_fell_through:
-                    logger.info("SQL cascade fell through to RRF. Re-enabling SectionRanker.")
-                try:
-                    from app.modules.rag.engines.vector_engine import VectorEngine
-                    from app.modules.rag.orchestrator.section_ranker import SectionRanker
-                    from app.modules.rag.schemas import RetrievalTask
-                    
-                    v_engine = VectorEngine(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
-                    dummy_task = RetrievalTask(
-                        task_id="section_ranking",
-                        query=current_query,
-                        metadata_filters=meta_dict,
-                        top_k=50,
-                        target_section_ids=[]
-                    )
-                    candidate_sections = await v_engine.get_candidate_sections(dummy_task, kb_ids)
-                    if not candidate_sections:
-                        return []
-                        
-                    heuristic_fallback_used = meta_dict.get("heuristic_fallback_used", False)
+                # BYPASS: SectionRanker's keyword-based pre-filtering drops relevant semantic chunks.
+                # Returning [] forces the pipeline to fall back to a full-KB search, which relies on 
+                # embeddings to find the best chunks across the entire knowledge base.
+                return []
 
-                    # Unconditional Gate: Rejection if candidate pool was derived from degraded heuristic keywords
-                    if heuristic_fallback_used:
-                        logger.info(
-                            f"[SECTION_TRUST] heuristic_fallback_used=True -> candidate pool derived from "
-                            f"noisy heuristic keywords, rejecting regardless of candidate sections -> "
-                            f"falling back to full-KB search."
-                        )
-                        return []
-
-                    ranker = SectionRanker()
-                    ranked_sections = ranker.rank_sections(current_query, candidate_sections, top_k=5)
-                    logger.info(f"SectionRanker selected {len(ranked_sections)} candidate sections out of {len(candidate_sections)}")
-                    
-                    # Implement fallback logic:
-                    if not ranked_sections:
-                        # SectionRanker returned nothing, but get_candidate_sections found
-                        # keyword-matched sections via Postgres ILIKE. Trust the Postgres results.
-                        logger.info(f"[SECTION_TRUST] SectionRanker returned 0 ranked sections, "
-                                    f"but Postgres ILIKE found {len(candidate_sections)} candidates. "
-                                    f"Using ILIKE candidates as section scope.")
-                        return [s.get("section_id") for s in candidate_sections if s.get("section_id")]
-                        
-                    top_score = ranked_sections[0].get("rank_score", 0.0)
-
-                    if top_score < TRUST_THRESHOLD:
-                        if top_score >= SECTION_TRUST_FLOOR:
-                            logger.info(
-                                f"[SECTION_TRUST] top_score={top_score:.2f} < TRUST_THRESHOLD={TRUST_THRESHOLD}, "
-                                f"heuristic_fallback_used={heuristic_fallback_used} -> "
-                                f"Using {len(candidate_sections)} ILIKE candidate sections (weak but plausible match)."
-                            )
-                            return [s.get("section_id") for s in candidate_sections if s.get("section_id")]
-                        else:
-                            logger.info(
-                                f"[SECTION_TRUST] top_score={top_score:.2f} < TRUST_THRESHOLD={TRUST_THRESHOLD}, "
-                                f"heuristic_fallback_used={heuristic_fallback_used} -> "
-                                f"falling back to full-KB search (ILIKE candidates rejected: low confidence top_score={top_score:.2f} < floor={SECTION_TRUST_FLOOR})"
-                            )
-                            return []
-                        
-                    if len(ranked_sections) > 1:
-                        second_score = ranked_sections[1].get("rank_score", 0.0)
-                        gap = top_score - second_score
-                        if gap < (0.3 * top_score):
-                            logger.info(f"[FALLBACK] SectionRanker score gap between {top_score} and {second_score} is < 30%. Falling back to full-KB search.")
-                            return []
-
-                    return [s.get("section_id") for s in ranked_sections if s.get("section_id")]
-                except Exception as e:
-                    logger.warning(f"Section ranking failed (non-blocking): {e}")
-                    return []
-
-            # 1. Graph Traversal
+            # 1. Graph Traversal (Dynamic Decision Gated)
             async def _run_triplet_search(target_sections=None):
                 if not self.settings.use_triplet_extraction:
                     return []
+                
+                from app.modules.rag.orchestrator.triplet_decision import decide_triplet_retrieval, TripletDecision
+                decision, reason = decide_triplet_retrieval(
+                    query=current_query,
+                    analysis=analysis,
+                    meta_dict=meta_dict,
+                    has_graph_data=True
+                )
+
+                # Structured Decision Diagnostics
+                q_words = [w for w in (current_query or "").split() if w and w[0].isupper() and len(w) > 1]
+                entity_count = len(set(q_words))
+                logger.info(
+                    f"[TRIPLET_DECISION] triplet_decision={decision.value} "
+                    f"triplet_decision_reason={reason} "
+                    f"triplet_query_intent={getattr(analysis.intent, 'name', 'UNKNOWN') if analysis else 'UNKNOWN'} "
+                    f"triplet_analyzer_confidence={getattr(analysis, 'confidence', 0.0) if analysis else 0.0:.2f} "
+                    f"triplet_entity_count={entity_count} "
+                    f"triplet_relationship_signal={'relational' in reason}"
+                )
+
+                if decision == TripletDecision.SKIP_TRIPLETS:
+                    return []
+
+                t_start = time.time()
                 try:
                     from app.core.triplet_extractor import TripletRetriever
                     retriever = TripletRetriever(self.tenant_id)
-                    return await retriever.search_triplets(
+                    results = await retriever.search_triplets(
                         query_embedding=query_embedding_val,
                         kb_ids=kb_ids,
                         top_k=20,
                         target_sections=target_sections,
                     )
+                    elapsed_ms = (time.time() - t_start) * 1000
+                    logger.info(f"[TRIPLET_TELEMETRY] triplet_execution_ms={elapsed_ms:.1f} returned_count={len(results)}")
+                    return results
                 except Exception as e:
-                    logger.warning(f"Triplet retrieval failed (non-blocking): {e}")
+                    elapsed_ms = (time.time() - t_start) * 1000
+                    logger.warning(f"[TRIPLET_TELEMETRY] Triplet retrieval failed (non-blocking) in {elapsed_ms:.1f}ms: {e}")
                     return []
 
             # 2. Hybrid (Postgres + Neo4j) Keyword Search
@@ -1136,382 +1126,513 @@ class RAGPipeline:
             
             # WAVE 1
             section_res = await _run_section_ranking()
-            target_sections = section_res if isinstance(section_res, list) else []
+            original_target_sections = section_res if isinstance(section_res, list) else []
             
-            # WAVE 2
-            triplet_res, keyword_res, vector_res, exact_match_res = await asyncio.gather(
-                _run_triplet_search(target_sections),
-                _run_keyword_search(target_sections),
-                _run_vector_search(target_sections),
-                _run_postgres_exact_match(target_sections),
-                return_exceptions=True
-            )
-            engine_time = time.time() - engine_start
+            for _retrieval_attempt in range(2 if original_target_sections else 1):
+                if _retrieval_attempt == 1:
+                    logger.info("[SECTION_TRUST] Post-rerank confidence near-zero. Retrying against full KB.")
+                    target_sections = []
+                else:
+                    target_sections = original_target_sections
+                # WAVE 2
+                triplet_res, keyword_res, vector_res, exact_match_res = await asyncio.gather(
+                    _run_triplet_search(target_sections),
+                    _run_keyword_search(target_sections),
+                    _run_vector_search(target_sections),
+                    _run_postgres_exact_match(target_sections),
+                    return_exceptions=True
+                )
+                engine_time = time.time() - engine_start
 
-            # Handle exceptions cleanly
-            if isinstance(triplet_res, Exception): triplet_res = []
-            if isinstance(keyword_res, Exception): keyword_res = []
-            if isinstance(vector_res, Exception): vector_res = []
-            if isinstance(exact_match_res, Exception): exact_match_res = []
+                # Handle exceptions cleanly
+                if isinstance(triplet_res, Exception): triplet_res = []
+                if isinstance(keyword_res, Exception): keyword_res = []
+                if isinstance(vector_res, Exception): vector_res = []
+                if isinstance(exact_match_res, Exception): exact_match_res = []
 
-            logger.info(f"[RRF_FLOW_MARKER] RRF Sources returned: Graph={len(triplet_res)}, Keyword={len(keyword_res)}, Vector={len(vector_res)}, ExactMatch={len(exact_match_res)}")
+                logger.info(f"[RRF_FLOW_MARKER] RRF Sources returned: Graph={len(triplet_res)}, Keyword={len(keyword_res)}, Vector={len(vector_res)}, ExactMatch={len(exact_match_res)}")
 
-            # --- RECIPROCAL RANK FUSION ---
-            logger.info("[RRF_FLOW_MARKER] Starting Reciprocal Rank Fusion...")
-            fused_scores = {}
+                # --- RECIPROCAL RANK FUSION ---
+                logger.info("[RRF_FLOW_MARKER] Starting Reciprocal Rank Fusion...")
+                fused_scores = {}
+                vector_chunk_map = {chunk.chunk_id: chunk for chunk in vector_res}
+                for chunk in vector_res:
+                    chunk.vector_score = chunk.embedding_similarity
             
-            # Graph scoring
-            for rank, t in enumerate(triplet_res):
-                cid = t.get("chunk_id")
-                if not cid: continue
-                score = WEIGHT_GRAPH / (RRF_K + rank + 1)
-                fused_scores[cid] = fused_scores.get(cid, 0.0) + score
+                # Graph scoring
+                for rank, t in enumerate(triplet_res):
+                    cid = t.get("chunk_id")
+                    if not cid: continue
+                    score = WEIGHT_GRAPH / (RRF_K + rank + 1)
+                    fused_scores[cid] = fused_scores.get(cid, 0.0) + score
+                    chunk_obj = vector_chunk_map.get(cid)
+                    if chunk_obj:
+                        chunk_obj.triplet_score = score
 
-            # Keyword scoring
-            for rank, cid in enumerate(keyword_res):
-                if not cid: continue
-                score = WEIGHT_KEYWORD / (RRF_K + rank + 1)
-                fused_scores[cid] = fused_scores.get(cid, 0.0) + score
+                # Keyword scoring
+                for rank, cid in enumerate(keyword_res):
+                    if not cid: continue
+                    score = WEIGHT_KEYWORD / (RRF_K + rank + 1)
+                    fused_scores[cid] = fused_scores.get(cid, 0.0) + score
+                    chunk_obj = vector_chunk_map.get(cid)
+                    if chunk_obj:
+                        chunk_obj.keyword_score = score
 
-            # Vector scoring
-            vector_chunk_map = {}
-            for rank, chunk in enumerate(vector_res):
-                cid = chunk.chunk_id
-                vector_chunk_map[cid] = chunk
-                score = WEIGHT_VECTOR / (RRF_K + rank + 1)
-                fused_scores[cid] = fused_scores.get(cid, 0.0) + score
+                # Vector scoring
+                for rank, chunk in enumerate(vector_res):
+                    cid = chunk.chunk_id
+                    score = WEIGHT_VECTOR / (RRF_K + rank + 1)
+                    fused_scores[cid] = fused_scores.get(cid, 0.0) + score
                 
-            # Exact Match scoring
-            for rank, c in enumerate(exact_match_res):
-                cid = c.get("chunk_id")
-                if not cid: continue
-                score = WEIGHT_EXACT_MATCH / (RRF_K + rank + 1)
-                fused_scores[cid] = fused_scores.get(cid, 0.0) + score
+                # Exact Match scoring
+                for rank, c in enumerate(exact_match_res):
+                    cid = c.get("chunk_id")
+                    if not cid: continue
+                    score = WEIGHT_EXACT_MATCH / (RRF_K + rank + 1)
+                    fused_scores[cid] = fused_scores.get(cid, 0.0) + score
+                    chunk_obj = vector_chunk_map.get(cid)
+                    if chunk_obj:
+                        chunk_obj.exact_score = score
 
-            # Apply SectionRanker boost post-hoc
-            boosted_count = 0
-            SECTION_BOOST_WEIGHT = 2.0  # Configurable RRF weight bonus
-            if section_res:
-                target_sections_set = set(section_res)
+                # Backfill any triplet/keyword/exact scores on vector_chunk_map items
+                for rank, t in enumerate(triplet_res):
+                    cid = t.get("chunk_id")
+                    if cid and cid in vector_chunk_map:
+                        vector_chunk_map[cid].triplet_score = WEIGHT_GRAPH / (RRF_K + rank + 1)
+                for rank, cid in enumerate(keyword_res):
+                    if cid and cid in vector_chunk_map:
+                        vector_chunk_map[cid].keyword_score = WEIGHT_KEYWORD / (RRF_K + rank + 1)
+                for rank, c in enumerate(exact_match_res):
+                    cid = c.get("chunk_id")
+                    if cid and cid in vector_chunk_map:
+                        vector_chunk_map[cid].exact_score = WEIGHT_EXACT_MATCH / (RRF_K + rank + 1)
+
+                # Apply SectionRanker boost post-hoc
+                boosted_count = 0
+                SECTION_BOOST_WEIGHT = 2.0  # Configurable RRF weight bonus
+                if section_res:
+                    target_sections_set = set(section_res)
+                    for cid in fused_scores.keys():
+                        chunk_obj = vector_chunk_map.get(cid)
+                        c_section = None
+                        if chunk_obj:
+                            c_section = getattr(chunk_obj, "section_id", None) or getattr(chunk_obj, "section", None)
+                        if cid in target_sections_set or c_section in target_sections_set:
+                            fused_scores[cid] += SECTION_BOOST_WEIGHT
+                            boosted_count += 1
+            
+                logger.info(f"[RRF_FLOW_MARKER] Target section IDs from SectionRanker: {section_res}. Boost applied to {boosted_count} chunks.")
+
+                # Apply Domain Keyword Boost post-hoc
+                # This ensures that chunks from a KB whose name matches core query entities (like "hike")
+                # forcefully outrank generic chunks that happen to score high in Graph/Vector due to boilerplate text.
+                domain_boosted_count = 0
+                DOMAIN_BOOST_WEIGHT = 2.0  # High weight to ensure explicit domain/document matches override keyword noise from other documents
+            
+                import re
+                def basic_stem(word):
+                    if len(word) <= 3: return word
+                    if word.endswith('ing') and len(word) > 5: return word[:-3]
+                    if word.endswith('es') and len(word) > 4: return word[:-2]
+                    if word.endswith('ed') and len(word) > 4: return word[:-2]
+                    if word.endswith('s') and len(word) > 3 and not word.endswith('ss'): return word[:-1]
+                    if word.endswith('e') and len(word) > 4: return word[:-1]
+                    return word
+
+                def get_tokens(text):
+                    return [t.lower() for t in re.findall(r'[a-zA-Z0-9]+', text)]
+
+                analyzer_keywords = []
+                if isinstance(meta_dict, dict):
+                    analyzer_keywords = meta_dict.get("keywords", [])
+                else:
+                    analyzer_keywords = getattr(meta_dict, "keywords", [])
+                    
+                from app.modules.rag.scoring.term_frequency import STOPWORDS
+                exploded_keywords = set()
+                for kw in analyzer_keywords:
+                    kw_lower = kw.lower()
+                    if kw_lower not in STOPWORDS:
+                        exploded_keywords.add(kw_lower)
+                    for w in kw.split():
+                        clean_w = ''.join(c for c in w if c.isalnum()).lower()
+                        if len(clean_w) > 3 and clean_w not in STOPWORDS:
+                            exploded_keywords.add(clean_w)
+                if not exploded_keywords:
+                    exploded_keywords = {w.lower() for w in original_query.split() if len(w) > 4 and w.isalnum() and w.lower() not in STOPWORDS}
+
+                # 4a. Fetch missing chunks from postgres *BEFORE* Domain Boost
+                missing_cids = [cid for cid in fused_scores.keys() if cid not in vector_chunk_map]
+            
+                if missing_cids and getattr(self, "db", None):
+                    from app.modules.knowledge_bases.models import DocumentChunk
+                    from sqlalchemy import select
+                    from uuid import UUID
+                
+                    try:
+                        uuid_list = []
+                        for cid in missing_cids:
+                            try:
+                                uuid_list.append(UUID(str(cid)))
+                            except (ValueError, TypeError):
+                                pass
+                    
+                        if uuid_list:
+                            if query_embedding_val:
+                                stmt = select(
+                                    DocumentChunk,
+                                    (1.0 - DocumentChunk.embedding.cosine_distance(query_embedding_val)).label("real_sim")
+                                ).where(
+                                    DocumentChunk.id.in_(uuid_list),
+                                    DocumentChunk.tenant_id == self.tenant_id
+                                )
+                                result = await self.db.execute(stmt)
+                                for row, real_sim in result.all():
+                                    c_id = str(row.id)
+                                    s3_path = row.metadata_json.get("s3_path") if row.metadata_json else None
+                                    rc = RetrievedChunk(
+                                        chunk_id=c_id,
+                                        text=row.text,
+                                        kb_id=str(row.kb_id),
+                                        position=row.chunk_index,
+                                        embedding_similarity=max(0.0, float(real_sim)),
+                                        graph_score=0.0,
+                                        hybrid_score=0.0, # Will be set next
+                                        vector_score=max(0.0, float(real_sim)),
+                                        reason="RRF_MERGE",
+                                        source=s3_path or f"DocumentChunk {row.chunk_index}",
+                                        s3_path=s3_path,
+                                        engine_name="hybrid_rrf",
+                                        section="Unknown",
+                                        ontology_node=None
+                                    )
+                                    vector_chunk_map[c_id] = rc
+                            else:
+                                stmt = select(DocumentChunk).where(
+                                    DocumentChunk.id.in_(uuid_list),
+                                    DocumentChunk.tenant_id == self.tenant_id
+                                )
+                                result = await self.db.execute(stmt)
+                                for row in result.scalars():
+                                    c_id = str(row.id)
+                                    s3_path = row.metadata_json.get("s3_path") if row.metadata_json else None
+                                    rc = RetrievedChunk(
+                                        chunk_id=c_id,
+                                        text=row.text,
+                                        kb_id=str(row.kb_id),
+                                        position=row.chunk_index,
+                                        embedding_similarity=0.0,
+                                        graph_score=0.0,
+                                        hybrid_score=0.0,
+                                        vector_score=0.0,
+                                        reason="RRF_MERGE",
+                                        source=s3_path or f"DocumentChunk {row.chunk_index}",
+                                        s3_path=s3_path,
+                                        engine_name="hybrid_rrf",
+                                        section="Unknown",
+                                        ontology_node=None
+                                    )
+                                    vector_chunk_map[c_id] = rc
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch missing postgres chunks before boost: {e}")
+                        if hasattr(self.db, "rollback"):
+                            if asyncio.iscoroutinefunction(self.db.rollback):
+                                await self.db.rollback()
+                            else:
+                                self.db.rollback()
+
+                # 4b. Apply Domain Boost
+                matched_kb_ids = list({chunk.kb_id for chunk in vector_res if getattr(chunk, "domain_matched", False)})
+                logger.info(f"[RRF_BOOST_DEBUG] boost loop starting with matched_kb_ids={matched_kb_ids}.")
+                from app.modules.rag.scoring.term_frequency import get_kb_doc_frequency, idf_discount
+                import re
+            
+                doc_freq_cache: Dict[str, Dict] = {}
+
                 for cid in fused_scores.keys():
                     chunk_obj = vector_chunk_map.get(cid)
-                    c_section = None
                     if chunk_obj:
-                        c_section = getattr(chunk_obj, "section_id", None) or getattr(chunk_obj, "section", None)
-                    if cid in target_sections_set or c_section in target_sections_set:
-                        fused_scores[cid] += SECTION_BOOST_WEIGHT
-                        boosted_count += 1
-            
-            logger.info(f"[RRF_FLOW_MARKER] Target section IDs from SectionRanker: {section_res}. Boost applied to {boosted_count} chunks.")
-
-            # Apply Domain Keyword Boost post-hoc
-            # This ensures that chunks from a KB whose name matches core query entities (like "hike")
-            # forcefully outrank generic chunks that happen to score high in Graph/Vector due to boilerplate text.
-            domain_boosted_count = 0
-            DOMAIN_BOOST_WEIGHT = 0.02  # ~1x single-source RRF top-rank contribution, tie-breaker only
-            
-            import re
-            def basic_stem(word):
-                if len(word) <= 3: return word
-                if word.endswith('ing') and len(word) > 5: return word[:-3]
-                if word.endswith('es') and len(word) > 4: return word[:-2]
-                if word.endswith('ed') and len(word) > 4: return word[:-2]
-                if word.endswith('s') and len(word) > 3 and not word.endswith('ss'): return word[:-1]
-                if word.endswith('e') and len(word) > 4: return word[:-1]
-                return word
-
-            def get_tokens(text):
-                return [t.lower() for t in re.findall(r'[a-zA-Z0-9]+', text)]
-
-            analyzer_keywords = []
-            if isinstance(meta_dict, dict):
-                analyzer_keywords = meta_dict.get("keywords", [])
-            else:
-                analyzer_keywords = getattr(meta_dict, "keywords", [])
+                        kb_level_match = getattr(chunk_obj, "domain_matched", False)
+                        chunk_text = getattr(chunk_obj, "text", "").lower()
+                        chunk_tokens = set(re.findall(r"[a-z0-9]+", chunk_text))
+                        term_matches = exploded_keywords & chunk_tokens
                     
-            exploded_keywords = set()
-            for kw in analyzer_keywords:
-                exploded_keywords.add(kw.lower())
-                for w in kw.split():
-                    clean_w = ''.join(c for c in w if c.isalnum()).lower()
-                    if len(clean_w) > 3:
-                        exploded_keywords.add(clean_w)
-            if not exploded_keywords:
-                exploded_keywords = {w.lower() for w in original_query.split() if len(w) > 4 and w.isalnum()}
+                        if not term_matches and not kb_level_match:
+                            continue
+                        
+                        idf_boost = 0.0
+                        if term_matches:
+                            kb_id = getattr(chunk_obj, "kb_id", None)
+                            doc_freq = {}
+                            if kb_id and getattr(self, "db", None):
+                                if kb_id not in doc_freq_cache:
+                                    doc_freq_cache[kb_id] = await get_kb_doc_frequency(kb_id, self.db)
+                                doc_freq = doc_freq_cache[kb_id]
+                            base_idf = sum(idf_discount(t, doc_freq) for t in term_matches)
+                            match_count_bonus = min(0.3, 0.03 * len(term_matches))
+                            idf_boost = base_idf + match_count_bonus
+                        
+                        kb_boost = DOMAIN_BOOST_WEIGHT if kb_level_match else 0.0
+                    
+                        total_boost = idf_boost + kb_boost
+                        if total_boost > 0:
+                            fused_scores[cid] += total_boost
+                            domain_boosted_count += 1
+                            logger.info(
+                                f"[RRF_BOOST_DEBUG] chunk_id={cid} term_matches={term_matches} "
+                                f"idf_boost={idf_boost:.3f} kb_level_match={kb_level_match} final_boost={total_boost:.3f}"
+                            )
+                    else:
+                        logger.info(f"[RRF_BOOST_DEBUG] chunk_id={cid} NOT FOUND in vector_chunk_map (Graph/Keyword only chunk)")
+                                
+                logger.info(f"[RRF_FLOW_MARKER] Domain Boost applied to {domain_boosted_count} chunks.")
 
-            # 4a. Fetch missing chunks from postgres *BEFORE* Domain Boost
-            missing_cids = [cid for cid in fused_scores.keys() if cid not in vector_chunk_map]
-            
-            if missing_cids and getattr(self, "db", None):
-                from app.modules.knowledge_bases.models import DocumentChunk
-                from sqlalchemy import select
-                from uuid import UUID
+                # 4c. Apply Narrative Intent Boost during RRF
+                NARRATIVE_BOOST_WEIGHT = 0.03  # Significant boost to ensure narrative chunks stay in top-N window
+                narrative_kw_list = ["cause", "event", "phase", "why", "how", "reason", "accident", "analysis", "report", "statement", "damage", "led to", "happen", "occur", "defining"]
+                if any(nk in original_query.lower() for nk in narrative_kw_list):
+                    narrative_boosted_count = 0
+                    for cid in fused_scores.keys():
+                        chunk_obj = vector_chunk_map.get(cid)
+                        if chunk_obj:
+                            pos = getattr(chunk_obj, "position", 99999)
+                            if pos < 90000:
+                                fused_scores[cid] += NARRATIVE_BOOST_WEIGHT
+                                narrative_boosted_count += 1
+                    logger.info(f"[RRF_FLOW_MARKER] Narrative Intent Boost applied to {narrative_boosted_count} narrative chunks.")
+
+                # Sort top N chunks with narrative quota preservation when narrative intent is present
+                if any(nk in original_query.lower() for nk in narrative_kw_list):
+                    narrative_items = []
+                    other_items = []
+                    for cid, score in sorted(fused_scores.items(), key=lambda x: x[1], reverse=True):
+                        chunk_obj = vector_chunk_map.get(cid)
+                        pos = getattr(chunk_obj, "position", 99999) if chunk_obj else 99999
+                        if pos < 90000:
+                            narrative_items.append((cid, score))
+                        else:
+                            other_items.append((cid, score))
                 
-                try:
-                    uuid_list = []
-                    for cid in missing_cids:
-                        try:
-                            uuid_list.append(UUID(str(cid)))
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    if uuid_list:
-                        if query_embedding_val:
-                            stmt = select(
-                                DocumentChunk,
-                                (1.0 - DocumentChunk.embedding.cosine_distance(query_embedding_val)).label("real_sim")
-                            ).where(
-                                DocumentChunk.id.in_(uuid_list),
-                                DocumentChunk.tenant_id == self.tenant_id
-                            )
-                            result = await self.db.execute(stmt)
-                            for row, real_sim in result.all():
-                                c_id = str(row.id)
-                                s3_path = row.metadata_json.get("s3_path") if row.metadata_json else None
-                                rc = RetrievedChunk(
-                                    chunk_id=c_id,
-                                    text=row.text,
-                                    kb_id=str(row.kb_id),
-                                    position=row.chunk_index,
-                                    embedding_similarity=max(0.0, float(real_sim)),
-                                    graph_score=0.0,
-                                    hybrid_score=0.0, # Will be set next
-                                    reason="RRF_MERGE",
-                                    source=s3_path or f"DocumentChunk {row.chunk_index}",
-                                    s3_path=s3_path,
-                                    engine_name="hybrid_rrf",
-                                    section="Unknown",
-                                    ontology_node=None
-                                )
-                                vector_chunk_map[c_id] = rc
-                        else:
-                            stmt = select(DocumentChunk).where(
-                                DocumentChunk.id.in_(uuid_list),
-                                DocumentChunk.tenant_id == self.tenant_id
-                            )
-                            result = await self.db.execute(stmt)
-                            for row in result.scalars():
-                                c_id = str(row.id)
-                                s3_path = row.metadata_json.get("s3_path") if row.metadata_json else None
-                                rc = RetrievedChunk(
-                                    chunk_id=c_id,
-                                    text=row.text,
-                                    kb_id=str(row.kb_id),
-                                    position=row.chunk_index,
-                                    embedding_similarity=0.0,
-                                    graph_score=0.0,
-                                    hybrid_score=0.0,
-                                    reason="RRF_MERGE",
-                                    source=s3_path or f"DocumentChunk {row.chunk_index}",
-                                    s3_path=s3_path,
-                                    engine_name="hybrid_rrf",
-                                    section="Unknown",
-                                    ontology_node=None
-                                )
-                                vector_chunk_map[c_id] = rc
-                except Exception as e:
-                    logger.warning(f"Failed to fetch missing postgres chunks before boost: {e}")
-                    if hasattr(self.db, "rollback"):
-                        if asyncio.iscoroutinefunction(self.db.rollback):
-                            await self.db.rollback()
-                        else:
-                            self.db.rollback()
+                    # Reserve up to 4 slots for top narrative items
+                    num_narrative = min(len(narrative_items), 4)
+                    guaranteed_narrative = narrative_items[:num_narrative]
+                    remaining_quota = TOP_N - len(guaranteed_narrative)
+                
+                    # Combine remaining narrative and other items by score
+                    remaining_candidates = narrative_items[num_narrative:] + other_items
+                    remaining_candidates.sort(key=lambda x: x[1], reverse=True)
+                
+                    sorted_fused = guaranteed_narrative + remaining_candidates[:remaining_quota]
+                else:
+                    sorted_fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[:TOP_N]
 
-            # 4b. Apply Domain Boost
-            matched_kb_ids = list({chunk.kb_id for chunk in vector_res if getattr(chunk, "domain_matched", False)})
-            logger.info(f"[RRF_BOOST_DEBUG] boost loop starting with matched_kb_ids={matched_kb_ids}.")
-            from app.modules.rag.scoring.term_frequency import get_kb_doc_frequency, idf_discount
-            import re
+                top_cids = [cid for cid, score in sorted_fused]
+                logger.info(f"[RRF_FLOW_MARKER] Fusion complete. Top {len(top_cids)} chunk IDs selected (Narrative Quota Preserved).")
             
-            doc_freq_cache: Dict[str, Dict] = {}
-
-            for cid in fused_scores.keys():
-                chunk_obj = vector_chunk_map.get(cid)
-                if chunk_obj:
-                    kb_level_match = getattr(chunk_obj, "domain_matched", False)
-                    chunk_text = getattr(chunk_obj, "text", "").lower()
-                    chunk_tokens = set(re.findall(r"[a-z0-9]+", chunk_text))
-                    term_matches = exploded_keywords & chunk_tokens
+                # Fetch missing chunks from postgres (if any left over)
+                final_chunks = []
+            
+                # Build final chunk list and assign true rrf_score, preserving hybrid_score compatibility
+                for rank, (cid, score) in enumerate(sorted_fused):
+                    if cid in vector_chunk_map:
+                        rc = vector_chunk_map[cid]
+                        rc.rrf_score = float(score)
+                        # Baseline score before reranking: preserve rank-based hybrid_score for backward compatibility
+                        rc.final_relevance_score = float(score)
+                        rc.hybrid_score = 0.99 - (rank * 0.01)
+                        logger.info(f"[RRF_SCORE] chunk_id={cid} rrf_score={rc.rrf_score:.6f} rank={rank}")
+                        final_chunks.append(rc)
                     
-                    if not term_matches and not kb_level_match:
+                if final_chunks:
+                    logger.info(f"RRF successfully aggregated {len(final_chunks)} chunks. Returning early.")
+                
+                    # === DEEPINFRA RERANKER INTEGRATION ===
+                    if getattr(get_settings(), "model_reranker", None) and len(final_chunks) > 1:
+                        try:
+                            logger.info("[RERANK] Starting DeepInfra LLM Reranking on top RRF chunks...")
+                            from app.core.llm.deepinfra_llm import get_llm_client
+                            llm = await get_llm_client()
+                        
+                            # Extract texts
+                            doc_texts = [c.text for c in final_chunks]
+                        
+                            # Call API with explicit timeout
+                            reranked_results = await asyncio.wait_for(
+                                llm.rerank_documents(
+                                    query=original_query,
+                                    documents=doc_texts,
+                                    top_n=min(len(doc_texts), 10),
+                                    model=get_settings().model_reranker,
+                                    tenant_id=self.tenant_id,
+                                    user_id=user_id
+                                ),
+                                timeout=10.0
+                            )
+                        
+                            # Reorder final_chunks based on reranker results
+                            import math
+                            new_final_chunks = []
+                            seen_cids = set()
+                            for rank, r in enumerate(reranked_results):
+                                orig_idx = r.get("original_index")
+                                if orig_idx is not None and orig_idx < len(final_chunks):
+                                    chunk = final_chunks[orig_idx]
+                                    raw_score = r.get("relevance_score", 0.0)
+                                    chunk.reranker_raw_score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
+                                    if isinstance(raw_score, (int, float)):
+                                        if raw_score > 1.0 or raw_score < 0.0:
+                                            prob = 1.0 / (1.0 + math.exp(-max(-20.0, min(20.0, raw_score))))
+                                        else:
+                                            prob = raw_score
+                                    else:
+                                        prob = 0.95 - (rank * 0.01)
+                                
+                                    normalized_score = max(0.0, min(1.0, float(prob)))
+                                    logger.info(f"[RERANKER_DEBUG] rank={rank} cid={chunk.chunk_id} raw_score={raw_score} (type={type(raw_score).__name__}) -> normalized={normalized_score:.4f} snippet={repr(chunk.text[:60]) if getattr(chunk, 'text', None) else 'None'}")
+                                    chunk.reranker_score = normalized_score
+                                    chunk.final_relevance_score = normalized_score
+                                    chunk.hybrid_score = normalized_score
+                                    chunk.reason = "LLM_RERANKED"
+                                    new_final_chunks.append(chunk)
+                                    seen_cids.add(chunk.chunk_id)
+
+                            # Preserving narrative quota: if any narrative chunk (<90000) was in pre-reranked final_chunks but dropped by top_n, preserve it.
+                            # Clearly document meaning: Assign narrative chunk a score relative to lowest reranked item so it cannot outrank verified reranked signal.
+                            min_reranked_score = min((c.final_relevance_score for c in new_final_chunks), default=0.50)
+                            for orig_chunk in final_chunks:
+                                if orig_chunk.chunk_id not in seen_cids and getattr(orig_chunk, "position", 99999) < 90000:
+                                    orig_chunk.reason = "LLM_RERANKED_NARRATIVE_PRESERVED"
+                                    orig_chunk.reranker_raw_score = None
+                                    orig_chunk.reranker_score = None
+                                    narrative_score = min_reranked_score * 0.85
+                                    orig_chunk.final_relevance_score = narrative_score
+                                    orig_chunk.hybrid_score = narrative_score
+                                    new_final_chunks.append(orig_chunk)
+                                    seen_cids.add(orig_chunk.chunk_id)
+
+                            final_chunks = new_final_chunks
+                            logger.info(f"[RERANK] Successfully reranked top {len(final_chunks)} chunks using LLM (Narrative Preserved).")
+                        except Exception as e:
+                            logger.error(f"[RERANK] LLM Reranking failed, falling back to pure RRF: {e}")
+                
+                    # Check and incorporate parallel SQL results if parallel branch was executed
+                    parallel_sql_context = ""
+                    if parallel_sql_task:
+                        try:
+                            p_sql_res = await parallel_sql_task
+                            if p_sql_res:
+                                parallel_sql_context = f"### Table Analytics Results (Parallel Branch)\n\n{p_sql_res}\n\n"
+                                logger.info("[RETRIEVAL_ROUTING] Parallel SQL branch succeeded and merged into evidence.")
+                            else:
+                                logger.info("[RETRIEVAL_ROUTING] Parallel SQL branch returned 0 rows. Vector evidence will be used exclusively.")
+                        except Exception as p_err:
+                            logger.warning(f"[RETRIEVAL_ROUTING] Parallel SQL branch encountered error: {p_err}")
+
+                    # Format triplet context from triplet_res
+                    triplet_context_str = ""
+                    if triplet_res and isinstance(triplet_res, list):
+                        try:
+                            from app.core.triplet_extractor import TripletRetriever
+                            triplet_context_str = TripletRetriever(self.tenant_id).format_triplets_as_context(triplet_res)
+                        except Exception as t_err:
+                            logger.warning(f"Failed to format triplets as context: {t_err}")
+
+                    # Structured Score Diagnostics
+                    rrf_scores_list = [c.rrf_score for c in final_chunks if getattr(c, "rrf_score", None) is not None]
+                    reranker_scores_list = [c.reranker_score for c in final_chunks if getattr(c, "reranker_score", None) is not None]
+                    final_scores_list = [c.final_relevance_score for c in final_chunks]
+                    logger.info(
+                        f"[RELEVANCE_SCORE] query_id={original_query[:30]!r} candidate_count={len(final_chunks)} "
+                        f"rrf_min={min(rrf_scores_list, default=0.0):.6f} rrf_max={max(rrf_scores_list, default=0.0):.6f} "
+                        f"rrf_avg={(sum(rrf_scores_list)/len(rrf_scores_list)) if rrf_scores_list else 0.0:.6f} "
+                        f"reranker_min={min(reranker_scores_list, default=0.0):.4f} reranker_max={max(reranker_scores_list, default=0.0):.4f} "
+                        f"reranker_avg={(sum(reranker_scores_list)/len(reranker_scores_list)) if reranker_scores_list else 0.0:.4f} "
+                        f"final_min={min(final_scores_list, default=0.0):.4f} final_max={max(final_scores_list, default=0.0):.4f} "
+                        f"final_avg={(sum(final_scores_list)/len(final_scores_list)) if final_scores_list else 0.0:.4f}"
+                    )
+
+
+                    max_final_score = max(final_scores_list, default=0.0)
+                    if _retrieval_attempt == 0 and original_target_sections and max_final_score < 0.05:
+                        logger.warning(f"[SECTION_TRUST] Targeted section search yielded max score {max_final_score:.4f} < 0.05. Discarding results and retrying full-KB.")
                         continue
                         
-                    idf_boost = 0.0
-                    if term_matches:
-                        kb_id = getattr(chunk_obj, "kb_id", None)
-                        doc_freq = {}
-                        if kb_id and getattr(self, "db", None):
-                            if kb_id not in doc_freq_cache:
-                                doc_freq_cache[kb_id] = await get_kb_doc_frequency(kb_id, self.db)
-                            doc_freq = doc_freq_cache[kb_id]
-                        idf_boost = sum(idf_discount(t, doc_freq) for t in term_matches)
-                        
-                    kb_boost = DOMAIN_BOOST_WEIGHT if kb_level_match else 0.0
+
+                    # --- DEDUP AND FILTER ---
+                    # 1. Sort by score
+                    final_chunks.sort(key=lambda c: getattr(c, "final_relevance_score", 0.0), reverse=True)
                     
-                    total_boost = idf_boost + kb_boost
-                    if total_boost > 0:
-                        fused_scores[cid] += total_boost
-                        domain_boosted_count += 1
-                        logger.info(
-                            f"[RRF_BOOST_DEBUG] chunk_id={cid} term_matches={term_matches} "
-                            f"idf_boost={idf_boost:.3f} kb_level_match={kb_level_match} final_boost={total_boost:.3f}"
-                        )
-                else:
-                    logger.info(f"[RRF_BOOST_DEBUG] chunk_id={cid} NOT FOUND in vector_chunk_map (Graph/Keyword only chunk)")
+                    # 2. Near-duplicate collapse + score floor
+                    deduped_chunks = []
+                    seen_hashes = []
+                    max_score = getattr(final_chunks[0], "final_relevance_score", 0.0) if final_chunks else 0.0
+                    for chunk in final_chunks:
+                        score = getattr(chunk, "final_relevance_score", 0.0)
+                        # Drop extreme noise (basically zero probability from reranker)
+                        if len(deduped_chunks) > 0 and score < 0.0001:
+                            continue
+                            
+                        # Use first 250 chars for similarity
+                        text = getattr(chunk, "text", "") or ""
+                        norm_text = "".join(c.lower() for c in text[:250] if c.isalnum() or c.isspace())
+                        words = set(norm_text.split())
+                        
+                        is_dup = False
+                        for seen_words in seen_hashes:
+                            if not words or not seen_words:
+                                continue
+                            overlap = len(words.intersection(seen_words))
+                            union = len(words.union(seen_words))
+                            if union > 0 and (overlap / union) > 0.75:  # High Jaccard similarity
+                                is_dup = True
+                                break
                                 
-            logger.info(f"[RRF_FLOW_MARKER] Domain Boost applied to {domain_boosted_count} chunks.")
-
-            # 4c. Apply Narrative Intent Boost during RRF
-            NARRATIVE_BOOST_WEIGHT = 0.03  # Significant boost to ensure narrative chunks stay in top-N window
-            narrative_kw_list = ["cause", "event", "phase", "why", "how", "reason", "accident", "analysis", "report", "statement", "damage", "led to", "happen", "occur", "defining"]
-            if any(nk in original_query.lower() for nk in narrative_kw_list):
-                narrative_boosted_count = 0
-                for cid in fused_scores.keys():
-                    chunk_obj = vector_chunk_map.get(cid)
-                    if chunk_obj:
-                        pos = getattr(chunk_obj, "position", 99999)
-                        if pos < 90000:
-                            fused_scores[cid] += NARRATIVE_BOOST_WEIGHT
-                            narrative_boosted_count += 1
-                logger.info(f"[RRF_FLOW_MARKER] Narrative Intent Boost applied to {narrative_boosted_count} narrative chunks.")
-
-            # Sort top N chunks with narrative quota preservation when narrative intent is present
-            if any(nk in original_query.lower() for nk in narrative_kw_list):
-                narrative_items = []
-                other_items = []
-                for cid, score in sorted(fused_scores.items(), key=lambda x: x[1], reverse=True):
-                    chunk_obj = vector_chunk_map.get(cid)
-                    pos = getattr(chunk_obj, "position", 99999) if chunk_obj else 99999
-                    if pos < 90000:
-                        narrative_items.append((cid, score))
-                    else:
-                        other_items.append((cid, score))
-                
-                # Reserve up to 4 slots for top narrative items
-                num_narrative = min(len(narrative_items), 4)
-                guaranteed_narrative = narrative_items[:num_narrative]
-                remaining_quota = TOP_N - len(guaranteed_narrative)
-                
-                # Combine remaining narrative and other items by score
-                remaining_candidates = narrative_items[num_narrative:] + other_items
-                remaining_candidates.sort(key=lambda x: x[1], reverse=True)
-                
-                sorted_fused = guaranteed_narrative + remaining_candidates[:remaining_quota]
-            else:
-                sorted_fused = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[:TOP_N]
-
-            top_cids = [cid for cid, score in sorted_fused]
-            logger.info(f"[RRF_FLOW_MARKER] Fusion complete. Top {len(top_cids)} chunk IDs selected (Narrative Quota Preserved).")
-            
-            # Fetch missing chunks from postgres (if any left over)
-            final_chunks = []
-            
-            # Build final chunk list and assign hybrid_score
-            for rank, (cid, score) in enumerate(sorted_fused):
-                if cid in vector_chunk_map:
-                    rc = vector_chunk_map[cid]
-                    # Map RRF rank to a safe hybrid_score range [0.85, 0.99] so service.py doesn't drop them
-                    rc.hybrid_score = 0.99 - (rank * 0.01)
-                    final_chunks.append(rc)
+                        if not is_dup:
+                            seen_hashes.append(words)
+                            deduped_chunks.append(chunk)
+                            if len(deduped_chunks) >= 10:  # Top-K cap increased to allow more project chunks
+                                break
                     
-            if final_chunks:
-                logger.info(f"RRF successfully aggregated {len(final_chunks)} chunks. Returning early.")
-                
-                # === DEEPINFRA RERANKER INTEGRATION ===
-                if getattr(get_settings(), "model_reranker", None):
-                    try:
-                        logger.info("[RERANK] Starting DeepInfra LLM Reranking on top RRF chunks...")
-                        from app.core.llm.deepinfra_llm import get_llm_client
-                        llm = await get_llm_client()
-                        
-                        # Extract texts
-                        doc_texts = [c.text for c in final_chunks]
-                        
-                        # Call API
-                        reranked_results = await llm.rerank_documents(
-                            query=original_query,
-                            documents=doc_texts,
-                            top_n=min(len(doc_texts), 10),
-                            model=get_settings().model_reranker,
-                            tenant_id=self.tenant_id,
-                            user_id=user_id
-                        )
-                        
-                        # Reorder final_chunks based on reranker results
-                        import math
-                        new_final_chunks = []
-                        seen_cids = set()
-                        for rank, r in enumerate(reranked_results):
-                            orig_idx = r.get("original_index")
-                            if orig_idx is not None and orig_idx < len(final_chunks):
-                                chunk = final_chunks[orig_idx]
-                                raw_score = r.get("relevance_score", 0.0)
-                                if isinstance(raw_score, (int, float)):
-                                    if raw_score > 1.0 or raw_score < 0.0:
-                                        prob = 1.0 / (1.0 + math.exp(-max(-20.0, min(20.0, raw_score))))
-                                    else:
-                                        prob = raw_score
-                                else:
-                                    prob = 0.95 - (rank * 0.01)
-                                chunk.hybrid_score = max(0.50, prob)
-                                chunk.reason = "LLM_RERANKED"
-                                new_final_chunks.append(chunk)
-                                seen_cids.add(chunk.chunk_id)
+                    if deduped_chunks:
+                        final_chunks = deduped_chunks
+                        logger.info(f"[DEDUP] Trimmed to {len(final_chunks)} unique, high-scoring chunks for prompt assembly.")
+                    # ------------------------
 
-                        # Preserving narrative quota: if any narrative chunk (<90000) was in pre-reranked final_chunks but dropped by top_n, preserve it
-                        for orig_chunk in final_chunks:
-                            if orig_chunk.chunk_id not in seen_cids and getattr(orig_chunk, "position", 99999) < 90000:
-                                orig_chunk.reason = "LLM_RERANKED_NARRATIVE_PRESERVED"
-                                orig_chunk.hybrid_score = 0.65
-                                new_final_chunks.append(orig_chunk)
-                                seen_cids.add(orig_chunk.chunk_id)
-
-                        final_chunks = new_final_chunks
-                        logger.info(f"[RERANK] Successfully reranked top {len(final_chunks)} chunks using LLM (Narrative Preserved).")
-                    except Exception as e:
-                        logger.error(f"[RERANK] LLM Reranking failed, falling back to pure RRF: {e}")
+                    rag_context = RAGContext(
+                        query=original_query,
+                        chunks=final_chunks,
+                        entity_mentions={},
+                        total_tokens=sum(len(c.text.split()) for c in final_chunks),
+                        triplet_context=parallel_sql_context + extractive_context_text + triplet_context_str,
+                        triplets=triplet_res,
+                        search_type="PARALLEL_HYBRID" if parallel_sql_context else analysis.intent.name
+                    )
                 
-                triplet_context_str = ""
-                if triplet_res:
-                    from app.core.triplet_extractor import TripletRetriever
-                    retriever = TripletRetriever(self.tenant_id)
-                    triplet_context_str = retriever.format_triplets_as_context(triplet_res)
-
-                rag_context = RAGContext(
-                    query=original_query,
-                    chunks=final_chunks,
-                    entity_mentions={},
-                    total_tokens=sum(len(c.text.split()) for c in final_chunks),
-                    triplet_context=extractive_context_text + triplet_context_str,
-                    triplets=triplet_res,
-                    search_type=analysis.intent.name
-                )
-                
-                # Pre-generation conflict detection
-                detector = ConflictDetector()
-                conflict_res = await detector.detect_conflicts(rag_context)
-                if conflict_res.get("conflict_found"):
-                    logger.warning(f"Conflict detected in evidence: {conflict_res.get('explanation')}")
-                    rag_context.triplet_context += f"\n\n### SYSTEM WARNING: CONFLICTING EVIDENCE DETECTED\n{conflict_res.get('explanation')}\nExplicitly address and resolve this conflict in your response based on the provided snippets."
+                    # Pre-generation conflict detection
+                    detector = ConflictDetector()
+                    conflict_res = await detector.detect_conflicts(rag_context)
+                    if conflict_res.get("conflict_found"):
+                        logger.warning(f"Conflict detected in evidence: {conflict_res.get('explanation')}")
+                        rag_context.triplet_context += f"\n\n### SYSTEM WARNING: CONFLICTING EVIDENCE DETECTED\n{conflict_res.get('explanation')}\nExplicitly address and resolve this conflict in your response based on the provided snippets."
                     
-                # Telemetry logging
-                TelemetryLogger.log_query(
-                    query=original_query,
-                    intent=analysis.intent.name,
-                    planner_latency=0.0,
-                    engine_latency=engine_time,
-                    coverage_score=1.0,
-                    conflict_found=conflict_res.get("conflict_found", False),
-                    token_usage=rag_context.total_tokens,
-                    evidence_count=len(final_chunks)
-                )
+                    # Telemetry logging
+                    TelemetryLogger.log_query(
+                        query=original_query,
+                        intent=analysis.intent.name,
+                        planner_latency=0.0,
+                        engine_latency=engine_time,
+                        coverage_score=1.0,
+                        conflict_found=conflict_res.get("conflict_found", False),
+                        token_usage=rag_context.total_tokens,
+                        evidence_count=len(final_chunks)
+                    )
                     
-                variation_elapsed = time.time() - variation_start_time
-                pipeline_total_elapsed = time.time() - total_pipeline_start
-                logger.info(f"TELEMETRY: Structured query variation {sq_idx + 1} completed in {variation_elapsed:.2f}s")
-                logger.info(f"TELEMETRY: Pipeline total retrieval phase completed in {pipeline_total_elapsed:.2f}s")
+                    variation_elapsed = time.time() - variation_start_time
+                    pipeline_total_elapsed = time.time() - total_pipeline_start
+                    logger.info(f"TELEMETRY: Structured query variation {sq_idx + 1} completed in {variation_elapsed:.2f}s")
+                    logger.info(f"TELEMETRY: Pipeline total retrieval phase completed in {pipeline_total_elapsed:.2f}s")
                 
-                return rag_context
+                    return rag_context
             
             variation_elapsed = time.time() - variation_start_time
             logger.warning(
@@ -1955,7 +2076,7 @@ class RAGPipeline:
             emb_tokens = emb_tokens if ('emb_tokens' in locals() and isinstance(locals().get('emb_tokens'), int)) else 10
         else:
             from app.core.embeddings import EmbeddingGenerator
-            query_embedding, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(query)
+            query_embedding, emb_tokens = await EmbeddingGenerator.generate_embedding_with_usage(query, is_query=True)
 
 
 
@@ -2321,75 +2442,35 @@ class RAGPipeline:
 
 
 
-        # STEP 7: TRIPLET RETRIEVAL (Phase 4A  Feature-Flagged)
-
-
-
+        # STEP 7: TRIPLET RETRIEVAL (Phase 4A & Phase 2 - Dynamically Gated)
         # Enriches context with knowledge graph relationships
-
-
-
-        # SAFETY: Independent step  if disabled or fails, pipeline continues
-
-
-
         triplet_context = ""
 
-
-
         if self.settings.use_triplet_extraction:
-
-
-
-            try:
-
-
-
-                from app.core.triplet_extractor import TripletRetriever
-
-
-
-                retriever = TripletRetriever(self.tenant_id)
-
-
-
-                relevant_triplets = await retriever.search_triplets(
-
-
-
-                    query_embedding=query_embedding,
-
-
-
-                    kb_ids=kb_ids,
-
-
-
-                    top_k=self.settings.triplet_retrieval_top_k,
-
-
-
-                )
-
-
-
-                if relevant_triplets:
-
-
-
-                    triplet_context = retriever.format_triplets_as_context(relevant_triplets)
-
-
-
-                    logger.info(f" Retrieved {len(relevant_triplets)} relevant triplets")
-
-
-
-            except Exception as e:
-
-
-
-                logger.warning(f" Triplet retrieval failed (non-blocking): {e}")
+            from app.modules.rag.orchestrator.triplet_decision import decide_triplet_retrieval, TripletDecision
+            f_decision, f_reason = decide_triplet_retrieval(
+                query=query,
+                analysis=analysis if 'analysis' in locals() else None,
+                has_graph_data=True
+            )
+            logger.info(
+                f"[TRIPLET_DECISION_FALLBACK] triplet_decision={f_decision.value} "
+                f"triplet_decision_reason={f_reason}"
+            )
+            if f_decision != TripletDecision.SKIP_TRIPLETS:
+                try:
+                    from app.core.triplet_extractor import TripletRetriever
+                    retriever = TripletRetriever(self.tenant_id)
+                    relevant_triplets = await retriever.search_triplets(
+                        query_embedding=query_embedding,
+                        kb_ids=kb_ids,
+                        top_k=self.settings.triplet_retrieval_top_k,
+                    )
+                    if relevant_triplets:
+                        triplet_context = retriever.format_triplets_as_context(relevant_triplets)
+                        logger.info(f" Retrieved {len(relevant_triplets)} relevant triplets")
+                except Exception as e:
+                    logger.warning(f"Fallback triplet retrieval failed (non-blocking): {e}")
 
 
 

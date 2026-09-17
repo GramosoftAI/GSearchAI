@@ -620,19 +620,15 @@ class DeepInfraLLMClient:
         }
         
         # Build System Persona
-        system_content = "You are a helpful knowledge base assistant."
-        if agent_persona:
+        if agent_persona and agent_persona.get("system_prompt"):
+            # agent_persona["system_prompt"] is already fully formed with personality, grounding, memory & citation rules
+            system_content = agent_persona["system_prompt"]
+        elif agent_persona:
             name = agent_persona.get("name", "Assistant")
             personality = agent_persona.get("personality", "Friendly")
-            prompt_custom = agent_persona.get("system_prompt", "")
-            
-            system_content = f"You are {name}. Your tone and personality is {personality}. "
-            if prompt_custom:
-                system_content += f"\n\nInstructions: {prompt_custom}"
-            
-            # STRICT GROUNDING + NUMERIC PRESERVATION
-            system_content += (
-                "\n\nCRITICAL INSTRUCTION: You must strictly respond ONLY using the provided knowledge base content and CONVERSATION HISTORY. "
+            system_content = (
+                f"You are {name}. Your tone and personality is {personality}.\n\n"
+                "CRITICAL INSTRUCTION: You must strictly respond ONLY using the provided knowledge base content and CONVERSATION HISTORY. "
                 "Do not rely on your own pre-trained knowledge. Always include precise numeric values, years, percentages, "
                 "and symbols (like GPA scores, dates, or currency) explicitly mentioned in the context. "
                 "If 'MEMORY DIRECTIVES' are provided in the <user_preferences> tag, they dictate your STYLISTIC and FORMATTING behavior ONLY. "
@@ -790,7 +786,7 @@ class DeepInfraLLMClient:
                             yield "]"
 
                     logger.info(
-                        f"LLM Stream Completed in {time.time() - start_time:.2f}s using model '{target_model}'"
+                        f"LLM Stream Completed in {time.time() - start_time:.2f}s using model '{target_model}' — Text: {full_text[:200]}..."
                     )
                     return  # Success! Exit function.
 
@@ -1004,16 +1000,20 @@ class DeepInfraLLMClient:
 
         system_content = "You are a helpful knowledge base assistant."
 
-        if agent_persona:
-
+        if agent_persona and agent_persona.get("system_prompt"):
+            system_content = agent_persona["system_prompt"]
+        elif agent_persona:
             name = agent_persona.get("name", "Assistant")
-
             personality = agent_persona.get("personality", "Friendly")
-            prompt_custom = agent_persona.get("system_prompt", "")
-
-            system_content = f"You are {name}. Your tone and personality is {personality}. "
-            if prompt_custom:
-                system_content += f"\n\nInstructions: {prompt_custom}"
+            system_content = (
+                f"You are {name}. Your tone and personality is {personality}.\n\n"
+                "CRITICAL INSTRUCTION: You must strictly respond ONLY using the provided knowledge base content. "
+                "Do not rely on your own pre-trained knowledge. Always include precise numeric values, years, percentages, "
+                "and symbols (like GPA scores, dates, or currency) explicitly mentioned in the context. "
+                "If the answer is not contained within the provided context, you MUST respond exactly with: "
+                "\"Im sorry, but the requested information is not available within my current knowledge base. "
+                "Please try a related query or provide additional context.\""
+            )
 
         else:
 
@@ -1074,11 +1074,19 @@ class DeepInfraLLMClient:
                     import time
                     t0 = time.perf_counter()
                     client = await self.get_client()
+                    
+                    # If earlier attempt failed or timed out, switch to fallback model
+                    if attempt > 0 and getattr(self, "model_answer_fallback", None):
+                        payload["model"] = self.model_answer_fallback
+                        logger.warning(f"[LLM_FALLBACK] Switched model to fallback: {payload['model']} on attempt {attempt + 1}")
+                    
+                    # 30s request timeout prevents indefinite hangs on stalled sockets
+                    req_timeout = min(self.timeout, 30.0)
                     response = await client.post(
-                        self.deepinfra_base_url, headers=headers, json=payload, timeout=self.timeout
+                        self.deepinfra_base_url, headers=headers, json=payload, timeout=req_timeout
                     )
                     t_req = time.perf_counter() - t0
-                    logger.info(f"[LLM_TIMING] DeepInfra completions request took {t_req:.4f}s")
+                    logger.info(f"[LLM_TIMING] DeepInfra completions request took {t_req:.4f}s (model={payload.get('model')})")
                     # Check for HTTP errors
 
                     response.raise_for_status()
@@ -1336,44 +1344,21 @@ class DeepInfraLLMClient:
 
         """
 
-        prompt = f"""You are an elite, human-like RAG assistant. Your primary goal is to help the user by providing accurate answers based on the provided CONTEXT.
-
-
-
-STRICT GROUNDING RULES:
-
-1. If the QUESTION is a factual inquiry, use ONLY the provided CONTEXT to answer.
-
-2. PRESERVE NUMERICS: Always include precise years, scores (GPA), and technical symbols.
-
-
-
-HUMAN-LIKE ASSISTANCE:
-
-1. If the QUESTION is a greeting (e.g., Hi, Hello) or a social interaction, respond warmly and professionally as a helpful assistant.
-
-2. Maintain a professional yet friendly "human-to-human" tone. Do not sound like a rigid bot.
-
-3. If the context is empty but the user is just saying hello, do NOT give the "information not available" error. Instead, greet them and ask how you can help.
-
-
-
-CONTEXT:
-
+        if context and context.strip():
+            prompt = f"""CONTEXT:
 {context}
 
-
-
 QUESTION:
-
 {query}
 
-
+ANSWER:
+"""
+        else:
+            prompt = f"""QUESTION:
+{query}
 
 ANSWER:
-
 """
-
         return prompt
 
 

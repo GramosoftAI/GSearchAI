@@ -366,25 +366,15 @@ class ParquetIngester:
         if not dataset_name:
             return None
 
+        if os.path.isabs(dataset_name) and os.path.exists(dataset_name):
+            return dataset_name
+            
         if not os.path.isabs(output_dir):
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             output_dir = os.path.join(base_dir, output_dir)
 
-        clean_dataset = dataset_name.strip()
-        
-        # 0. Direct file check: If the given path is an existing parquet file on disk
-        if os.path.isabs(clean_dataset) and os.path.exists(clean_dataset) and clean_dataset.lower().endswith('.parquet'):
-            return clean_dataset
-
-        clean_name = ParquetIngester._clean_dataset_name(dataset_name)
-        # Normalize key names from absolute path, URL, or filename
-        base = os.path.basename(clean_dataset)
-        if base.lower().startswith("spreadsheet: "):
-            base = base[13:].strip()
-        name_no_ext = os.path.splitext(base)[0] if base.lower().endswith(('.csv', '.xlsx', '.xls', '.parquet')) else base
-        # Strip versioned timestamp suffix like _1789473099
-        raw_name = re.sub(r'_\d{10,}$', '', name_no_ext).strip()
-        clean_key = clean_name
+        # Extract only the filename, handling mixed slashes just in case
+        clean_key = os.path.basename(dataset_name.strip().replace('/', os.sep).replace('\\', os.sep))
         if clean_key.lower().endswith(('.csv', '.xlsx', '.xls', '.parquet')):
             clean_key = os.path.splitext(clean_key)[0]
 

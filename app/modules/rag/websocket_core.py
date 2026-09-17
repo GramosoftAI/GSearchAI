@@ -21,7 +21,7 @@ def resolve_memory_api_base_url() -> str:
         return env_host.rstrip("/")
     return "http://127.0.0.1:4917"
 
-async def _persist_partial(db, chat_service, session_id, user_id, query, response_buffer, reason: str) -> None:
+async def _persist_partial(db, chat_service, session_id, user_id, query, response_buffer, reason: str, channel: str = "websocket") -> None:
     try:
         try:
             await db.rollback()
@@ -35,6 +35,7 @@ async def _persist_partial(db, chat_service, session_id, user_id, query, respons
                 "sources": [],
                 "status": "partial_failure",
                 "failure_reason": reason,
+                "channel": channel,
             },
         )
         await db.commit()
@@ -50,7 +51,12 @@ def _rag_chunk_to_loop_event(chunk: str) -> LoopEvent:
             if parsed.get("type") == "metadata":
                 return LoopEvent(type="sources", sources=parsed.get("sources", []), triplets=parsed.get("triplets", []))
             elif parsed.get("type") == "clarification_needed":
-                return LoopEvent(type="clarification_needed", text=parsed.get("plain_text_fallback"), clarification=parsed)
+                return LoopEvent(
+                    type="clarification_needed", 
+                    text=parsed.get("plain_text_fallback"), 
+                    clarification=parsed,
+                    candidates=parsed.get("candidates")
+                )
             elif "error" in parsed:
                 return LoopEvent(type="error", error_detail=parsed["error"])
     except (json.JSONDecodeError, TypeError):
@@ -94,33 +100,187 @@ async def run_unified_rag_websocket_loop(
         if not active_session_id and request.session_id:
             active_session_id = request.session_id
 
+        if not active_session_id:
+            try:
+                new_session = await chat_service.chat_repo.create_session(
+                    agent_id=agent_id,
+                    user_id=user_id,
+                    title="New Conversation"
+                )
+                active_session_id = str(new_session.id)
+                await db.commit()
+            except Exception as e:
+                logger.error(f"Failed to auto-create session: {e}")
+
+        if active_session_id:
+            try:
+                await chat_service.chat_repo.add_message(
+                    session_id=active_session_id,
+                    role="user",
+                    content=request.query
+                )
+                await db.commit()
+            except Exception as e:
+                logger.error(f"Failed to persist user message: {e}")
+
         async def _forward_event(event: LoopEvent):
             await adapter.send(websocket, event)
 
         try:
-            result = await execute_rag(
-                db=db,
-                tenant_id=tenant_id,
-                agent_id=agent_id,
+            async def _fetch_chat_history():
+                if active_session_id:
+                    return await chat_service.chat_repo.get_recent_messages(
+                        session_id=active_session_id, count=10
+                    )
+                return []
+            
+            # Await ONLY chat history synchronously
+            history_messages = await _fetch_chat_history()
+
+            # Original query is immutable from this point forward
+            original_query = request.query
+            logger.info("QUERY_FIDELITY | original=%r | rewriter=removed", original_query)
+
+            # 3. Graph Memory Context Formatting
+            chat_history_str = None
+            if history_messages:
+                chat_history_str = chat_service._format_memory_context(
+                    history=history_messages, current_query=original_query
+                )
+
+
+            # 4. LangGraph Execution & Streaming
+            has_error = False
+            msg_metadata = {"status": "complete"}
+            response_buffer = []
+            collected_sources = []
+            
+            from app.modules.rag.graph.workflow import build_rag_graph
+            import asyncio
+            
+            stream_queue = asyncio.Queue()
+            
+            initial_state = {
+                "query": original_query,
+                "original_query": original_query,
+                "tenant_id": tenant_id,
+                "agent_id": agent_id,
+                "session_id": active_session_id,
+                "user_id": user_id,
+                "kb_ids": kb_ids,
+                "chat_history": chat_history_str,
+                "skip_search": False,
+                "top_k": request.top_k,
+                "max_depth": request.max_depth,
+                "stream_queue": stream_queue
+            }
+            
+            # Fetch target_kb_id if explicitly requested
+            if getattr(request, "target_kb_id", None):
+                initial_state["target_kb_id"] = request.target_kb_id
+                
+            graph = build_rag_graph().compile()
+            graph_task = asyncio.create_task(graph.ainvoke(initial_state))
+            
+            # Watchdog: ensure sentinel None is queued if graph_task dies prematurely
+            def _on_graph_done(t):
+                if t.cancelled() or t.exception():
+                    try:
+                        stream_queue.put_nowait(None)
+                    except Exception:
+                        pass
+            graph_task.add_done_callback(_on_graph_done)
+
+            # Consumer Loop for LLM Tokens with watchdog protection
+            final_state = {}
+            while True:
+                if stream_queue.empty() and graph_task.done():
+                    break
+
+                get_task = asyncio.create_task(stream_queue.get())
+                done, _ = await asyncio.wait(
+                    [graph_task, get_task],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+
+                if get_task in done:
+                    chunk = get_task.result()
+                    if chunk is None:
+                        break
+                    response_buffer.append(chunk)
+                    await adapter.send(websocket, LoopEvent(type="token", text=chunk))
+                elif graph_task in done:
+                    get_task.cancel()
+                    # Drain any tokens that were already pushed to the queue
+                    while not stream_queue.empty():
+                        chunk = stream_queue.get_nowait()
+                        if chunk is None:
+                            break
+                        response_buffer.append(chunk)
+                        await adapter.send(websocket, LoopEvent(type="token", text=chunk))
+                    break
+                
+            try:
+                final_state = await graph_task
+            except Exception as e:
+                has_error = True
+                logger.error(f"[LANGGRAPH] Execution failed: {e}", exc_info=True)
+                await adapter.send_error(websocket, str(e))
+                final_state = {}
+                
+            if final_state.get("requires_clarification"):
+                parsed = final_state["clarification_payload"]
+                plain_fallback = parsed.get("message", "Please choose a file.")
+                response_buffer.append(plain_fallback)
+                msg_metadata["clarification"] = parsed
+                await adapter.send(
+                    websocket, 
+                    LoopEvent(
+                        type="clarification_needed", 
+                        text=plain_fallback, 
+                        clarification=parsed,
+                        candidates=parsed.get("candidates")
+                    )
+                )
+                
+            if final_state.get("sources"):
+                sources_payload = [{"source": s} for s in final_state["sources"]]
+                collected_sources = sources_payload
+                await adapter.send(websocket, LoopEvent(type="sources", sources=sources_payload, triplets=[]))
+
+            full_response = "".join(response_buffer)
+
+            if has_error:
+                await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, "rag_error")
+                break
+
+            # 5. Evaluate Human Support Escalation
+            is_escalated = detect_escalation_intent(
                 query=request.query,
-                session_id=active_session_id,
-                user_id=user_id,
-                source=channel,
-                enable_memory=enable_memory,
-                top_k=request.top_k,
-                max_depth=request.max_depth,
-                target_kb_id=request.target_kb_id,
-                kb_ids=kb_ids,
-                on_event=_forward_event,
+                sources=collected_sources,
+                response_text=full_response
             )
-            active_session_id = result.get("session_id", active_session_id)
-            await adapter.send(
-                websocket,
-                LoopEvent(
-                    type="done",
-                    escalation_detected=result.get("escalation_detected", False),
-                ),
-            )
+
+            # Persist response and send completion event
+            if active_session_id:
+                try:
+                    await chat_service.chat_repo.add_message(
+                        session_id=active_session_id,
+                        role="assistant",
+                        content=full_response,
+                        metadata={
+                            "sources": collected_sources,
+                            "status": "complete",
+                            "escalation_detected": is_escalated,
+                            "channel": channel,
+                        },
+                    )
+                    await db.commit()
+                except Exception as e:
+                    logger.error(f"Failed to persist response: {e}")
+
+            await adapter.send(websocket, LoopEvent(type="done", escalation_detected=is_escalated))
+
         except WebSocketDisconnect:
             return
         except Exception as e:

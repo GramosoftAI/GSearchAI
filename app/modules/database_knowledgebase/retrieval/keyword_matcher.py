@@ -76,6 +76,13 @@ class SchemaKeywordMatcher:
             (r"\boffice\s+hours?\b", "attendance"),
             (r"\b(?:work(?:ing)?|office)\s+attendance\b", "attendance"),
             (r"\blow\s+attendance\b", "attendance"),
+            # Working time and durations
+            (r"\b(?:spend|spent)\s+(?:at\s+)?(?:work|the\s+office|workplace)\b", "attendance at_work_second"),
+            (r"\bhow\s+(?:long|much\s+time)\b", "attendance at_work_second duration"),
+            (r"\b(?:work(?:ing)?\s+(?:time|duration|hours?)|daily\s+working\s+time)\b", "attendance at_work_second attendance_worked_hour"),
+            (r"\bhours?\s+(?:did\s+[\w\s]+\s+work|worked)\b", "attendance at_work_second"),
+            (r"\btime\s+(?:did\s+[\w\s]+\s+enter|entered)\b", "attendance attendance_clock_in"),
+            (r"\btime\s+(?:did\s+[\w\s]+\s+leave|left)\b", "attendance attendance_clock_out"),
             # Late arrivals & early departures (late_come, early_out)
             (r"\b(?:came|come|arrived?|showed?\s+up)\s+(?:in\s+)?late\b", "late_come attendance"),
             (r"\blate\s+(?:to\s+)?(?:work|office|come|arrival|arriv)\b", "late_come attendance"),
@@ -96,6 +103,8 @@ class SchemaKeywordMatcher:
             (r"\bearly\s+shift\b", "shift shift_schedule"),
             (r"\bnight\s+shift\b", "shift shift_schedule"),
             (r"\bshift\s+schedule\b", "shift_schedule"),
+            # Activity Sessions
+            (r"\b(?:activity\s+sessions?|sessions?|clock\s+activity|punch\s+activity)\b", "attendance_attendanceactivity clock_in clock_out"),
         ]
         norm_q = query.lower()
         for pat, canonical_ent in compound_patterns:

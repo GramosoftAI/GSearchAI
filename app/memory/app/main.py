@@ -227,7 +227,7 @@ async def get_embedding(text: str, priority: str = "live") -> List[float]:
         try:
             llm_base = os.getenv("EMBEDDING_BASE_URL", os.getenv("LLM_BASE_URL", "https://api.deepinfra.com/v1/openai")).rstrip('/')
             api_key = os.getenv("EMBEDDING_API_KEY", os.getenv("LLM_GATEWAY_API_KEY", os.getenv("DEEPINFRA_API_KEY", "")))
-            embed_model = os.getenv("DEEPINFRA_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B")
+            embed_model = os.getenv("DEEPINFRA_EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5")
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
             
             endpoint = f"{llm_base}/embeddings" if not llm_base.endswith("/embeddings") else llm_base

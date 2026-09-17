@@ -48,7 +48,7 @@ class SchemaRetrievalRequest(BaseModel):
     top_k_columns_per_table: int = Field(default=25, ge=1, le=100, description="Max columns per table")
     include_relationships: bool = Field(default=True, description="Whether to include FK join paths")
     min_confidence_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
-    enable_semantic_glossary: bool = Field(default=False, description="Enable semantic glossary enriched retrieval")
+    enable_semantic_glossary: bool = Field(default=True, description="Enable semantic glossary enriched retrieval")
     workspace_id: Optional[str] = Field(default=None, description="Optional domain workspace name/ID filter")
 
 
@@ -410,6 +410,7 @@ class SchemaRetriever:
             selected_scores=selected_table_keys,
             active_relationships=active_relationships,
             top_k_columns_per_table=request.top_k_columns_per_table,
+            glossary_entries=published_glossary_map if enable_glossary else None,
         )
 
         # 10. Compute Overall Retrieval Confidence

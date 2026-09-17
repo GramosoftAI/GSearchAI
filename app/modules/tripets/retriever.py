@@ -72,6 +72,71 @@ class TripletRetriever:
         LIMIT 100
         """
 
+        from app.core.config import get_settings
+        settings = get_settings()
+
+        if getattr(settings, "enable_server_side_triplet_cosine", False):
+            # Phase 2 Optimized: Server-side Neo4j cosine similarity avoiding Bolt transfer of 4096-dim vectors
+            server_query = """
+            MATCH (kb:KnowledgeBase)
+            WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
+            MATCH (kb)-[:HAS_CHUNK]->(c:Chunk)-[:HAS_TRIPLET]->(t:Triplet {tenant_id: $tenant_id})
+            WHERE t.embedding IS NOT NULL
+            """
+            if target_sections:
+                server_query += " AND c.section IN $target_sections "
+
+            server_query += """
+            RETURN t.id as id, t.text as text, t.subject as subject,
+                   t.predicate as predicate, t.object as object,
+                   t.chunk_id as chunk_id,
+                   ((vector.similarity.cosine(t.embedding, $query_embedding) * 2.0) - 1.0) AS similarity
+            
+            UNION
+            
+            MATCH (t:Triplet {tenant_id: $tenant_id})
+            WHERE t.embedding IS NOT NULL AND size(t.embedding) = $dimension
+            AND NOT (t)<-[:HAS_TRIPLET]-(:Chunk)-[:HAS_CHUNK]-(:KnowledgeBase)
+            RETURN t.id as id, t.text as text, t.subject as subject,
+                   t.predicate as predicate, t.object as object,
+                   t.chunk_id as chunk_id,
+                   ((vector.similarity.cosine(t.embedding, $query_embedding) * 2.0) - 1.0) AS similarity
+            
+            ORDER BY similarity DESC
+            LIMIT $top_k
+            """
+            try:
+                t_server_start = time.time()
+                results = await self.neo4j_repo.execute_read(
+                    server_query,
+                    {
+                        "kb_ids": kb_ids,
+                        "tenant_id": self.tenant_id,
+                        "target_sections": target_sections if target_sections else [],
+                        "dimension": len(query_embedding),
+                        "query_embedding": query_embedding,
+                        "top_k": top_k
+                    }
+                )
+                final_triplets = [
+                    {
+                        "id": r["id"],
+                        "text": r["text"],
+                        "subject": r["subject"],
+                        "predicate": r["predicate"],
+                        "object": r["object"],
+                        "chunk_id": r["chunk_id"],
+                        "similarity": float(r.get("similarity", 0.0))
+                    }
+                    for r in (results or [])
+                ]
+                latency = time.time() - trace_start
+                server_ms = (time.time() - t_server_start) * 1000
+                logger.info(f"[TRACE_E2E] [EXIT] TripletRetriever.search_triplets (server_side) - Output: {len(final_triplets)} triplets - Latency: {latency:.2f}s (neo4j_ms={server_ms:.1f})")
+                return final_triplets
+            except Exception as e:
+                logger.warning(f"Server-side triplet search encountered error, falling back to Python cosine: {e}")
+
         try:
             results = await self.neo4j_repo.execute_read(
                 query,
@@ -120,7 +185,7 @@ class TripletRetriever:
             scored_triplets.sort(key=lambda x: x["similarity"], reverse=True)
             final_triplets = scored_triplets[:top_k]
             latency = time.time() - trace_start
-            logger.info(f"[TRACE_E2E] [EXIT] TripletRetriever.search_triplets - Output: {len(final_triplets)} triplets - Latency: {latency:.2f}s")
+            logger.info(f"[TRACE_E2E] [EXIT] TripletRetriever.search_triplets (python_cosine) - Output: {len(final_triplets)} triplets - Latency: {latency:.2f}s")
             return final_triplets
 
         except Exception as e:
@@ -216,11 +281,16 @@ class TripletRetriever:
                     attrs_str = ", ".join([f"{attr}: {val}" for attr, val in info["attributes"]])
                     lines.append(f"       - Details: {attrs_str}")
 
-        # 2. Output Simple Binary Relationships
+        # 2. Output Simple Binary Relationships (Deduplicated)
         if simple_relations:
             if hubs:
                 lines.append("   Direct Relationships:")
+            seen_tuples = set()
             for t in simple_relations:
+                t_key = (t['subject'].strip().lower(), t['predicate'].strip().lower(), t['object'].strip().lower())
+                if t_key in seen_tuples:
+                    continue
+                seen_tuples.add(t_key)
                 lines.append(
                     f"     - {t['subject']} [{t['predicate']}] {t['object']}"
                 )

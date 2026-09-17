@@ -746,10 +746,19 @@ class PDFStructureParser:
             nonlocal table_lines, in_table
             if table_lines:
                 tbl = "\n".join(table_lines).strip()
+                
+                table_section = current_section
+                if len(table_lines) > 0 and "|" in table_lines[0]:
+                    # Extract columns from the first row to give the table an independently-scorable identity
+                    cols = [c.strip() for c in table_lines[0].split("|") if c.strip() and not all(ch == '-' for ch in c.strip())]
+                    if cols:
+                        col_str = " | ".join(cols[:4])
+                        table_section = f"{current_section} - Table ({col_str})"
+                        
                 segments.append({
                     "type": "table",
                     "text": tbl,
-                    "section": current_section,
+                    "section": table_section,
                     "heading_level": current_heading_level
                 })
             table_lines = []

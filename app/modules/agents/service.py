@@ -687,19 +687,37 @@ class AgentService:
             # Explicit cascade delete with all relationships and tenant_id validation:
             # Agent → KB → Chunk → Entity
             # Also clean up Session and MemoryEntity nodes from the memory-api microservice.
-            delete_query = """
-            MATCH (a:Agent {tenant_id: $tenant_id, id: $agent_id})
-            OPTIONAL MATCH (a)-[:OWNS_KB]->(kb:KnowledgeBase {tenant_id: $tenant_id})
-            OPTIONAL MATCH (kb)-[:HAS_CHUNK]->(c:Chunk {tenant_id: $tenant_id})
-            OPTIONAL MATCH (s:Session {tenant_id: $tenant_id, agent_id: $agent_id})
-            OPTIONAL MATCH (m:MemoryEntity {tenant_id: $tenant_id, agent_id: $agent_id})
-            DETACH DELETE a, kb, c, s, m
-            RETURN count(a) as deleted_agents
-            """
+            # To prevent dbms.memory.transaction.total.max OutOfMemoryError in Neo4j,
+            # we must delete large hierarchies (like Chunks) separately before the agent itself.
             try:
+                # 1. Delete Chunks attached to the agent's KBs using APOC periodic iterate
+                # This batches the deletion directly in the database, avoiding all memory issues
+                chunk_delete_query = """
+                CALL apoc.periodic.iterate(
+                    "MATCH (a:Agent {tenant_id: $tenant_id, id: $agent_id})-[:OWNS_KB]->(kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk) RETURN c",
+                    "DETACH DELETE c",
+                    {batchSize: 1000, parallel: false, params: {tenant_id: $tenant_id, agent_id: $agent_id}}
+                )
+                """
+                
                 await retry_neo4j_operation(
                     lambda: neo4j_repo.execute_write(
-                        delete_query,
+                        chunk_delete_query,
+                        {"agent_id": str(agent_id), "tenant_id": str(self.tenant_id)}
+                    )
+                )
+
+                # 2. Delete the remaining graph nodes (KBs, Sessions, Memory, Agent)
+                agent_delete_query = """
+                MATCH (a:Agent {tenant_id: $tenant_id, id: $agent_id})
+                OPTIONAL MATCH (a)-[:OWNS_KB]->(kb:KnowledgeBase {tenant_id: $tenant_id})
+                OPTIONAL MATCH (s:Session {tenant_id: $tenant_id, agent_id: $agent_id})
+                OPTIONAL MATCH (m:MemoryEntity {tenant_id: $tenant_id, agent_id: $agent_id})
+                DETACH DELETE a, kb, s, m
+                """
+                await retry_neo4j_operation(
+                    lambda: neo4j_repo.execute_write(
+                        agent_delete_query,
                         {
                             "agent_id": str(agent_id),
                             "tenant_id": str(self.tenant_id),

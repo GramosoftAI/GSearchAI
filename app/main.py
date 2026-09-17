@@ -51,6 +51,12 @@ import pkgutil
 import logging
 
 import asyncio
+import sys
+import time
+
+# Windows asyncpg compatibility fix
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 
@@ -245,6 +251,42 @@ async def lifespan(app: FastAPI):
 
         # Fire and forget warmup
         asyncio.create_task(warmup_ds_libs())
+
+        # Safe Background Embedding Model Keep-Warm (Task 7)
+        async def keep_warm_embedding_model():
+            if not getattr(settings, "embedding_warmup_enabled", True) or not getattr(settings, "use_real_embeddings", True):
+                return
+            delay = getattr(settings, "embedding_warmup_delay_seconds", 1.0)
+            if delay > 0:
+                await asyncio.sleep(delay)
+            timeout = getattr(settings, "embedding_warmup_timeout_seconds", 15.0)
+            model_name = getattr(settings, "model_embedding", "BAAI/bge-large-en-v1.5")
+            logger.info(f"[EMBEDDING_WARMUP] Starting background keep-warm cron for model={model_name} (interval=60s)...")
+            
+            from app.core.embeddings import EmbeddingGenerator
+            import time as time_lib
+            
+            while True:
+                try:
+                    t_w0 = time_lib.perf_counter()
+                    # Use unique query to bypass local EmbeddingGenerator._query_cache
+                    unique_query = f"keep-warm ping {time_lib.time()}"
+                    await asyncio.wait_for(
+                        EmbeddingGenerator.generate_embedding_with_usage(unique_query, request_id="keep_warm_cron"),
+                        timeout=timeout
+                    )
+                    t_w = (time_lib.perf_counter() - t_w0) * 1000.0
+                    if t_w > 2000.0:
+                        logger.info(f"[EMBEDDING_WARMUP] Keep-warm successful but took {t_w:.1f}ms (recovered from cold state)")
+                except asyncio.TimeoutError:
+                    logger.warning(f"[EMBEDDING_WARMUP] Keep-warm timed out after {timeout}s for model={model_name}")
+                except Exception as w_err:
+                    logger.warning(f"[EMBEDDING_WARMUP] Keep-warm ping failed: {w_err}")
+                
+                # Sleep for 15 seconds before next ping to prevent model from unloading
+                await asyncio.sleep(15.0)
+
+        asyncio.create_task(keep_warm_embedding_model())
 
 
 

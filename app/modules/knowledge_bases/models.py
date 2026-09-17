@@ -105,7 +105,7 @@ class KnowledgeBase(Base):
 
     # ============= SEMANTIC ROUTING =============
     from pgvector.sqlalchemy import Vector
-    summary_embedding = Column(Vector(4096), nullable=True)
+    summary_embedding = Column("summary_embedding_bge", Vector(1024), nullable=True)
 
     # ============= SOFT DELETE TRACKING =============
     deleted_at = Column(
@@ -242,9 +242,8 @@ class DocumentChunk(Base):
     chunk_index = Column(Integer, nullable=False)
     section = Column(String(255), nullable=True)
     
-    # Store the vector. Dimension is 4096 as per EMBEDDING_DIMENSION in .env (Qwen/Qwen3-Embedding-8B)
     from pgvector.sqlalchemy import Vector
-    embedding = Column(Vector(4096), nullable=True)
+    embedding = Column("embedding_bge", Vector(1024), nullable=True)
 
     from sqlalchemy.dialects.postgresql import JSONB
     metadata_json = Column(JSONB, nullable=True)

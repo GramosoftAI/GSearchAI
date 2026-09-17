@@ -176,6 +176,26 @@ class QueryPlanValidator:
                     f"Projection security violation: Unrequested banking column '{proj.table_alias}.{proj.column_name}' cannot be projected [DATA_MINIMIZATION_VIOLATION]"
                 )
 
+        # 3b. Validate Group By Semantic Consistency
+        has_aggregations = any(
+            proj.aggregation not in (AggregateFunction.NONE, None)
+            or any(proj.column_name.strip().upper().startswith(fn) for fn in ("SUM(", "AVG(", "COUNT(", "MIN(", "MAX(", "ROUND(", "COALESCE("))
+            or "/" in proj.column_name
+            for proj in plan.projections
+        )
+        scalar_projections = [
+            proj for proj in plan.projections
+            if proj.aggregation in (AggregateFunction.NONE, None)
+            and not any(proj.column_name.strip().upper().startswith(fn) for fn in ("SUM(", "AVG(", "COUNT(", "MIN(", "MAX(", "ROUND(", "COALESCE("))
+            and "/" not in proj.column_name
+        ]
+        if has_aggregations and scalar_projections and not plan.group_by:
+            # Auto-populate missing GROUP BY with all scalar projections to ensure valid SQL execution
+            plan.group_by = [f"{p.table_alias}.{p.column_name}" for p in scalar_projections]
+            logger.info(
+                f"Auto-populated missing GROUP BY in query plan with scalar projections: {plan.group_by}"
+            )
+
         # 4. Validate Predicates (WHERE filters)
         for pred in plan.predicates:
             if pred.table_alias not in alias_to_table:
