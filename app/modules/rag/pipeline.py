@@ -1472,7 +1472,7 @@ class RAGPipeline:
                                         tenant_id=self.tenant_id,
                                         user_id=user_id
                                     ),
-                                    timeout=10.0
+                                    timeout=2.5
                                 )
                         
                                 # Reorder final_chunks based on reranker results

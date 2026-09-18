@@ -648,7 +648,7 @@ class KnowledgeBaseService:
                 chunks = []
                 chunk_metadata_list = []
                 for doc in documents_list:
-                    doc_chunks = await AdaptiveChunker.chunk(content=doc["content"], source_type="url")
+                    doc_chunks = await AdaptiveChunker.chunk(content=doc["content"], source_type="text")
                     for i, c in enumerate(doc_chunks):
                         chunks.append(c["chunk_text"])
                         meta = c["metadata"].copy()

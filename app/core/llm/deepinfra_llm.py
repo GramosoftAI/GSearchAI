@@ -684,7 +684,7 @@ class DeepInfraLLMClient:
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": self.temperature,
-                    "max_tokens": 400,  # Capped for latency based on typical answer length
+                    "max_tokens": self.max_tokens_answer,  # Use configured max tokens instead of hardcoded 400 limit
                     "stream": True,
                     "stream_options": {"include_usage": True},
                 }

@@ -80,7 +80,7 @@ async def rerank_node(state: GraphState) -> GraphState:
 
     # Dual-logic cutoffs
     is_tabular = state.get("used_sql_fallback", False) or state.get("intent") in ["TABULAR_SQL", "DATA_AGGREGATION"]
-    flat_cutoff = 0.01 if is_tabular else 0.02
+    flat_cutoff = 0.01
 
     max_score = max(((getattr(c, "reranker_score", 0) or 0) for c in scored_chunks), default=0)
     relative_cutoff = max_score * 0.05  # Lowered to 5% to keep more chunks (e.g. ones scoring 0.25 when top is 0.97)
