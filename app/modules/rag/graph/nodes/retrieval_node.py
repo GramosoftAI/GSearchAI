@@ -40,6 +40,57 @@ async def retrieval_node(state: GraphState) -> GraphState:
             # We fetch the embedding from the cache (primed in init_node)
             query_embedding = await EmbeddingGenerator.generate_embedding_with_usage(query, is_query=True)
 
+            # --- ENUMERATION BYPASS ---
+            intent = state.get("intent")
+            analysis = state.get("analysis_object")
+            target_chunk_type = None
+            if analysis and hasattr(analysis, "metadata") and hasattr(analysis.metadata, "target_chunk_type"):
+                target_chunk_type = analysis.metadata.target_chunk_type
+                
+            if intent == "ENUMERATION" and target_chunk_type:
+                from app.modules.knowledge_bases.models import DocumentChunk
+                from sqlalchemy import select
+                from app.modules.rag.pipeline import RetrievedChunk
+                import uuid
+                
+                logger.info(f"Bypassing vector retrieval for ENUMERATION intent, fetching chunk_type: {target_chunk_type}")
+                
+                # Fetch chunks for this tenant/kb that match the chunk_type
+                stmt = select(DocumentChunk).where(
+                    DocumentChunk.tenant_id == (uuid.UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id)
+                )
+                
+                if resolved_kb_ids:
+                    stmt = stmt.where(DocumentChunk.kb_id.in_([uuid.UUID(k) for k in resolved_kb_ids]))
+                    
+                stmt = stmt.where(DocumentChunk.metadata_json['chunk_type'].astext == target_chunk_type)
+                
+                result = await db.execute(stmt)
+                db_chunks = result.scalars().all()
+                
+                chunks = []
+                for db_chunk in db_chunks:
+                    chunks.append(RetrievedChunk(
+                        chunk_id=str(db_chunk.id),
+                        text=db_chunk.text,
+                        kb_id=str(db_chunk.kb_id),
+                        position=db_chunk.chunk_index,
+                        embedding_similarity=1.0,
+                        graph_score=0.0,
+                        hybrid_score=1.0,
+                        exact_score=1.0,
+                        final_relevance_score=1.0,
+                        provenance_metadata=db_chunk.metadata_json
+                    ))
+                    
+                logger.info(f"ENUMERATION fetch returned {len(chunks)} chunks.")
+                
+                return {
+                    "retrieved_chunks": chunks,
+                    "graph_triplets": []
+                }
+            # --- END BYPASS ---
+
             # We leverage the existing _retrieve_and_rank method from pipeline but split it logically.
             res = await pipeline.query(
                 query=query,

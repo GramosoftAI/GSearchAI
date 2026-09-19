@@ -1307,7 +1307,8 @@ class RAGPipeline:
                                         s3_path=s3_path,
                                         engine_name="hybrid_rrf",
                                         section="Unknown",
-                                        ontology_node=None
+                                        ontology_node=None,
+                                        provenance_metadata=row.metadata_json
                                     )
                                     vector_chunk_map[c_id] = rc
                             else:

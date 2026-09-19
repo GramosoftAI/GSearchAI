@@ -52,6 +52,11 @@ async def build_system_prompt(state: GraphState) -> tuple[str, str]:
   * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
   * Debit (Withdrawal/Outgoing/Payment): ATM withdrawals, payments to merchants, fees, taxes, outgoing transfers."""
 
+    enumeration_rules = ""
+    if state.get("intent") == "ENUMERATION":
+        enumeration_rules = """
+- ENUMERATION DIRECTIVE: The user has asked you to list items (e.g. current openings, available roles). You MUST list EACH distinct item by name. DO NOT generalize, DO NOT summarize, and DO NOT group them together. State every single item retrieved from the context explicitly."""
+
     injected_system_prompt = f"""
 [PERSONALITY MODE: STRICT]
 
@@ -98,7 +103,13 @@ If retrieved passages conflict, state the conflict. Do not resolve it yourself.
 - Mention the relevant source at the end.
 - Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
 - Be concise. Focus strictly on direct answers and avoid filler.
-- NEVER include internal relevance scores or confidence numbers (e.g. "(relevance: 0.65)", "(relevance: 0.58)", or "score: 0.61") in your output text. Relevance scores are for internal search ranking only and must never be shown to the user.{tabular_rules}
+- NEVER include internal relevance scores or confidence numbers (e.g. "(relevance: 0.65)", "(relevance: 0.58)", or "score: 0.61") in your output text. Relevance scores are for internal search ranking only and must never be shown to the user.{tabular_rules}{enumeration_rules}
+
+==================================================
+ENTITY DISAMBIGUATION RULES
+==================================================
+When the user asks generic questions about team members, roles, or executives (e.g. "who is the CTO?"), assume they are asking about the primary company/organization.
+If the retrieved context contains executives from both the primary company and third-party clients (e.g. inside testimonials or case studies), ONLY return the primary company's executive. Do not list client executives unless explicitly asked.
 
 ==================================================
 FORMATTING RULES
@@ -164,11 +175,36 @@ async def generation_node(state: GraphState) -> dict:
         
     # Format Context from chunks
     reranked_chunks = state.get("reranked_chunks") or state.get("retrieved_chunks") or []
+    # Sort chunks by kb_id and chunk_index to ensure stitched neighbors are contiguous
+    reranked_chunks = sorted(
+        reranked_chunks, 
+        key=lambda c: (str(getattr(c, "kb_id", "")), getattr(c, "chunk_index", 0) or 0)
+    )
+    
+    # Precompute set of (kb_id, position) for adjacency checks
+    present_chunks = {
+        (str(getattr(c, "kb_id", "")), getattr(c, "position", getattr(c, "chunk_index", 0)) or 0)
+        for c in reranked_chunks
+    }
+    
     context_text = ""
     for c in reranked_chunks:
         raw_source = getattr(c, "source", "") or getattr(c, "metadata", {}).get("source", "Unknown Document")
         filename = raw_source.split("/")[-1]
         content = getattr(c, "content", "") or getattr(c, "text", "")
+        
+        # Phase 2: Strip overlap only if the previous chunk is also retrieved
+        prov_metadata = getattr(c, "provenance_metadata", {}) or {}
+        overlap_len = prov_metadata.get("overlap_prefix_len", 0)
+        if overlap_len and len(content) > overlap_len:
+            c_kb_id = str(getattr(c, "kb_id", ""))
+            c_pos = getattr(c, "position", getattr(c, "chunk_index", 0)) or 0
+            
+            # If the chunk immediately preceding this one is in the context, we strip the redundant overlap.
+            # If it's missing, we KEEP the overlap so this chunk has complete context.
+            if (c_kb_id, c_pos - 1) in present_chunks:
+                content = content[overlap_len:]
+                
         # Enforce max chunk length to prevent LLM prefill bottlenecks (massive stories)
         if len(content) > 2500:
             content = content[:2500] + "... [truncated for brevity]"
@@ -237,6 +273,10 @@ async def generation_node(state: GraphState) -> dict:
     for c in reranked_chunks:
         raw_source = getattr(c, "source", "") or getattr(c, "metadata", {}).get("source", "Unknown Document")
         clean_name = raw_source.split("/")[-1]
+        
+        if getattr(c, "is_stitched_neighbor", False):
+            clean_name = f"{clean_name} (Neighbor Context)"
+            
         if clean_name not in sources:
             sources.append(clean_name)
             

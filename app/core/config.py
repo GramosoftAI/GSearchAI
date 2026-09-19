@@ -246,6 +246,8 @@ class Settings(BaseSettings):
     hybrid_vector_top_k: int = 50
     hybrid_fts_top_k: int = 50
     hybrid_candidate_pool_size: int = 30
+    stitch_window: int = 1
+
 
     # --- Legacy properties for backwards compatibility ---
     @property

@@ -10,6 +10,7 @@ from app.modules.rag.graph.nodes.rerank_node import rerank_node
 from app.modules.rag.graph.nodes.generation_node import generation_node
 from app.modules.rag.graph.nodes.join_node import join_node
 from app.modules.rag.graph.nodes.cleanup_node import cleanup_node
+from app.modules.rag.graph.nodes.stitch_node import stitch_node
 
 def route_kb(state: GraphState) -> str:
     """Conditional routing from KB Resolution."""
@@ -36,6 +37,7 @@ def build_rag_graph() -> StateGraph:
     workflow.add_node("tabular_node", tabular_node)
     workflow.add_node("retrieval_node", retrieval_node)
     workflow.add_node("rerank_node", rerank_node)
+    workflow.add_node("stitch_node", stitch_node)
     workflow.add_node("join_node", join_node)
     workflow.add_node("generation_node", generation_node)
     workflow.add_node("cleanup_node", cleanup_node)
@@ -56,10 +58,13 @@ def build_rag_graph() -> StateGraph:
     # Retrieval always goes to Rerank
     workflow.add_edge("retrieval_node", "rerank_node")
     
+    # Rerank goes to Stitching to pull adjacent chunks
+    workflow.add_edge("rerank_node", "stitch_node")
+    
     # Fan-in Join Point
-    # Memory, Rerank, and Tabular all point to the join_node.
+    # Memory, Stitching, and Tabular all point to the join_node.
     # LangGraph waits for all incoming supersteps to complete before running join_node.
-    workflow.add_edge(["memory_node", "rerank_node", "tabular_node"], "join_node")
+    workflow.add_edge(["memory_node", "stitch_node", "tabular_node"], "join_node")
     
     workflow.add_edge("join_node", "generation_node")
     
