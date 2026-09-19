@@ -748,7 +748,7 @@
             searchSendBtn.disabled = true;
           }
           if (searchPoweredByContainer) {
-            searchPoweredByContainer.style.display = "none";
+            searchPoweredByContainer.style.display = "flex";
           }
         }
       }
@@ -912,7 +912,7 @@
 
       // Powered by Gramosoft label wrapper
       searchPoweredByContainer = document.createElement("div");
-      searchPoweredByContainer.style.display = "none"; // Hidden by default when search bar is closed
+      searchPoweredByContainer.style.display = "flex"; // Always shown below search bar
       searchPoweredByContainer.style.justifyContent = "center";
       searchPoweredByContainer.style.marginTop = "6px";
 

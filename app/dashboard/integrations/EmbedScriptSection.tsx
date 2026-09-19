@@ -1795,11 +1795,12 @@ export default function EmbedScriptSection() {
                     onClick={() => {
                       if (!previewIsOpen) setPreviewIsOpen(true);
                     }}
-                    className={`absolute z-30 w-[94%] bottom-4 cursor-pointer transition-all duration-300 ${
+                    className={`absolute z-30 w-[94%] bottom-2 cursor-pointer transition-all duration-300 flex flex-col items-center ${
                       draftPosition === "center" ? "left-1/2 -translate-x-1/2 max-w-[440px]" : "right-4 max-w-[380px]"
                     }`}
                   >
                     <div
+                      className="w-full"
                       style={{
                         padding: "2px",
                         borderRadius: "26px",
@@ -1875,6 +1876,26 @@ export default function EmbedScriptSection() {
                           </svg>
                         </button>
                       </div>
+                    </div>
+                    <div className="flex justify-center mt-1.5 pointer-events-none">
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "4px",
+                          padding: "2px 10px",
+                          fontSize: "10px",
+                          color: isDarkTheme ? "#e2e8f0" : "#18181b",
+                          fontWeight: 600,
+                          borderRadius: "100px",
+                          background: isDarkTheme ? "#1e293b" : "#ffffff",
+                          border: isDarkTheme ? "1px solid #334155" : "1px solid #d4d4d8",
+                          boxShadow: "0 2px 6px rgba(0, 0, 0, 0.08)",
+                        }}
+                      >
+                        Powered by <span style={{ fontWeight: 750, color: draftThemeColor }}>Gsearch</span>
+                      </span>
                     </div>
                   </div>
                 )}

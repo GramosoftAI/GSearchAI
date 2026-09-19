@@ -365,27 +365,56 @@ function SlackIntegrationContent() {
     }, 150);
   };
 
-  // DELETE SLACK BOX
+  // DELETE SLACK BOX (Disconnects first if connected, then deletes)
   const handleDeleteSlackBox = (boxId: string, boxName: string) => {
     if (slackBoxes.length <= 1) {
       message.info("At least one Slack connection box is required.");
       return;
     }
 
+    const targetBox = slackBoxes.find((b) => b.id === boxId);
+    const isConnected = !!targetBox?.connected;
+    const agentId = targetBox?.agentId;
+
     modal.confirm({
       title: `Delete ${boxName}?`,
       icon: <DeleteOutlined style={{ color: "#ff4d4f" }} />,
-      content: `Are you sure you want to remove this Slack connection box? This will remove channel mappings for this workspace.`,
+      content: (
+        <Text className="text-[var(--app-text-soft)]">
+          {isConnected
+            ? `Are you sure you want to delete ${boxName}? This will automatically disconnect the Slack workspace and remove all linked channels.`
+            : `Are you sure you want to remove this Slack workspace card?`}
+        </Text>
+      ),
       okText: "Delete Box",
       okType: "danger",
       cancelText: "Cancel",
       maskClosable: true,
       centered: true,
-      onOk: () => {
-        const updated = slackBoxes.filter((b) => b.id !== boxId);
-        setSlackBoxes(updated);
-        saveBoxesToStorage(updated);
-        message.success(`Slack box removed successfully`);
+      onOk: async () => {
+        setActionLoading((prev) => ({ ...prev, [boxId]: true }));
+        try {
+          if (isConnected && agentId) {
+            try {
+              await fetch(`${API_BASE_URL}/slack/disconnect?agent_id=${agentId}`, {
+                method: "DELETE",
+                headers: getAuthHeaders(),
+              });
+            } catch (err) {
+              console.warn("Disconnect prior to box deletion error:", err);
+            }
+          }
+
+          const updated = slackBoxes.filter((b) => b.id !== boxId);
+          setSlackBoxes(updated);
+          saveBoxesToStorage(updated);
+          message.success(`${boxName} disconnected and removed successfully`);
+        } catch (err: any) {
+          console.error("Delete box error:", err);
+          message.error("Failed to delete Slack box.");
+        } finally {
+          setActionLoading((prev) => ({ ...prev, [boxId]: false }));
+        }
       },
     });
   };
@@ -739,14 +768,14 @@ function SlackIntegrationContent() {
               return (
                 <Card
                   key={box.id}
-                  className="w-[320px] sm:w-[350px] lg:w-[360px] min-h-[440px] shrink-0 snap-start group relative overflow-hidden bg-[var(--app-surface)] border border-[var(--app-border)] rounded-3xl transition-all duration-300 hover:shadow-xl hover:border-[#0fb5a1]/40 flex flex-col justify-between"
+                  className="w-[320px] sm:w-[350px] lg:w-[360px] min-h-[380px] shrink-0 snap-start group relative overflow-hidden bg-[var(--app-surface)] border border-[var(--app-border)] rounded-3xl transition-all duration-300 hover:shadow-xl hover:border-[#0fb5a1]/40 flex flex-col justify-between"
                   styles={{
                     body: {
                       padding: "24px",
                       display: "flex",
                       flexDirection: "column",
                       height: "100%",
-                      minHeight: "440px",
+                      minHeight: "380px",
                       justifyContent: "space-between",
                       gap: "18px",
                     },
@@ -831,30 +860,6 @@ function SlackIntegrationContent() {
                         }))}
                       />
                     </div>
-
-                    {/* AGENT DETAIL MINI CARD */}
-                    {currentAgent && (
-                      <div className="p-3.5 rounded-2xl bg-slate-50/70 dark:bg-slate-900/30 border border-[var(--app-border)] flex items-start gap-3">
-                        <div className="w-10 h-10 shrink-0 rounded-xl bg-[#0fb5a1]/15 text-[#0fb5a1] flex items-center justify-center text-xl font-bold">
-                          <RobotOutlined />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-xs text-[var(--app-text)] truncate">
-                              {currentAgent.name}
-                            </span>
-                            {currentAgent.personality && (
-                              <span className="text-[9px] font-bold text-[#0fb5a1] uppercase tracking-wider">
-                                {currentAgent.personality}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[11px] text-[var(--app-text-soft)] line-clamp-2 mt-1 m-0 leading-relaxed">
-                            {currentAgent.description || "Autonomous AI agent ready to respond in Slack channels."}
-                          </p>
-                        </div>
-                      </div>
-                    )}
                   </div>
 
                   {/* Bottom: Channels & Connect Actions */}
@@ -980,17 +985,17 @@ function SlackIntegrationContent() {
               );
             })}
 
-            {/* ADJACENT '+ ADD WORKSPACE' CARD (Identical size & sits directly next to previous card) */}
+            {/* ADJACENT '+ ADD WORKSPACE' CARD (Hidden on mobile screens) */}
             <Card
               onClick={handleAddNewSlackBox}
-              className="w-[320px] sm:w-[350px] lg:w-[360px] min-h-[440px] shrink-0 snap-start border-2 border-dashed border-[var(--app-border)] hover:border-[#0fb5a1] bg-[var(--app-surface)]/60 hover:bg-[#0fb5a1]/5 rounded-3xl transition-all duration-300 hover:shadow-xl cursor-pointer select-none group flex flex-col justify-between"
+              className="hidden sm:flex w-[320px] sm:w-[350px] lg:w-[360px] min-h-[380px] shrink-0 snap-start border-2 border-dashed border-[var(--app-border)] hover:border-[#0fb5a1] bg-[var(--app-surface)]/60 hover:bg-[#0fb5a1]/5 rounded-3xl transition-all duration-300 hover:shadow-xl cursor-pointer select-none group flex-col justify-between"
               styles={{
                 body: {
                   padding: "24px",
                   display: "flex",
                   flexDirection: "column",
                   height: "100%",
-                  minHeight: "440px",
+                  minHeight: "380px",
                   justifyContent: "center",
                   alignItems: "center",
                   textAlign: "center",
