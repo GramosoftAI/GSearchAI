@@ -76,12 +76,18 @@ class GoogleAuthManager:
         else:
             self.is_service_account = False
             logger.info(f"Initializing Google User OAuth2 credentials with scopes: {effective_scopes}")
+            import os
+            client_id = credentials.get("client_id") or os.getenv("GOOGLE_CLIENT_ID")
+            client_secret = credentials.get("client_secret") or os.getenv("GOOGLE_CLIENT_SECRET")
+            refresh_token = credentials.get("refresh_token")
+            token_uri = credentials.get("token_uri") or "https://oauth2.googleapis.com/token"
+
             self.creds = google_credentials.Credentials(
                 token=credentials.get("access_token"),
-                refresh_token=credentials.get("refresh_token"),
-                client_id=credentials.get("client_id"),
-                client_secret=credentials.get("client_secret"),
-                token_uri="https://oauth2.googleapis.com/token",
+                refresh_token=refresh_token,
+                client_id=client_id,
+                client_secret=client_secret,
+                token_uri=token_uri,
                 scopes=effective_scopes,
             )
 
@@ -107,6 +113,21 @@ class GoogleAuthManager:
         if active_creds.token and not getattr(active_creds, "expired", False):
             return active_creds.token
 
+        import os
+        # Fallback missing client_id / client_secret / token_uri on active_creds if omitted from stored credentials
+        if not getattr(active_creds, "client_id", None):
+            active_creds._client_id = os.getenv("GOOGLE_CLIENT_ID")
+        if not getattr(active_creds, "client_secret", None):
+            active_creds._client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+        if not getattr(active_creds, "token_uri", None):
+            active_creds._token_uri = "https://oauth2.googleapis.com/token"
+
+        if not getattr(active_creds, "refresh_token", None):
+            raise RuntimeError(
+                "Access token expired and no refresh_token was found in credentials. "
+                "Please disconnect and reconnect your Google Drive account."
+            )
+
         # Refresh token using google-auth library
         try:
             active_creds.refresh(GoogleRequest())
@@ -116,7 +137,6 @@ class GoogleAuthManager:
         except Exception as e:
             # Self-healing: If refresh fails with unauthorized_client and credentials came with mismatched client_id,
             # retry with server's configured GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
-            import os
             server_client_id = os.getenv("GOOGLE_CLIENT_ID")
             server_client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
             if server_client_id and "unauthorized_client" in str(e).lower() and getattr(active_creds, "client_id", None) != server_client_id:
