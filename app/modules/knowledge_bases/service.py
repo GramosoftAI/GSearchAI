@@ -800,7 +800,7 @@ class KnowledgeBaseService:
                     return False
                     
                 # 5. Skip standard website boilerplate, cookie notices, and navigation/footer fluff
-                if re.search(r'(?i)(copyright\s+©|all\s+rights\s+reserved|cookie\s+policy|privacy\s+policy|terms\s+of\s+use|navigation|footer|menu)', chunk_text) and len(chunk_text) < 300:
+                if re.search(r'(?i)(copyright|\(c\)|\u00a9|all\s+rights\s+reserved|cookie\s+policy|privacy\s+policy|terms\s+of\s+use|navigation|footer|menu)', chunk_text) and len(chunk_text) < 300:
                     return False
                     
                 # 6. Skip chunks where more than 60% of lines are short links/menu items (< 35 chars)
@@ -3104,7 +3104,14 @@ class KnowledgeBaseService:
                         import tempfile, os, hashlib
                         from app.core.parquet_ingester import ParquetIngester
 
-                        ext = os.path.splitext(filename)[1] or (".csv" if "csv" in mime_type else ".xlsx")
+                        # Detect format: Excel files always start with ZIP PK header; native Google Sheets export as CSV
+                        if file_bytes.startswith(b"PK\x03\x04"):
+                            ext = ".xlsx"
+                        elif "spreadsheet" in mime_type or "csv" in mime_type or filename.lower().endswith(".csv"):
+                            ext = ".csv"
+                        else:
+                            ext = os.path.splitext(filename)[1] or ".csv"
+
                         temp_fd, temp_path = tempfile.mkstemp(suffix=ext)
                         try:
                             with os.fdopen(temp_fd, 'wb') as f:
@@ -3198,6 +3205,13 @@ class KnowledgeBaseService:
 
                             files_synced += 1
                             synced_filenames.append(filename)
+                        except Exception as tab_err:
+                            logger.warning(f"Failed to ingest tabular file '{filename}' from Google Drive: {tab_err}")
+                            partial_failures.append({
+                                "file": filename,
+                                "stage": "tabular_ingestion",
+                                "error": str(tab_err)
+                            })
                         finally:
                             if os.path.exists(temp_path):
                                 os.remove(temp_path)
@@ -3966,199 +3980,6 @@ class KnowledgeBaseService:
             logger.error(f'Outlook sync failed: {e}', exc_info=True)
             return format_error(f'Failed to sync Outlook: {e}')
 
-    async def save_table_rows(self, kb_id: str, table_rows: list):
-        """
-        Saves extracted structured tables directly to PostgreSQL (no Neo4j syncing required for tables).
-        """
-        try:
-            async for doc in crawler.load_from_checkpoint(0, time.time(), checkpoint):
-                if hasattr(doc, 'node_type'):
-                    continue
-                
-                msg_data = await crawler.get_message_content(doc.id, user_email)
-                if not msg_data or not msg_data.get('body'):
-                    continue
-
-                chunk_id = str(uuid4())
-                chunk_text = f"Subject: {msg_data.get('subject')}\nFrom: {msg_data.get('sender')}\nDate: {msg_data.get('date')}\n\n{msg_data.get('body')}"
-
-                from app.core.entity_extraction import EntityExtractor
-                entities = await EntityExtractor.extract_entities(msg_data.get('body') or "")
-
-                neo4j_nodes.append({
-                    'chunk_id': chunk_id,
-                    'message_id': doc.id,
-                    'subject': msg_data.get('subject'),
-                    'sender': msg_data.get('sender'),
-                    'date': msg_data.get('date'),
-                    'entities': [{'text': e.text, 'type': e.entity_type} for e in entities[:50]]
-                })
-
-                from app.core.embeddings import get_embedding
-                emb = await get_embedding(chunk_text)
-                
-                pg_chunk = DocumentChunk(
-                    id=uuid.UUID(chunk_id),
-                    tenant_id=self.tenant_id,
-                    kb_id=uuid.UUID(kb_id),
-                    content=chunk_text,
-                    embedding=emb,
-                    metadata_json={
-                        'source': 'gmail',
-                        'message_id': doc.id
-                    }
-                )
-                self.db.add(pg_chunk)
-                messages_synced += 1
-
-            if neo4j_nodes:
-                neo_query_emails = """
-                MATCH (kb:KnowledgeBase {id: $kb_id, tenant_id: $tenant_id})
-                UNWIND $chunks AS chunk
-                MERGE (p:Person {text: chunk.sender, tenant_id: $tenant_id})
-                ON CREATE SET p.type = 'PERSON', p.id = randomUUID(), p.created_at = timestamp()
-                MERGE (e:Email {id: chunk.message_id, tenant_id: $tenant_id})
-                ON CREATE SET e.subject = chunk.subject, e.date = chunk.date, e.chunk_id = chunk.chunk_id, e.created_at = timestamp()
-                MERGE (p)-[:SENT]->(e)
-                MERGE (kb)-[:HAS_EMAIL]->(e)
-                WITH e, chunk, $tenant_id AS tenant_id
-                UNWIND chunk.entities AS ent
-                MERGE (ent_node:Entity {text: ent.text, type: ent.type, tenant_id: tenant_id})
-                ON CREATE SET ent_node.id = randomUUID(), ent_node.created_at = timestamp()
-                MERGE (e)-[:MENTIONS]->(ent_node)
-                """
-                await execute_write_query(neo_query_emails, {
-                    'kb_id': str(kb_id),
-                    'tenant_id': str(self.tenant_id),
-                    'chunks': neo4j_nodes
-                })
-                
-                pg_kb.total_chunks += messages_synced
-                await self.db.commit()
-
-            from app.utils.formatters import format_success, format_error
-            return format_success({'kb_id': kb_id, 'messages_synced': messages_synced, 'sync_duration_seconds': time.time() - sync_start_time}, meta={'message': 'Gmail synchronized successfully'})
-
-        except Exception as e:
-            logger.error(f'Gmail sync failed: {e}', exc_info=True)
-            from app.utils.formatters import format_error
-            return format_error(f'Failed to sync Gmail: {e}')
-
-    async def sync_outlook_source(self, kb_id: str, sync_req: dict) -> dict:
-        import time
-        import json
-        from uuid import uuid4
-        from sqlalchemy import select
-        from app.modules.knowledge_bases.models import KnowledgeBase, DatabaseConnection, DocumentChunk
-        from app.modules.connectors.sharepoint.outlook_crawler import OutlookConnector
-        from app.core.connectors import ConnectorCheckpoint
-
-        sync_start_time = time.time()
-        
-        query = select(KnowledgeBase).where(KnowledgeBase.id == uuid.UUID(kb_id), KnowledgeBase.tenant_id == self.tenant_id)
-        res = await self.db.execute(query)
-        pg_kb = res.scalar_one_or_none()
-        if not pg_kb:
-            return format_error('Knowledge Base not found', meta={'error_code': 'KB_NOT_FOUND'})
-
-        conn_query = select(DatabaseConnection).where(
-            DatabaseConnection.kb_id == uuid.UUID(kb_id),
-            DatabaseConnection.tenant_id == self.tenant_id,
-            DatabaseConnection.db_type == 'outlook'
-        )
-        conn_res = await self.db.execute(conn_query)
-        db_conn = conn_res.scalar_one_or_none()
-        if not db_conn:
-            return format_error('Outlook connection not configured for this KB.')
-
-        user_email = sync_req.get('user_email')
-        if not user_email:
-            return format_error('user_email is required for Outlook sync.')
-
-        pg_kb.source = f'outlook({user_email})'
-        await self.db.commit()
-
-        crawler = OutlookConnector(folder_id=sync_req.get('folder_id'), max_results=sync_req.get('max_results', 100))
-        crawler.load_credentials(db_conn.connection_params)
-        checkpoint = ConnectorCheckpoint(user_emails=[user_email], has_more=True, completion_stage='start')
-
-        messages_synced = 0
-        neo4j_nodes = []
-
-        try:
-            async for doc in crawler.load_from_checkpoint(0, time.time(), checkpoint):
-                if hasattr(doc, 'node_type'):
-                    continue
-                
-                msg_data = await crawler.get_message_content(user_email, doc.id)
-                if not msg_data or not msg_data.get('body'):
-                    continue
-
-                chunk_id = str(uuid4())
-                chunk_text = f"Subject: {msg_data.get('subject')}\nFrom: {msg_data.get('sender')}\nDate: {msg_data.get('date')}\n\n{msg_data.get('body')}"
-
-                from app.core.entity_extraction import EntityExtractor
-                entities = await EntityExtractor.extract_entities(msg_data.get('body') or "")
-
-                neo4j_nodes.append({
-                    'chunk_id': chunk_id,
-                    'message_id': doc.id,
-                    'subject': msg_data.get('subject'),
-                    'sender': msg_data.get('sender'),
-                    'date': msg_data.get('date'),
-                    'entities': [{'text': e.text, 'type': e.entity_type} for e in entities[:50]]
-                })
-
-                from app.core.embeddings import get_embedding
-                emb = await get_embedding(chunk_text)
-                
-                pg_chunk = DocumentChunk(
-                    id=uuid.UUID(chunk_id),
-                    tenant_id=self.tenant_id,
-                    kb_id=uuid.UUID(kb_id),
-                    content=chunk_text,
-                    embedding=emb,
-                    metadata_json={
-                        'source': 'outlook',
-                        'message_id': doc.id
-                    }
-                )
-                self.db.add(pg_chunk)
-                messages_synced += 1
-
-            if neo4j_nodes:
-                neo_query_emails = """
-                MATCH (kb:KnowledgeBase {id: $kb_id, tenant_id: $tenant_id})
-                UNWIND $chunks AS chunk
-                MERGE (p:Person {text: chunk.sender, tenant_id: $tenant_id})
-                ON CREATE SET p.type = 'PERSON', p.id = randomUUID(), p.created_at = timestamp()
-                MERGE (e:Email {id: chunk.message_id, tenant_id: $tenant_id})
-                ON CREATE SET e.subject = chunk.subject, e.date = chunk.date, e.chunk_id = chunk.chunk_id, e.created_at = timestamp()
-                MERGE (p)-[:SENT]->(e)
-                MERGE (kb)-[:HAS_EMAIL]->(e)
-                WITH e, chunk, $tenant_id AS tenant_id
-                UNWIND chunk.entities AS ent
-                MERGE (ent_node:Entity {text: ent.text, type: ent.type, tenant_id: tenant_id})
-                ON CREATE SET ent_node.id = randomUUID(), ent_node.created_at = timestamp()
-                MERGE (e)-[:MENTIONS]->(ent_node)
-                """
-                from app.core.neo4j import execute_write_query
-                await execute_write_query(neo_query_emails, {
-                    'kb_id': str(kb_id),
-                    'tenant_id': str(self.tenant_id),
-                    'chunks': neo4j_nodes
-                })
-                
-                pg_kb.total_chunks += messages_synced
-                await self.db.commit()
-
-            from app.utils.formatters import format_success, format_error
-            return format_success({'kb_id': kb_id, 'messages_synced': messages_synced, 'sync_duration_seconds': time.time() - sync_start_time}, meta={'message': 'Outlook synchronized successfully'})
-
-        except Exception as e:
-            logger.error(f'Outlook sync failed: {e}', exc_info=True)
-            from app.utils.formatters import format_error
-            return format_error(f'Failed to sync Outlook: {e}')
 
     async def save_table_rows(self, kb_id: str, table_rows: list, filename: str = None, global_identifiers: dict = None):
         """
