@@ -636,20 +636,13 @@ async def run_url_ingestion_job(
                     await job_service.update_job_progress(job_id, status="failed", progress=10, current_step="Crawling URL", error_message="Failed to extract content from URL.")
                     return
                 
-                document_text = ""
-                for doc in documents:
-                    if len(documents) > 1:
-                        document_text += f"\n\n# SOURCE: {doc['source']}\n\n"
-                    document_text += doc["content"]
-                document_text = document_text.strip()
+                # Pass documents directly to preserve page boundaries and avoid cross-deduplication
             except Exception as e:
                 logger.error(f"Job {job_id}: Crawl failed: {e}")
                 await job_service.update_job_progress(job_id, status="failed", progress=10, current_step="Crawling URL", error_message=f"Failed to crawl URL: {str(e)}")
                 return
 
-            if not document_text:
-                await job_service.update_job_progress(job_id, status="failed", progress=10, current_step="Crawling URL", error_message="URL returned empty content.")
-                return
+
 
             await job_service.update_job_progress(job_id, status="processing", progress=30, current_step="Creating Knowledge Base Entry")
 
@@ -674,8 +667,9 @@ async def run_url_ingestion_job(
             await job_service.update_job_progress(job_id, status="processing", progress=60, current_step="Chunking and Graph Extraction")
             
             ingest_result = await kb_service.ingest_document(
-                kb_id, 
-                document_text, 
+                kb_id=kb_id, 
+                document_text="", 
+                documents_list=documents
             )
 
             if not ingest_result.get("success"):

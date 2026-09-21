@@ -612,7 +612,12 @@ class DeepInfraLLMClient:
         Stream structured answer from query + context.
         Yields text chunks as they arrive from the API.
         """
+        import time
+        
+        t_prompt_start = time.perf_counter()
         prompt = self._build_prompt(query, context)
+        t_prompt_end = time.perf_counter()
+        logger.info(f"[QA_TIMING] Prompt assembly (serialization) took {(t_prompt_end - t_prompt_start):.4f}s")
 
         headers = {
             "Authorization": f"Bearer {self.deepinfra_api_key}",
@@ -659,7 +664,7 @@ class DeepInfraLLMClient:
             models_to_try.append(self.model_answer_fallback)
 
         client = await self.get_client()
-        stream_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=30.0)
+        stream_timeout = httpx.Timeout(connect=10.0, read=12.0, write=30.0, pool=30.0)
 
         for model_idx, target_model in enumerate(models_to_try):
             is_fallback_model = (model_idx > 0)
@@ -679,7 +684,7 @@ class DeepInfraLLMClient:
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": self.temperature,
-                    "max_tokens": self.max_tokens_answer,
+                    "max_tokens": self.max_tokens_answer,  # Use configured max tokens instead of hardcoded 400 limit
                     "stream": True,
                     "stream_options": {"include_usage": True},
                 }
@@ -1614,13 +1619,7 @@ async def get_llm_client() -> DeepInfraLLMClient:
 
     """
 
-    global _llm_client
-
-    if _llm_client is None:
-
-        _llm_client = DeepInfraLLMClient()
-
-    return _llm_client
+    return DeepInfraLLMClient.get_instance()
 
 
 

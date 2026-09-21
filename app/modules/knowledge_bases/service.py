@@ -647,17 +647,40 @@ class KnowledgeBaseService:
                 from ...core.adaptive_chunker import AdaptiveChunker
                 chunks = []
                 chunk_metadata_list = []
-                for doc in documents_list:
-                    doc_chunks = await AdaptiveChunker.chunk(content=doc["content"], source_type="url")
+                
+                # Check if it's a URL crawl based on kb source or derived source_type
+                if kb.source == "url_crawl" or source_type == "url":
+                    merged_content = []
+                    base_url = None
+                    for doc in documents_list:
+                        if not base_url:
+                            base_url = doc.get("url") or doc.get("source")
+                        merged_content.append(doc["content"])
+                    
+                    # Merge all pages into a massive document
+                    combined_text = "\n\n---\n\n".join(merged_content)
+                    
+                    doc_chunks = await AdaptiveChunker.chunk(content=combined_text, source_type="url")
                     for i, c in enumerate(doc_chunks):
                         chunks.append(c["chunk_text"])
                         meta = c["metadata"].copy()
-                        meta["source_url"] = doc.get("url") or doc.get("source")
-                        meta["title"] = doc.get("metadata", {}).get("title", "")
-                        # Mark the last chunk of the document to prevent cross-document NEXT linking
+                        meta["source_url"] = base_url
+                        meta["title"] = "Merged URL Crawl"
                         if i == len(doc_chunks) - 1:
                             meta["_is_last_in_doc"] = True
                         chunk_metadata_list.append(meta)
+                else:
+                    for doc in documents_list:
+                        doc_chunks = await AdaptiveChunker.chunk(content=doc["content"], source_type="text")
+                        for i, c in enumerate(doc_chunks):
+                            chunks.append(c["chunk_text"])
+                            meta = c["metadata"].copy()
+                            meta["source_url"] = doc.get("url") or doc.get("source")
+                            meta["title"] = doc.get("metadata", {}).get("title", "")
+                            # Mark the last chunk of the document to prevent cross-document NEXT linking
+                            if i == len(doc_chunks) - 1:
+                                meta["_is_last_in_doc"] = True
+                            chunk_metadata_list.append(meta)
             else:
                 from ...core.adaptive_chunker import AdaptiveChunker
                 adaptive_chunks = await AdaptiveChunker.chunk(content=document_text, source_type=source_type)

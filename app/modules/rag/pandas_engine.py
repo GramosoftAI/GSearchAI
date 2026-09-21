@@ -60,7 +60,8 @@ def build_heuristic_sql(query: str, columns: List[str]) -> str:
         "this", "is", "my", "for", "oem", "and", "part", "number", "based", "on", 
         "detail", "details", "give", "me", "the", "exact", "mrp", "product", "name", 
         "what", "how", "much", "find", "show", "get", "tell", "which", "where", "with",
-        "please", "can", "you", "item", "items", "dataset", "table", "record", "records"
+        "please", "can", "you", "item", "items", "dataset", "table", "record", "records",
+        "address", "company", "who", "has", "whose", "about", "or", "of", "in", "at", "to", "by", "are", "not", "all", "both"
     }
     val_tokens = [t for t in tokens if t.lower() not in stop_words and len(t) >= 2]
     
@@ -309,6 +310,7 @@ def invalidate_duckdb_engine_cache(paths: List[str]):
 # Two-Stage Entity Resolution & Column Distinct Value Cache
 # -------------------------------------------------------------------------
 _COLUMN_VALUES_CACHE: Dict[Tuple[Tuple[str, ...], str], Tuple[float, List[str]]] = {}
+_FAILED_LOOKUPS_CACHE: Dict[Tuple[Tuple[str, ...], str, str], float] = {}
 _COLUMN_VALUES_CACHE_LOCK = threading.Lock()
 _COLUMN_VALUES_CACHE_TTL_SECONDS = 600.0  # 10 minutes TTL
 _MAX_COLUMN_VALUES_CACHE_SIZE = 200
@@ -469,7 +471,7 @@ def resolve_partial_entities(
     safe_col = _sanitize_column_identifier(column, available_columns)
     paths_key = tuple(sorted(str(p).replace('\\', '/') for p in dataset_paths if p and os.path.exists(p))) if dataset_paths else ()
 
-    # Check distinct values cache
+    # Check distinct values cache and failed lookups
     cached_values: Optional[List[str]] = None
     now = time.time()
     with _COLUMN_VALUES_CACHE_LOCK:
@@ -488,6 +490,16 @@ def resolve_partial_entities(
             logger.info(f"[TELEMETRY] [ENTITY_RESOLUTION] Fast path bypassed for well-formed entity '{frag}' on column {safe_col}")
             results[frag] = [frag]
             continue
+            
+        # Check failed lookups cache
+        frag_lower = frag.lower()
+        if paths_key:
+            with _COLUMN_VALUES_CACHE_LOCK:
+                failed_ts = _FAILED_LOOKUPS_CACHE.get((paths_key, column.lower(), frag_lower))
+                if failed_ts and now - failed_ts <= _COLUMN_VALUES_CACHE_TTL_SECONDS:
+                    logger.info(f"[TELEMETRY] [ENTITY_RESOLUTION] Skipped '{frag}' on {safe_col} (cached failed lookup)")
+                    results[frag] = []
+                    continue
 
         t0 = time.time()
         matches: List[str] = []
@@ -538,6 +550,14 @@ def resolve_partial_entities(
             f"[TELEMETRY] [ENTITY_RESOLUTION] column='{column}', fragment='{frag}', "
             f"matches_found={len(matches)}, matches={matches[:5]}, latency={latency_ms:.2f}ms"
         )
+        if not matches and paths_key:
+            with _COLUMN_VALUES_CACHE_LOCK:
+                # Cache the failed lookup so we don't full scan DuckDB again for this fragment
+                _FAILED_LOOKUPS_CACHE[(paths_key, column.lower(), frag_lower)] = time.time()
+                # Simple cleanup to prevent unbounded growth
+                if len(_FAILED_LOOKUPS_CACHE) > 5000:
+                    _FAILED_LOOKUPS_CACHE.clear()
+                    
         results[frag] = matches
 
     return EntityResolutionResult(results)
@@ -559,7 +579,7 @@ class PandasQueryEngine:
         
         api_key = getattr(settings, "deepinfra_api_key", "")
         base_url = getattr(settings, "deepinfra_api_url", "https://api.deepinfra.com/v1/openai")
-        model_name = getattr(settings, "sql_generation_model", "deepseek-ai/DeepSeek-V4-Flash-0731")
+        model_name = getattr(settings, "sql_generation_model", "Qwen/Qwen2.5-Coder-7B-Instruct")
         self.llm = ChatOpenAI(
             model=model_name,
             api_key=api_key,
@@ -946,10 +966,10 @@ class PandasQueryEngine:
                          "CRITICAL RULES:\n"
                          "1. Return ONLY valid JSON with 'sql' and 'explanation'. No markdown, no <think> tags.\n"
                          "2. ALWAYS enclose column names containing spaces or symbols in DOUBLE QUOTES (e.g. \"Customer ID\").\n"
-                         "3. When searching for strings containing apostrophes or single quotes (e.g. 'Ron''s Gone Wrong'), double the single quotes in SQL ('%ron''s gone wrong%') or use wildcards ('%ron%gone%wrong%').\n"
-                         "4. COLUMN NOT FOUND REPAIR: If the DuckDB Error Message indicates that a requested column does not exist (e.g. 'Referenced column \"Mobile Number\" not found'):\n"
-                         "   - If the query has a WHERE filter searching for an entity/person/company/record: DO NOT return WHERE FALSE. Instead, change the SELECT clause to SELECT * FROM dataset WHERE ... LIMIT 5 so that the entity record is retrieved with all its available fields!\n"
-                         "   - ONLY return SELECT 'not present in dataset' AS info WHERE FALSE; if the query requested an aggregate calculation on a non-existent metric and no entity was being looked up.\n"
+                         "3. When searching for strings containing apostrophes or single quotes, double the single quotes in SQL ('%ron''s gone wrong%').\n"
+                         "4. COLUMN NOT FOUND REPAIR: If the requested column doesn't exist, you may ONLY substitute it with a clear synonym/alias if one exists (e.g. 'Employee_Age' for 'Age'). You MUST NOT invent, infer, or proxy semantically different concepts (e.g. using 'Hire Date' as a proxy for 'Age').\n"
+                         "   - If you substitute a synonym, your explanation MUST contain the exact string '[NAMING MISMATCH]'.\n"
+                         "   - If no valid synonym exists, return SELECT 'not present in dataset' AS info WHERE FALSE; and your explanation MUST contain the exact string '[UNSUPPORTED]'.\n"
                          "5. The query MUST be a read-only DuckDB SELECT on table 'dataset'."),
                         ("user",
                          "User Question: {question}\n\nFailed SQL Query:\n{sql}\n\nDuckDB Error Message:\n{error}\n\nProvide the corrected DuckDB SQL query in valid JSON.")
@@ -969,6 +989,41 @@ class PandasQueryEngine:
                     if sec_err_repair:
                         return sec_err_repair
                     
+                    # Early semantic exit for self-healing
+                    explanation = repaired_plan.explanation.upper()
+                    if "[UNSUPPORTED]" in explanation or "NOT PRESENT IN DATASET" in explanation:
+                        return f"{repaired_plan.explanation}\nNo records matched your query."
+
+                    if "REFERENCED COLUMN" in str(e).upper() and "[NAMING MISMATCH]" not in explanation:
+                        return "Error: Self-healing failed to confidently classify substitution (missing tag)."
+                        
+                    # Deterministic fallback check for column substitution
+                    if "[NAMING MISMATCH]" in explanation:
+                        import difflib
+                        
+                        # Attempt to extract old and new columns from error and new SQL
+                        old_col_match = re.search(r'Referenced column "(.*?)" not found', str(e), re.IGNORECASE)
+                        if old_col_match:
+                            old_col = old_col_match.group(1).lower()
+                            # Check if the new SQL uses any column that looks vaguely similar
+                            # This is a heuristic backstop: we just check if ANY column in the repaired SQL
+                            # has a difflib ratio > 0.4 with the old column.
+                            import sqlglot
+                            try:
+                                parsed = sqlglot.parse_one(sql_query, read="duckdb")
+                                new_cols = [col.name.lower() for col in parsed.find_all(sqlglot.expressions.Column)]
+                                best_ratio = 0
+                                for new_col in new_cols:
+                                    ratio = difflib.SequenceMatcher(None, old_col, new_col).ratio()
+                                    if ratio > best_ratio:
+                                        best_ratio = ratio
+                                
+                                if new_cols and best_ratio < 0.4:
+                                    logger.warning(f"[SELF_HEAL] Rejected substitution: '{old_col}' to '{new_cols}' (ratio={best_ratio:.2f})")
+                                    return f"I couldn't find information regarding '{old_col}' in the dataset."
+                            except Exception as parse_err:
+                                logger.debug(f"Could not parse repaired SQL for difflib check: {parse_err}")
+
                     # Programmatic safety net: If self-healing defaulted to WHERE FALSE because a specific
                     # attribute column (e.g. "Mobile Number", "phone", "email") wasn't in the schema, but the
                     # query was filtering for an entity/record, rewrite the failed query to SELECT *
@@ -994,9 +1049,10 @@ class PandasQueryEngine:
                     logger.error(f"Self-healing SQL retry failed: {e_retry}", exc_info=True)
                     return f"Error executing SQL ({sql_query}): {str(e)}"
                     
-            # Early semantic exit
+            # Final fallback semantic exit
             if "WHERE FALSE" in sql_query.upper() or "not present in dataset" in query_plan.explanation.lower():
                 return f"{query_plan.explanation}\nNo records matched your query."
+
                     
             if not rows and "WHERE " in sql_query.upper():
                 logger.warning(f"Query returned 0 rows with WHERE filter ({sql_query}). Attempting Layer 3 fuzzy string matching retry...")
@@ -1076,7 +1132,9 @@ class PandasQueryEngine:
 
             if not rows:
                 return f"Error: {query_plan.explanation}\nNo records matched your query. Not present in dataset."
-            return self._format_table_results(rows, col_names)
+            
+            formatted_table = self._format_table_results(rows, col_names)
+            return f"[Context: {query_plan.explanation}]\n\n{formatted_table}"
             
         except Exception as e:
             logger.error(f"PandasQueryEngine Execution Failed: {e}", exc_info=True)

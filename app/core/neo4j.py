@@ -151,6 +151,10 @@ async def init_neo4j():
         logger.info("    Single indexes created (tenant isolation)")
         logger.info("    Composite indexes created (performance)")
         logger.info("    Vector index created (embeddings)")
+        
+        # Eagerly initialize the global Neo4j driver connection pool
+        await get_neo4j_driver()
+        logger.info(" Neo4j connection pool warmed up successfully")
 
     except FileNotFoundError as e:
         logger.error(f" Neo4j schema initialization failed: {e}")

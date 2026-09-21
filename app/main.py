@@ -53,6 +53,7 @@ import logging
 import asyncio
 import sys
 import time
+import httpx
 
 # Windows asyncpg compatibility fix
 if sys.platform == "win32":
@@ -65,7 +66,7 @@ from app.core.config import get_settings
 from app.core.database import init_db, close_db
 
 
-from app.core.neo4j import init_neo4j, close_neo4j
+from app.core.neo4j import init_neo4j, close_neo4j, get_neo4j_driver
 
 from app.core.middleware import (
 
@@ -259,32 +260,40 @@ async def lifespan(app: FastAPI):
             delay = getattr(settings, "embedding_warmup_delay_seconds", 1.0)
             if delay > 0:
                 await asyncio.sleep(delay)
-            timeout = getattr(settings, "embedding_warmup_timeout_seconds", 15.0)
-            model_name = getattr(settings, "model_embedding", "BAAI/bge-large-en-v1.5")
-            logger.info(f"[EMBEDDING_WARMUP] Starting background keep-warm cron for model={model_name} (interval=60s)...")
             
-            from app.core.embeddings import EmbeddingGenerator
+            model_name = getattr(settings, "model_embedding", "BAAI/bge-large-en-v1.5")
+            api_url = getattr(settings, "deepinfra_api_url", "https://api.deepinfra.com/v1/openai")
+            if not api_url.endswith("/embeddings"):
+                api_url = f"{api_url.rstrip('/')}/embeddings"
+            
+            # Dedicated client — NOT shared with real request pool
+            warmup_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0),
+                limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
+            )
+            headers = {
+                "Authorization": f"Bearer {settings.deepinfra_api_key}",
+                "Content-Type": "application/json",
+            }
+            
+            logger.info(f"[EMBEDDING_WARMUP] Background keep-warm started (isolated client, interval=45s)")
+            
             import time as time_lib
             
             while True:
                 try:
-                    t_w0 = time_lib.perf_counter()
-                    # Use unique query to bypass local EmbeddingGenerator._query_cache
-                    unique_query = f"keep-warm ping {time_lib.time()}"
-                    await asyncio.wait_for(
-                        EmbeddingGenerator.generate_embedding_with_usage(unique_query, request_id="keep_warm_cron"),
-                        timeout=timeout
-                    )
-                    t_w = (time_lib.perf_counter() - t_w0) * 1000.0
-                    if t_w > 2000.0:
-                        logger.info(f"[EMBEDDING_WARMUP] Keep-warm successful but took {t_w:.1f}ms (recovered from cold state)")
-                except asyncio.TimeoutError:
-                    logger.warning(f"[EMBEDDING_WARMUP] Keep-warm timed out after {timeout}s for model={model_name}")
+                    t0 = time_lib.perf_counter()
+                    payload = {"model": model_name, "input": f"keep-warm ping {time_lib.time()}"}
+                    resp = await warmup_client.post(api_url, headers=headers, json=payload)
+                    resp.raise_for_status()
+                    dur_ms = (time_lib.perf_counter() - t0) * 1000
+                    warm_state = "warm" if dur_ms < 2000 else "cold"
+                    logger.info(f"[EMBEDDING_WARMUP] ping OK {dur_ms:.0f}ms warm_state={warm_state}")
                 except Exception as w_err:
                     logger.warning(f"[EMBEDDING_WARMUP] Keep-warm ping failed: {w_err}")
                 
-                # Sleep for 15 seconds before next ping to prevent model from unloading
-                await asyncio.sleep(15.0)
+                # Sleep for 45 seconds before next ping
+                await asyncio.sleep(45.0)
 
         asyncio.create_task(keep_warm_embedding_model())
 

@@ -376,7 +376,7 @@ class FastQueryAnalyzer:
         has_tabular_ids: bool,
         has_implied_cols: bool,
         is_composite: bool
-    ) -> Tuple[QueryIntent, bool, float, str]:
+    ) -> Tuple[QueryIntent, bool, float, str, Optional[str]]:
         """
         Deterministic, rule-based classification with calibrated confidence scores.
         Returns (intent, is_tabular, confidence, reasoning)
@@ -401,9 +401,20 @@ class FastQueryAnalyzer:
         pure_doc_keywords = {"document", "pdf", "policy", "clause", "section", "paragraph", "guideline", "rule", "terms", "fuzzing", "nist", "according to"}
         has_pure_doc = bool(query_words & pure_doc_keywords) or any(ph in q_low for ph in ["according to", "in the pdf", "in the doc"])
 
+        # 0. Enumeration
+        enum_targets = {
+            "job_posting": ["openings", "jobs", "careers", "positions"],
+            "service_offering": ["services", "offerings"],
+            "team_member": ["team", "members", "who are"]
+        }
+        for chunk_type, keywords in enum_targets.items():
+            if any(k in q_low for k in keywords):
+                if any(w in query_words for w in ["list", "all", "current"]) or "what are" in q_low or "tell me" in q_low or "show" in q_low:
+                    return QueryIntent.ENUMERATION, False, 0.95, f"Deterministic enumeration for {chunk_type}", chunk_type
+                    
         # 1. Calculation
         if bool(query_words & calc_signals) and not has_pure_doc:
-            return QueryIntent.CALCULATION, True, 0.92, "Deterministic calculation match"
+            return QueryIntent.CALCULATION, True, 0.92, "Deterministic calculation match", None
 
         # 2. Comparison
         if bool(query_words & comp_signals):
@@ -412,24 +423,24 @@ class FastQueryAnalyzer:
             # Subjective comparisons (e.g. "better off", "worse off") without clear metrics are ambiguous
             if "better" in query_words or "worse" in query_words:
                 if not (has_tabular_ids or has_implied_cols or (query_words & tabular_signals)):
-                    return QueryIntent.COMPARISON, False, 0.50, "Subjective comparison without clear metrics (ambiguous)"
-            return QueryIntent.COMPARISON, is_tab, 0.88, "Deterministic comparison match"
+                    return QueryIntent.COMPARISON, False, 0.50, "Subjective comparison without clear metrics (ambiguous)", None
+            return QueryIntent.COMPARISON, is_tab, 0.88, "Deterministic comparison match", None
 
         # 3. Why / Reasoning
         if bool(query_words & why_signals):
-            return QueryIntent.WHY, False, 0.90, "Deterministic why/reasoning match"
+            return QueryIntent.WHY, False, 0.90, "Deterministic why/reasoning match", None
 
         # 4. Summary
         if bool(query_words & summary_signals):
-            return QueryIntent.SUMMARY, False, 0.95, "Deterministic summary match"
+            return QueryIntent.SUMMARY, False, 0.95, "Deterministic summary match", None
 
         # 5. Graph / Structural
         if bool(query_words & graph_signals):
-            return QueryIntent.GRAPH, False, 0.85, "Deterministic graph/relationship match"
+            return QueryIntent.GRAPH, False, 0.85, "Deterministic graph/relationship match", None
 
         # 6. Table Lookup (e.g. "show all records", "list rows")
         if "table records" in q_low or (any(ph in q_low for ph in ["how many", "list all", "show all"]) and (has_tabular_ids or has_implied_cols)):
-            return QueryIntent.TABLE, True, 0.92, "Deterministic table aggregation match"
+            return QueryIntent.TABLE, True, 0.92, "Deterministic table aggregation match", None
 
         # 7. Fact / Lookup (Tabular vs Vector)
         # Exclude common publication/standards prefixes from tabular entity IDs (e.g. IR 8397, RFC 2616, ISO 27001)
@@ -459,15 +470,15 @@ class FastQueryAnalyzer:
             vec_score += 2
 
         if has_strong_doc and not (query_words & tabular_signals) and not any(q in q_low for q in ["salary", "cost", "price", "revenue", "how many"]):
-            return QueryIntent.FACT, False, 0.90, "Strong document/vector lookup signals override"
+            return QueryIntent.FACT, False, 0.90, "Strong document/vector lookup signals override", None
 
         if tab_score > vec_score and tab_score >= 2:
-            return QueryIntent.FACT, True, 0.90, "Strong tabular entity/attribute signals"
+            return QueryIntent.FACT, True, 0.90, "Strong tabular entity/attribute signals", None
         elif vec_score > tab_score:
-            return QueryIntent.FACT, False, 0.88, "Strong document/vector lookup signals"
+            return QueryIntent.FACT, False, 0.88, "Strong document/vector lookup signals", None
 
         # Default Fact with moderate confidence
-        return QueryIntent.FACT, False, 0.70, "Default factual question"
+        return QueryIntent.FACT, False, 0.70, "Default factual question", None
 
     def decompose_composite_query(self, query: str, identified_entities: List[str]) -> Tuple[bool, Optional[str], Optional[str]]:
         """
@@ -535,10 +546,11 @@ class FastQueryAnalyzer:
 
         compact_prompt = f"""{schema_info}Analyze this query for RAG routing.
 Query: "{query}"
-
+If intent is ENUMERATION (e.g. "list all X"), extract target_chunk_type.
 Return strict JSON only:
 {{
-  "intent": "FACT" | "CALCULATION" | "COMPARISON" | "TEMPORAL" | "STRUCTURAL" | "TABLE" | "SUMMARY" | "WHY" | "GRAPH" | "UNKNOWN",
+  "intent": "FACT" | "CALCULATION" | "COMPARISON" | "TEMPORAL" | "STRUCTURAL" | "TABLE" | "SUMMARY" | "WHY" | "GRAPH" | "ENUMERATION" | "UNKNOWN",
+  "target_chunk_type": "job_posting" | "service_offering" | "team_member" | "blog_post" | null,
   "entities": ["entity1", "entity2"],
   "is_tabular": true | false,
   "implied_columns": [],
@@ -673,7 +685,7 @@ Return strict JSON only:
             # Fallback to rule-based classification if LLM times out
             llm_timeout = True
             classify_intent_and_routing_called = True
-            intent, is_tabular, confidence, reasoning = self.classify_intent_and_routing(
+            intent, is_tabular, confidence, reasoning, target_chunk_type = self.classify_intent_and_routing(
                 corrected_query,
                 has_tabular_ids=bool(extracted_ids),
                 has_implied_cols=bool(implied_cols),
@@ -708,7 +720,8 @@ Return strict JSON only:
             tabular_subquery=tab_subq,
             vector_subquery=vec_subq,
             implied_columns=implied_cols,
-            structured_queries=structured_queries
+            structured_queries=structured_queries,
+            target_chunk_type=target_chunk_type if 'target_chunk_type' in locals() else None
         )
 
         return AnalysisResult(

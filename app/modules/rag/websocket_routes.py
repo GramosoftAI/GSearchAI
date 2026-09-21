@@ -202,4 +202,7 @@ async def rag_websocket(
             except Exception:
                 pass
             if db:
-                await db.close()
+                try:
+                    await db.close()
+                except Exception as e:
+                    logger.error(f"Error closing db session: {e}")
