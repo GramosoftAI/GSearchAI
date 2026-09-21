@@ -901,7 +901,7 @@ class RAGPipeline:
             WEIGHT_KEYWORD = 1.0
             WEIGHT_VECTOR = 1.0
             WEIGHT_EXACT_MATCH = 3.0
-            TOP_N = 10
+            TOP_N = self.settings.rag_final_chunk_limit
 
             # Convert analysis metadata to dictionary for RetrievalTasks
             meta_dict = {}
@@ -1575,8 +1575,8 @@ class RAGPipeline:
                     max_score = getattr(final_chunks[0], "final_relevance_score", 0.0) if final_chunks else 0.0
                     for chunk in final_chunks:
                         score = getattr(chunk, "final_relevance_score", 0.0)
-                        # Drop extreme noise (basically zero probability from reranker)
-                        if len(deduped_chunks) > 0 and score < 0.0001:
+                        # Drop extreme noise using configured noise floor (default 0.10)
+                        if len(deduped_chunks) > 0 and score < self.settings.rag_graph_noise_floor:
                             continue
                             
                         # Use first 250 chars for similarity
@@ -1597,7 +1597,7 @@ class RAGPipeline:
                         if not is_dup:
                             seen_hashes.append(words)
                             deduped_chunks.append(chunk)
-                            if len(deduped_chunks) >= 10:  # Top-K cap increased to allow more project chunks
+                            if len(deduped_chunks) >= self.settings.rag_final_chunk_limit:
                                 break
                     
                     if deduped_chunks:

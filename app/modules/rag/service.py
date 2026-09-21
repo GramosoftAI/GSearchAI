@@ -797,6 +797,16 @@ class RAGService:
                 short_query = query[:50] + "..." if len(query) > 50 else query
 
             effective_target_kb_id = str(target_kb_id) if target_kb_id else None
+            
+            # --- Entity Resolution for Hard Filtering ---
+            if not effective_target_kb_id:
+                from app.modules.rag.orchestrator.kb_resolver import KBResolver
+                resolver = KBResolver(self.tenant_id)
+                resolved_id = resolver.resolve(query, doc_kbs + excel_kbs)
+                if resolved_id:
+                    effective_target_kb_id = resolved_id
+                    logger.info(f"[KB_RESOLVER_GATE] Hard-filtering search to resolved KB {effective_target_kb_id}")
+
             if not effective_target_kb_id and session_id:
                 pin = await _csv_session_store.get_pin(self.tenant_id, session_id)
                 if pin and pin.get("kb_id") in authorized_kb_ids:
@@ -817,14 +827,21 @@ class RAGService:
                             logger.info(f"[SESSION_PIN] Query relevance is 0 for pinned KB {nm}. Topic switched - evicted pin.")
 
             if effective_target_kb_id:
-                selected_kb = next((k for k in excel_kbs if str(k.id) == effective_target_kb_id), None)
-                if selected_kb:
-                    excel_kbs = [selected_kb]
+                selected_excel = next((k for k in excel_kbs if str(k.id) == effective_target_kb_id), None)
+                selected_doc = next((k for k in doc_kbs if str(k.id) == effective_target_kb_id), None)
+                
+                if selected_excel:
+                    excel_kbs = [selected_excel]
+                    doc_kbs = []
                     if target_kb_id:
                         await _csv_session_store.set_pin(
-                            self.tenant_id, session_id, str(selected_kb.id), getattr(selected_kb, "name", "unknown")
+                            self.tenant_id, session_id, str(selected_excel.id), getattr(selected_excel, "name", "unknown")
                         )
-                    logger.info(f"[DISAMBIGUATION_RESOLVED] target_kb_id={effective_target_kb_id}, filename={getattr(selected_kb, 'name', 'unknown')}")
+                    logger.info(f"[DISAMBIGUATION_RESOLVED] target_kb_id={effective_target_kb_id}, filename={getattr(selected_excel, 'name', 'unknown')} (Excel)")
+                elif selected_doc:
+                    doc_kbs = [selected_doc]
+                    excel_kbs = []
+                    logger.info(f"[DISAMBIGUATION_RESOLVED] target_kb_id={effective_target_kb_id}, filename={getattr(selected_doc, 'name', 'unknown')} (Document)")
 
             agent = await self.agent_repo.get_by_id(agent_id)
             if agent:

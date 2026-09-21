@@ -247,6 +247,7 @@ class Settings(BaseSettings):
     hybrid_fts_top_k: int = 50
     hybrid_candidate_pool_size: int = 30
     stitch_window: int = 1
+    rag_final_chunk_limit: int = 20
 
 
     # --- Legacy properties for backwards compatibility ---
