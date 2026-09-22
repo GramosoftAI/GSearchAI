@@ -58,7 +58,7 @@ class OntologyResolver:
         query = """
         UNWIND $entities AS ent
         MATCH (e:TripletEntity {tenant_id: $tenant_id, type: ent.type})
-        WHERE e.embedding IS NOT NULL AND size(e.embedding) > 0 AND size(ent.embedding) > 0
+        WHERE e.embedding IS NOT NULL AND size(e.embedding) = size(ent.embedding)
         WITH ent, e, vector.similarity.cosine(ent.embedding, e.embedding) AS sim
         WHERE sim > 0.92
         // Sort by similarity to get the best match

@@ -142,7 +142,7 @@ class OntologyService:
             
         query_fuzzy = """
         MATCH (c:OntologyClass {tenant_id: $tenant_id})
-        WHERE c.embedding IS NOT NULL AND size(c.embedding) > 0
+        WHERE c.embedding IS NOT NULL AND size(c.embedding) = size($embedding)
         WITH c, vector.similarity.cosine(c.embedding, $embedding) as sim
         WHERE sim > 0.85
         RETURN c.name as name

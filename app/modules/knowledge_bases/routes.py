@@ -1670,44 +1670,22 @@ async def sync_google_drive_to_graph(request: Request, kb_id: str, sync_req: Opt
                     meta={"message": "Google Drive sync queued to Redis background worker successfully"}
                 )
             except Exception as queue_err:
-                logger.warning(f"Redis queue unavailable ({queue_err}), running Google Drive sync in background task.")
-
-                async def run_sync_in_background():
-                    try:
-                        async with AsyncSessionLocal() as bg_db:
-                            bg_service = KnowledgeBaseService(bg_db, tenant_id)
-                            res = await bg_service.sync_google_drive_source(
-                                kb_id=kb_id,
-                                credentials_dict=credentials,
-                                folder_urls=folder_urls,
-                                file_ids=file_ids,
-                                folder_ids=folder_ids,
-                                user_email=user_email
-                            )
-                            logger.info(f"Background Google Drive sync finished for KB {kb_id}: {res}")
-                            from sqlalchemy import update
-                            await bg_db.execute(
-                                update(DatabaseConnection)
-                                .where(DatabaseConnection.kb_id == uuid.UUID(kb_id))
-                                .values(last_synced_at=datetime.now())
-                            )
-                            await bg_db.commit()
-                    except Exception as bg_err:
-                        logger.error(f"Background Google Drive sync failed for KB {kb_id}: {bg_err}", exc_info=True)
-
-                import asyncio
-                asyncio.create_task(run_sync_in_background())
-
-                return format_success(
-                    {
-                        "kb_id": kb_id,
-                        "status": "processing",
-                        "message": "Google Drive sync started in background",
-                        "files_queued": len(file_ids) if file_ids else 0,
-                        "folders_queued": len(folder_ids) if folder_ids else 0,
-                    },
-                    meta={"message": "Google Drive sync started in background task."}
+                logger.warning(f"Redis queue unavailable ({queue_err}), falling back to inline synchronous sync.")
+                result = await service.sync_google_drive_source(
+                    kb_id=kb_id,
+                    credentials_dict=credentials,
+                    folder_urls=folder_urls,
+                    file_ids=file_ids,
+                    folder_ids=folder_ids,
+                    user_email=user_email
                 )
+
+                if not result.get("success"):
+                    raise HTTPException(status_code=400, detail=result.get("error"))
+
+                db_conn.last_synced_at = datetime.now()
+                await db.commit()
+                return result
 
     except HTTPException:
 

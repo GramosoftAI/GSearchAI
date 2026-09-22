@@ -81,7 +81,7 @@ class TripletRetriever:
             MATCH (kb:KnowledgeBase)
             WHERE kb.id IN $kb_ids AND kb.tenant_id = $tenant_id
             MATCH (kb)-[:HAS_CHUNK]->(c:Chunk)-[:HAS_TRIPLET]->(t:Triplet {tenant_id: $tenant_id})
-            WHERE t.embedding IS NOT NULL
+            WHERE t.embedding IS NOT NULL AND size(t.embedding) = size($query_embedding)
             """
             if target_sections:
                 server_query += " AND c.section IN $target_sections "
