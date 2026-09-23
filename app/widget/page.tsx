@@ -1320,27 +1320,15 @@ function WidgetContent() {
 
         try {
           const baseUrl = getApiBaseUrl();
-          const payload = {
-            message_id: targetMsgId,
-            agent_id: agentId || "",
-            tenant_id: tenantId || "",
-            feedback_type: "thumbs_up",
-            feedback_reason: "Correct response",
-          };
-
-          const res = await fetch(`${baseUrl}/embed/chats/messages/feedback`, {
+          await fetch(`${baseUrl}/chats/messages/feedback`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            body: JSON.stringify({
+              message_id: targetMsgId,
+              feedback_type: "thumbs_up",
+              feedback_reason: "Correct response",
+            }),
           });
-
-          if (!res.ok) {
-            await fetch(`${baseUrl}/chats/messages/feedback`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
-            });
-          }
         } catch (err) {
           console.warn("Feedback API call attempted:", err);
         }
@@ -1369,27 +1357,15 @@ function WidgetContent() {
 
     try {
       const baseUrl = getApiBaseUrl();
-      const payload = {
-        message_id: feedbackMessageId,
-        agent_id: agentId || "",
-        tenant_id: tenantId || "",
-        feedback_type: "thumbs_down",
-        feedback_reason: finalReason,
-      };
-
-      const res = await fetch(`${baseUrl}/embed/chats/messages/feedback`, {
+      await fetch(`${baseUrl}/chats/messages/feedback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          message_id: feedbackMessageId,
+          feedback_type: "thumbs_down",
+          feedback_reason: finalReason,
+        }),
       });
-
-      if (!res.ok) {
-        await fetch(`${baseUrl}/chats/messages/feedback`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      }
     } catch (err) {
       console.warn("Feedback API call attempted:", err);
     } finally {
