@@ -120,6 +120,7 @@ async def init_db():
                 ALTER TABLE episodic_memories 
                 ADD COLUMN IF NOT EXISTS raw_vector vector(1024);
             """))
+            
             await conn.execute(text("""
                 ALTER TABLE episodic_memories 
                 ADD COLUMN IF NOT EXISTS summary_vector vector(1024);
@@ -128,6 +129,7 @@ async def init_db():
                 ALTER TABLE episodic_memories 
                 ALTER COLUMN raw_vector TYPE vector(1024) USING NULL;
             """))
+            
             await conn.execute(text("""
                 ALTER TABLE episodic_memories 
                 ALTER COLUMN summary_vector TYPE vector(1024) USING NULL;

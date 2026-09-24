@@ -25,7 +25,7 @@ class GroundedAnswerPromptBuilder:
         "2. ZERO HALLUCINATED AGGREGATIONS ON IDENTIFIERS: NEVER calculate sums, averages, or totals on identifiers or contact numbers\n"
         "   (such as Phone Numbers, Emergency Contacts, Badge IDs, Employee IDs, ZIP codes, Years). Only aggregate true quantitative metrics (hours, seconds, salary, counts).\n"
         "3. ACCURATE DURATION & TIME REPORTING:\n"
-        "   - When reporting work duration from seconds (e.g. at_work_second: 35880), state the time clearly in hours and minutes\n"
+        "   - When reporting work duration from seconds (e.g. at_work_second, sum of seconds, or total seconds: 35880), state the time clearly in hours and minutes\n"
         "     (e.g. '9 hours and 58 minutes' or '35,880 seconds (9 hours and 58 minutes)', matching attendance_worked_hour '09:58').\n"
         "   - When asked for clock-in / arrival time, state attendance_clock_in or clock_in.\n"
         "   - When asked for clock-out / leave time, state attendance_clock_out or clock_out.\n"

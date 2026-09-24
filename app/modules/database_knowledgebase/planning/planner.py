@@ -1159,23 +1159,35 @@ class QueryPlanner:
         ALLOWED_DED_TABLES = {"payroll_deduction", "payroll_contract", "employee_employee"}
 
         if has_asset_intent:
-            active_target_aliases = {a for a in active_target_aliases if alias_to_table[a].table_name.lower() in ALLOWED_ASSET_TABLES}
-            primary_entity_aliases = [a for a in primary_entity_aliases if alias_to_table[a].table_name.lower() in ALLOWED_ASSET_TABLES]
+            _filtered = {a for a in active_target_aliases if alias_to_table[a].table_name.lower() in ALLOWED_ASSET_TABLES}
+            if _filtered:
+                active_target_aliases = _filtered
+                primary_entity_aliases = [a for a in primary_entity_aliases if alias_to_table[a].table_name.lower() in ALLOWED_ASSET_TABLES]
         elif has_att_intent:
-            active_target_aliases = {a for a in active_target_aliases if alias_to_table[a].table_name.lower() in ALLOWED_ATTENDANCE_TABLES}
-            primary_entity_aliases = [a for a in primary_entity_aliases if alias_to_table[a].table_name.lower() in ALLOWED_ATTENDANCE_TABLES]
+            _filtered = {a for a in active_target_aliases if alias_to_table[a].table_name.lower() in ALLOWED_ATTENDANCE_TABLES}
+            if _filtered:
+                active_target_aliases = _filtered
+                primary_entity_aliases = [a for a in primary_entity_aliases if alias_to_table[a].table_name.lower() in ALLOWED_ATTENDANCE_TABLES]
         elif has_project_intent:
-            active_target_aliases = {a for a in active_target_aliases if alias_to_table[a].table_name.lower() in ALLOWED_PROJECT_TABLES}
-            primary_entity_aliases = [a for a in primary_entity_aliases if alias_to_table[a].table_name.lower() in ALLOWED_PROJECT_TABLES]
+            _filtered = {a for a in active_target_aliases if alias_to_table[a].table_name.lower() in ALLOWED_PROJECT_TABLES}
+            if _filtered:
+                active_target_aliases = _filtered
+                primary_entity_aliases = [a for a in primary_entity_aliases if alias_to_table[a].table_name.lower() in ALLOWED_PROJECT_TABLES]
         elif has_leave_intent:
-            active_target_aliases = {a for a in active_target_aliases if alias_to_table[a].table_name.lower() in ALLOWED_LEAVE_TABLES}
-            primary_entity_aliases = [a for a in primary_entity_aliases if alias_to_table[a].table_name.lower() in ALLOWED_LEAVE_TABLES]
+            _filtered = {a for a in active_target_aliases if alias_to_table[a].table_name.lower() in ALLOWED_LEAVE_TABLES}
+            if _filtered:
+                active_target_aliases = _filtered
+                primary_entity_aliases = [a for a in primary_entity_aliases if alias_to_table[a].table_name.lower() in ALLOWED_LEAVE_TABLES]
         elif has_loan_intent:
-            active_target_aliases = {a for a in active_target_aliases if alias_to_table[a].table_name.lower() in ALLOWED_LOAN_TABLES}
-            primary_entity_aliases = [a for a in primary_entity_aliases if alias_to_table[a].table_name.lower() in ALLOWED_LOAN_TABLES]
+            _filtered = {a for a in active_target_aliases if alias_to_table[a].table_name.lower() in ALLOWED_LOAN_TABLES}
+            if _filtered:
+                active_target_aliases = _filtered
+                primary_entity_aliases = [a for a in primary_entity_aliases if alias_to_table[a].table_name.lower() in ALLOWED_LOAN_TABLES]
         elif has_deduction_intent:
-            active_target_aliases = {a for a in active_target_aliases if alias_to_table[a].table_name.lower() in ALLOWED_DED_TABLES}
-            primary_entity_aliases = [a for a in primary_entity_aliases if alias_to_table[a].table_name.lower() in ALLOWED_DED_TABLES]
+            _filtered = {a for a in active_target_aliases if alias_to_table[a].table_name.lower() in ALLOWED_DED_TABLES}
+            if _filtered:
+                active_target_aliases = _filtered
+                primary_entity_aliases = [a for a in primary_entity_aliases if alias_to_table[a].table_name.lower() in ALLOWED_DED_TABLES]
 
         needed_aliases = active_target_aliases
         if primary_alias not in needed_aliases and needed_aliases:
@@ -1214,20 +1226,28 @@ class QueryPlanner:
         # If multiple primary entities are requested, ensure they are connected via approved join paths
         if len(primary_entity_aliases) >= 2:
             graph = SchemaGraph.from_database_schema(canonical_schema)
+            _base_allowed = {t.table_name.lower() for t in retrieval_result.retrieved_tables}
+            
             if has_asset_intent:
-                allowed_retrieved_tables = ALLOWED_ASSET_TABLES
+                _f = ALLOWED_ASSET_TABLES.intersection(_base_allowed)
+                allowed_retrieved_tables = _f if _f else _base_allowed
             elif has_att_intent:
-                allowed_retrieved_tables = ALLOWED_ATTENDANCE_TABLES
+                _f = ALLOWED_ATTENDANCE_TABLES.intersection(_base_allowed)
+                allowed_retrieved_tables = _f if _f else _base_allowed
             elif has_project_intent:
-                allowed_retrieved_tables = ALLOWED_PROJECT_TABLES
+                _f = ALLOWED_PROJECT_TABLES.intersection(_base_allowed)
+                allowed_retrieved_tables = _f if _f else _base_allowed
             elif has_leave_intent:
-                allowed_retrieved_tables = ALLOWED_LEAVE_TABLES
+                _f = ALLOWED_LEAVE_TABLES.intersection(_base_allowed)
+                allowed_retrieved_tables = _f if _f else _base_allowed
             elif has_loan_intent:
-                allowed_retrieved_tables = ALLOWED_LOAN_TABLES
+                _f = ALLOWED_LOAN_TABLES.intersection(_base_allowed)
+                allowed_retrieved_tables = _f if _f else _base_allowed
             elif has_deduction_intent:
-                allowed_retrieved_tables = ALLOWED_DED_TABLES
+                _f = ALLOWED_DED_TABLES.intersection(_base_allowed)
+                allowed_retrieved_tables = _f if _f else _base_allowed
             else:
-                allowed_retrieved_tables = {t.table_name.lower() for t in retrieval_result.retrieved_tables}
+                allowed_retrieved_tables = _base_allowed
 
             forbidden_hops = set()
             if has_asset_intent and not any(w in q_lower for w in ("owner", "owns", "owned", "ownership")):
@@ -1588,7 +1608,7 @@ class QueryPlanner:
                         if t_low == "employee_employee":
                             if c_low in ("employee_first_name", "employee_last_name"):
                                 should_project = True
-                            elif c_low == "badge_id" and any(k in q_lower for k in ("badge", "id", "badge id", "employee id")):
+                            elif c_low == "badge_id" and any(k in q_lower for k in ("badge", "badge id")) and "employee id" not in q_lower:
                                 should_project = True
                             elif c_low in ("phone", "mobile") and is_phone_auth:
                                 should_project = True
@@ -2643,21 +2663,40 @@ class QueryPlanner:
         # Re-enforce domain boundary on needed_aliases after path resolution
         if has_asset_intent:
             if any(w in q_lower for w in ("owner", "owns", "owned", "ownership")):
-                needed_aliases = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ("asset_asset", "employee_employee")}
+                _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ("asset_asset", "employee_employee")}
+                if _f: needed_aliases = _f
             elif not any(w in q_lower for w in ("assigned", "assign", "assignment", "laptop", "engineering", "department", "staff")) and not anchor_alias and not literals:
-                needed_aliases = {a for a in needed_aliases if alias_to_table[a].table_name.lower() == "asset_asset"}
+                _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() == "asset_asset"}
+                if _f: needed_aliases = _f
             else:
-                needed_aliases = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ALLOWED_ASSET_TABLES}
+                _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ALLOWED_ASSET_TABLES}
+                if _f: needed_aliases = _f
         elif has_att_intent:
-            needed_aliases = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ALLOWED_ATTENDANCE_TABLES}
+            _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ALLOWED_ATTENDANCE_TABLES}
+            if _f: needed_aliases = _f
             if any(w in q_lower for w in ("early out", "leave early", "early leave", "late come", "late arrival", "late arrivals")) or ("late" in q_tokens and "latest" not in q_tokens) or ("early" in q_tokens):
                 if any(alias_to_table[a].table_name.lower() == "attendance_attendancelatecomeearlyout" for a in needed_aliases):
-                    needed_aliases = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ("attendance_attendancelatecomeearlyout", "employee_employee")}
+                    _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ("attendance_attendancelatecomeearlyout", "employee_employee")}
+                    if _f: needed_aliases = _f
             elif any(w in q_lower for w in ("activity", "activities", "session", "sessions", "punch activity")):
                 if any(alias_to_table[a].table_name.lower() == "attendance_attendanceactivity" for a in needed_aliases):
-                    needed_aliases = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ("attendance_attendanceactivity", "employee_employee")}
+                    _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ("attendance_attendanceactivity", "employee_employee")}
+                    if _f: needed_aliases = _f
             elif any(w in q_lower for w in ("absent", "absenteeism")):
-                needed_aliases = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ("leave_leaverequest", "leave_leavetype", "employee_employee", "base_department", "employee_employeeworkinformation")}
+                _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ("leave_leaverequest", "leave_leavetype", "employee_employee", "base_department", "employee_employeeworkinformation")}
+                if _f: needed_aliases = _f
+        elif has_project_intent:
+            _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ALLOWED_PROJECT_TABLES}
+            if _f: needed_aliases = _f
+        elif has_leave_intent:
+            _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ALLOWED_LEAVE_TABLES}
+            if _f: needed_aliases = _f
+        elif has_loan_intent:
+            _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ALLOWED_LOAN_TABLES}
+            if _f: needed_aliases = _f
+        elif has_deduction_intent:
+            _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ALLOWED_DED_TABLES}
+            if _f: needed_aliases = _f
 
         # Construct final minimal table_plans with primary table first
         table_plans = [tp for tp in all_table_plans if tp.alias in needed_aliases]
@@ -2833,6 +2872,10 @@ class QueryPlanner:
         elif "absenteeism" in q_lower:
             plan_reasoning = "Ranked departments by total approved absent days (SUM(requested_days))."
 
+        # Safety fallback: if aggressive pruning emptied table_plans, restore all tables
+        if not table_plans:
+            table_plans = all_table_plans
+
         plan = QueryPlanIR(
             database_knowledgebase_id=database_knowledgebase_id,
             schema_version=canonical_schema.fingerprint or "unknown",
@@ -2851,12 +2894,30 @@ class QueryPlanner:
         )
 
         # Validate strictly against canonical schema
-        QueryPlanValidator.validate_plan(
-            plan,
-            canonical_schema,
-            expected_entities=analysis.detected_entities,
-            resolved_entities=resolved_entities if resolved_entities else None,
-        )
+        try:
+            QueryPlanValidator.validate_plan(
+                plan,
+                canonical_schema,
+                expected_entities=analysis.detected_entities,
+                resolved_entities=resolved_entities if resolved_entities else None,
+            )
+        except QueryPlanValidationError as e:
+            print(f"DEBUG: Deterministic plan failed validation: {e}. Falling back to LLM.")
+            return QueryPlanIR(
+                database_knowledgebase_id=database_knowledgebase_id,
+                schema_version=canonical_schema.fingerprint or "unknown",
+                user_query=user_query,
+                intent=analysis.intent,
+                tables=all_table_plans,
+                projections=[],
+                joins=[],
+                predicates=[],
+                group_by=[],
+                order_by=[],
+                limit=None,
+                confidence=0.0,
+                reasoning=f"Deterministic plan failed validation: {e}. Falling back to LLM.",
+            )
 
         # Mandatory Semantic Plan Validation Gate
         from ..semantic.plan_validator import PlanValidator

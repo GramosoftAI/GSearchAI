@@ -31,6 +31,7 @@ STRICT CONSTRAINTS:
     - ALWAYS use integer `at_work_second` for working time comparisons, filters, SUM, and AVG (1 hr = 3600s, 6 hrs = 21600s, 8 hrs = 28800s, 10 hrs = 36000s).
       Example: "worked more than 8 hours" -> `at_work_second > 28800`.
       Example: "worked less than 6 hours" -> `at_work_second < 21600`.
+      Example: "total time between all clock-in and clock-out" -> `SUM(at_work_second)`.
     - Columns `attendance_worked_hour`, `minimum_hour`, and `attendance_overtime` are VARCHAR display strings (e.g. '09:58', '08:00'). NEVER use them with arithmetic or comparison operators (<, >, <=, >=, SUM, AVG). ALWAYS use `at_work_second` or `overtime_second` instead.
     - ALWAYS use `overtime_second` or `approved_overtime_second` for overtime calculations (e.g. "more than 10 hours overtime" -> `overtime_second > 36000`).
     - NEVER compare VARCHAR columns against numerical float or integer values.
@@ -39,7 +40,13 @@ STRICT CONSTRAINTS:
     - For conditional aggregations / percentages (e.g. "% completing 8 hours"):
       Use: `ROUND(COUNT(CASE WHEN at_work_second >= 28800 THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2)`.
     - For null checks, use `column IS NULL` or `column IS NOT NULL` (never `IFNULL()` or `ISNULL()`; use standard `COALESCE()`).
-12. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text.
+12. EMPLOYEE IDENTIFICATION & NAME RESOLUTION: 
+    - When a user asks for "Employee ID", they mean the primary key `id` column in the employee table, NOT the `badge_id`.
+    - Whenever your query returns an employee ID (or badge ID) or a foreign key pointing to an employee, you MUST JOIN the employee table (if not already joined) and also explicitly SELECT the employee's first name and last name (or equivalent name columns). Never return just an employee ID without their corresponding name.
+13. ABSENTEE & LEAVE RESOLUTION:
+    - If a user asks for "absentees", "absent list", or "who is absent" on a specific date, do NOT use `LIKE '%Absent%'` on leave types or statuses.
+    - Instead, find employees who are absent by checking `leave_leaverequest` (where `status = 'approved'` and the date is between `start_date` and `end_date`), OR find employees who have NO record in `attendance_attendance` for that date (using `LEFT JOIN ... WHERE attendance_date IS NULL`).
+14. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text.
 """
 
     @classmethod
@@ -105,5 +112,6 @@ Remember:
 - For conditional aggregations / percentages, use `ROUND(COUNT(CASE WHEN at_work_second >= 28800 THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2)`.
 - If combining aggregates (SUM, AVG, MIN, MAX, COUNT) with scalar columns, include ALL scalar columns in GROUP BY.
 - Use canonical integer `at_work_second` for working time comparisons (e.g. at_work_second < 28800 for 8 hours). Never do arithmetic on VARCHAR duration columns.
+- EMPLOYEE IDENTIFICATION: If returning an employee ID, you MUST JOIN the employee table and SELECT their name as well.
 - Output ONLY the corrected SQL query inside a ```sql ... ``` block."""
         return prompt
