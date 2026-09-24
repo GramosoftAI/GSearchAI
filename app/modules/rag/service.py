@@ -2343,6 +2343,8 @@ RESPONSE FORMAT
 
         if episodic_guidance:
             logger.debug("Episodic guidance retrieved; will inject into RAG context.")
+            
+        analysis = None
 
         # Step 2: Cache check
         cache_key = self._make_cache_key(
