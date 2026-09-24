@@ -1,4 +1,5 @@
 import logging
+import time
 from app.modules.rag.graph.state import GraphState
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,11 @@ async def build_system_prompt(state: GraphState) -> tuple[str, str]:
   * Credit (Deposit/Incoming): Salary, interest, deposits, incoming transfers.
   * Debit (Withdrawal/Outgoing/Payment): ATM withdrawals, payments to merchants, fees, taxes, outgoing transfers."""
 
+    enumeration_rules = ""
+    if state.get("intent") == "ENUMERATION":
+        enumeration_rules = """
+- ENUMERATION DIRECTIVE: The user has asked you to list items (e.g. current openings, available roles). You MUST list EACH distinct item by name. DO NOT generalize, DO NOT summarize, and DO NOT group them together. State every single item retrieved from the context explicitly."""
+
     injected_system_prompt = f"""
 [PERSONALITY MODE: STRICT]
 
@@ -92,12 +98,37 @@ If retrieved passages conflict, state the conflict. Do not resolve it yourself.
 - For multi-part or compound questions (e.g., asking for multiple facts/attributes like defining event and phase of operation), evaluate each part independently:
   * Answer EVERY part that has grounded information present in the context.
   * For any part where the specific field or information is missing, unstated, or blank in the document, explicitly state that specific part is not specified or left blank in the document (do NOT refuse the entire answer).
+  * When answering eligibility or limits questions, extract each distinct condition from the context and present as a compact list (one line per condition, no repetition). Do not paraphrase into a narrative paragraph.
 - If the user is asking a factual/document question and the requested information is ENTIRELY missing for ALL parts from BOTH the document context AND the user memory section, reply exactly:
   "I couldn't find it."
 - Mention the relevant source at the end.
 - Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
-- Be concise. Focus strictly on direct answers and avoid filler.
-- NEVER include internal relevance scores or confidence numbers (e.g. "(relevance: 0.65)", "(relevance: 0.58)", or "score: 0.61") in your output text. Relevance scores are for internal search ranking only and must never be shown to the user.{tabular_rules}
+- Be concise. Focus strictly on direct answers and avoid filler. Being concise means using fewer words per fact — it does not mean omitting facts. Every constraint, qualifier, or exception present in the context must appear in the answer, even briefly.
+- Before finalizing, internally verify: does the answer address every sub-question and every qualifying clause (age, visa/permit type, activity intent, etc.) found in the retrieved context? Are there any ambiguously-scoped terms or interacting multi-part clauses that need to be surfaced? Only output the final answer, not this check.
+- NEVER include internal relevance scores or confidence numbers (e.g. "(relevance: 0.65)", "(relevance: 0.58)", or "score: 0.61") in your output text. Relevance scores are for internal search ranking only and must never be shown to the user.{tabular_rules}{enumeration_rules}
+
+==================================================
+AMBIGUITY-SURFACING RULE
+==================================================
+If a calculation depends on a term or formula the source document scopes narrowly or defines ambiguously (e.g. a formula stated 'assuming X condition' when the question's scenario may or may not meet X), do not silently pick one interpretation. State the calculation under the literal document wording, then add one line flagging the ambiguity and what document clarification would resolve it. 
+*Note: This ambiguity flag is NOT considered "extra analysis" and is REQUIRED even under the concise/no-extra-analysis rules above.*
+
+Example of handling ambiguity:
+Question: What is the excess for my RM1,000 claim? (Document says: "Excess is 15% of loss")
+Answer: 
+Excess applicable: RM150 (calculated as 15% of the RM1,000 total loss).
+*Note: The document states "15% of loss", which is ambiguous as to whether it means 15% of the total loss or 15% of the claim payable. The calculation above assumes total loss based on literal wording.*
+
+==================================================
+MULTI-CLAUSE INTERACTION CHECK
+==================================================
+Before finalizing a multi-part answer, check whether more than one retrieved clause could apply to the same sub-question (e.g. an age-based rule and a separate insured-amount rule both touching the payout). If so, state both applicable clauses and whether the document specifies which takes precedence or how they combine. If the document does not specify the interaction, say so explicitly rather than applying only one clause.
+
+==================================================
+ENTITY DISAMBIGUATION RULES
+==================================================
+When the user asks generic questions about team members, roles, or executives (e.g. "who is the CTO?"), assume they are asking about the primary company/organization.
+If the retrieved context contains executives from both the primary company and third-party clients (e.g. inside testimonials or case studies), ONLY return the primary company's executive. Do not list client executives unless explicitly asked.
 
 ==================================================
 FORMATTING RULES
@@ -105,6 +136,17 @@ FORMATTING RULES
 Use Markdown tables whenever information is easier to compare in rows and columns.
 Use bullet points when listing multiple items.
 Use paragraphs for explanations.
+
+Example of a compact, complete list for eligibility/limits:
+Question: Who is eligible for the Senior Plan and what are the restrictions?
+Answer:
+Eligibility:
+- Must be a citizen or permanent resident
+- Must be over 65 years old (as of next birthday)
+- Must intend to travel internationally
+Restrictions:
+- Maximum coverage of $10,000
+- Excludes pre-existing conditions diagnosed within the last 6 months
 
 ==================================================
 SOURCE CITATION RULES (STRICT)
@@ -140,6 +182,7 @@ async def generation_node(state: GraphState) -> dict:
     - Includes memory guidance if provided by the memory node.
     - Handles [Source: Knowledge Graph] citation rules.
     """
+    t_entry = time.perf_counter()
     if state.get("requires_clarification"):
         logger.info("[GENERATION] Skipping LLM generation because clarification is required.")
         return {"generation": ""}
@@ -162,14 +205,48 @@ async def generation_node(state: GraphState) -> dict:
         
     # Format Context from chunks
     reranked_chunks = state.get("reranked_chunks") or state.get("retrieved_chunks") or []
+    # Sort chunks by kb_id and chunk_index to ensure stitched neighbors are contiguous
+    reranked_chunks = sorted(
+        reranked_chunks, 
+        key=lambda c: (str(getattr(c, "kb_id", "")), getattr(c, "chunk_index", 0) or 0)
+    )
+    
+    # Precompute set of (kb_id, position) for adjacency checks
+    present_chunks = {
+        (str(getattr(c, "kb_id", "")), getattr(c, "position", getattr(c, "chunk_index", 0)) or 0)
+        for c in reranked_chunks
+    }
+    
     context_text = ""
     for c in reranked_chunks:
+        raw_source = getattr(c, "source", "") or getattr(c, "metadata", {}).get("source", "Unknown Document")
+        filename = raw_source.split("/")[-1]
         content = getattr(c, "content", "") or getattr(c, "text", "")
-        context_text += f"{content}\n\n"
+        
+        # Phase 2: Strip overlap only if the previous chunk is also retrieved
+        prov_metadata = getattr(c, "provenance_metadata", {}) or {}
+        overlap_len = prov_metadata.get("overlap_prefix_len", 0)
+        if overlap_len and len(content) > overlap_len:
+            c_kb_id = str(getattr(c, "kb_id", ""))
+            c_pos = getattr(c, "position", getattr(c, "chunk_index", 0)) or 0
+            
+            # If the chunk immediately preceding this one is in the context, we strip the redundant overlap.
+            # If it's missing, we KEEP the overlap so this chunk has complete context.
+            if (c_kb_id, c_pos - 1) in present_chunks:
+                content = content[overlap_len:]
+                
+        # Enforce max chunk length to prevent LLM prefill bottlenecks (massive stories)
+        if len(content) > 2500:
+            content = content[:2500] + "... [truncated for brevity]"
+        context_text += f"Document: {filename}\n{content}\n\n"
         
     tabular_results = state.get("tabular_results", "")
+    tabular_sources = state.get("tabular_sources", [])
     if tabular_results:
-        context_text += f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS]\n{tabular_results}\n"
+        if tabular_sources:
+            context_text += f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS]\nDocuments: {', '.join(tabular_sources)}\n{tabular_results}\n"
+        else:
+            context_text += f"\n\n[ENTERPRISE SPREADSHEET ANALYSIS]\n{tabular_results}\n"
 
     # Streaming Generation
     from app.core.llm.deepinfra_llm import DeepInfraLLMClient
@@ -185,6 +262,10 @@ async def generation_node(state: GraphState) -> dict:
     full_answer = []
     stream_queue = state.get("stream_queue")
     
+    t_start = time.perf_counter()
+    logger.info(f"[TIMING] generation_node prompt assembly took {t_start - t_entry:.3f}s")
+    ttft_logged = False
+    
     try:
         async for chunk in llm_client.stream_answer(
             query=query,
@@ -194,10 +275,17 @@ async def generation_node(state: GraphState) -> dict:
             agent_persona=agent_persona,
             enable_thinking=False,
         ):
+            if not ttft_logged:
+                t_ttft = time.perf_counter()
+                logger.info(f"[TIMING] generation_node TTFT (Time To First Token): {t_ttft - t_start:.3f}s")
+                ttft_logged = True
+            
             full_answer.append(chunk)
             if stream_queue is not None:
                 await stream_queue.put(chunk)
     finally:
+        t_end = time.perf_counter()
+        logger.info(f"[TIMING] generation_node full stream duration: {t_end - t_start:.3f}s")
         # Ensure sentinel is sent to stream_queue even if streaming errors or aborts
         if stream_queue is not None:
             await stream_queue.put(None)
@@ -214,9 +302,18 @@ async def generation_node(state: GraphState) -> dict:
         
     for c in reranked_chunks:
         raw_source = getattr(c, "source", "") or getattr(c, "metadata", {}).get("source", "Unknown Document")
-        clean_name = raw_source.split("/")[-1].replace(".pdf", "").replace("_", " ")
+        clean_name = raw_source.split("/")[-1]
+        
+        if getattr(c, "is_stitched_neighbor", False):
+            clean_name = f"{clean_name} (Neighbor Context)"
+            
         if clean_name not in sources:
             sources.append(clean_name)
+            
+    tabular_sources = state.get("tabular_sources", [])
+    for ts in tabular_sources:
+        if ts not in sources:
+            sources.append(ts)
             
     return {
         "system_prompt": system_prompt,

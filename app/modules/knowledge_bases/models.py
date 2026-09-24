@@ -80,6 +80,11 @@ class KnowledgeBase(Base):
     # ============= KB METADATA =============
     name = Column(String(255), nullable=False)
     description = Column(String(1000), nullable=True)
+    canonical_name = Column(String(255), nullable=True)
+    
+    from sqlalchemy.dialects.postgresql import JSONB
+    aliases = Column(JSONB, nullable=True, server_default='[]')
+    
     source = Column(
         String(50),
         nullable=False,
@@ -243,7 +248,7 @@ class DocumentChunk(Base):
     section = Column(String(255), nullable=True)
     
     from pgvector.sqlalchemy import Vector
-    embedding = Column("embedding", Vector(1024), nullable=True)
+    embedding = Column("embedding_bge", Vector(1024), nullable=True)
 
     from sqlalchemy.dialects.postgresql import JSONB
     metadata_json = Column(JSONB, nullable=True)

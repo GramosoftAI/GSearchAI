@@ -20,6 +20,7 @@ class QueryIntent(Enum):
     GRAPH = "GRAPH"
     SUMMARY = "SUMMARY"
     WHY = "WHY"
+    ENUMERATION = "ENUMERATION"
     UNKNOWN = "UNKNOWN"
 
 class QueryMetadata(BaseModel):
@@ -37,6 +38,7 @@ class QueryMetadata(BaseModel):
     structured_queries: List[str] = Field(default_factory=list, description="A list of structured/rephrased queries to try in order.")
     implied_columns: List[str] = Field(default_factory=list, description="List of semantically required fields/columns (e.g. 'salary', 'age', 'department') that MUST exist for this query to be answerable.")
     target_kb_id: Optional[str] = Field(None, description="Explicitly targeted Knowledge Base ID from fast-routing gate")
+    target_chunk_type: Optional[str] = Field(None, description="For ENUMERATION queries, extract the repeating content type from this list: ['job_posting', 'service_offering', 'team_member', 'blog_post']. Leave null otherwise.")
 
 
 class AnalysisResult(BaseModel):
@@ -143,7 +145,8 @@ TASKS:
 2. KEYWORDS: Extract key search terms/entities in `keywords` list.
 3. TABULAR: Set `is_tabular` to true if query asks for numbers, sums, counts, prices, salary, HSN, table records; false otherwise.
 4. COMPOSITE: If query asks both tabular and text questions, split into `tabular_subquery` and `vector_subquery` (resolving pronouns). Otherwise null.
-5. INTENT: One of FACT, CALCULATION, COMPARISON, TEMPORAL, STRUCTURAL, TABLE, SUMMARY, WHY, GRAPH, UNKNOWN.
+5. INTENT: One of FACT, CALCULATION, COMPARISON, TEMPORAL, STRUCTURAL, TABLE, SUMMARY, WHY, GRAPH, ENUMERATION, UNKNOWN.
+6. ENUMERATION: If intent is ENUMERATION (e.g. "list all X", "what roles are available", "current openings"), extract the `target_chunk_type` exactly matching one of these: ["job_posting", "service_offering", "team_member", "blog_post"]. If you are unsure, leave null.
 
 CRITICAL TASK: STRUCTURED QUERY REPHRASING
 You must generate an array of 3 optimized retrieval queries based on the user's input in the `structured_queries` field inside the `metadata` object. 
@@ -199,11 +202,13 @@ Return ONLY valid JSON:
     "tabular_subquery": null,
     "vector_subquery": null,
     "implied_columns": [],
+    "query_embedding": null,
     "structured_queries": [
       "Who is Jon Snow?",
       "Can you explain who the character Jon Snow is?",
       "Give me details and information about Jon Snow."
-    ]
+    ],
+    "target_chunk_type": null
   }},
   "confidence": 0.95,
   "reasoning": "Query asks for a specific character fact. The typo 'Jon Sno' was corrected."
@@ -230,7 +235,8 @@ JSON:
       "Tell me about Arun and find his salary in the first CSV file.",
       "What details are available about Arun, and what is his salary in the CSV?",
       "Provide an overview of Arun along with his salary from the first CSV."
-    ]
+    ],
+    "target_chunk_type": null
   }},
   "confidence": 0.98,
   "reasoning": "Query is composite. Split into tabular salary query with resolved pronoun, and vector document query."

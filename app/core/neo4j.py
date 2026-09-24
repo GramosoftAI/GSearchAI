@@ -41,7 +41,7 @@ async def get_neo4j_driver() -> AsyncDriver:
         neo4j_uri = settings.neo4j_uri.replace("localhost", "127.0.0.1")
         logger.info(f"Connecting to Neo4j: {neo4j_uri}")
 
-        _driver = AsyncGraphDatabase.driver(
+        driver = AsyncGraphDatabase.driver(
             neo4j_uri,
             auth=basic_auth(settings.neo4j_user, settings.neo4j_password),
             max_connection_pool_size=settings.neo4j_pool_size,
@@ -50,10 +50,16 @@ async def get_neo4j_driver() -> AsyncDriver:
 
         # Test connection
         try:
-            await _driver.verify_connectivity()
+            await driver.verify_connectivity()
             logger.info("Neo4j connection verified")
+            _driver = driver
         except Exception as e:
             logger.error(f"Neo4j connection failed: {e}")
+            try:
+                await driver.close()
+            except Exception:
+                pass
+            _driver = None
             raise
 
     return _driver
@@ -145,6 +151,10 @@ async def init_neo4j():
         logger.info("    Single indexes created (tenant isolation)")
         logger.info("    Composite indexes created (performance)")
         logger.info("    Vector index created (embeddings)")
+        
+        # Eagerly initialize the global Neo4j driver connection pool
+        await get_neo4j_driver()
+        logger.info(" Neo4j connection pool warmed up successfully")
 
     except FileNotFoundError as e:
         logger.error(f" Neo4j schema initialization failed: {e}")

@@ -199,7 +199,32 @@ class SemanticChunker:
         if current_chunk_micros:
             chunks.append("\n\n".join(current_chunk_micros))
             
-        return chunks
+        final_chunks = []
+        target_overlap = int(max_chunk_size * 0.15)
+        
+        for i, text in enumerate(chunks):
+            overlap_prefix_len = 0
+            if i > 0:
+                prev_text = chunks[i-1]
+                slice_text = prev_text[-target_overlap:]
+                import re
+                match = re.search(r'(?<=[.!?])\s+', slice_text)
+                if match:
+                    overlap_text = slice_text[match.end():].strip()
+                else:
+                    overlap_text = slice_text.strip()
+                    
+                if overlap_text:
+                    overlap_prefix = overlap_text + " "
+                    overlap_prefix_len = len(overlap_prefix)
+                    text = overlap_prefix + text
+            
+            final_chunks.append({
+                "text": text,
+                "overlap_prefix_len": overlap_prefix_len
+            })
+            
+        return final_chunks
 
 
 def df_to_markdown(df: pd.DataFrame) -> str:
@@ -259,7 +284,7 @@ class ExcelChunker:
                 
                 for sc in sub_chunks:
                     chunks.append({
-                        "chunk_text": sc,
+                                "chunk_text": sc["text"],
                         "chunk_type": "group",
                         "source_type": "excel",
                         "position": position,
@@ -292,7 +317,7 @@ class ExcelChunker:
                 
                 for sc in sub_chunks:
                     chunks.append({
-                        "chunk_text": sc,
+                                "chunk_text": sc["text"],
                         "chunk_type": "rows",
                         "source_type": "excel",
                         "position": position,
@@ -395,8 +420,8 @@ class URLChunker:
                     "position": idx,
                     "section": "FAQ",
                     "sheet": None,
-                    "metadata": {}
-                })
+                    "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                                })
             return chunks
 
         chunks = []
@@ -424,20 +449,20 @@ class URLChunker:
                                 "position": position,
                                 "section": heading,
                                 "sheet": None,
-                                "metadata": {}
-                            })
+                                "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                                })
                             position += 1
                         else:
                             semantic_subchunks = await SemanticChunker.chunk(pre_text, max_chunk_size=max_chunk_size)
                             for sc in semantic_subchunks:
                                 chunks.append({
-                                    "chunk_text": sc,
+                                "chunk_text": sc["text"],
                                     "chunk_type": "semantic",
                                     "source_type": "url",
                                     "position": position,
                                     "section": heading,
                                     "sheet": None,
-                                    "metadata": {}
+                                    "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
                                 })
                                 position += 1
                     
@@ -450,8 +475,8 @@ class URLChunker:
                             "position": position,
                             "section": heading,
                             "sheet": None,
-                            "metadata": {}
-                        })
+                            "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                                })
                         position += 1
                     last_idx = match.end()
                 
@@ -465,21 +490,21 @@ class URLChunker:
                             "position": position,
                             "section": heading,
                             "sheet": None,
-                            "metadata": {}
-                        })
+                            "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                                })
                         position += 1
                     else:
                         semantic_subchunks = await SemanticChunker.chunk(post_text, max_chunk_size=max_chunk_size)
                         for sc in semantic_subchunks:
                             chunks.append({
-                                "chunk_text": sc,
+                                "chunk_text": sc["text"],
                                 "chunk_type": "semantic",
                                 "source_type": "url",
                                 "position": position,
                                 "section": heading,
                                 "sheet": None,
-                                "metadata": {}
-                            })
+                                "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                                })
                             position += 1
             else:
                 if len(content) <= max_chunk_size:
@@ -490,21 +515,21 @@ class URLChunker:
                         "position": position,
                         "section": heading,
                         "sheet": None,
-                        "metadata": {}
-                    })
+                        "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                                })
                     position += 1
                 else:
                     semantic_subchunks = await SemanticChunker.chunk(content, max_chunk_size=max_chunk_size)
                     for sc in semantic_subchunks:
                         chunks.append({
-                            "chunk_text": sc,
+                                "chunk_text": sc["text"],
                             "chunk_type": "semantic",
                             "source_type": "url",
                             "position": position,
                             "section": heading,
                             "sheet": None,
-                            "metadata": {}
-                        })
+                            "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                                })
                         position += 1
                         
         return chunks
@@ -1054,6 +1079,10 @@ class PDFChunker:
             # If it's a FAQ section (the faq_chunks check was not matched, or this is individual questions)
             if sec_name and sec_name.strip().endswith("?") and chunk_type_val == "section":
                 chunk_type_val = "faq"
+            elif sec_name and any(kw in sec_name.lower() for kw in ["openings", "careers", "jobs", "positions", "role"]) and chunk_type_val == "section":
+                chunk_type_val = "job_posting"
+            elif sec_text and any(kw in sec_text.lower() for kw in ["apply now", "qualifications:", "requirements:", "responsibilities:"]) and chunk_type_val == "section":
+                chunk_type_val = "job_posting"
                 
             # If the single section is already huge, flush accumulator and semantically chunk it
             if len(sec_text) > max_chunk_size:
@@ -1066,7 +1095,7 @@ class PDFChunker:
                         prefix = f"Section: {sec_name}\nProject: {sec_project} (continued)\n\n"
                         
                     chunks.append({
-                        "chunk_text": f"{prefix}{sc}",
+                        "chunk_text": f"{prefix}{sc['text']}",
                         "chunk_type": chunk_type_val,
                         "source_type": "pdf",
                         "position": position,
@@ -1078,7 +1107,8 @@ class PDFChunker:
                             "section": sec_name,
                             "project_name": sec_project,
                             "heading_level": sec_level,
-                            "position": position
+                            "position": position,
+                            "overlap_prefix_len": sc.get("overlap_prefix_len", 0)
                         }
                     })
                     position += 1
@@ -1165,13 +1195,13 @@ class AdaptiveChunker:
             chunks = []
             for idx, sc in enumerate(fallback_subchunks):
                 chunks.append({
-                    "chunk_text": sc,
+                                "chunk_text": sc["text"],
                     "chunk_type": "generic",
                     "source_type": source_type,
                     "position": idx,
                     "section": None,
                     "sheet": None,
-                    "metadata": {}
-                })
+                    "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                                })
             return chunks
 

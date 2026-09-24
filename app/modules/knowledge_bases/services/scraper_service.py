@@ -351,6 +351,8 @@ class GCrawlClient:
         payload = {
             "urls": urls,
             "geo": "IN",
+            "auto_scroll": True,
+            "scroll_delay": 200,
             "markdown": {
                 "enabled": True,
                 "clean": True

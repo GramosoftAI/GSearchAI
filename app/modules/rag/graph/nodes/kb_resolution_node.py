@@ -50,6 +50,23 @@ async def kb_resolution_node(state: GraphState) -> GraphState:
             excel_kbs = [selected_kb]
             updates["target_kb_id"] = str(selected_kb.id)
 
+    # --- INJECT KBResolver HERE for unstructured/structured disambiguation ---
+    if not updates.get("target_kb_id") and not effective_target_kb_id:
+        from app.modules.rag.orchestrator.kb_resolver import KBResolver
+        resolver = KBResolver(tenant_id)
+        resolved_id = resolver.resolve(query, doc_kbs + excel_kbs)
+        if resolved_id:
+            resolved_doc = next((k for k in doc_kbs if str(k.id) == resolved_id), None)
+            if resolved_doc:
+                doc_kbs = [resolved_doc]
+                logger.info(f"[KB_RESOLVER_GATE_GRAPH] Hard-filtering unstructured search to resolved KB {resolved_id}")
+            
+            resolved_excel = next((k for k in excel_kbs if str(k.id) == resolved_id), None)
+            if resolved_excel:
+                excel_kbs = [resolved_excel]
+                updates["target_kb_id"] = str(resolved_excel.id)
+                logger.info(f"[KB_RESOLVER_GATE_GRAPH] Hard-filtering structured search to resolved KB {resolved_id}")
+
     updates["excel_kbs"] = excel_kbs
     updates["doc_kbs"] = doc_kbs
 

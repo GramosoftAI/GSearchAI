@@ -103,6 +103,10 @@ class GoogleAuthManager:
             # Domain-wide delegation impersonation
             active_creds = self.creds.with_subject(impersonate_email)
 
+        # If token is already present and valid, return it directly without forcing an unnecessary refresh
+        if active_creds.token and not getattr(active_creds, "expired", False):
+            return active_creds.token
+
         # Refresh token using google-auth library
         try:
             active_creds.refresh(GoogleRequest())
@@ -187,3 +191,38 @@ async def execute_google_request(
 
     # 4. Standard failures (401, 403 Unauthorized, 404, etc.)
     raise GoogleAPIError(response.status_code, err_msg)
+
+
+@retry(
+    retry=retry_if_exception_type(GoogleRateLimitError),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True,
+)
+async def execute_google_download(
+    client: httpx.AsyncClient,
+    url: str,
+    params: Optional[Dict[str, Any]] = None,
+) -> bytes:
+    """
+    Executes an async GET request for binary downloads or file exports
+    with retry and exponential backoff on rate limits.
+    """
+    logger.info(f"Google API Download: GET {url} with params {params}")
+    response = await client.get(url, params=params)
+
+    if response.status_code in (200, 206):
+        return response.content
+
+    try:
+        err_data = response.json()
+        err_msg = err_data.get("error", {}).get("message", response.text)
+    except Exception:
+        err_msg = response.text
+
+    if response.status_code == 429 or (response.status_code == 403 and "limit" in err_msg.lower()):
+        logger.warning(f"Google API download rate limit hit ({response.status_code}). Retrying... {err_msg}")
+        raise GoogleRateLimitError(response.status_code, err_msg)
+
+    raise GoogleAPIError(response.status_code, err_msg)
+

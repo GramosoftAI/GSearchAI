@@ -204,7 +204,7 @@ class URLDiscoverRequest(BaseModel):
     Schema for link discovery request from a root website URL.
     """
     url: str = Field(..., description="Root website URL to discover internal links from")
-    max_pages: int = Field(50, description="Maximum number of links to return after filtering")
+    max_pages: int = Field(100, description="Maximum number of links to return after filtering")
 
 
 class URLSelectIngestRequest(BaseModel):

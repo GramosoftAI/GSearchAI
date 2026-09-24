@@ -13,26 +13,17 @@ async def init_node(state: GraphState) -> GraphState:
     """
     query = state["query"]
     
-    # 1. Prime Embedding Cache
-    # We call this here so the cache is hot. It takes ~0-2s depending on DeepInfra cold start.
-    # Downstream nodes (retrieval) will hit the cache instantly.
-    embed_task = asyncio.create_task(EmbeddingGenerator.generate_embedding_with_usage(query, is_query=True))
-    
     # 2. Query Analysis
     # In full implementation, kb_context will be injected from state after KBs are loaded.
     analyzer = QueryAnalyzer()
-    analysis_task = asyncio.create_task(
-        analyzer.analyze_query(
-            query=query, 
-            kb_context="", # Will map from state["doc_kbs"] + state["excel_kbs"] in full implementation
-            chat_history=state.get("chat_history"), 
-            tenant_id=state["tenant_id"], 
-            user_id=state.get("user_id"), 
-            session_id=state.get("session_id")
-        )
+    analysis = await analyzer.analyze_query(
+        query=query, 
+        kb_context="", # Will map from state["doc_kbs"] + state["excel_kbs"] in full implementation
+        chat_history=state.get("chat_history"), 
+        tenant_id=state["tenant_id"], 
+        user_id=state.get("user_id"), 
+        session_id=state.get("session_id")
     )
-    
-    analysis, embed_res = await asyncio.gather(analysis_task, embed_task)
     
     # Extract intent safely
     intent_name = getattr(analysis, "intent", "UNKNOWN") if analysis and getattr(analysis, "intent", None) else "UNKNOWN"
@@ -43,6 +34,6 @@ async def init_node(state: GraphState) -> GraphState:
     return {
         "intent": intent_name,
         "analysis_object": analysis,
-        "query_embedding_tuple": embed_res
+        # query_embedding_tuple is removed from here; retrieval_node will generate it
     }
 

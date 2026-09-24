@@ -56,8 +56,12 @@ class Settings(BaseSettings):
 
 
 
-    # ============= EXTERNAL ALERTS =============
+    # ============= EXTERNAL ALERTS & SLACK =============
     slack_webhook_url: Optional[str] = None
+    slack_client_id: Optional[str] = None
+    slack_client_secret: Optional[str] = None
+    slack_signing_secret: Optional[str] = None
+    slack_token_encryption_key: Optional[str] = None
     
     # ============= GCRAWL API =============
     gcrawl_api_key: Optional[str] = None
@@ -218,7 +222,7 @@ class Settings(BaseSettings):
     model_memory: str = "meta-llama/Llama-3.1-8B-Instruct-Turbo"
     max_tokens_memory: int = 512
 
-    model_answer: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    model_answer: str = "deepseek-ai/DeepSeek-V3"
     model_answer_fallback: str = "deepseek-ai/DeepSeek-V3"
     model_answer_try: int = 3
     max_tokens_answer: int = 4096
@@ -246,6 +250,9 @@ class Settings(BaseSettings):
     hybrid_vector_top_k: int = 50
     hybrid_fts_top_k: int = 50
     hybrid_candidate_pool_size: int = 30
+    stitch_window: int = 1
+    rag_final_chunk_limit: int = 20
+
 
     # --- Legacy properties for backwards compatibility ---
     @property
