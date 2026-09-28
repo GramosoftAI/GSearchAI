@@ -42,6 +42,7 @@ const footerColumns = [
       { label: "Book a demo", href: "#cta" },
       { label: "Contact", href: "#" },
       { label: "Privacy Policy", href: "/privacy-policy" },
+      { label: "Terms of Service", href: "/terms-of-service" },
     ],
   },
 ];
