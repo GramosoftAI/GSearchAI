@@ -248,7 +248,8 @@ class DocumentChunk(Base):
     section = Column(String(255), nullable=True)
     
     from pgvector.sqlalchemy import Vector
-    embedding = Column("embedding_bge", Vector(1024), nullable=True)
+    embedding = Column(Vector(1024), nullable=True)
+    embedding_bge = Column("embedding_bge", Vector(1024), nullable=True)
 
     from sqlalchemy.dialects.postgresql import JSONB
     metadata_json = Column(JSONB, nullable=True)

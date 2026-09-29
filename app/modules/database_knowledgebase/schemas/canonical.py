@@ -50,6 +50,8 @@ class ColumnSchema(BaseModel):
     is_foreign_key: bool = Field(default=False, description="Whether column references another table")
     comment: Optional[str] = Field(default=None, description="Database comment / description for this column")
     ordinal_position: int = Field(default=0, description="1-indexed column position in table")
+    classification: str = Field(default="GENERAL", description="Data sensitivity classification (GENERAL, FINANCIAL, PII, CONTACT, LOCATION, BANKING, CREDENTIAL)")
+    default_projection: bool = Field(default=True, description="Whether this column should be projected by default")
     extra_metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional engine metadata")
 
 
@@ -215,3 +217,52 @@ class DatabaseSchema(BaseModel):
             "relationship_count": total_relations,
         }
         return self.summary
+
+
+class StructuredSchemaDocumentColumn(BaseModel):
+    """Structured column definition for semantic indexing."""
+    model_config = ConfigDict(extra="ignore")
+    
+    name: str
+    data_type: str
+    is_primary_key: bool = False
+
+
+class StructuredSchemaDocumentRelationship(BaseModel):
+    """Structured relationship definition for semantic indexing."""
+    model_config = ConfigDict(extra="ignore")
+    
+    column: str
+    referenced_table: str
+    referenced_column: str
+
+
+class StructuredSchemaDocument(BaseModel):
+    """
+    Phase 1: Structured Schema Document Contract.
+    This acts as the standardized, versioned payload for vector embedding.
+    Unlike canonical DDL, this is structured to aid semantic retrieval and tenant isolation.
+    """
+    model_config = ConfigDict(extra="ignore")
+    
+    document_type: str = Field(default="TABLE", description="e.g., TABLE, COLUMN_GROUP, RELATIONSHIP")
+    document_version: str = Field(default="v1.0", description="Version of this document schema")
+    
+    # Isolation properties
+    tenant_id: str
+    connection_id: Optional[str] = None
+    database_id: Optional[str] = None
+    
+    # Target identifiers
+    schema_name: str = "public"
+    table_name: str
+    
+    # Vector payload
+    content: str = Field(..., description="Rich text describing the table, business meaning, and search terms")
+    
+    # Structured metadata
+    columns: List[StructuredSchemaDocumentColumn] = Field(default_factory=list)
+    relationships: List[StructuredSchemaDocumentRelationship] = Field(default_factory=list)
+    
+    # Freshness
+    schema_hash: str = Field(..., description="Fingerprint to detect drift")

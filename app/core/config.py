@@ -354,6 +354,10 @@ class Settings(BaseSettings):
 
     use_llm_entity_extraction: bool = False  # Phase 3: Switch to LLM-based
 
+    new_query_pipeline_enabled: bool = False  # Feature flag: Enable new Phase 2-5 pipeline as primary path
+
+    shadow_query_pipeline_enabled: bool = True  # Feature flag: Enable shadow mode execution of new pipeline
+
     enable_pdf_fallback: bool = True  # Enable/disable heavy LLM fallback/pdfplumber mechanisms when Gdocz fails/is not configured
 
     enable_billing: bool = False  # Billing system toggle (per-tenant cost tracking)

@@ -1,0 +1,42 @@
+[
+  {
+    "question": "How many tables are in the database?",
+    "generated_sql": "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';",
+    "sql_valid": true,
+    "execution_success": true,
+    "latency_ms": 3200,
+    "failure_type": null
+  },
+  {
+    "question": "What is the total number of employees?",
+    "generated_sql": "SELECT COUNT(*) FROM employee;",
+    "sql_valid": false,
+    "execution_success": false,
+    "latency_ms": 4100,
+    "failure_type": "SCHEMA_ERROR"
+  },
+  {
+    "question": "List the top 5 departments by employee count.",
+    "generated_sql": "SELECT d.name, COUNT(e.id) FROM departments d JOIN employees e ON d.id = e.department_id GROUP BY d.name ORDER BY COUNT(e.id) DESC LIMIT 5;",
+    "sql_valid": true,
+    "execution_success": true,
+    "latency_ms": 5200,
+    "failure_type": null
+  },
+  {
+    "question": "What is the average joining date of employees?",
+    "generated_sql": "SELECT AVG(joining_date) FROM employees;",
+    "sql_valid": false,
+    "execution_success": false,
+    "latency_ms": 3800,
+    "failure_type": "SYNTAX_ERROR"
+  },
+  {
+    "question": "Show me the names of employees in the sales department.",
+    "generated_sql": "SELECT e.first_name, e.last_name FROM employees e JOIN departments d ON e.dept_id = d.id WHERE d.name = 'Sales';",
+    "sql_valid": false,
+    "execution_success": false,
+    "latency_ms": 4700,
+    "failure_type": "SCHEMA_ERROR"
+  }
+]
