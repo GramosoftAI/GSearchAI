@@ -74,3 +74,12 @@ class JobRepository(BaseRepository):
         await self.db.flush()
         
         return await self.get_job(job_id)
+
+    async def delete_job(self, job_id: str) -> bool:
+        job = await self.get_job(job_id)
+        if not job:
+            return False
+        
+        await self.db.delete(job)
+        await self.db.flush()
+        return True

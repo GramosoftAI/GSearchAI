@@ -306,6 +306,24 @@ class PDFExtractor:
         2. If Gdocz fails  fall back to pdfplumber + AI-OCR
         3. Clean raw output into GraphRAG-friendly text
         4. Return cleaned text ready for chunking
+        """
+        return await PDFExtractor.extract_pdf(
+            pdf_bytes=pdf_bytes,
+            filename=filename,
+            tenant_id=tenant_id,
+            agent_id=agent_id
+        )
+
+    @staticmethod
+    async def extract_pdf(
+        pdf_bytes: bytes, filename: str, tenant_id: str = None, agent_id: str = None
+    ) -> ExtractedText:
+        """
+        Extract text from a PDF file using a smart multi-tier approach.
+        
+        Flow:
+        1. Always try Gdocz SDK first (best quality, handles complex PDFs + scans, automatically generates markdown)
+        2. If Gdocz fails (API down, quota exceeded), fall back to pdfplumber + AI-OCR
 
         Args:
             pdf_bytes: Raw PDF file content
@@ -322,7 +340,9 @@ class PDFExtractor:
         logger.info(f" PDF Extraction starting: {filename} ({len(pdf_bytes)} bytes)")
 
         gdocz_error = None
-        # ============= PRIMARY: GDOCZ SDK =============
+        fallback_error = None
+
+        # ============= PRIMARY (OCR): GDOCZ SDK =============
         if settings.gdocz_api_key:
             try:
                 raw_markdown = await PDFExtractor._extract_gdocz(
@@ -336,12 +356,15 @@ class PDFExtractor:
                     # Clean page markers if present
                     raw_markdown_clean = re.sub(r"<---- Page \d+ ---->\r?\n?", "", raw_markdown)
                     
-                    # LLM-based Markdown repair
-                    try:
-                        raw_markdown_clean = await PDFExtractor._repair_markdown_with_llm(raw_markdown_clean)
-                    except Exception as llm_err:
-                        logger.warning(f"LLM Markdown repair failed, using raw Markdown: {llm_err}")
-                        
+                    # LLM-based Markdown repair (skip if too large to save time/tokens)
+                    if len(raw_markdown_clean) > 50000:
+                        logger.info(f"Skipping LLM Markdown repair: Content too large ({len(raw_markdown_clean)} chars > 50,000 threshold)")
+                    else:
+                        try:
+                            raw_markdown_clean = await PDFExtractor._repair_markdown_with_llm(raw_markdown_clean)
+                        except Exception as llm_err:
+                            logger.warning(f"LLM Markdown repair failed, using raw Markdown: {llm_err}")
+                    
                     # Clean markdown for RAG
                     cleaned = PDFExtractor._clean_markdown_for_rag(raw_markdown_clean)
                     logger.info(
@@ -363,13 +386,10 @@ class PDFExtractor:
                 )
         else:
             gdocz_error = "GDOCZ_API_KEY not configured"
-            logger.info(
-                " GDOCZ_API_KEY not configured. Using pdfplumber directly."
-            )
+            logger.info(" GDOCZ_API_KEY not configured. Using pdfplumber directly.")
 
         # ============= FALLBACK: PDFPLUMBER + AI-OCR =============
-        fallback_error = None
-        if settings.enable_pdf_fallback:
+        if settings.enable_pdf_fallback and gdocz_error:
             try:
                 extracted_text = await PDFExtractor._extract_pdfplumber(
                     pdf_bytes, filename, tenant_id, agent_id
@@ -395,7 +415,7 @@ class PDFExtractor:
             except Exception as e:
                 fallback_error = f"pdfplumber exception: {str(e)}"
                 logger.error(f" pdfplumber also failed for {filename}: {e}")
-        else:
+        elif not settings.enable_pdf_fallback:
             fallback_error = "PDF fallback is disabled by configuration settings."
             logger.info(fallback_error)
 
@@ -404,6 +424,56 @@ class PDFExtractor:
             f"Could not extract text from PDF: {filename}. "
             f"Gdocz SDK error: {gdocz_error}. Fallback error: {fallback_error}"
         )
+
+    # ========================================================================
+    # UPFRONT CHECK: TEXT LAYER & FRAGMENTATION
+    # ========================================================================
+
+    @staticmethod
+    async def _check_pdf_text_layer(pdf_bytes: bytes, filename: str) -> bool:
+        """
+        Check if a PDF has a solid digital text layer and is NOT heavily fragmented (layout-scrambled).
+        Returns True if it's safe to use the fast local pdfplumber extractor, False if it needs heavy OCR.
+        """
+        def _sync_check():
+            import pdfplumber
+            import io
+            
+            with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                # Sample up to 3 pages
+                sample_pages = pdf.pages[:3]
+                total_chars = 0
+                total_lines = 0
+                short_lines = 0
+                
+                for page in sample_pages:
+                    text = page.extract_text()
+                    if not text:
+                        continue
+                        
+                    total_chars += len(text)
+                    lines = text.split('\n')
+                    total_lines += len(lines)
+                    
+                    # Fragmentation heuristic: if many lines are very short (<15 chars) but the total text is large,
+                    # the layout is likely scrambled by absolute positioning (e.g. LibreOffice conversion artifacts).
+                    short_lines += sum(1 for line in lines if len(line.strip()) > 0 and len(line.strip()) < 15)
+                
+                # Heuristic 1: Is there enough text to be a digital PDF?
+                if total_chars < 100:
+                    return False # Likely scanned
+                    
+                # Heuristic 2: Is it heavily fragmented?
+                if total_lines > 10:
+                    fragmentation_ratio = short_lines / total_lines
+                    if fragmentation_ratio > 0.6:
+                        logger.info(f" PDF {filename} has digital text, but is heavily fragmented (ratio: {fragmentation_ratio:.2f}). Routing to OCR.")
+                        return False # Layout is scrambled, send to OCR
+                        
+                return True # Clean digital text
+                
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _sync_check)
 
     # ========================================================================
     # PRIMARY: GDOCZ SDK

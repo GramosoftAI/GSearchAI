@@ -41,6 +41,7 @@ from uuid import UUID
 
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.database import AsyncSessionLocal
 
 
 
@@ -311,43 +312,17 @@ class RAGPipeline:
 
 
 
-    def __init__(self, tenant_id: str, db: Optional[AsyncSession] = None):
-
-
-
+    def __init__(self, tenant_id: str, db: Optional[AsyncSession] = None, session_factory=None):
         """
-
-
-
         Initialize RAG pipeline for tenant.
-
-
-
-
-
-
-
         Args:
-
-
-
             tenant_id: Tenant UUID (for multi-tenancy enforcement)
-
-
-
-            db: Optional PostgreSQL AsyncSession for pgvector search
-
-
-
+            db: Optional PostgreSQL AsyncSession for sequential operations
+            session_factory: Factory for checking out dedicated connections in parallel searches
         """
-
-
-
         self.tenant_id = tenant_id
-
-
-
         self.db = db
+        self.session_factory = session_factory or AsyncSessionLocal
         self._kb_metadata = {}
 
 
@@ -901,7 +876,8 @@ class RAGPipeline:
             WEIGHT_KEYWORD = 1.0
             WEIGHT_VECTOR = 1.0
             WEIGHT_EXACT_MATCH = 3.0
-            TOP_N = self.settings.rag_final_chunk_limit
+            RRF_CANDIDATE_POOL_SIZE = 60  # Pre-fusion raw candidate limit per engine
+            TOP_N = self.settings.rag_final_chunk_limit  # Post-fusion cutoff for reranker
 
             # Convert analysis metadata to dictionary for RetrievalTasks
             meta_dict = {}
@@ -966,7 +942,7 @@ class RAGPipeline:
                     results = await retriever.search_triplets(
                         query_embedding=query_embedding_val,
                         kb_ids=kb_ids,
-                        top_k=20,
+                        top_k=RRF_CANDIDATE_POOL_SIZE,
                         target_sections=target_sections,
                     )
                     elapsed_ms = (time.time() - t_start) * 1000
@@ -988,7 +964,7 @@ class RAGPipeline:
                         return []
 
                     # 2a. Postgres ILIKE / Keyword Search on DocumentChunk
-                    if getattr(self, "db", None):
+                    if self.session_factory:
                         try:
                             from app.modules.knowledge_bases.models import DocumentChunk
                             from sqlalchemy import select, or_, and_
@@ -1000,10 +976,11 @@ class RAGPipeline:
                             kw_clauses = [DocumentChunk.text.ilike(f"%{kw}%") for kw in keywords if len(kw) > 2]
                             if kw_clauses:
                                 kw_conditions.append(or_(*kw_clauses))
-                                stmt = select(DocumentChunk.id).where(and_(*kw_conditions)).limit(50)
-                                res = await self.db.execute(stmt)
-                                pg_ids = [str(r[0]) for r in res.fetchall()]
-                                results_cids.extend(pg_ids)
+                                stmt = select(DocumentChunk.id).where(and_(*kw_conditions)).limit(RRF_CANDIDATE_POOL_SIZE)
+                                async with self.session_factory() as session:
+                                    res = await session.execute(stmt)
+                                    pg_ids = [str(r[0]) for r in res.fetchall()]
+                                    results_cids.extend(pg_ids)
                         except Exception as pg_err:
                             logger.warning(f"Postgres keyword search warning: {pg_err}")
 
@@ -1020,9 +997,9 @@ class RAGPipeline:
                             cypher += """
                             AND any(word IN $keywords WHERE toLower(c.text) CONTAINS toLower(word))
                             RETURN DISTINCT c.id as section_id
-                            LIMIT 50
+                            LIMIT $limit
                             """
-                            params = {"kb_ids": kb_ids, "tenant_id": self.tenant_id, "keywords": keywords}
+                            params = {"kb_ids": kb_ids, "tenant_id": self.tenant_id, "keywords": keywords, "limit": RRF_CANDIDATE_POOL_SIZE}
                             if target_sections:
                                 params["target_sections"] = target_sections
                                 
@@ -1049,13 +1026,13 @@ class RAGPipeline:
                 try:
                     from app.modules.rag.engines.vector_engine import VectorEngine
                     from app.modules.rag.schemas import RetrievalTask
-                    vector_engine = VectorEngine(self.tenant_id, self.neo4j_repo, getattr(self, "db", None))
+                    vector_engine = VectorEngine(self.tenant_id, self.neo4j_repo, self.session_factory)
                     
                     dummy_task = RetrievalTask(
                         task_id="full_kb_search",
                         query=current_query,
                         metadata_filters=meta_dict,
-                        top_k=TOP_N,
+                        top_k=RRF_CANDIDATE_POOL_SIZE,
                         target_section_ids=target_sections or []
                     )
                     res = await vector_engine.retrieve(dummy_task, kb_ids)
@@ -1108,20 +1085,16 @@ class RAGPipeline:
                     
                     from sqlalchemy import or_
                     all_conditions = regex_conditions + ilike_conditions
-                    chunk_query = chunk_query.where(or_(*all_conditions)).limit(20)
+                    chunk_query = chunk_query.where(or_(*all_conditions)).limit(RRF_CANDIDATE_POOL_SIZE)
                     
-                    res = await self.db.execute(chunk_query)
-                    exact_chunks = []
-                    for row in res.all():
-                        exact_chunks.append({"chunk_id": str(row.id), "source_kb_id": str(row.kb_id)})
-                    return exact_chunks
+                    async with self.session_factory() as session:
+                        res = await session.execute(chunk_query)
+                        exact_chunks = []
+                        for row in res.all():
+                            exact_chunks.append({"chunk_id": str(row.id), "source_kb_id": str(row.kb_id)})
+                        return exact_chunks
                 except Exception as e:
                     logger.warning(f"Exact match search failed (non-blocking): {e}")
-                    if hasattr(self.db, "rollback"):
-                        if asyncio.iscoroutinefunction(self.db.rollback):
-                            await self.db.rollback()
-                        else:
-                            self.db.rollback()
                     return []
 
             # Launch sequentially then concurrently (2-wave design)
@@ -1152,6 +1125,10 @@ class RAGPipeline:
                 if isinstance(keyword_res, Exception): keyword_res = []
                 if isinstance(vector_res, Exception): vector_res = []
                 if isinstance(exact_match_res, Exception): exact_match_res = []
+
+                for name, r in zip(("triplet", "keyword", "vector", "exact"), (triplet_res, keyword_res, vector_res, exact_match_res)):
+                    if isinstance(r, Exception):
+                        logger.error("Wave 2 %s failed", name, exc_info=r)
 
                 logger.info(f"[RRF_FLOW_MARKER] RRF Sources returned: Graph={len(triplet_res)}, Keyword={len(keyword_res)}, Vector={len(vector_res)}, ExactMatch={len(exact_match_res)}")
 
@@ -1197,6 +1174,8 @@ class RAGPipeline:
                     if chunk_obj:
                         chunk_obj.exact_score = score
 
+                logger.info(f"[RRF_FLOW_MARKER] Fusion generated {len(fused_scores)} unique candidates from raw engine feeds. Cutoff TOP_N={TOP_N} will be applied after scoring.")
+
                 # Backfill any triplet/keyword/exact scores on vector_chunk_map items
                 for rank, t in enumerate(triplet_res):
                     cid = t.get("chunk_id")
@@ -1210,21 +1189,8 @@ class RAGPipeline:
                     if cid and cid in vector_chunk_map:
                         vector_chunk_map[cid].exact_score = WEIGHT_EXACT_MATCH / (RRF_K + rank + 1)
 
-                # Apply SectionRanker boost post-hoc
-                boosted_count = 0
-                SECTION_BOOST_WEIGHT = 2.0  # Configurable RRF weight bonus
-                if section_res:
-                    target_sections_set = set(section_res)
-                    for cid in fused_scores.keys():
-                        chunk_obj = vector_chunk_map.get(cid)
-                        c_section = None
-                        if chunk_obj:
-                            c_section = getattr(chunk_obj, "section_id", None) or getattr(chunk_obj, "section", None)
-                        if cid in target_sections_set or c_section in target_sections_set:
-                            fused_scores[cid] += SECTION_BOOST_WEIGHT
-                            boosted_count += 1
-            
-                logger.info(f"[RRF_FLOW_MARKER] Target section IDs from SectionRanker: {section_res}. Boost applied to {boosted_count} chunks.")
+                # Apply SectionRanker boost post-hoc (Deferred to normalization step)
+                logger.info(f"[RRF_FLOW_MARKER] Target section IDs from SectionRanker: {section_res}. (Boost deferred to normalization phase)")
 
                 # Apply Domain Keyword Boost post-hoc
                 # This ensures that chunks from a KB whose name matches core query entities (like "hike")
@@ -1345,51 +1311,134 @@ class RAGPipeline:
                             else:
                                 self.db.rollback()
 
-                # 4b. Apply Domain Boost
-                matched_kb_ids = list({chunk.kb_id for chunk in vector_res if getattr(chunk, "domain_matched", False)})
-                logger.info(f"[RRF_BOOST_DEBUG] boost loop starting with matched_kb_ids={matched_kb_ids}.")
+                # 4b. Fetch doc_priors and Calculate Normalization Components
+                W_CHUNK = 0.45
+                W_DOC = 0.08
+                
+                # Fetch doc_priors
+                doc_priors = {}
+                if getattr(self, "db", None) and query_embedding_val:
+                    from app.modules.knowledge_bases.models import KnowledgeBase
+                    from sqlalchemy import select
+                    from uuid import UUID
+                    
+                    unique_kb_ids = []
+                    for rc in vector_chunk_map.values():
+                        if getattr(rc, "kb_id", None):
+                            try:
+                                kb_uuid = UUID(str(rc.kb_id))
+                                if kb_uuid not in unique_kb_ids:
+                                    unique_kb_ids.append(kb_uuid)
+                            except (ValueError, TypeError):
+                                pass
+                    
+                    if unique_kb_ids:
+                        try:
+                            stmt = select(
+                                KnowledgeBase.id,
+                                (1.0 - KnowledgeBase.summary_embedding.cosine_distance(query_embedding_val)).label("doc_sim")
+                            ).where(
+                                KnowledgeBase.id.in_(unique_kb_ids),
+                                KnowledgeBase.tenant_id == self.tenant_id
+                            )
+                            result = await self.db.execute(stmt)
+                            for row in result.all():
+                                doc_priors[str(row.id)] = max(0.0, float(row.doc_sim)) if row.doc_sim is not None else 0.0
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch doc_priors: {e}")
+                            if hasattr(self.db, "rollback"):
+                                if asyncio.iscoroutinefunction(self.db.rollback):
+                                    await self.db.rollback()
+                                else:
+                                    self.db.rollback()
+                
+                # Prepare arrays for normalization
+                cids = list(fused_scores.keys())
+                arr_base = []
+                arr_idf = []
+                arr_doc = []
+                arr_sec = []
+                
+                target_sections_set = set(section_res) if section_res else set()
+                SECTION_BOOST_WEIGHT = 2.0
+                
                 from app.modules.rag.scoring.term_frequency import get_kb_doc_frequency, idf_discount
                 import re
-            
                 doc_freq_cache: Dict[str, Dict] = {}
-
-                for cid in fused_scores.keys():
+                
+                for cid in cids:
+                    # Base RRF
+                    arr_base.append(fused_scores[cid])
+                    
+                    # Section Boost
                     chunk_obj = vector_chunk_map.get(cid)
+                    c_section = getattr(chunk_obj, "section_id", None) or getattr(chunk_obj, "section", None) if chunk_obj else None
+                    sec_val = SECTION_BOOST_WEIGHT if (cid in target_sections_set or c_section in target_sections_set) else 0.0
+                    arr_sec.append(sec_val)
+                    
+                    # IDF Boost and Doc Prior
+                    idf_val = 0.0
+                    doc_val = 0.0
                     if chunk_obj:
-                        kb_level_match = getattr(chunk_obj, "domain_matched", False)
+                        kb_id_str = str(getattr(chunk_obj, "kb_id", ""))
+                        doc_val = doc_priors.get(kb_id_str, 0.0)
+                        
                         chunk_text = getattr(chunk_obj, "text", "").lower()
                         chunk_tokens = set(re.findall(r"[a-z0-9]+", chunk_text))
                         term_matches = exploded_keywords & chunk_tokens
-                    
-                        if not term_matches and not kb_level_match:
-                            continue
                         
-                        idf_boost = 0.0
                         if term_matches:
-                            kb_id = getattr(chunk_obj, "kb_id", None)
                             doc_freq = {}
-                            if kb_id and getattr(self, "db", None):
-                                if kb_id not in doc_freq_cache:
-                                    doc_freq_cache[kb_id] = await get_kb_doc_frequency(kb_id, self.db)
-                                doc_freq = doc_freq_cache[kb_id]
+                            if kb_id_str and getattr(self, "db", None):
+                                if kb_id_str not in doc_freq_cache:
+                                    doc_freq_cache[kb_id_str] = await get_kb_doc_frequency(kb_id_str, self.db)
+                                doc_freq = doc_freq_cache[kb_id_str]
                             base_idf = sum(idf_discount(t, doc_freq) for t in term_matches)
                             match_count_bonus = min(0.3, 0.03 * len(term_matches))
-                            idf_boost = base_idf + match_count_bonus
-                        
-                        kb_boost = DOMAIN_BOOST_WEIGHT if kb_level_match else 0.0
+                            idf_val = base_idf + match_count_bonus
                     
-                        total_boost = idf_boost + kb_boost
-                        if total_boost > 0:
-                            fused_scores[cid] += total_boost
-                            domain_boosted_count += 1
-                            logger.info(
-                                f"[RRF_BOOST_DEBUG] chunk_id={cid} term_matches={term_matches} "
-                                f"idf_boost={idf_boost:.3f} kb_level_match={kb_level_match} final_boost={total_boost:.3f}"
-                            )
-                    else:
-                        logger.info(f"[RRF_BOOST_DEBUG] chunk_id={cid} NOT FOUND in vector_chunk_map (Graph/Keyword only chunk)")
-                                
-                logger.info(f"[RRF_FLOW_MARKER] Domain Boost applied to {domain_boosted_count} chunks.")
+                    arr_idf.append(idf_val)
+                    arr_doc.append(doc_val)
+                    
+                def min_max_norm(arr):
+                    if not arr: return arr
+                    min_v = min(arr)
+                    max_v = max(arr)
+                    if max_v == min_v:
+                        return [0.0] * len(arr)
+                    return [(v - min_v) / (max_v - min_v) for v in arr]
+                
+                norm_base = min_max_norm(arr_base)
+                norm_idf = min_max_norm(arr_idf)
+                norm_doc = min_max_norm(arr_doc)
+                norm_sec = min_max_norm(arr_sec)
+                
+                domain_boosted_count = sum(1 for v in arr_idf if v > 0)
+                
+                # Combine and apply
+                for i, cid in enumerate(cids):
+                    chunk_obj = vector_chunk_map.get(cid)
+                    chunk_text = getattr(chunk_obj, "text", "").lower() if chunk_obj else ""
+                    chunk_tokens = set(re.findall(r"[a-z0-9]+", chunk_text))
+                    term_matches = exploded_keywords & chunk_tokens
+                    
+                    fused_scores[cid] = (
+                        norm_base[i] 
+                        + (W_CHUNK * norm_idf[i]) 
+                        + (W_DOC * norm_doc[i]) 
+                        + norm_sec[i]
+                    )
+                    
+                    logger.info(
+                        f"[RRF_BOOST_DEBUG] chunk_id={cid} term_matches={term_matches} "
+                        f"idf_boost={arr_idf[i]:.3f} idf_boost_norm={norm_idf[i]:.3f} "
+                        f"doc_prior={arr_doc[i]:.3f} doc_prior_norm={norm_doc[i]:.3f} "
+                        f"sec_boost={arr_sec[i]:.3f} sec_boost_norm={norm_sec[i]:.3f} "
+                        f"rrf_base={arr_base[i]:.3f} rrf_norm={norm_base[i]:.3f} "
+                        f"final_score={fused_scores[cid]:.3f}"
+                    )
+                
+                logger.info(f"[RRF_FLOW_MARKER] Normalization and Boosts applied to {len(cids)} chunks. IDF applied to {domain_boosted_count}.")
 
                 # 4c. Apply Narrative Intent Boost during RRF
                 NARRATIVE_BOOST_WEIGHT = 0.03  # Significant boost to ensure narrative chunks stay in top-N window
@@ -1468,7 +1517,7 @@ class RAGPipeline:
                                     llm.rerank_documents(
                                         query=original_query,
                                         documents=doc_texts,
-                                        top_n=min(len(doc_texts), 10),
+                                        top_n=min(len(doc_texts), getattr(self.settings, "rag_final_chunk_limit", 20)),
                                         model=get_settings().model_reranker,
                                         tenant_id=self.tenant_id,
                                         user_id=user_id
@@ -1566,43 +1615,91 @@ class RAGPipeline:
                         
 
                     # --- DEDUP AND FILTER ---
+                    # 0. QUALITY FLOOR (Applied before dedup, no "always keep best chunk" exemption)
+                    min_rerank_threshold = getattr(self.settings, "rag_rerank_min_score", 0.0)
+                    if min_rerank_threshold > 0.0:
+                        before_count = len(final_chunks)
+                        final_chunks = [
+                            c for c in final_chunks
+                            if getattr(c, "final_relevance_score", 0.0) >= min_rerank_threshold
+                        ]
+                        logger.info(
+                            f"[RERANK_FILTER] Applied min score threshold {min_rerank_threshold:.4f}: "
+                            f"{before_count} -> {len(final_chunks)} chunks remaining."
+                        )
+
                     # 1. Sort by score
                     final_chunks.sort(key=lambda c: getattr(c, "final_relevance_score", 0.0), reverse=True)
                     
                     # 2. Near-duplicate collapse + score floor
                     deduped_chunks = []
-                    seen_hashes = []
+                    seen_chunks = []  # List of (words, chunk)
                     max_score = getattr(final_chunks[0], "final_relevance_score", 0.0) if final_chunks else 0.0
                     for chunk in final_chunks:
                         score = getattr(chunk, "final_relevance_score", 0.0)
-                        # Drop extreme noise using configured noise floor (default 0.10)
-                        if len(deduped_chunks) > 0 and score < self.settings.rag_graph_noise_floor:
+                        # Drop extreme noise using relative floor gated by top score
+                        absolute_min = self.settings.rag_graph_noise_floor
+                        floor = max(absolute_min, max_score * 0.15)
+                        if len(deduped_chunks) > 0 and score < floor:
+                            logger.info(f"[NOISE_FLOOR_DROP] chunk_id={getattr(chunk, 'chunk_id', 'unknown')} score={score:.4f} floor={floor:.4f}")
                             continue
                             
-                        # Use first 250 chars for similarity
                         text = getattr(chunk, "text", "") or ""
-                        norm_text = "".join(c.lower() for c in text[:250] if c.isalnum() or c.isspace())
+                        # Scale comparison window down for short chunks
+                        compare_len = int(max(50, min(250, len(text) * 0.3)))
+                        prefix_text = text[:compare_len]
+                        norm_text = "".join(c.lower() for c in prefix_text if c.isalnum() or c.isspace())
                         words = set(norm_text.split())
                         
                         is_dup = False
-                        for seen_words in seen_hashes:
+                        for seen_words, survivor in seen_chunks:
                             if not words or not seen_words:
                                 continue
                             overlap = len(words.intersection(seen_words))
                             union = len(words.union(seen_words))
                             if union > 0 and (overlap / union) > 0.75:  # High Jaccard similarity
                                 is_dup = True
+                                tail = text[compare_len:].strip()
+                                if tail:
+                                    survivor.text = (getattr(survivor, "text", "") or "") + "\n... " + tail
+                                logger.info(f"[DEDUP_MERGE] kept={getattr(survivor, 'chunk_id', 'unknown')} merged_from={getattr(chunk, 'chunk_id', 'unknown')}")
                                 break
                                 
                         if not is_dup:
-                            seen_hashes.append(words)
+                            seen_chunks.append((words, chunk))
                             deduped_chunks.append(chunk)
                             if len(deduped_chunks) >= self.settings.rag_final_chunk_limit:
                                 break
                     
                     if deduped_chunks:
-                        final_chunks = deduped_chunks
-                        logger.info(f"[DEDUP] Trimmed to {len(final_chunks)} unique, high-scoring chunks for prompt assembly.")
+                        expanded_chunks = []
+                        seen_parents = set()
+                        for c in deduped_chunks:
+                            meta = getattr(c, "provenance_metadata", None)
+                            if not meta and hasattr(c, "metadata"): meta = getattr(c, "metadata", None)
+                            
+                            if isinstance(meta, dict) and meta.get("parent_text") and meta.get("parent_id"):
+                                p_id = meta["parent_id"]
+                                if p_id not in seen_parents:
+                                    seen_parents.add(p_id)
+                                    # Expand context to parent
+                                    c.text = meta["parent_text"]
+                                    expanded_chunks.append(c)
+                            else:
+                                expanded_chunks.append(c)
+                                
+                        budget = 10000  # Conservative budget
+                        tokens_so_far = 0
+                        final_capped_chunks = []
+                        for c in expanded_chunks:
+                            toks = len((c.text or "").split())
+                            if tokens_so_far + toks > budget and len(final_capped_chunks) > 0:
+                                break
+                            tokens_so_far += toks
+                            final_capped_chunks.append(c)
+                            
+                        final_chunks = final_capped_chunks
+                        logger.info(f"[DEDUP] Trimmed to {len(final_chunks)} unique, high-scoring chunks for prompt assembly (after V2 parent expansion).")
                     # ------------------------
 
                     rag_context = RAGContext(
@@ -2687,6 +2784,11 @@ class RAGPipeline:
                 from sqlalchemy import select, and_, or_
                 from app.modules.knowledge_bases.models import DocumentChunk
 
+                from app.core.config import get_settings
+                settings = get_settings()
+                # Set ef_search for this transaction to optimize recall/speed tradeoff
+                await self.db.execute(text(f"SET LOCAL hnsw.ef_search = {int(settings.hnsw_ef_search)}"))
+                
                 # Query using pgvector cosine_distance operator
                 stmt = (
                     select(

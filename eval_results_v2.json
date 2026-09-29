@@ -1,0 +1,218 @@
+{
+  "metrics": {
+    "recall_at_5": 60.0,
+    "mrr": 0.6
+  },
+  "details": [
+    {
+      "id": "q1",
+      "query": "What were Apple's total net sales in 2023?",
+      "expected": "apple.pdf",
+      "found_rank": -1,
+      "top_source": "DocumentChunk 46"
+    },
+    {
+      "id": "q2",
+      "query": "Who is the CEO of Apple?",
+      "expected": "apple.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/apple.pdf"
+    },
+    {
+      "id": "q3",
+      "query": "What are the risk factors related to global economic conditions?",
+      "expected": "apple.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/apple.pdf"
+    },
+    {
+      "id": "q4",
+      "query": "R&D expense 2022 vs 2023",
+      "expected": "apple.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/apple.pdf"
+    },
+    {
+      "id": "q5",
+      "query": "How many employees does Apple have?",
+      "expected": "apple.pdf",
+      "found_rank": -1,
+      "top_source": "DocumentChunk 47"
+    },
+    {
+      "id": "q6",
+      "query": "NTSB report on the helicopter crash cause",
+      "expected": "ntsb pdfs",
+      "found_rank": -1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/the-four-million-o-henry-1147.pdf"
+    },
+    {
+      "id": "q7",
+      "query": "What was the pilot's flight experience in hours?",
+      "expected": "ntsb pdfs",
+      "found_rank": -1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/the-four-million-o-henry-1147.pdf"
+    },
+    {
+      "id": "q8",
+      "query": "Weather conditions during the accident",
+      "expected": "ntsb pdfs",
+      "found_rank": -1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/apple.pdf"
+    },
+    {
+      "id": "q9",
+      "query": "Maintenance records of the engine",
+      "expected": "ntsb pdfs",
+      "found_rank": -1,
+      "top_source": "DocumentChunk 169"
+    },
+    {
+      "id": "q10",
+      "query": "Safety recommendations issued by NTSB",
+      "expected": "ntsb pdfs",
+      "found_rank": -1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/apple.pdf"
+    },
+    {
+      "id": "q11",
+      "query": "Arun N ML Engineer skills",
+      "expected": "arun_n.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/ARUN_N.pdf"
+    },
+    {
+      "id": "q12",
+      "query": "What projects did Arun build with CrewAI?",
+      "expected": "arun_n.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/ARUN_N.pdf"
+    },
+    {
+      "id": "q13",
+      "query": "Arun's email and phone number",
+      "expected": "arun_n.pdf",
+      "found_rank": -1,
+      "top_source": "DocumentChunk 98"
+    },
+    {
+      "id": "q14",
+      "query": "Quality assurance testing methodology",
+      "expected": "quality assurance.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/Quality Assurance.pdf"
+    },
+    {
+      "id": "q15",
+      "query": "ISO standards for QA",
+      "expected": "quality assurance.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/Quality Assurance.pdf"
+    },
+    {
+      "id": "q16",
+      "query": "Automated vs manual testing trade-offs",
+      "expected": "quality assurance.pdf",
+      "found_rank": -1,
+      "top_source": "DocumentChunk 90008"
+    },
+    {
+      "id": "q17",
+      "query": "What is the habitat of the snow leopard?",
+      "expected": "big_cats_comprehensive_compendium.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/Big_Cats_Comprehensive_Compendium.pdf"
+    },
+    {
+      "id": "q18",
+      "query": "Lions vs tigers bite force",
+      "expected": "big_cats_comprehensive_compendium.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/Big_Cats_Comprehensive_Compendium.pdf"
+    },
+    {
+      "id": "q19",
+      "query": "Endangered status of cheetahs",
+      "expected": "big_cats_comprehensive_compendium.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/Big_Cats_Comprehensive_Compendium.pdf"
+    },
+    {
+      "id": "q20",
+      "query": "O. Henry Four Million summary",
+      "expected": "the-four-million-o-henry-1147.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/the-four-million-o-henry-1147.pdf"
+    },
+    {
+      "id": "q21",
+      "query": "Gift of the Magi characters",
+      "expected": "the-four-million-o-henry-1147.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/the-four-million-o-henry-1147.pdf"
+    },
+    {
+      "id": "q22",
+      "query": "Who bought the watch chain?",
+      "expected": "the-four-million-o-henry-1147.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/the-four-million-o-henry-1147.pdf"
+    },
+    {
+      "id": "q23",
+      "query": "Memory test corpus context",
+      "expected": "rag_memory_test_corpus.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/rag_memory_test_corpus.pdf"
+    },
+    {
+      "id": "q24",
+      "query": "Apple services revenue breakdown",
+      "expected": "apple.pdf",
+      "found_rank": -1,
+      "top_source": "DocumentChunk 16"
+    },
+    {
+      "id": "q25",
+      "query": "iPhone sales Q4",
+      "expected": "apple.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/apple.pdf"
+    },
+    {
+      "id": "q26",
+      "query": "NTSB fatal injuries count",
+      "expected": "ntsb pdfs",
+      "found_rank": -1,
+      "top_source": "DocumentChunk 44"
+    },
+    {
+      "id": "q27",
+      "query": "Big cats conservation efforts",
+      "expected": "big_cats_comprehensive_compendium.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/Big_Cats_Comprehensive_Compendium.pdf"
+    },
+    {
+      "id": "q28",
+      "query": "QA defect leakage rate",
+      "expected": "quality assurance.pdf",
+      "found_rank": -1,
+      "top_source": "DocumentChunk 90003"
+    },
+    {
+      "id": "q29",
+      "query": "O Henry pub year",
+      "expected": "the-four-million-o-henry-1147.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/the-four-million-o-henry-1147.pdf"
+    },
+    {
+      "id": "q30",
+      "query": "Arun N education",
+      "expected": "arun_n.pdf",
+      "found_rank": 1,
+      "top_source": "https://gramosoft.s3.ap-south-1.amazonaws.com/grag/uploads/b91f23d9-7127-420d-acc9-fc420b46bf9e/ARUN_N.pdf"
+    }
+  ]
+}

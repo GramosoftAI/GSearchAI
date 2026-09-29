@@ -753,42 +753,57 @@ async def ingest_file(
         
         # 2. Route based on file extension
         if filename.endswith(SUPPORTED_EXTENSIONS) or filename.endswith(".pdf"):
-            temp_dir = tempfile.mkdtemp(prefix="doc_convert_")
-            try:
-                temp_upload_path = Path(temp_dir) / file.filename
-                temp_upload_path.write_bytes(content)
-                
+            ext = filename.lower().split('.')[-1] if '.' in filename else ''
+            
+            document_text = None
+            converted_to_pdf = False
+            
+            if ext == "docx":
                 try:
-                    pdf_path = await prepare_for_pdf_pipeline(str(temp_upload_path), temp_dir)
-                    pdf_content = Path(pdf_path).read_bytes()
-                except ConversionError as ce:
-                    logger.error(f"Document conversion failed: {ce}")
-                    raise HTTPException(status_code=422, detail=str(ce))
-
-                # Extract PDF using PDFExtractor (Gdocz primary + pdfplumber fallback)
-                from ...core.pdf_extractor import PDFExtractor
-                try:
-                    document_text = await PDFExtractor.extract(
-                        pdf_bytes=pdf_content,
-                        filename=Path(pdf_path).name,
-                        tenant_id=tenant_id,
-                    )
-                except ValueError as e:
-                    raise HTTPException(status_code=400, detail=str(e))
+                    from ...core.docx_extractor import DocxExtractor
+                    logger.info(f"Attempting native DOCX extraction for {filename}")
+                    document_text = await DocxExtractor.extract(content, filename)
                 except Exception as e:
-                    logger.error(f"PDF extraction failed: {e}")
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Failed to extract text from document: {str(e)}",
-                    )
+                    logger.error(f"Native DOCX extraction failed for {filename}, falling back to LibreOffice: {e}")
+                    document_text = None # Force fallback
                     
-                if not document_text.strip():
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Could not extract any text from the document",
-                    )
-            finally:
-                shutil.rmtree(temp_dir, ignore_errors=True)
+            if document_text is None:
+                temp_dir = tempfile.mkdtemp(prefix="doc_convert_")
+                try:
+                    temp_upload_path = Path(temp_dir) / file.filename
+                    temp_upload_path.write_bytes(content)
+                    
+                    try:
+                        pdf_path = await prepare_for_pdf_pipeline(str(temp_upload_path), temp_dir)
+                        pdf_content = Path(pdf_path).read_bytes()
+                    except ConversionError as ce:
+                        logger.error(f"Document conversion failed: {ce}")
+                        raise HTTPException(status_code=422, detail=str(ce))
+    
+                    # Extract PDF using PDFExtractor (Gdocz primary + pdfplumber fallback)
+                    from ...core.pdf_extractor import PDFExtractor
+                    try:
+                        document_text = await PDFExtractor.extract(
+                            pdf_bytes=pdf_content,
+                            filename=Path(pdf_path).name,
+                            tenant_id=tenant_id,
+                        )
+                    except ValueError as e:
+                        raise HTTPException(status_code=400, detail=str(e))
+                    except Exception as e:
+                        logger.error(f"PDF extraction failed: {e}")
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Failed to extract text from document: {str(e)}",
+                        )
+                finally:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+            
+            if document_text is None or not document_text.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Could not extract any text from the document",
+                )
 
 
 

@@ -420,7 +420,7 @@ class URLChunker:
                     "position": idx,
                     "section": "FAQ",
                     "sheet": None,
-                    "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                    "metadata": {}
                                 })
             return chunks
 
@@ -449,7 +449,7 @@ class URLChunker:
                                 "position": position,
                                 "section": heading,
                                 "sheet": None,
-                                "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                                "metadata": {}
                                 })
                             position += 1
                         else:
@@ -462,7 +462,7 @@ class URLChunker:
                                     "position": position,
                                     "section": heading,
                                     "sheet": None,
-                                    "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                                    "metadata": {}
                                 })
                                 position += 1
                     
@@ -475,7 +475,7 @@ class URLChunker:
                             "position": position,
                             "section": heading,
                             "sheet": None,
-                            "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                            "metadata": {}
                                 })
                         position += 1
                     last_idx = match.end()
@@ -490,7 +490,7 @@ class URLChunker:
                             "position": position,
                             "section": heading,
                             "sheet": None,
-                            "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                            "metadata": {}
                                 })
                         position += 1
                     else:
@@ -503,7 +503,7 @@ class URLChunker:
                                 "position": position,
                                 "section": heading,
                                 "sheet": None,
-                                "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                                "metadata": {}
                                 })
                             position += 1
             else:
@@ -515,7 +515,7 @@ class URLChunker:
                         "position": position,
                         "section": heading,
                         "sheet": None,
-                        "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                        "metadata": {}
                                 })
                     position += 1
                 else:
@@ -528,27 +528,58 @@ class URLChunker:
                             "position": position,
                             "section": heading,
                             "sheet": None,
-                            "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
+                            "metadata": {}
                                 })
                         position += 1
                         
         return chunks
 
 
+# ---------------------------------------------------------------------------
+# Canonical top-level section header whitelist.
+# A line must be an EXACT whole-line match (after stripping asterisks/underscores
+# and uppercasing) against this set to be treated as a top-tier boundary.
+# Never use substring-contains for top-level detection.
+# ---------------------------------------------------------------------------
+KNOWN_SECTION_HEADERS = {
+    "SUMMARY", "OBJECTIVE", "CAREER OBJECTIVE", "CAREER", "EDUCATION",
+    "EXPERIENCE", "WORK EXPERIENCE", "WORK HISTORY", "PROJECTS", "KEY PROJECTS",
+    "PROJECT DETAILS", "SKILLS", "TECHNICAL SKILLS", "ADDITIONAL SKILLS",
+    "CERTIFICATIONS", "LANGUAGES", "AWARDS", "INTERESTS", "PUBLICATIONS",
+    "ABOUT ME", "CONTACT", "CONTACT INFO", "PERSONAL DETAILS", "DECLARATION",
+    "ANALYSIS", "PROBABLE CAUSE", "PROBABLE CAUSE AND FINDINGS",
+    "FINDINGS", "HISTORY OF FLIGHT", "METEOROLOGICAL INFORMATION",
+    "AIRCRAFT INFORMATION", "WRECKAGE AND IMPACT INFORMATION",
+    "MEDICAL AND PATHOLOGICAL INFORMATION", "TESTS AND RESEARCH",
+    "ADDITIONAL INFORMATION", "FLIGHT RECORDERS", "SURVIVAL ASPECTS",
+    "INTRODUCTION", "OVERVIEW", "BACKGROUND", "CONCLUSION", "REFERENCES",
+    "APPENDIX", "GLOSSARY", "TABLE OF CONTENTS", "ACKNOWLEDGEMENTS",
+}
+
+
 class PDFStructureParser:
     """
-    Parses HTML or Markdown text into structured segments.
-    Each segment is a dict containing:
-    - type: "heading", "table", "text"
-    - text: content of the segment
-    - section: current section heading
-    - heading_level: heading level (1-6) or None
+    Parses HTML, Markdown, or raw PDF bytes into structured segments.
+
+    Detection strategy (three tiers — structure beats text):
+      Tier 1 – True top-level section header:
+        Exact whole-line match against KNOWN_SECTION_HEADERS.
+        Sets `current_section`; emits type="heading".
+      Tier 2 – Sub-item / project title:
+        Any heading tag / bold line that is NOT in KNOWN_SECTION_HEADERS.
+        Never resets `current_section`; emits type="project_heading".
+      Tier 3 – Body text:
+        Everything else; emits type="text".
+
+    For raw PDF bytes the layout-aware path (`parse_from_bytes`) uses
+    pdfplumber font-size signals instead of regex heuristics.
     """
+
     @staticmethod
     def parse(raw_content: str) -> List[Dict[str, Any]]:
         if not raw_content:
             return []
-            
+
         # Detect HTML
         is_html = False
         if any(tag in raw_content.lower() for tag in ["<html", "<body", "<p>", "<table", "</div>", "</span>", "</h1>"]):
@@ -564,13 +595,25 @@ class PDFStructureParser:
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(html_content, "html.parser")
         
-        # Preprocessing: Remove scripts, styles
         for element in soup(["script", "style", "nav", "header", "footer"]):
             element.decompose()
             
         body = soup.body if soup.body else soup
-        
         segments = []
+        
+        KNOWN_HEADERS = {
+            "SUMMARY", "OBJECTIVE", "CAREER OBJECTIVE", "CAREER", "EDUCATION", 
+            "EXPERIENCE", "WORK EXPERIENCE", "WORK HISTORY", "PROJECTS", "KEY PROJECTS",
+            "PROJECT DETAILS", "SKILLS", "TECHNICAL SKILLS", "ADDITIONAL SKILLS", 
+            "CERTIFICATIONS", "LANGUAGES", "AWARDS", "INTERESTS", "PUBLICATIONS", 
+            "ABOUT ME", "CONTACT", "CONTACT INFO", "PERSONAL DETAILS", "DECLARATION",
+            "ANALYSIS", "PROBABLE CAUSE", "PROBABLE CAUSE AND FINDINGS", 
+            "FINDINGS", "HISTORY OF FLIGHT", "METEOROLOGICAL INFORMATION", 
+            "AIRCRAFT INFORMATION", "WRECKAGE AND IMPACT INFORMATION",
+            "MEDICAL AND PATHOLOGICAL INFORMATION", "TESTS AND RESEARCH",
+            "ADDITIONAL INFORMATION", "FLIGHT RECORDERS", "SURVIVAL ASPECTS"
+        }
+        
         current_section = "Introduction"
         current_heading_level = 1
         
@@ -593,35 +636,7 @@ class PDFStructureParser:
                 level = int(element.name[1])
                 text = element.get_text().strip()
                 if text:
-                    # Check if it should be a project heading
-                    is_project = False
-                    if current_section.upper() in ["PROJECTS", "PROJECT DETAILS", "WORK EXPERIENCE", "EXPERIENCE"]:
-                        if 5 <= len(text) <= 75 and not text.endswith((".", ",", ";", "?", "!")):
-                            common_keywords = {
-                                "SUMMARY", "OBJECTIVE", "CAREER OBJECTIVE", "CAREER", "EDUCATION", 
-                                "EXPERIENCE", "WORK EXPERIENCE", "WORK HISTORY", "PROJECTS", 
-                                "PROJECT DETAILS", "SKILLS", "TECHNICAL SKILLS", "ADDITIONAL SKILLS", 
-                                "CERTIFICATIONS", "LANGUAGES", "AWARDS", "INTERESTS", "PUBLICATIONS", 
-                                "ABOUT ME", "CONTACT", "CONTACT INFO", "PERSONAL DETAILS", "DECLARATION"
-                            }
-                            is_all_caps = text.isupper() and any(c.isalpha() for c in text)
-                            if text.upper() not in common_keywords and not (is_all_caps and len(text.split()) == 1):
-                                has_tech_parentheses = bool(re.search(r'\([^)]+(?:python|javascript|html|css|sql|c\+\+|java|aws|react|vue|angular|django|flask|sqlite|postgres)[^)]*\)', text, re.IGNORECASE))
-                                has_using_tech = bool(re.search(r'\busing\s+[\w\s\&]+', text, re.IGNORECASE))
-                                words = text.split()
-                                is_title_case = all(w[0].isupper() or w[0] in "(&" for w in words if w and w[0].isalpha())
-                                
-                                if has_tech_parentheses or has_using_tech or (is_title_case and len(words) <= 6):
-                                    is_project = True
-                                
-                    if is_project:
-                        segments.append({
-                            "type": "project_heading",
-                            "text": text,
-                            "section": current_section,
-                            "heading_level": level
-                        })
-                    else:
+                    if text.upper() in KNOWN_HEADERS:
                         current_section = text
                         current_heading_level = level
                         segments.append({
@@ -630,6 +645,14 @@ class PDFStructureParser:
                             "level": level,
                             "section": current_section,
                             "heading_level": current_heading_level
+                        })
+                    else:
+                        # Sub-item title using layout signal
+                        segments.append({
+                            "type": "project_heading",
+                            "text": text,
+                            "section": current_section,
+                            "heading_level": level
                         })
                 return
                 
@@ -652,78 +675,13 @@ class PDFStructureParser:
                             return
                         parent = parent.parent
                         
-                    # 1. Project heading detection heuristic:
-                    is_project = False
-                    if current_section.upper() in ["PROJECTS", "PROJECT DETAILS", "WORK EXPERIENCE", "EXPERIENCE"]:
-                        if 5 <= len(text) <= 75 and not text.endswith((".", ",", ";", "?", "!")):
-                            common_keywords = {
-                                "SUMMARY", "OBJECTIVE", "CAREER OBJECTIVE", "CAREER", "EDUCATION", 
-                                "EXPERIENCE", "WORK EXPERIENCE", "WORK HISTORY", "PROJECTS", 
-                                "PROJECT DETAILS", "SKILLS", "TECHNICAL SKILLS", "ADDITIONAL SKILLS", 
-                                "CERTIFICATIONS", "LANGUAGES", "AWARDS", "INTERESTS", "PUBLICATIONS", 
-                                "ABOUT ME", "CONTACT", "CONTACT INFO", "PERSONAL DETAILS", "DECLARATION"
-                            }
-                            is_all_caps = text.isupper() and any(c.isalpha() for c in text)
-                            if text.upper() not in common_keywords and not (is_all_caps and len(text.split()) == 1):
-                                has_tech_parentheses = bool(re.search(r'\([^)]+(?:python|javascript|html|css|sql|c\+\+|java|aws|react|vue|angular|django|flask|sqlite|postgres)[^)]*\)', text, re.IGNORECASE))
-                                has_using_tech = bool(re.search(r'\busing\s+[\w\s\&]+', text, re.IGNORECASE))
-                                words = text.split()
-                                is_title_case = all(w[0].isupper() or w[0] in "(&" for w in words if w and w[0].isalpha())
-                                
-                                if has_tech_parentheses or has_using_tech or (is_title_case and len(words) <= 6):
-                                    is_project = True
-                                
-                    if is_project:
-                        segments.append({
-                            "type": "project_heading",
-                            "text": text,
-                            "section": current_section,
-                            "heading_level": current_heading_level + 1
-                        })
-                        return
-
-                    # 2. Plain text heading detection heuristic inside <p>:
-                    is_h = False
-                    if element.name == "p" and len(text) <= 50 and not text.endswith((".", ",", "?", "!")):
-                        clean_h = re.sub(r'[:\-\s\&\/\\]', '', text)
-                        if clean_h.isalnum():
-                            has_alpha = any(c.isalpha() for c in text)
-                            is_all_caps = has_alpha and text.isupper()
-                            
-                            common_keywords = {
-                                "SUMMARY", "OBJECTIVE", "CAREER OBJECTIVE", "CAREER", "EDUCATION", 
-                                "EXPERIENCE", "WORK EXPERIENCE", "WORK HISTORY", "PROJECTS", 
-                                "PROJECT DETAILS", "SKILLS", "TECHNICAL SKILLS", "ADDITIONAL SKILLS", 
-                                "CERTIFICATIONS", "LANGUAGES", "AWARDS", "INTERESTS", "PUBLICATIONS", 
-                                "ABOUT ME", "CONTACT", "CONTACT INFO", "PERSONAL DETAILS", "DECLARATION",
-                                # NTSB & Incident Report specific
-                                "ANALYSIS", "PROBABLE CAUSE", "PROBABLE CAUSE AND FINDINGS", 
-                                "FINDINGS", "HISTORY OF FLIGHT", "METEOROLOGICAL INFORMATION", 
-                                "AIRCRAFT INFORMATION", "WRECKAGE AND IMPACT INFORMATION",
-                                "MEDICAL AND PATHOLOGICAL INFORMATION", "TESTS AND RESEARCH",
-                                "ADDITIONAL INFORMATION", "FLIGHT RECORDERS", "SURVIVAL ASPECTS"
-                            }
-                            
-                            words = text.split()
-                            is_title_case = False
-                            if len(words) <= 6:
-                                connectors = {"and", "or", "of", "the", "in", "to", "for", "with", "on", "at", "by"}
-                                is_title_case = all(
-                                    w.isupper() or (w and w[0].isupper()) or (w.lower() in connectors)
-                                    for w in words if w and w[0].isalpha()
-                                )
-                                if is_title_case and not any(w[0].isupper() for w in words if w and w[0].isalpha()):
-                                    is_title_case = False
-                            
-                            if is_all_caps or text.upper() in common_keywords or is_title_case:
-                                is_h = True
-                                
-                    if is_h:
-                        current_section = text
+                    clean_text = re.sub(r'[*_:\-\s&/\\;]', '', text)
+                    if len(text) <= 50 and text.upper().strip() in KNOWN_HEADERS:
+                        current_section = text.strip()
                         current_heading_level = 2
                         segments.append({
                             "type": "heading",
-                            "text": text,
+                            "text": text.strip(),
                             "level": 2,
                             "section": current_section,
                             "heading_level": current_heading_level
@@ -746,173 +704,345 @@ class PDFStructureParser:
 
     @staticmethod
     def _parse_markdown(markdown_content: str) -> List[Dict[str, Any]]:
-        lines = markdown_content.split("\n")
         segments = []
         current_section = "Introduction"
         current_heading_level = 1
         
+        lines = markdown_content.split("\n")
+        
+        KNOWN_HEADERS = {
+            "SUMMARY", "OBJECTIVE", "CAREER OBJECTIVE", "CAREER", "EDUCATION", 
+            "EXPERIENCE", "WORK EXPERIENCE", "WORK HISTORY", "PROJECTS", "KEY PROJECTS",
+            "PROJECT DETAILS", "SKILLS", "TECHNICAL SKILLS", "ADDITIONAL SKILLS", 
+            "CERTIFICATIONS", "LANGUAGES", "AWARDS", "INTERESTS", "PUBLICATIONS", 
+            "ABOUT ME", "CONTACT", "CONTACT INFO", "PERSONAL DETAILS", "DECLARATION",
+            "ANALYSIS", "PROBABLE CAUSE", "PROBABLE CAUSE AND FINDINGS", 
+            "FINDINGS", "HISTORY OF FLIGHT", "METEOROLOGICAL INFORMATION", 
+            "AIRCRAFT INFORMATION", "WRECKAGE AND IMPACT INFORMATION",
+            "MEDICAL AND PATHOLOGICAL INFORMATION", "TESTS AND RESEARCH",
+            "ADDITIONAL INFORMATION", "FLIGHT RECORDERS", "SURVIVAL ASPECTS"
+        }
+        
         in_table = False
         table_lines = []
-        text_lines = []
         
-        def flush_text():
-            nonlocal text_lines
-            txt = "\n".join(text_lines).strip()
-            if txt:
-                segments.append({
-                    "type": "text",
-                    "text": txt,
-                    "section": current_section,
-                    "heading_level": current_heading_level
-                })
-            text_lines = []
-            
-        def flush_table():
-            nonlocal table_lines, in_table
-            if table_lines:
-                tbl = "\n".join(table_lines).strip()
-                
-                table_section = current_section
-                if len(table_lines) > 0 and "|" in table_lines[0]:
-                    # Extract columns from the first row to give the table an independently-scorable identity
-                    cols = [c.strip() for c in table_lines[0].split("|") if c.strip() and not all(ch == '-' for ch in c.strip())]
-                    if cols:
-                        col_str = " | ".join(cols[:4])
-                        table_section = f"{current_section} - Table ({col_str})"
-                        
-                segments.append({
-                    "type": "table",
-                    "text": tbl,
-                    "section": table_section,
-                    "heading_level": current_heading_level
-                })
-            table_lines = []
-            in_table = False
-
         for line in lines:
             stripped = line.strip()
             if not stripped:
                 continue
                 
-            heading_match = re.match(r"^(#{1,6})\s+(.*)$", stripped)
-            
-            is_heuristic_heading = False
-            heading_text = ""
-            level = 2
-            
-            if not heading_match:
-                # 1. FAQ/Question headings: ends with '?' and starts with common question words or is short
-                if 5 <= len(stripped) <= 80 and stripped.endswith("?") and any(stripped.lower().startswith(w) for w in ["what", "how", "why", "who", "when", "where", "can", "is", "are", "do", "does", "did"]):
-                    is_heuristic_heading = True
-                    heading_text = stripped
-                    level = 3
-                
-                # 2. Numbered headings (e.g. 1. Introduction, 2.1 Technical Specs, 3.2.1 Deep Dive)
-                # We look for: (digits and dots) + space + Title Case or UPPERCASE words
-                elif 3 <= len(stripped) <= 60 and re.match(r"^\d+(?:\.\d+)*\.?\s+[A-Z][a-zA-Z\s\&\-\/]*$", stripped):
-                    is_heuristic_heading = True
-                    heading_text = stripped
-                    level = 2
+            if "|" in stripped and stripped.startswith("|") and stripped.endswith("|"):
+                in_table = True
+                table_lines.append(line)
+                continue
+            else:
+                if in_table:
+                    segments.append({
+                        "type": "table",
+                        "text": "\n".join(table_lines),
+                        "section": current_section,
+                        "heading_level": current_heading_level
+                    })
+                    in_table = False
+                    table_lines = []
                     
-                # 3. Resume headings / UPPERCASE headings
-                # Must consist of alphabetic words, spaces, and optionally separators like &, /, -, :
-                # Must be entirely uppercase (at least 3 characters) or match common section keywords
+            heading_match = re.match(r'^(#{1,6})\s+(.*)', stripped)
+            if heading_match:
+                level = len(heading_match.group(1))
+                text = heading_match.group(2).strip()
+                if text.upper() in KNOWN_HEADERS:
+                    current_section = text
+                    current_heading_level = level
+                    segments.append({
+                        "type": "heading",
+                        "text": text,
+                        "level": level,
+                        "section": current_section,
+                        "heading_level": current_heading_level
+                    })
                 else:
-                    clean_h = re.sub(r'[:\-\s\&\/\\]', '', stripped)
-                    if 3 <= len(stripped) <= 60 and clean_h.isalnum() and not stripped.endswith((".", ",", "?", "!")):
-                        has_alpha = any(c.isalpha() for c in stripped)
-                        is_all_caps = has_alpha and stripped.isupper()
-                        
-                        common_keywords = {
-                            "SUMMARY", "OBJECTIVE", "CAREER OBJECTIVE", "CAREER", "EDUCATION", 
-                            "EXPERIENCE", "WORK EXPERIENCE", "WORK HISTORY", "PROJECTS", 
-                            "PROJECT DETAILS", "SKILLS", "TECHNICAL SKILLS", "ADDITIONAL SKILLS", 
-                            "CERTIFICATIONS", "LANGUAGES", "AWARDS", "INTERESTS", "PUBLICATIONS", 
-                            "ABOUT ME", "CONTACT", "CONTACT INFO", "PERSONAL DETAILS", "DECLARATION",
-                            # NTSB & Incident Report specific
-                            "ANALYSIS", "PROBABLE CAUSE", "PROBABLE CAUSE AND FINDINGS", 
-                            "FINDINGS", "HISTORY OF FLIGHT", "METEOROLOGICAL INFORMATION", 
-                            "AIRCRAFT INFORMATION", "WRECKAGE AND IMPACT INFORMATION",
-                            "MEDICAL AND PATHOLOGICAL INFORMATION", "TESTS AND RESEARCH",
-                            "ADDITIONAL INFORMATION", "FLIGHT RECORDERS", "SURVIVAL ASPECTS"
-                        }
-                        
-                        # Check for Title Case short lines (e.g., "Probable Cause and Findings")
-                        words = stripped.split()
-                        is_title_case = False
-                        if len(words) <= 6:
-                            # Allow small connector words like 'and', 'of', 'the' to be lowercase
-                            connectors = {"and", "or", "of", "the", "in", "to", "for", "with", "on", "at", "by"}
-                            is_title_case = all(
-                                w.isupper() or (w and w[0].isupper()) or (w.lower() in connectors)
-                                for w in words if w and w[0].isalpha()
-                            )
-                            # Must have at least one capitalized word
-                            if is_title_case and not any(w[0].isupper() for w in words if w and w[0].isalpha()):
-                                is_title_case = False
-
-                        if is_all_caps or stripped.upper() in common_keywords or is_title_case:
-                            is_heuristic_heading = True
-                            heading_text = stripped
-                            level = 2
-                            
-            # 4. Project heading check
-            is_project = False
-            if not heading_match and not is_heuristic_heading:
-                if current_section.upper() in ["PROJECTS", "PROJECT DETAILS", "WORK EXPERIENCE", "EXPERIENCE"]:
-                    if 5 <= len(stripped) <= 75 and not stripped.endswith((".", ",", ";", "?", "!")):
-                        # Check for tech stack in parentheses or using keyword
-                        has_tech_parentheses = bool(re.search(r'\([^)]+(?:python|javascript|html|css|sql|c\+\+|java|aws|react|vue|angular|django|flask|sqlite|postgres)[^)]*\)', stripped, re.IGNORECASE))
-                        has_using_tech = bool(re.search(r'\busing\s+[\w\s\&]+', stripped, re.IGNORECASE))
-                        # Or it consists of Title Case words
-                        words = stripped.split()
-                        is_title_case = all(w[0].isupper() or w[0] in "(&" for w in words if w and w[0].isalpha())
-                        
-                        if has_tech_parentheses or has_using_tech or (is_title_case and len(words) <= 6):
-                            is_project = True
-
-            if heading_match or is_heuristic_heading:
-                flush_text()
-                flush_table()
-                if heading_match:
-                    hashes, text = heading_match.groups()
-                    level = len(hashes)
-                    heading_text = text
+                    segments.append({
+                        "type": "project_heading",
+                        "text": text,
+                        "section": current_section,
+                        "heading_level": level
+                    })
+                continue
                 
-                current_section = heading_text
-                current_heading_level = level
+            clean_line = re.sub(r'[*_:\-\s&/\\;]', '', stripped)
+            raw_upper = re.sub(r'[*_]', '', stripped).strip().upper()
+            if len(stripped) <= 50 and raw_upper in KNOWN_HEADERS:
+                current_section = re.sub(r'[*_]', '', stripped).strip()
+                current_heading_level = 2
                 segments.append({
                     "type": "heading",
-                    "text": heading_text,
-                    "level": level,
+                    "text": current_section,
+                    "level": 2,
                     "section": current_section,
                     "heading_level": current_heading_level
                 })
                 continue
                 
-            if is_project:
-                flush_text()
-                flush_table()
+            segments.append({
+                "type": "text",
+                "text": stripped,
+                "section": current_section,
+                "heading_level": current_heading_level
+            })
+            
+        if in_table:
+            segments.append({
+                "type": "table",
+                "text": "\n".join(table_lines),
+                "section": current_section,
+                "heading_level": current_heading_level
+            })
+            
+        return segments
+
+    # ------------------------------------------------------------------
+    # Layout-aware path: reads font metrics from pdfplumber directly
+    # ------------------------------------------------------------------
+    @staticmethod
+    async def parse_from_bytes(pdf_bytes: bytes) -> List[Dict[str, Any]]:
+        """
+        Parse raw PDF bytes using pdfplumber font-size/weight signals.
+
+        Three-tier classification:
+          - Tier 1 (top-level section): largest font OR all-caps AND exact KNOWN match → type="heading"
+          - Tier 2 (sub-item title): bolder/larger than body but not top-tier → type="project_heading"
+          - Tier 3 (body): everything else → type="text"
+
+        Falls back to LLM tree if layout confidence is too low.
+        """
+        import asyncio
+        import io
+
+        def _sync_extract(pdf_bytes: bytes):
+            try:
+                import pdfplumber
+            except ImportError:
+                return None, 0.0
+
+            segments = []
+            current_section = "Introduction"
+            current_heading_level = 1
+
+            # Collect all font sizes for statistical thresholds
+            all_sizes = []
+            pages_data = []  # (page_idx, words_with_font)
+
+            try:
+                with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                    for page_idx, page in enumerate(pdf.pages):
+                        words = page.extract_words(
+                            extra_attrs=["fontname", "size"],
+                            keep_blank_chars=False,
+                        )
+                        pages_data.append((page_idx, words))
+                        for w in words:
+                            sz = w.get("size")
+                            if sz:
+                                all_sizes.append(float(sz))
+            except Exception:
+                return None, 0.0
+
+            if not all_sizes:
+                return None, 0.0
+
+            reliable_count = sum(1 for s in all_sizes if s and s > 0)
+            confidence = reliable_count / len(all_sizes) if all_sizes else 0.0
+            if confidence < 0.5:
+                return None, confidence
+
+            # Statistical thresholds
+            import statistics
+            body_size = statistics.median(all_sizes)
+            # tier1: >= body * 1.25 or all-caps + in KNOWN_SECTION_HEADERS
+            # tier2: > body * 1.05 (bolder/larger than body, not tier1)
+            tier1_size_thresh = body_size * 1.15
+            tier2_size_thresh = body_size * 1.04
+
+            def _classify_line(line_text: str, max_size: float, is_bold: bool) -> str:
+                """
+                Returns 'heading', 'project_heading', or 'text'.
+                Top-tier (heading) = exact KNOWN match OR (large font AND all-caps-ish).
+                Sub-tier (project_heading) = meaningfully larger/bolder than body.
+                """
+                stripped = re.sub(r'[*_]', '', line_text).strip()
+                upper = stripped.upper()
+                in_known = upper in KNOWN_SECTION_HEADERS
+
+                if in_known:
+                    return 'heading'
+                if max_size >= tier1_size_thresh and stripped.isupper() and len(stripped) >= 3:
+                    return 'heading'
+                if max_size >= tier2_size_thresh or is_bold:
+                    return 'project_heading'
+                return 'text'
+
+            # Group words into visual lines by y-coordinate
+            for page_idx, words in pages_data:
+                if not words:
+                    continue
+
+                # Sort by top (y0) then left (x0)
+                words_sorted = sorted(words, key=lambda w: (round(w["top"], 1), w["x0"]))
+
+                # Group into lines
+                lines = []
+                current_line = []
+                last_top = None
+                for w in words_sorted:
+                    top = round(w["top"], 1)
+                    if last_top is None or abs(top - last_top) <= 3:
+                        current_line.append(w)
+                    else:
+                        if current_line:
+                            lines.append(current_line)
+                        current_line = [w]
+                    last_top = top
+                if current_line:
+                    lines.append(current_line)
+
+                for line_words in lines:
+                    line_text = " ".join(w["text"] for w in line_words).strip()
+                    if not line_text:
+                        continue
+
+                    max_size = max((float(w.get("size") or 0) for w in line_words), default=0)
+                    is_bold = any(
+                        "bold" in (w.get("fontname") or "").lower() or
+                        "bd" in (w.get("fontname") or "").lower()
+                        for w in line_words
+                    )
+
+                    tier = _classify_line(line_text, max_size, is_bold)
+
+                    if tier == 'heading':
+                        current_section = re.sub(r'[*_]', '', line_text).strip()
+                        current_heading_level = 1
+                        segments.append({
+                            "type": "heading",
+                            "text": current_section,
+                            "level": 1,
+                            "section": current_section,
+                            "heading_level": 1,
+                            "parent_section": current_section,
+                        })
+                    elif tier == 'project_heading':
+                        segments.append({
+                            "type": "project_heading",
+                            "text": line_text,
+                            "section": current_section,
+                            "heading_level": 2,
+                            "parent_section": current_section,  # ← never resets current_section
+                        })
+                    else:
+                        segments.append({
+                            "type": "text",
+                            "text": line_text,
+                            "section": current_section,
+                            "heading_level": current_heading_level,
+                            "parent_section": current_section,
+                        })
+
+            return segments, confidence
+
+        loop = asyncio.get_event_loop()
+        segments, confidence = await loop.run_in_executor(None, _sync_extract, pdf_bytes)
+
+        if segments is not None:
+            logger.info(f"[LayoutAwarePDF] Parsed {len(segments)} segments via pdfplumber layout (confidence={confidence:.2f})")
+            return segments
+
+        # Low confidence → LLM fallback
+        logger.warning("[LayoutAwarePDF] Layout confidence too low — falling back to LLM section-tree parsing")
+        return await PDFStructureParser._parse_llm_tree_from_bytes(pdf_bytes)
+
+    @staticmethod
+    async def _parse_llm_tree_from_bytes(pdf_bytes: bytes) -> List[Dict[str, Any]]:
+        """
+        LLM fallback: extract plain text, send to LLM once with a structured prompt,
+        receive a JSON section tree, then chunk against that tree.
+        Used only when layout heuristics fail confidence checks.
+        """
+        import asyncio
+        import io
+        import json
+
+        def _get_plain_text(pdf_bytes):
+            try:
+                import pdfplumber
+                with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                    return "\n\n".join(p.extract_text() or "" for p in pdf.pages).strip()
+            except Exception:
+                return ""
+
+        loop = asyncio.get_event_loop()
+        raw_text = await loop.run_in_executor(None, _get_plain_text, pdf_bytes)
+        if not raw_text:
+            return []
+
+        prompt = (
+            "You are a document structure parser. Given the raw text below, return ONLY a "
+            "JSON array of section objects with no extra commentary. Each object must have:\n"
+            '  {"section": "<top-level section name>", "sub_sections": ["<sub-item title>", ...], "body": "<body text>"}\n\n'
+            "Rules:\n"
+            "- Top-level sections are major headings (e.g. EDUCATION, KEY PROJECTS, EXPERIENCE).\n"
+            "- Sub-sections are project/job titles within those sections.\n"
+            "- Do NOT include markdown formatting in values.\n"
+            "- If a section has no sub-sections, use an empty array for sub_sections.\n\n"
+            f"Raw text:\n{raw_text[:12000]}"
+        )
+
+        try:
+            from .llm.deepinfra_llm import DeepInfraLLMClient
+            llm_client = DeepInfraLLMClient()
+            response = await llm_client.complete(prompt, max_tokens=4000, temperature=0)
+            # Strip markdown fences if present
+            clean = re.sub(r'^```[^\n]*\n?|```$', '', response.strip(), flags=re.MULTILINE).strip()
+            tree = json.loads(clean)
+        except Exception as e:
+            logger.error(f"[LLMTreeFallback] LLM section-tree extraction failed: {e}")
+            # Last resort: parse the raw text with the text parser
+            return PDFStructureParser._parse_markdown(raw_text)
+
+        # Convert the JSON tree into our standard segment format
+        segments = []
+        for entry in tree:
+            top_section = entry.get("section", "Introduction").strip()
+            segments.append({
+                "type": "heading",
+                "text": top_section,
+                "level": 1,
+                "section": top_section,
+                "heading_level": 1,
+                "parent_section": top_section,
+            })
+
+            for sub in entry.get("sub_sections", []):
+                sub = sub.strip()
+                if sub:
+                    segments.append({
+                        "type": "project_heading",
+                        "text": sub,
+                        "section": top_section,
+                        "heading_level": 2,
+                        "parent_section": top_section,
+                    })
+
+            body = entry.get("body", "").strip()
+            if body:
                 segments.append({
-                    "type": "project_heading",
-                    "text": stripped,
-                    "section": current_section,
-                    "heading_level": current_heading_level + 1
+                    "type": "text",
+                    "text": body,
+                    "section": top_section,
+                    "heading_level": 1,
+                    "parent_section": top_section,
                 })
-                continue
-                
-            if stripped.startswith("|") and stripped.endswith("|"):
-                if not in_table:
-                    flush_text()
-                    in_table = True
-                table_lines.append(line)
-            else:
-                if in_table:
-                    flush_table()
-                text_lines.append(line)
-                
-        flush_text()
-        flush_table()
+
+        logger.info(f"[LLMTreeFallback] Built {len(segments)} segments from LLM section tree")
         return segments
 
 
@@ -988,7 +1118,8 @@ class PDFChunker:
                     "project_name": None,
                     "level": seg["heading_level"],
                     "text": seg["text"],
-                    "type": "table"
+                    "type": "table",
+                    "parent_section": seg.get("parent_section", current_section_name),
                 })
             elif seg["type"] == "heading":
                 # Flush current section text
@@ -998,29 +1129,32 @@ class PDFChunker:
                         "project_name": current_project_name,
                         "level": current_heading_level,
                         "text": "\n\n".join(current_section_texts),
-                        "type": current_section_type
+                        "type": current_section_type,
+                        "parent_section": seg.get("parent_section", current_section_name),
                     })
                     current_section_texts = []
-                current_section_name = seg["section"]
+                current_section_name = seg["section"]  # ← only top-tier heading resets current_section
                 current_heading_level = seg["heading_level"]
                 current_project_name = None
                 current_section_type = "section"
             elif seg["type"] == "project_heading":
-                # Flush current section text
+                # Flush current section text — parent_section stays as current_section_name
                 if current_section_texts:
                     sections.append({
                         "name": current_section_name,
                         "project_name": current_project_name,
                         "level": current_heading_level,
                         "text": "\n\n".join(current_section_texts),
-                        "type": current_section_type
+                        "type": current_section_type,
+                        "parent_section": current_section_name,  # ← never changes on sub-item
                     })
                     current_section_texts = []
-                current_project_name = seg["text"]
+                current_project_name = seg["text"]  # sub-item title → project_name, NOT current_section
                 current_section_type = "project"
+                # current_section_name intentionally NOT updated here
             elif seg["type"] == "text":
                 current_section_texts.append(seg["text"])
-                
+
         # Flush final section text
         if current_section_texts:
             sections.append({
@@ -1028,7 +1162,8 @@ class PDFChunker:
                 "project_name": current_project_name,
                 "level": current_heading_level,
                 "text": "\n\n".join(current_section_texts),
-                "type": current_section_type
+                "type": current_section_type,
+                "parent_section": current_section_name,
             })
             
         # 4. Generate chunks from sections/tables
@@ -1065,7 +1200,9 @@ class PDFChunker:
             
             # Format chunk text with metadata prefixes for enhanced retrieval
             if sec_type == "project":
-                chunk_text = f"Section: {sec_name}\nProject: {sec_project}\n\n{sec_text}"
+                topic_name = sec_name
+                sec_name = sec_project[:250] if sec_project else sec_name
+                chunk_text = f"Topic: {topic_name}\nSection: {sec_name}\n\n{sec_text}"
                 chunk_type_val = "project"
             elif sec_type == "table":
                 # Skip raw markdown table chunks — structured row-level embeddings
@@ -1073,7 +1210,7 @@ class PDFChunker:
                 # Including raw markdown tables creates noisy duplicate chunks.
                 continue
             else:
-                chunk_text = f"Section: {sec_name}\n\n{sec_text}" if sec_name and sec_name != "Introduction" else sec_text
+                chunk_text = f"Section: {sec_name}\n\n{sec_text}" if sec_name else sec_text
                 chunk_type_val = "section"
                 
             # If it's a FAQ section (the faq_chunks check was not matched, or this is individual questions)
@@ -1092,7 +1229,7 @@ class PDFChunker:
                 for sc in semantic_subchunks:
                     prefix = f"Section: {sec_name} (continued)\n\n"
                     if sec_type == "project":
-                        prefix = f"Section: {sec_name}\nProject: {sec_project} (continued)\n\n"
+                        prefix = f"Topic: {topic_name}\nSection: {sec_name} (continued)\n\n"
                         
                     chunks.append({
                         "chunk_text": f"{prefix}{sc['text']}",
@@ -1105,6 +1242,7 @@ class PDFChunker:
                             "source_type": "pdf",
                             "chunk_type": chunk_type_val,
                             "section": sec_name,
+                            "parent_section": sec.get("parent_section", sec_name),
                             "project_name": sec_project,
                             "heading_level": sec_level,
                             "position": position,
@@ -1113,9 +1251,7 @@ class PDFChunker:
                     })
                     position += 1
             else:
-                # Accumulate small sections — but flush when section name changes
-                # to preserve section identity for retrieval (SectionRanker needs
-                # distinct section labels to scope queries correctly).
+                # Accumulate small sections — flush when section name changes
                 section_changed = (
                     current_combined_metadata is not None and
                     current_combined_metadata.get("section") != sec_name and
@@ -1123,15 +1259,16 @@ class PDFChunker:
                 )
                 if section_changed:
                     flush_accumulator()
-                
+
                 if len(current_combined_text) + len(chunk_text) > max_chunk_size and current_combined_text:
                     flush_accumulator()
-                    
+
                 if not current_combined_metadata:
                     current_combined_metadata = {
                         "source_type": "pdf",
                         "chunk_type": chunk_type_val,
                         "section": sec_name,
+                        "parent_section": sec.get("parent_section", sec_name),
                         "project_name": sec_project,
                         "heading_level": sec_level
                     }
@@ -1163,45 +1300,51 @@ class AdaptiveChunker:
                 elif avg_words_per_line < 5:
                     max_chunk_size = 2500  # Sparse text (TOC, lists): smaller chunks
                     
+        chunks = []
         if source_type in ["excel", "xlsx", "xls"]:
             if isinstance(content, pd.DataFrame):
                 sheet_name = (metadata or {}).get("sheet_name", "Sheet1")
-                return ExcelChunker.chunk(content, sheet_name=sheet_name, max_chunk_size=max_chunk_size)
+                chunks = ExcelChunker.chunk(content, sheet_name=sheet_name, max_chunk_size=max_chunk_size)
             else:
                 all_chunks = []
                 if isinstance(content, dict):
                     for s_name, s_df in content.items():
                          all_chunks.extend(ExcelChunker.chunk(s_df, sheet_name=s_name, max_chunk_size=max_chunk_size))
-                return all_chunks
+                chunks = all_chunks
                 
         elif source_type == "csv":
             if isinstance(content, pd.DataFrame):
-                return CSVChunker.chunk(content, max_chunk_size=max_chunk_size)
-            return []
+                chunks = CSVChunker.chunk(content, max_chunk_size=max_chunk_size)
             
         elif source_type == "url":
-            return await URLChunker.chunk(str(content), max_chunk_size=max_chunk_size)
+            chunks = await URLChunker.chunk(str(content), max_chunk_size=max_chunk_size)
             
         elif source_type in ["pdf", "docx", "txt", "text"]:
             if source_type == "pdf":
                 raw_html = getattr(content, "raw_html", str(content))
                 structure = PDFStructureParser.parse(raw_html)
-                return await PDFChunker.chunk(structure, max_chunk_size=max_chunk_size)
+                chunks = await PDFChunker.chunk(structure, max_chunk_size=max_chunk_size)
             else:
-                return await PDFChunker.chunk(str(content), max_chunk_size=max_chunk_size)
+                chunks = await PDFChunker.chunk(str(content), max_chunk_size=max_chunk_size)
             
         else:
             fallback_subchunks = await SemanticChunker.chunk(str(content), max_chunk_size=max_chunk_size)
-            chunks = []
             for idx, sc in enumerate(fallback_subchunks):
                 chunks.append({
-                                "chunk_text": sc["text"],
+                    "chunk_text": sc["text"],
                     "chunk_type": "generic",
                     "source_type": source_type,
                     "position": idx,
                     "section": None,
                     "sheet": None,
-                    "metadata": {"overlap_prefix_len": sc.get("overlap_prefix_len", 0)} if isinstance(sc, dict) else {}
-                                })
-            return chunks
+                    "metadata": {}
+                })
+                
+        for c in chunks:
+            if "chunk_text" in c:
+                sec = c.get("section")
+                if sec and not c["chunk_text"].startswith("Section:") and not c["chunk_text"].startswith("Topic:"):
+                    c["chunk_text"] = f"Section: {sec}\n\n{c['chunk_text']}"
+                    
+        return chunks
 

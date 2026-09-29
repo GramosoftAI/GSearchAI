@@ -75,6 +75,8 @@ async def run_pdf_ingestion_job(
             )
             
             job_service = JobService(db, tenant_id)
+            # Immediately mark as processing so the job never remains stranded in 'queued'
+            await job_service.update_job_progress(job_id, status="processing", progress=2, current_step="Initializing ingestion")
             
             # Check database for duplicate hash or duplicate filename with modified content
             from sqlalchemy import select, or_
@@ -157,37 +159,50 @@ async def run_pdf_ingestion_job(
                     ext = filename.lower().split('.')[-1] if '.' in filename else ''
                     if f".{ext}" in [".doc", ".docx", ".txt", ".md"]:
                         converted = False
-                        try:
-                            from app.modules.file_supporter import prepare_for_pdf_pipeline
-                            import tempfile
-                            import os
-                            
-                            with tempfile.TemporaryDirectory() as workdir:
-                                temp_input_path = os.path.join(workdir, filename)
-                                with open(temp_input_path, 'wb') as f:
-                                    f.write(content)
+                        
+                        if ext == "docx":
+                            try:
+                                from app.core.docx_extractor import DocxExtractor
+                                logger.info(f"Job {job_id}: Attempting native DOCX extraction for {filename}")
+                                document_text = await DocxExtractor.extract(content, filename)
+                                converted = True # Skip the LibreOffice path
+                            except Exception as e:
+                                logger.error(f"Job {job_id}: Native DOCX extraction failed, falling back to LibreOffice: {e}")
+                                converted = False # Fall through to LibreOffice
                                 
-                                logger.info(f"Job {job_id}: Converting {filename} to PDF using prepare_for_pdf_pipeline")
-                                pdf_path = await prepare_for_pdf_pipeline(temp_input_path, workdir)
+                        if not converted:
+                            try:
+                                from app.modules.file_supporter import prepare_for_pdf_pipeline
+                                import tempfile
+                                import os
                                 
-                                with open(pdf_path, 'rb') as f:
-                                    content = f.read()
+                                with tempfile.TemporaryDirectory() as workdir:
+                                    temp_input_path = os.path.join(workdir, filename)
+                                    with open(temp_input_path, 'wb') as f:
+                                        f.write(content)
                                     
-                                filename = f"{filename}.pdf"
+                                    logger.info(f"Job {job_id}: Converting {filename} to PDF using prepare_for_pdf_pipeline")
+                                    pdf_path = await prepare_for_pdf_pipeline(temp_input_path, workdir)
+                                    
+                                    with open(pdf_path, 'rb') as f:
+                                        content = f.read()
+                                        
+                                    filename = f"{filename}.pdf"
+                                    
+                                document_text = await PDFExtractor.extract(
+                                    pdf_bytes=content,
+                                    filename=filename,
+                                    tenant_id=tenant_id,
+                                    agent_id=agent_id,
+                                )
                                 converted = True
-                        except Exception as conv_err:
-                            logger.warning(f"Job {job_id}: LibreOffice conversion failed or soffice missing ({conv_err}). Falling back to native text parser.")
+                            except Exception as conv_err:
+                                logger.warning(f"Job {job_id}: LibreOffice conversion failed or soffice missing ({conv_err}). Falling back to native text parser.")
 
-                        if converted:
-                            document_text = await PDFExtractor.extract(
-                                pdf_bytes=content,
-                                filename=filename,
-                                tenant_id=tenant_id,
-                                agent_id=agent_id,
-                            )
-                        else:
+                        if not converted:
                             from app.core.pdf_extractor import ExtractedText
                             if ext == "docx":
+                                # Very old fallback if even LibreOffice fails
                                 import zipfile
                                 import io
                                 import xml.etree.ElementTree as ET
@@ -199,9 +214,65 @@ async def run_pdf_ingestion_job(
                                         if elem.tag.endswith('t'):
                                             paragraphs.append(elem.text or "")
                                     raw_text = " ".join(paragraphs)
-                                document_text = ExtractedText(raw_text, extraction_method="docx_native")
+                                document_text = ExtractedText(raw_text, extraction_method="docx_native_fallback")
+                            elif ext == "doc":
+                                import re
+                                import struct
+                                import io
+                                raw_text = ""
+                                try:
+                                    import olefile
+                                    ole = olefile.OleFileIO(io.BytesIO(content))
+                                    if ole.exists('WordDocument'):
+                                        word_doc = ole.openstream('WordDocument').read()
+                                        fib = word_doc[:1472]
+                                        flags = struct.unpack('<H', fib[0x000A:0x000C])[0]
+                                        table_name = '1Table' if (flags & 0x0200) else '0Table'
+                                        if ole.exists(table_name):
+                                            table_stream = ole.openstream(table_name).read()
+                                            fcClx = struct.unpack('<I', fib[0x01a2:0x01a6])[0]
+                                            lcbClx = struct.unpack('<I', fib[0x01a6:0x01aa])[0]
+                                            clx_data = table_stream[fcClx:fcClx + lcbClx]
+                                            # Plcfpcd starts after 0x02 clxt byte + 4 bytes length
+                                            pcd_data = clx_data[5:]
+                                            cp0, cp1 = struct.unpack('<II', pcd_data[:8])
+                                            pcd = pcd_data[8:16]
+                                            fc = struct.unpack('<I', pcd[2:6])[0]
+                                            is_compressed = bool(fc & (1 << 30))
+                                            actual_fc = fc & ~(1 << 30)
+
+                                            if is_compressed:
+                                                raw_piece = word_doc[actual_fc // 2 : (actual_fc // 2) + (cp1 - cp0)]
+                                                doc_extracted_text = raw_piece.decode('latin-1', errors='ignore')
+                                            else:
+                                                raw_piece = word_doc[actual_fc : actual_fc + (cp1 - cp0) * 2]
+                                                doc_extracted_text = raw_piece.decode('utf-16-le', errors='ignore')
+
+                                            clean = doc_extracted_text.replace('\r\r', '\n\n').replace('\r', '\n')
+                                            clean = clean.replace('\x07', ' | ')
+                                            clean = re.sub(r'[\x00-\x06\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ufffd\ufffe\uffff]', '', clean)
+                                            clean = re.sub(r'\n{3,}', '\n\n', clean)
+                                            raw_text = clean.strip()
+                                except Exception as ole_err:
+                                    logger.warning(f"Job {job_id}: OLE piece table extraction failed ({ole_err}), falling back to regex.")
+
+                                if not raw_text:
+                                    utf16_matches = re.findall(rb'(?:[\x20-\x7e\t\r\n]\x00){4,}', content)
+                                    utf16_text = [m.decode('utf-16-le', errors='ignore').strip() for m in utf16_matches]
+                                    ascii_matches = re.findall(rb'[\x20-\x7e\t\r\n]{4,}', content)
+                                    ascii_text = [m.decode('latin-1', errors='ignore').strip() for m in ascii_matches]
+                                    seen = set()
+                                    doc_chunks = []
+                                    for t in utf16_text + ascii_text:
+                                        cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', t).strip()
+                                        if len(cleaned) >= 4 and cleaned not in seen:
+                                            seen.add(cleaned)
+                                            doc_chunks.append(cleaned)
+                                    raw_text = "\n\n".join(doc_chunks) if doc_chunks else ""
+
+                                document_text = ExtractedText(raw_text, extraction_method="doc_native")
                             else:
-                                raw_text = content.decode("utf-8", errors="ignore")
+                                raw_text = content.decode("utf-8", errors="ignore").replace("\x00", "")
                                 document_text = ExtractedText(raw_text, extraction_method="text_native")
                     else:
                         document_text = await PDFExtractor.extract(
@@ -244,13 +315,27 @@ async def run_pdf_ingestion_job(
 
             kb_service = KnowledgeBaseService(db, tenant_id)
             kb_name = f"Spreadsheet: {filename}" if is_spreadsheet else f"PDF: {filename}"
+            raw_method = getattr(document_text, "extraction_method", "unknown").lower()
+            is_fallback_parser = raw_method in ("doc_native", "docx_native", "text_native")
+
             if is_spreadsheet:
                 kb_description = "Automated spreadsheet upload source (Table extraction)"
             else:
-                method = getattr(document_text, "extraction_method", "gdocz")
-                display_method = "Gdocz" if method.lower() == "gdocz" else "pdfplumber"
-                kb_description = f"Automated PDF upload source ({display_method} extraction)"
+                method_display_map = {
+                    "gdocz": "Gdocz",
+                    "pdfplumber": "pdfplumber",
+                    "docx_native": "DOCX Fallback (XML text)",
+                    "doc_native": "DOC Fallback (Binary text)",
+                    "text_native": "Plain Text Native",
+                }
+                display_method = method_display_map.get(raw_method, raw_method)
+                kb_description = f"Automated document upload source ({display_method} extraction)"
             kb_source = "spreadsheet_upload" if is_spreadsheet else "pdf_upload"
+
+            kb_metadata = {
+                "extraction_method": raw_method,
+                "is_fallback_parser": is_fallback_parser,
+            }
 
             kb_request = KBCreate(
                 name=kb_name,
@@ -285,18 +370,22 @@ async def run_pdf_ingestion_job(
                             if clean_k not in global_identifiers and clean_v and len(clean_v) < 50:
                                 global_identifiers[clean_k] = clean_v
 
-            # Save global identifiers to KnowledgeBase.metadata_json
-            if global_identifiers:
-                formatted_ids = [f"{k} {v}" for k, v in global_identifiers.items()]
-                async with AsyncSessionLocal() as db:
-                    from sqlalchemy import update
-                    from app.modules.knowledge_bases.models import KnowledgeBase
-                    await db.execute(
-                        update(KnowledgeBase)
-                        .where(KnowledgeBase.id == uuid.UUID(kb_id))
-                        .values(metadata_json={"global_identifiers": formatted_ids})
-                    )
-                    await db.commit()
+            # Save global identifiers & extraction metadata to KnowledgeBase.metadata_json
+            async with AsyncSessionLocal() as db:
+                from sqlalchemy import update
+                from app.modules.knowledge_bases.models import KnowledgeBase
+                
+                meta_update = dict(kb_metadata)
+                if global_identifiers:
+                    formatted_ids = [f"{k} {v}" for k, v in global_identifiers.items()]
+                    meta_update["global_identifiers"] = formatted_ids
+                
+                await db.execute(
+                    update(KnowledgeBase)
+                    .where(KnowledgeBase.id == uuid.UUID(kb_id))
+                    .values(metadata_json=meta_update)
+                )
+                await db.commit()
 
             # Step 2.5: Save Table Rows
             if table_rows:
@@ -386,7 +475,7 @@ async def run_pdf_ingestion_job(
             await job_service.update_job_progress(job_id, status="completed", progress=100, current_step="Complete")
             logger.info(f"Job {job_id}: Successfully completed!")
 
-    except Exception as e:
+    except (Exception, asyncio.CancelledError) as e:
         logger.error(f"Job {job_id}: Unexpected error: {e}", exc_info=True)
         try:
             async with AsyncSessionLocal() as db:
@@ -587,7 +676,7 @@ async def run_excel_ingestion_job(
             await job_service.update_job_progress(job_id, status="completed", progress=100, current_step="Complete")
             logger.info(f"Job {job_id}: Parquet hybrid ingestion successfully completed!")
 
-    except Exception as e:
+    except (Exception, asyncio.CancelledError) as e:
         logger.error(f"Job {job_id}: Unexpected error in Excel job: {e}", exc_info=True)
         try:
             async with AsyncSessionLocal() as db:
@@ -695,7 +784,7 @@ async def run_url_ingestion_job(
             await job_service.update_job_progress(job_id, status="completed", progress=100, current_step="Complete")
             logger.info(f"Job {job_id}: URL ingestion successfully completed!")
 
-    except Exception as e:
+    except (Exception, asyncio.CancelledError) as e:
         logger.error(f"Job {job_id}: Unexpected error: {e}", exc_info=True)
         try:
             async with AsyncSessionLocal() as db:

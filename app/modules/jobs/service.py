@@ -67,3 +67,35 @@ class JobService:
             await self.db.rollback()
             logger.error(f"Failed to update job {job_id}: {e}")
             return format_error(f"Failed to update job: {str(e)}")
+
+    async def cancel_and_delete_job(self, job_id: str) -> Dict[str, Any]:
+        try:
+            job = await self.repo.get_job(job_id)
+            if not job:
+                return format_error("Job not found", meta={"status_code": 404})
+            
+            # Cancel running task in Redis ARQ
+            try:
+                from arq.jobs import Job as ArqJob, JobStatus
+                from app.worker.queue import get_redis_pool
+                redis_pool = await get_redis_pool()
+                arq_job = ArqJob(job_id, redis_pool)
+                status = await arq_job.status()
+                
+                if status in [JobStatus.queued, JobStatus.in_progress]:
+                    await arq_job.abort()
+                    logger.info(f"Aborted ARQ job {job_id}")
+            except Exception as arq_err:
+                logger.warning(f"Failed to abort ARQ job: {arq_err}")
+                
+            # Delete from DB
+            deleted = await self.repo.delete_job(job_id)
+            if deleted:
+                await self.db.commit()
+                return format_success({"message": "Job cancelled and deleted successfully"})
+            else:
+                return format_error("Failed to delete job from database")
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Failed to cancel/delete job {job_id}: {e}")
+            return format_error(f"Failed to process request: {str(e)}")

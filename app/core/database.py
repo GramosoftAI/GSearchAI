@@ -4,7 +4,7 @@
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
-from sqlalchemy.pool import NullPool, QueuePool
+from sqlalchemy.pool import NullPool
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -38,13 +38,10 @@ engine = create_async_engine(
 
     echo=settings.postgres_echo,  # Log SQL in debug mode
 
-    pool_size=settings.postgres_pool_size,
 
-    max_overflow=settings.postgres_max_overflow,
+    pool_size=20,
+    max_overflow=40,
 
-    pool_pre_ping=True,
-
-    pool_recycle=settings.postgres_pool_recycle,
 
     connect_args={
         "server_settings": {
@@ -160,17 +157,22 @@ async def get_db(request: Request) -> AsyncSession:
 
             await session.commit()
 
-        except SQLAlchemyError as e:
-
-            await session.rollback()
-
+        except BaseException as e:
+            import anyio
+            try:
+                with anyio.CancelScope(shield=True):
+                    await session.rollback()
+            except Exception:
+                pass
             logger.error(f"Database error for tenant {tenant_id}: {e}")
-
             raise
-
         finally:
-
-            await session.close()
+            import anyio
+            try:
+                with anyio.CancelScope(shield=True):
+                    await session.close()
+            except Exception:
+                pass
 
 
 
@@ -216,17 +218,22 @@ async def get_db_public() -> AsyncSession:
 
             await session.commit()
 
-        except SQLAlchemyError as e:
-
-            await session.rollback()
-
+        except BaseException as e:
+            import anyio
+            try:
+                with anyio.CancelScope(shield=True):
+                    await session.rollback()
+            except Exception:
+                pass
             logger.error(f"Database error (public route): {e}")
-
             raise
-
         finally:
-
-            await session.close()
+            import anyio
+            try:
+                with anyio.CancelScope(shield=True):
+                    await session.close()
+            except Exception:
+                pass
 
 
 
@@ -251,10 +258,22 @@ async def _get_db_with_tenant(tenant_id: str) -> AsyncSession:
             )
 
             yield session
-
+            await session.commit()
+        except BaseException as e:
+            import anyio
+            try:
+                with anyio.CancelScope(shield=True):
+                    await session.rollback()
+            except Exception:
+                pass
+            raise
         finally:
-
-            await session.close()
+            import anyio
+            try:
+                with anyio.CancelScope(shield=True):
+                    await session.close()
+            except Exception:
+                pass
 
 
 
@@ -880,12 +899,13 @@ async def init_db():
             await conn.execute(text("ALTER TABLE knowledge_bases DROP COLUMN IF EXISTS language;"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_chunks_tenant_kb ON document_chunks (tenant_id, kb_id);"))
 
-        # Run HNSW index creation in its own transaction block
-        try:
-            async with engine.begin() as conn:
-                await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw ON document_chunks USING hnsw (embedding vector_cosine_ops);"))
-        except Exception as hnsw_err:
-            logger.warning(f"HNSW vector index notice: {hnsw_err}")
+        # Ensure HNSW index exists (created by Alembic migration)
+        async with engine.begin() as conn:
+            check_idx = await conn.execute(text(
+                "SELECT indexname FROM pg_indexes WHERE tablename = 'document_chunks' AND indexname = 'idx_chunks_embedding_bge_hnsw';"
+            ))
+            if not check_idx.scalar():
+                raise RuntimeError("CRITICAL: HNSW index 'idx_chunks_embedding_bge_hnsw' is missing! Run Alembic migrations.")
 
         async with engine.begin() as conn:
             # Auto-migrate users columns

@@ -43,9 +43,10 @@ class Settings(BaseSettings):
     app_env: str = "development"  # development, staging, production
 
     debug: bool = False
-
-
-
+    
+    # ============= EXPERIMENTAL FEATURES =============
+    chunking_v2_enabled: bool = False
+    chunking_v2_kb_ids: str = ""  # Comma separated list of KB IDs
     # ============= SERVER SETTINGS =============
 
     host: str = "0.0.0.0"
@@ -109,6 +110,8 @@ class Settings(BaseSettings):
     postgres_pool_recycle: int = 3600  # Recycle connections after 1 hour
 
     postgres_max_overflow: int = 20
+    
+    hnsw_ef_search: int = 100  # Default ef_search for HNSW vector search
 
 
 
@@ -417,6 +420,7 @@ class Settings(BaseSettings):
     # Relevance filtering: reranker score floor under which candidate chunks are classified as ambient noise
     # and bypassed if knowledge graph triplets are present as clean evidence
     rag_graph_noise_floor: float = 0.10
+    rag_rerank_min_score: float = 0.0  # Quality floor for reranked chunks (0.0 = disabled)
 
 
 

@@ -1,0 +1,188 @@
+{
+  "metrics": {
+    "recall_at_5": 63.33333333333333,
+    "mrr": 0.6166666666666667
+  },
+  "details": [
+    {
+      "id": "q1",
+      "query": "What were Apple's total net sales in 2023?",
+      "expected": "apple.pdf",
+      "found_rank": -1
+    },
+    {
+      "id": "q2",
+      "query": "Who is the CEO of Apple?",
+      "expected": "apple.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q3",
+      "query": "What are the risk factors related to global economic conditions?",
+      "expected": "apple.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q4",
+      "query": "R&D expense 2022 vs 2023",
+      "expected": "apple.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q5",
+      "query": "How many employees does Apple have?",
+      "expected": "apple.pdf",
+      "found_rank": -1
+    },
+    {
+      "id": "q6",
+      "query": "NTSB report on the helicopter crash cause",
+      "expected": "NTSB PDFs",
+      "found_rank": -1
+    },
+    {
+      "id": "q7",
+      "query": "What was the pilot's flight experience in hours?",
+      "expected": "NTSB PDFs",
+      "found_rank": -1
+    },
+    {
+      "id": "q8",
+      "query": "Weather conditions during the accident",
+      "expected": "NTSB PDFs",
+      "found_rank": -1
+    },
+    {
+      "id": "q9",
+      "query": "Maintenance records of the engine",
+      "expected": "NTSB PDFs",
+      "found_rank": -1
+    },
+    {
+      "id": "q10",
+      "query": "Safety recommendations issued by NTSB",
+      "expected": "NTSB PDFs",
+      "found_rank": -1
+    },
+    {
+      "id": "q11",
+      "query": "Arun N ML Engineer skills",
+      "expected": "ARUN_N.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q12",
+      "query": "What projects did Arun build with CrewAI?",
+      "expected": "ARUN_N.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q13",
+      "query": "Arun's email and phone number",
+      "expected": "ARUN_N.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q14",
+      "query": "Quality assurance testing methodology",
+      "expected": "Quality Assurance.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q15",
+      "query": "ISO standards for QA",
+      "expected": "Quality Assurance.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q16",
+      "query": "Automated vs manual testing trade-offs",
+      "expected": "Quality Assurance.pdf",
+      "found_rank": -1
+    },
+    {
+      "id": "q17",
+      "query": "What is the habitat of the snow leopard?",
+      "expected": "Big_Cats_Comprehensive_Compendium.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q18",
+      "query": "Lions vs tigers bite force",
+      "expected": "Big_Cats_Comprehensive_Compendium.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q19",
+      "query": "Endangered status of cheetahs",
+      "expected": "Big_Cats_Comprehensive_Compendium.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q20",
+      "query": "O. Henry Four Million summary",
+      "expected": "the-four-million-o-henry-1147.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q21",
+      "query": "Gift of the Magi characters",
+      "expected": "the-four-million-o-henry-1147.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q22",
+      "query": "Who bought the watch chain?",
+      "expected": "the-four-million-o-henry-1147.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q23",
+      "query": "Memory test corpus context",
+      "expected": "rag_memory_test_corpus.pdf",
+      "found_rank": 2
+    },
+    {
+      "id": "q24",
+      "query": "Apple services revenue breakdown",
+      "expected": "apple.pdf",
+      "found_rank": -1
+    },
+    {
+      "id": "q25",
+      "query": "iPhone sales Q4",
+      "expected": "apple.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q26",
+      "query": "NTSB fatal injuries count",
+      "expected": "NTSB PDFs",
+      "found_rank": -1
+    },
+    {
+      "id": "q27",
+      "query": "Big cats conservation efforts",
+      "expected": "Big_Cats_Comprehensive_Compendium.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q28",
+      "query": "QA defect leakage rate",
+      "expected": "Quality Assurance.pdf",
+      "found_rank": -1
+    },
+    {
+      "id": "q29",
+      "query": "O Henry pub year",
+      "expected": "the-four-million-o-henry-1147.pdf",
+      "found_rank": 1
+    },
+    {
+      "id": "q30",
+      "query": "Arun N education",
+      "expected": "ARUN_N.pdf",
+      "found_rank": 1
+    }
+  ]
+}

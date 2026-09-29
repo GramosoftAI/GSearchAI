@@ -62,8 +62,19 @@ class LibreOfficeConverter:
             # Convert Windows paths to URIs for LibreOffice if necessary
             profile_url = f"file://{user_installation_dir.replace('\\', '/')}"
             
+            soffice_bin = "soffice"
+            if os.name == "nt" and not shutil.which("soffice"):
+                standard_paths = [
+                    r"C:\Program Files\LibreOffice\program\soffice.exe",
+                    r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+                ]
+                for p in standard_paths:
+                    if os.path.exists(p):
+                        soffice_bin = p
+                        break
+
             cmd = [
-                "soffice",
+                soffice_bin,
                 "--headless",
                 "--invisible",
                 "--nodefault",

@@ -38,10 +38,10 @@ class VectorEngine(BaseEngine):
     def domain(cls) -> List[str]:
         return ["*"]
 
-    def __init__(self, tenant_id: str, neo4j_repo: Neo4jRepository, db: Any = None):
+    def __init__(self, tenant_id: str, neo4j_repo: Neo4jRepository, session_factory: Any = None):
         self.tenant_id = tenant_id
         self.neo4j_repo = neo4j_repo
-        self.db = db
+        self.session_factory = session_factory
 
     async def _get_or_load_kb_snippets(self, kb_id: str) -> Dict[str, str]:
         """Lazy loads and caches the first ~600 chars of content for each section in a KB."""
@@ -57,7 +57,7 @@ class VectorEngine(BaseEngine):
                 return _KB_SECTION_SNIPPETS_CACHE[cache_key]
                 
             snippets = {}
-            if self.db:
+            if self.session_factory:
                 try:
                     import time
                     from sqlalchemy import text
@@ -75,9 +75,10 @@ class VectorEngine(BaseEngine):
                     WHERE rn <= 3
                     GROUP BY kb_id, section
                     """
-                    res = await self.db.execute(text(sql), {'kb_id': kb_id, 'tenant_id': str(self.tenant_id)})
-                    for row in res.all():
-                        snippets[row.section] = row.snippet
+                    async with self.session_factory() as session:
+                        res = await session.execute(text(sql), {'kb_id': kb_id, 'tenant_id': str(self.tenant_id)})
+                        for row in res.all():
+                            snippets[row.section] = row.snippet
                         
                     t1 = time.time()
                     logger.info(f"[CACHE_WARM] Loaded {len(snippets)} section snippets for KB {kb_id} in {t1-t0:.3f}s")
@@ -109,7 +110,7 @@ class VectorEngine(BaseEngine):
 
         # Prefetch snippets for all candidate KBs concurrently
         kb_snippets = {}
-        if self.db:
+        if self.session_factory:
             snippet_results = await asyncio.gather(
                 *[self._get_or_load_kb_snippets(str(k)) for k in kb_ids],
                 return_exceptions=True
@@ -119,7 +120,7 @@ class VectorEngine(BaseEngine):
                     kb_snippets.update(res)
 
         sections = []
-        if self.db:
+        if self.session_factory:
             try:
                 from sqlalchemy import select, or_, text
                 from app.modules.knowledge_bases.models import DocumentChunk
@@ -150,28 +151,24 @@ class VectorEngine(BaseEngine):
                 
                 logger.info(f"[VECTOR_ENGINE_DEBUG] get_candidate_sections broad_keywords={broad_keywords}")
                 
-                res = await self.db.execute(stmt)
-                rows = res.all()
-                if len(rows) >= 1000:
-                    logger.warning(f"Candidate section truncation triggered: >= 1000 sections found, truncated to 1000.")
-                
-                for row in rows:
-                    sec = row.section
-                    if sec:
-                        sections.append({
-                            "section_id": sec,
-                            "title": sec,
-                            "snippet": kb_snippets.get(sec, ""),
-                            "doc_type": "document",
-                            "task_id": getattr(task, "task_id", "")
-                        })
+                async with self.session_factory() as session:
+                    res = await session.execute(stmt)
+                    rows = res.all()
+                    if len(rows) >= 1000:
+                        logger.warning(f"Candidate section truncation triggered: >= 1000 sections found, truncated to 1000.")
+                    
+                    for row in rows:
+                        sec = row.section
+                        if sec:
+                            sections.append({
+                                "section_id": sec,
+                                "title": sec,
+                                "snippet": kb_snippets.get(sec, ""),
+                                "doc_type": "document",
+                                "task_id": getattr(task, "task_id", "")
+                            })
             except Exception as e:
                 logger.error(f"Postgres candidate section search failed: {e}")
-                if hasattr(self.db, "rollback"):
-                    if asyncio.iscoroutinefunction(self.db.rollback):
-                        await self.db.rollback()
-                    else:
-                        self.db.rollback()
                 
         latency = time.time() - trace_start
         logger.info(f"[TRACE_E2E] [EXIT] VectorEngine.get_candidate_sections - Output: {len(sections)} sections - Latency: {latency:.2f}s")
@@ -221,7 +218,7 @@ class VectorEngine(BaseEngine):
             retrieval_path = "targeted_section"
         logger.info(f"zero_section_guard_path: {retrieval_path}")
 
-        if self.db:
+        if self.session_factory:
             try:
                 from app.core.embeddings import EmbeddingGenerator
                 from sqlalchemy import select, and_, or_, case, Float
@@ -243,71 +240,51 @@ class VectorEngine(BaseEngine):
                 top_k = getattr(task, "top_k", 15)
                 candidate_limit = max(top_k, 15)
 
-                vector_score = (1.0 - DocumentChunk.embedding.cosine_distance(query_embedding))
-                position_boost = case((DocumentChunk.chunk_index < 3, 0.01), else_=0.0).cast(Float)
+                from sqlalchemy import text
+                from app.core.config import get_settings
+                settings = get_settings()
+                
+                async with self.session_factory() as session:
+                    # Set ef_search for this transaction to optimize recall/speed tradeoff
+                    await session.execute(text(f"SET LOCAL hnsw.ef_search = {int(settings.hnsw_ef_search)}"))
 
-                # Build the WHERE conditions.
-                base_conditions = [
-                    DocumentChunk.tenant_id == UUID(str(self.tenant_id)),
-                    DocumentChunk.kb_id.in_([UUID(str(kb_id)) for kb_id in kb_ids]),
-                ]
+                    vector_score = (1.0 - DocumentChunk.embedding.cosine_distance(query_embedding))
+                    position_boost = case((DocumentChunk.chunk_index < 3, 0.01), else_=0.0).cast(Float)
 
-                if target_sections:
-                    base_conditions.append(or_(
-                        DocumentChunk.section.in_(target_sections),
-                        DocumentChunk.chunk_index >= 90000
-                    ))
-                    logger.info(
-                        "VectorEngine task=%s: restricting pgvector search "
-                        "to %d target section names (or synthetic table chunks).",
-                        task.task_id,
-                        len(target_sections),
-                    )
-                elif is_tabular:
-                    narrative_keywords = ["cause", "event", "phase", "why", "how", "reason", "accident", "analysis", "report", "statement", "damage", "led to", "happen", "occur", "defining"]
-                    has_narrative_intent = any(nk in task.query.lower() for nk in narrative_keywords)
-                    if not has_narrative_intent:
-                        base_conditions.append(DocumentChunk.chunk_index >= 90000)
-                        logger.info(
-                            "VectorEngine task=%s: restricting pgvector search "
-                            "to synthetic table chunks ONLY (table_fallback).",
-                            task.task_id,
-                        )
-                    else:
-                        logger.info(
-                            "VectorEngine task=%s: query is tabular BUT contains narrative intent terms. Allowing both narrative and table chunks.",
-                            task.task_id,
-                        )
-
-                stmt = (
-                    select(
-                        DocumentChunk.id,
-                        DocumentChunk.text,
-                        DocumentChunk.chunk_index,
-                        DocumentChunk.kb_id,
-                        DocumentChunk.section,
-                        DocumentChunk.metadata_json,
-                        KnowledgeBase.name,
-                        KnowledgeBase.s3_path,
-                        vector_score.label("similarity"),
-                    )
-                    .join(KnowledgeBase, DocumentChunk.kb_id == KnowledgeBase.id)
-                    .where(and_(*base_conditions))
-                    .order_by((vector_score + position_boost).desc())
-                    .limit(200)  # Fetch more for Python re-ranking
-                )
-
-                res = await self.db.execute(stmt)
-                all_rows = res.fetchall()
-
-                # Fallback: If section-restricted search returned 0 results, fall back to broad search
-                if not all_rows and target_sections:
-                    logger.info(f"VectorEngine task={task.task_id}: 0 results with target_sections filter. Retrying with broad KB search fallback.")
-                    fallback_conditions = [
+                    # Build the WHERE conditions.
+                    base_conditions = [
                         DocumentChunk.tenant_id == UUID(str(self.tenant_id)),
                         DocumentChunk.kb_id.in_([UUID(str(kb_id)) for kb_id in kb_ids]),
                     ]
-                    stmt_fallback = (
+
+                    if target_sections:
+                        base_conditions.append(or_(
+                            DocumentChunk.section.in_(target_sections),
+                            DocumentChunk.chunk_index >= 90000
+                        ))
+                        logger.info(
+                            "VectorEngine task=%s: restricting pgvector search "
+                            "to %d target section names (or synthetic table chunks).",
+                            task.task_id,
+                            len(target_sections),
+                        )
+                    elif is_tabular:
+                        narrative_keywords = ["cause", "event", "phase", "why", "how", "reason", "accident", "analysis", "report", "statement", "damage", "led to", "happen", "occur", "defining"]
+                        has_narrative_intent = any(nk in task.query.lower() for nk in narrative_keywords)
+                        if not has_narrative_intent:
+                            base_conditions.append(DocumentChunk.chunk_index >= 90000)
+                            logger.info(
+                                "VectorEngine task=%s: restricting pgvector search "
+                                "to synthetic table chunks ONLY (table_fallback).",
+                                task.task_id,
+                            )
+                        else:
+                            logger.info(
+                                "VectorEngine task=%s: query is tabular BUT contains narrative intent terms. Allowing both narrative and table chunks.",
+                                task.task_id,
+                            )
+
+                    stmt = (
                         select(
                             DocumentChunk.id,
                             DocumentChunk.text,
@@ -320,12 +297,39 @@ class VectorEngine(BaseEngine):
                             vector_score.label("similarity"),
                         )
                         .join(KnowledgeBase, DocumentChunk.kb_id == KnowledgeBase.id)
-                        .where(and_(*fallback_conditions))
+                        .where(and_(*base_conditions))
                         .order_by((vector_score + position_boost).desc())
-                        .limit(200)
+                        .limit(200)  # Fetch more for Python re-ranking
                     )
-                    res_fb = await self.db.execute(stmt_fallback)
-                    all_rows = res_fb.fetchall()
+
+                    res = await session.execute(stmt)
+                    all_rows = res.fetchall()
+
+                    if not all_rows and target_sections:
+                        logger.info(f"VectorEngine task={task.task_id}: 0 results with target_sections filter. Retrying with broad KB search fallback.")
+                        fallback_conditions = [
+                            DocumentChunk.tenant_id == UUID(str(self.tenant_id)),
+                            DocumentChunk.kb_id.in_([UUID(str(kb_id)) for kb_id in kb_ids]),
+                        ]
+                        stmt_fallback = (
+                            select(
+                                DocumentChunk.id,
+                                DocumentChunk.text,
+                                DocumentChunk.chunk_index,
+                                DocumentChunk.kb_id,
+                                DocumentChunk.section,
+                                DocumentChunk.metadata_json,
+                                KnowledgeBase.name,
+                                KnowledgeBase.s3_path,
+                                vector_score.label("similarity"),
+                            )
+                            .join(KnowledgeBase, DocumentChunk.kb_id == KnowledgeBase.id)
+                            .where(and_(*fallback_conditions))
+                            .order_by((vector_score + position_boost).desc())
+                            .limit(200)
+                        )
+                        res_fb = await session.execute(stmt_fallback)
+                        all_rows = res_fb.fetchall()
 
                 chunks = []
 
@@ -442,11 +446,6 @@ class VectorEngine(BaseEngine):
                 return final_chunks
             except Exception as e:
                 logger.error(f"VectorEngine pgvector retrieval failed: {e}. Falling back to Cypher.")
-                if hasattr(self.db, "rollback"):
-                    if asyncio.iscoroutinefunction(self.db.rollback):
-                        await self.db.rollback()
-                    else:
-                        self.db.rollback()
 
         # ------------------------------------------------------------------
         # Cypher fallback (no db session available)

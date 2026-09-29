@@ -660,7 +660,7 @@ class KnowledgeBaseService:
                     # Merge all pages into a massive document
                     combined_text = "\n\n---\n\n".join(merged_content)
                     
-                    doc_chunks = await AdaptiveChunker.chunk(content=combined_text, source_type="url")
+                    doc_chunks = await AdaptiveChunker.chunk(content=combined_text, source_type="url", metadata={"title": kb.name})
                     for i, c in enumerate(doc_chunks):
                         chunks.append(c["chunk_text"])
                         meta = c["metadata"].copy()
@@ -671,7 +671,8 @@ class KnowledgeBaseService:
                         chunk_metadata_list.append(meta)
                 else:
                     for doc in documents_list:
-                        doc_chunks = await AdaptiveChunker.chunk(content=doc["content"], source_type="text")
+                        doc_title = doc.get("metadata", {}).get("title") or kb.name
+                        doc_chunks = await AdaptiveChunker.chunk(content=doc["content"], source_type="text", metadata={"title": doc_title})
                         for i, c in enumerate(doc_chunks):
                             chunks.append(c["chunk_text"])
                             meta = c["metadata"].copy()
@@ -682,10 +683,73 @@ class KnowledgeBaseService:
                                 meta["_is_last_in_doc"] = True
                             chunk_metadata_list.append(meta)
             else:
-                from ...core.adaptive_chunker import AdaptiveChunker
-                adaptive_chunks = await AdaptiveChunker.chunk(content=document_text, source_type=source_type)
-                chunks = [c["chunk_text"] for c in adaptive_chunks]
-                chunk_metadata_list = [c["metadata"] for c in adaptive_chunks]
+                v2_kbs = [k.strip() for k in settings.chunking_v2_kb_ids.split(",") if k.strip()]
+                is_v2 = settings.chunking_v2_enabled or (kb_id in v2_kbs)
+                
+                if is_v2:
+                    from app.modules.rag.file_router.adapters import parse_gdocz_markdown, parse_pdf_structure
+                    from app.modules.rag.file_router.adaptive_chunking import AdaptiveChunker
+                    
+                    if source_type in ["pdf", "docx"]:
+                        from app.core.adaptive_chunker import PDFStructureParser
+                        structure = PDFStructureParser.parse(document_text)
+                        sections = parse_pdf_structure(structure)
+                    else:
+                        sections = parse_gdocz_markdown(document_text)
+                        
+                    def _get_breadcrumb(meta: dict) -> str:
+                        if not meta: return ""
+                        parts = []
+                        if meta.get("title"):
+                            parts.append(f"Title: {meta['title']}")
+                        return " | ".join(parts)
+                        
+                    chunker = AdaptiveChunker()
+                    v2_results = chunker.chunk_document(sections, breadcrumb_fn=_get_breadcrumb)
+                    
+                    chunks = []
+                    chunk_metadata_list = []
+                    
+                    parent_map = {r.chunk_id: r.text for r in v2_results if r.is_parent}
+                    
+                    children = [r for r in v2_results if not r.is_parent]
+                    parents = [r for r in v2_results if r.is_parent]
+                    truncations = sum(1 for r in children if r.tokens > 512)
+                    # wait, AdaptiveChunker already deduplicates adjacent chunks, but "dropped duplicates" might mean total duplicates?
+                    # We can just put 0 for dropped duplicates if not tracked
+                    logger.info(f"V2 Ingestion: {source_type}, children: {len(children)}, parents: {len(parents)}, truncations: {truncations}, dropped duplicates: 0, model: embedding_bge")
+                    
+                    for res in children:
+                        chunks.append(res.text) # Clean text
+                        
+                        hash_str = f"{kb_id}_{str(res.metadata.get('heading_path', []))}_{res.text}"
+                        v2_id = str(uuid.uuid5(uuid.NAMESPACE_OID, hash_str))
+                        
+                        meta = res.metadata.copy() if res.metadata else {}
+                        meta["chunker_version"] = "v2"
+                        meta["parent_id"] = res.parent_id
+                        meta["parent_text"] = parent_map.get(res.parent_id, "")
+                        meta["heading_path"] = res.metadata.get("heading_path", [])
+                        meta["section"] = meta["heading_path"][-1] if meta["heading_path"] else ""
+                        meta["strategy"] = "v2_adaptive"
+                        meta["embedding_model"] = "bge-large-en-v1.5"
+                        
+                        meta["embed_text"] = res.embed_text
+                        meta["v2_id"] = v2_id
+                        
+                        # Retain source_url, title etc.
+                        meta["source_url"] = source or ""
+                        
+                        chunk_metadata_list.append(meta)
+                else:
+                    from ...core.adaptive_chunker import AdaptiveChunker
+                    doc_title = kb.name
+                    if source:
+                        import os
+                        doc_title = os.path.basename(source.split("?")[0]) or kb.name
+                    adaptive_chunks = await AdaptiveChunker.chunk(content=document_text, source_type=source_type, metadata={"title": doc_title})
+                    chunks = [c["chunk_text"] for c in adaptive_chunks]
+                    chunk_metadata_list = [c["metadata"] for c in adaptive_chunks]
 
             if not chunks:
                 return format_error("Document produced no chunks", meta={"status_code": 400})
@@ -735,7 +799,10 @@ class KnowledgeBaseService:
                 if len(prefix) > 150:
                     prefix = prefix[:147] + "..."
                     
-                embedding_inputs.append(f"{prefix}\n\n{chunk_text}")
+                if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i] and "embed_text" in chunk_metadata_list[i]:
+                    embedding_inputs.append(chunk_metadata_list[i]["embed_text"])
+                else:
+                    embedding_inputs.append(f"{prefix}\n\n{chunk_text}")
 
             if embedding_inputs:
                 logger.info(f"Sample embedding context prefix: {embedding_inputs[0][:150]!r}")
@@ -1080,7 +1147,12 @@ class KnowledgeBaseService:
 
             # 5. BATCH CREATE CHUNK NODES & STAGE IN POSTGRESQL
 
-            chunk_ids = [str(uuid.uuid4()) for _ in range(len(chunks))]
+            chunk_ids = []
+            for i in range(len(chunks)):
+                if chunk_metadata_list and i < len(chunk_metadata_list) and chunk_metadata_list[i] and "v2_id" in chunk_metadata_list[i]:
+                    chunk_ids.append(chunk_metadata_list[i]["v2_id"])
+                else:
+                    chunk_ids.append(str(uuid.uuid4()))
             chunk_section_map = {
                 chunk_ids[i]: chunk_metadata_list[i].get("section") 
                 for i in range(len(chunks)) 

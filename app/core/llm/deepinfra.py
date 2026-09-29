@@ -105,11 +105,13 @@ class DeepInfraEmbeddingClient:
         self.model = settings.model_embedding
         self.timeout = 60.0  # Request timeout in seconds (increased to prevent timeouts)
         self.max_retries = 3  # Number of retry attempts
-        self.max_text_length = 1000  # Safe limit (~300-400 tokens)
+        # BGE-large-en-v1.5 has an exact 512-token context window. 
+        # 1800 characters is safely ~450-480 WordPiece/BERT tokens, preventing HTTP 400 '513 input tokens' errors.
+        self.max_text_length = 1800
         self.expected_dimension = settings.embedding_dimension  # Dynamic from settings
 
         logger.info(
-            f" DeepInfra Embedding Client initialized (model={self.model}, timeout={self.timeout}s, dim={self.expected_dimension})"
+            f" DeepInfra Embedding Client initialized (model={self.model}, timeout={self.timeout}s, dim={self.expected_dimension}, max_len={self.max_text_length})"
         )
 
     async def generate_embedding(self, text: str) -> List[float]:
@@ -128,6 +130,12 @@ class DeepInfraEmbeddingClient:
         # Validate input
         if not text or not text.strip():
             raise ValueError("Text cannot be empty")
+
+        # Telemetry check before truncation
+        if len(text) > self.max_text_length:
+            logger.warning(
+                f"[EMBEDDING_TRUNCATION_WARNING] original_len={len(text)} max_len={self.max_text_length} snippet={text[:80]!r}"
+            )
 
         # Truncate to prevent API overload
         text = text[: self.max_text_length]
@@ -299,6 +307,11 @@ class DeepInfraEmbeddingClient:
         for i, text in enumerate(texts):
             if not text or not text.strip():
                 text = "empty"
+            
+            if len(text) > self.max_text_length:
+                logger.warning(
+                    f"[EMBEDDING_TRUNCATION_WARNING] batch_idx={i} original_len={len(text)} max_len={self.max_text_length} snippet={text[:80]!r}"
+                )
             text = text[: self.max_text_length]
             
             text_hash = hashlib.sha256(text.encode()).hexdigest()
