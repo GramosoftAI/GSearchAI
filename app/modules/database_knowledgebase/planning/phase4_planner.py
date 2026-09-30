@@ -488,6 +488,85 @@ JSON Output Format (Strictly valid JSON):
                                 new_gb.append(gb)
                         data["group_by"] = new_gb
                         
+                    # Deterministic Foreign Key Auto-Join & Projection (Permanent Solution for ID -> Name)
+                    try:
+                        tables_in_plan = {t.get("table_name"): t.get("alias") for t in data.get("tables", []) if isinstance(t, dict)}
+                        alias_to_table = {v: k for k, v in tables_in_plan.items()}
+                        
+                        auto_join_tables = set()
+                        # Soft FK map for Rails/ActiveRecord logical associations missing from DB schema
+                        soft_fk_map = {
+                            "assigned_to_id": "users",
+                            "responsible_id": "users",
+                            "author_id": "users",
+                            "user_id": "users"
+                        }
+                        
+                        # Identify foreign keys in projections
+                        if isinstance(data.get("projections"), list):
+                            for p in data["projections"]:
+                                if isinstance(p, dict):
+                                    col = p.get("column_name", "")
+                                    ta = p.get("table_alias", "")
+                                    t_name = alias_to_table.get(ta)
+                                    if t_name:
+                                        t_obj = canonical_schema.get_table(t_name)
+                                        found_fk = False
+                                        if t_obj:
+                                            for rel in t_obj.relationships:
+                                                if col in rel.source_columns:
+                                                    auto_join_tables.add((t_name, ta, rel.target_table.split(".")[-1], col, rel.target_columns[0]))
+                                                    found_fk = True
+                                                    break
+                                                    
+                                        # Fallback to soft FK mappings
+                                        if not found_fk and col.lower() in soft_fk_map:
+                                            auto_join_tables.add((t_name, ta, soft_fk_map[col.lower()], col, "id"))
+                                                
+                        # For each identified FK target, ensure joined and project readable columns
+                        readable_cols = ("firstname", "lastname", "name", "login", "title", "subject", "username")
+                        for src_t_name, src_alias, tgt_t_name, src_col, tgt_col in auto_join_tables:
+                            tgt_obj = canonical_schema.get_table(tgt_t_name)
+                            if tgt_obj:
+                                tgt_alias = tables_in_plan.get(tgt_t_name)
+                                if not tgt_alias:
+                                    tgt_alias = tgt_t_name[0].lower() + tgt_t_name[1].lower() if len(tgt_t_name) > 1 else tgt_t_name[0].lower()
+                                    idx = 1
+                                    while tgt_alias in alias_to_table:
+                                        tgt_alias = f"{tgt_t_name[0].lower()}{idx}"
+                                        idx += 1
+                                    data.setdefault("tables", []).append({
+                                        "schema_name": "public",
+                                        "table_name": tgt_t_name,
+                                        "alias": tgt_alias,
+                                        "role": "JOIN_TARGET"
+                                    })
+                                    tables_in_plan[tgt_t_name] = tgt_alias
+                                    alias_to_table[tgt_alias] = tgt_t_name
+                                    
+                                    # Add join
+                                    data.setdefault("joins", []).append({
+                                        "source_table_alias": src_alias,
+                                        "source_column": src_col,
+                                        "target_table_alias": tgt_alias,
+                                        "target_column": tgt_col,
+                                        "join_type": "LEFT"
+                                    })
+                                    
+                                # Add projections
+                                for c_name in tgt_obj.columns.keys():
+                                    if c_name.lower() in readable_cols:
+                                        out_alias = f"{tgt_t_name}_{c_name}"
+                                        if not any(p.get("table_alias") == tgt_alias and p.get("column_name") == c_name for p in data.get("projections", [])):
+                                            data["projections"].append({
+                                                "table_alias": tgt_alias,
+                                                "column_name": c_name,
+                                                "output_alias": out_alias,
+                                                "aggregation": "NONE"
+                                            })
+                    except Exception as e:
+                        logger.warning(f"Failed to auto-expand FKs for LLM plan: {e}")
+                        
                     if isinstance(data.get("order_by"), list):
                         for ob in data["order_by"]:
                             if isinstance(ob, dict) and "expression" not in ob:

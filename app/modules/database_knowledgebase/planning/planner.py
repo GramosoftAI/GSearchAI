@@ -656,7 +656,9 @@ class QueryPlanner:
 
         # Check explicit domain keywords first to avoid random token collisions from all_table_plans
         explicit_target_table = None
-        if any(w in q_lower for w in ("attendance percentage", "percentage of employees", "percentage", "rate")) and any(w in q_lower for w in ("work", "hours", "attendance", "completed", "working")):
+        if any(w in q_lower for w in ("work package", "work packages", "workpackage", "workpackages")):
+            explicit_target_table = "work_packages"
+        elif any(w in q_lower for w in ("attendance percentage", "percentage of employees", "percentage", "rate")) and any(w in q_lower for w in ("work", "hours", "attendance", "completed", "working")):
             explicit_target_table = "attendance_attendance"
         elif any(w in q_lower for w in ("deduction", "deductions")):
             explicit_target_table = "payroll_deduction"
@@ -668,7 +670,7 @@ class QueryPlanner:
             explicit_target_table = "attendance_attendanceactivity"
         elif any(w in q_lower for w in ("early out", "leave early", "late come", "late arrival", "late arrivals")) or ("late" in q_tokens and "latest" not in q_tokens) or ("early" in q_tokens):
             explicit_target_table = "attendance_attendancelatecomeearlyout"
-        elif any(w in q_lower for w in ("attendance", "check in", "clock in", "check out", "clock out", "punch", "worked", "working", "work", "hours", "checkin", "checkout", "clockin", "clockout", "overtime", "arrive", "arrived", "arrival", "arrivals", "depart", "departed", "departure", "departures", "clock")):
+        elif any(w in q_lower for w in ("attendance", "check in", "clock in", "check out", "clock out", "punch", "worked", "working", "hours", "checkin", "checkout", "clockin", "clockout", "overtime", "arrive", "arrived", "arrival", "arrivals", "depart", "departed", "departure", "departures", "clock")) or ("work" in q_tokens and not any(w in q_lower for w in ("work package", "work packages", "workpackage", "workpackages", "work type", "work information"))):
             explicit_target_table = "attendance_attendance"
         elif any(w in q_lower for w in ("vacation", "absence", "absent", "absenteeism", "time off", "on leave", "leave request", "leave balance", "sick leave", "casual leave")) or ("leave" in q_tokens and not any(w in q_lower for w in ("leave early", "early leave", "left early", "arrive", "arrived", "arrival", "arrivals", "depart", "departed", "departure", "when did", "what time", "clock", "punch", "hours", "worked", "working"))):
             if not any(w in q_lower for w in ("leave request", "leave requests", "requested")) and any(w in q_lower for w in ("leave balance", "available leave", "remaining leave", "balance", "available days")):
@@ -1153,7 +1155,7 @@ class QueryPlanner:
             "leave_leaverequest",
             "leave_leavetype",
         }
-        ALLOWED_PROJECT_TABLES = {"project_project", "project_project_members", "project_project_managers", "project_task", "project_task_task_members", "project_timesheet", "employee_employee"}
+        ALLOWED_PROJECT_TABLES = {"project_project", "project_project_members", "project_project_managers", "project_task", "project_task_task_members", "project_timesheet", "employee_employee", "work_packages", "projects", "users", "members", "statuses", "types", "versions", "journals"}
         ALLOWED_LEAVE_TABLES = {"leave_availableleave", "leave_leaverequest", "leave_leavetype", "employee_employee", "employee_employeeworkinformation", "base_department"}
         ALLOWED_LOAN_TABLES = {"payroll_loan", "payroll_loaninstallment", "employee_employee"}
         ALLOWED_DED_TABLES = {"payroll_deduction", "payroll_contract", "employee_employee"}
@@ -1817,8 +1819,14 @@ class QueryPlanner:
                             elif c_low in ("amount", "rate") and is_fin_auth:
                                 should_project = True
 
-                        elif t_low in ("base_jobposition", "base_jobrole", "base_worktype"):
-                            if c_low in ("job_position", "job_role", "work_type", "name", "title"):
+                        elif t_low in ("work_packages", "issues", "tickets", "tasks"):
+                            if c_low in ("subject", "title", "name", "description"):
+                                should_project = True
+                            elif c_low in ("responsible_id", "assigned_to_id", "author_id", "user_id", "assigned_to", "responsible") and any(k in q_lower for k in ("who", "accountable", "responsible", "assigned", "assignee", "author", "creator", "owner", "user", "person", "hold")):
+                                should_project = True
+
+                        elif c_low.endswith("_id") or c_low.endswith("_id_id"):
+                            if any(k in q_lower for k in ("who", "accountable", "responsible", "assigned", "assignee", "author", "creator", "owner", "user", "person", "manager", "employee", "name")) and not c_low.startswith(("badge_", "asset_")):
                                 should_project = True
 
                         else:
@@ -2731,25 +2739,34 @@ class QueryPlanner:
 
         # Cartesian product defense: prune any table that is not connected to primary_alias via join_plans
         if len(table_plans) > 1:
-            connected_aliases = {primary_alias}
-            changed = True
-            while changed:
-                changed = False
-                for jp in join_plans:
-                    if jp.source_table_alias in connected_aliases and jp.target_table_alias not in connected_aliases:
-                        connected_aliases.add(jp.target_table_alias)
-                        changed = True
-                    elif jp.target_table_alias in connected_aliases and jp.source_table_alias not in connected_aliases:
-                        connected_aliases.add(jp.source_table_alias)
-                        changed = True
+            if not join_plans:
+                table_plans = [tp for tp in table_plans if tp.alias == primary_alias]
+                if not table_plans and all_table_plans:
+                    table_plans = [tp for tp in all_table_plans if tp.alias == primary_alias]
+                if not table_plans and all_table_plans:
+                    table_plans = [all_table_plans[0]]
+            else:
+                connected_aliases = {primary_alias}
+                changed = True
+                while changed:
+                    changed = False
+                    for jp in join_plans:
+                        if jp.source_table_alias in connected_aliases and jp.target_table_alias not in connected_aliases:
+                            connected_aliases.add(jp.target_table_alias)
+                            changed = True
+                        elif jp.target_table_alias in connected_aliases and jp.source_table_alias not in connected_aliases:
+                            connected_aliases.add(jp.source_table_alias)
+                            changed = True
 
-            table_plans = [tp for tp in table_plans if tp.alias in connected_aliases]
+                table_plans = [tp for tp in table_plans if tp.alias in connected_aliases]
+
+            active_aliases = {tp.alias for tp in table_plans}
             join_plans = [
                 jp for jp in join_plans
-                if jp.source_table_alias in connected_aliases and jp.target_table_alias in connected_aliases
+                if jp.source_table_alias in active_aliases and jp.target_table_alias in active_aliases
             ]
-            projections = [p for p in projections if p.table_alias in connected_aliases]
-            predicates = [p for p in predicates if p.table_alias in connected_aliases]
+            projections = [p for p in projections if p.table_alias in active_aliases]
+            predicates = [p for p in predicates if p.table_alias in active_aliases]
 
         # 5. Formulate Order By
         order_by: List[OrderByPlan] = []
@@ -2872,9 +2889,22 @@ class QueryPlanner:
         elif "absenteeism" in q_lower:
             plan_reasoning = "Ranked departments by total approved absent days (SUM(requested_days))."
 
-        # Safety fallback: if aggressive pruning emptied table_plans, restore all tables
+        # Safety fallback: if aggressive pruning emptied table_plans, restore primary_alias table
         if not table_plans:
-            table_plans = all_table_plans
+            if primary_alias in alias_to_table:
+                tp_obj = alias_to_table[primary_alias]
+                table_plans = [TablePlan(schema_name=tp_obj.schema_name or "public", table_name=tp_obj.table_name, alias=primary_alias, role="PRIMARY")]
+            else:
+                table_plans = all_table_plans
+
+        if not projections and table_plans:
+            prim_tp = table_plans[0]
+            prim_tbl = alias_to_table.get(prim_tp.alias)
+            if prim_tbl:
+                target_cols = [c for c in prim_tbl.columns.keys() if c.lower() in ("responsible_id", "assigned_to_id", "author_id", "subject", "name", "title", "id")]
+                for tc in (target_cols or ["id"]):
+                    if not any(p.table_alias == prim_tp.alias and p.column_name == tc for p in projections):
+                        projections.append(ColumnProjectionPlan(table_alias=prim_tp.alias, column_name=tc, aggregation=AggregateFunction.NONE))
 
         plan = QueryPlanIR(
             database_knowledgebase_id=database_knowledgebase_id,
@@ -2892,6 +2922,9 @@ class QueryPlanner:
             confidence=plan_confidence,
             reasoning=plan_reasoning,
         )
+
+        if plan.confidence > 0.0:
+            plan = cls._expand_foreign_keys(plan, canonical_schema)
 
         # Validate strictly against canonical schema
         try:
@@ -2938,6 +2971,145 @@ class QueryPlanner:
             raise QueryPlanValidationError(
                 f"Plan validation rejected [{val_res.reason_code.value if val_res.reason_code else 'ERROR'}]: {val_res.message}"
             )
+
+        return plan
+
+    @classmethod
+    def _expand_foreign_keys(cls, plan: QueryPlanIR, canonical_schema: DatabaseSchema) -> QueryPlanIR:
+        """
+        Permanent Architectural Foreign Key Auto-Expansion.
+        Automatically resolves raw ID foreign keys (e.g. assigned_to_id, responsible_id, author_id, user_id)
+        by LEFT JOINing the target referenced table (e.g. users, employees, departments) and projecting 
+        human-readable identifier columns (firstname, lastname, name, login, username, title, subject).
+        """
+        if not plan or not plan.projections or not canonical_schema:
+            return plan
+
+        tables_by_alias = {t.alias: t for t in plan.tables}
+        tables_by_name = {t.table_name.lower(): t for t in plan.tables}
+        used_aliases = {t.alias for t in plan.tables}
+
+        soft_fk_map = {
+            "assigned_to_id": "users",
+            "responsible_id": "users",
+            "author_id": "users",
+            "user_id": "users",
+            "created_by_id": "users",
+            "updated_by_id": "users",
+            "owner_id": "users",
+            "manager_id": "users",
+            "employee_id": "users",
+        }
+
+        readable_cols = ("firstname", "lastname", "name", "login", "username", "title", "subject")
+
+        existing_join_pairs = {
+            (j.source_table_alias, j.source_column): j.target_table_alias
+            for j in plan.joins
+        }
+
+        projections_to_add = []
+
+        for proj in list(plan.projections):
+            if proj.aggregation not in (AggregateFunction.NONE, None) or any(fn in proj.column_name.upper() for fn in ("SUM(", "AVG(", "COUNT(", "MIN(", "MAX(")):
+                continue
+
+            col = proj.column_name.lower()
+
+            if col.endswith("_id") or col.endswith("_id_id") or col in soft_fk_map:
+                src_alias = proj.table_alias
+                src_table_plan = tables_by_alias.get(src_alias)
+                if not src_table_plan:
+                    continue
+
+                src_t_name = src_table_plan.table_name
+                t_obj = canonical_schema.get_table(src_t_name)
+
+                tgt_t_name = None
+                tgt_pk = "id"
+
+                # 1. Try explicit DB schema relationship
+                if t_obj and t_obj.relationships:
+                    for rel in t_obj.relationships:
+                        if proj.column_name in rel.source_columns:
+                            tgt_t_name = rel.target_table.split(".")[-1]
+                            if rel.target_columns:
+                                tgt_pk = rel.target_columns[0]
+                            break
+
+                # 2. Try soft FK map fallback
+                if not tgt_t_name and col in soft_fk_map:
+                    target_cand = soft_fk_map[col]
+                    if canonical_schema.get_table(target_cand):
+                        tgt_t_name = target_cand
+                    elif canonical_schema.get_table("employee_employee"):
+                        tgt_t_name = "employee_employee"
+                    elif canonical_schema.get_table("base_employee"):
+                        tgt_t_name = "base_employee"
+
+                # 3. Try structural name matching (e.g. department_id -> department / departments)
+                if not tgt_t_name and col.endswith("_id"):
+                    base_ent = col[:-3].rstrip("_")
+                    for cand in (f"{base_ent}s", f"{base_ent}es", base_ent, f"base_{base_ent}"):
+                        if canonical_schema.get_table(cand):
+                            tgt_t_name = cand
+                            break
+
+                if not tgt_t_name:
+                    continue
+
+                tgt_obj = canonical_schema.get_table(tgt_t_name)
+                if not tgt_obj:
+                    continue
+
+                if (src_alias, proj.column_name) in existing_join_pairs:
+                    tgt_alias = existing_join_pairs[(src_alias, proj.column_name)]
+                else:
+                    existing_tgt = tables_by_name.get(tgt_t_name.lower())
+                    if existing_tgt and not any(j.target_table_alias == existing_tgt.alias for j in plan.joins):
+                        tgt_alias = existing_tgt.alias
+                    else:
+                        base_alias_prefix = f"{proj.column_name.replace('_id', '').replace('_id_id', '')[:4]}_{tgt_t_name[:3]}"
+                        tgt_alias = cls._generate_alias(base_alias_prefix, used_aliases)
+                        used_aliases.add(tgt_alias)
+                        
+                        new_tp = TablePlan(
+                            schema_name=tgt_obj.schema_name or "public",
+                            table_name=tgt_t_name,
+                            alias=tgt_alias,
+                            role="JOIN_TARGET",
+                        )
+                        plan.tables.append(new_tp)
+                        tables_by_alias[tgt_alias] = new_tp
+                        tables_by_name[tgt_t_name.lower()] = new_tp
+
+                    new_join = JoinPlan(
+                        source_table_alias=src_alias,
+                        source_column=proj.column_name,
+                        target_table_alias=tgt_alias,
+                        target_column=tgt_pk,
+                        join_type=JoinType.LEFT,
+                    )
+                    if not any(j.source_table_alias == src_alias and j.source_column == proj.column_name for j in plan.joins):
+                        plan.joins.append(new_join)
+                    existing_join_pairs[(src_alias, proj.column_name)] = tgt_alias
+
+                for c_name in tgt_obj.columns.keys():
+                    if c_name.lower() in readable_cols:
+                        prefix = proj.column_name.replace('_id', '').replace('_id_id', '')
+                        out_alias = f"{prefix}_{c_name}"
+                        if not any(p.table_alias == tgt_alias and p.column_name == c_name for p in plan.projections) and not any(p.table_alias == tgt_alias and p.column_name == c_name for p in projections_to_add):
+                            projections_to_add.append(
+                                ColumnProjectionPlan(
+                                    table_alias=tgt_alias,
+                                    column_name=c_name,
+                                    output_alias=out_alias,
+                                    aggregation=AggregateFunction.NONE,
+                                )
+                            )
+
+        if projections_to_add:
+            plan.projections.extend(projections_to_add)
 
         return plan
 

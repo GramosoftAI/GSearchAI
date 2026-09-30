@@ -245,24 +245,34 @@ class QueryPlanValidator:
             rels = [rel for neighbor, rel in graph.get_neighbors(src_key) if neighbor == tgt_key]
 
             if not rels:
-                raise QueryPlanValidationError(
-                    f"Unauthorized join between '{src_key}' and '{tgt_key}': no canonical foreign key relationship exists"
-                )
+                # Soft FK convention check (e.g. responsible_id, assigned_to_id, author_id -> users)
+                col_low = join.source_column.lower()
+                soft_fk_cols = {"assigned_to_id", "responsible_id", "author_id", "user_id", "created_by_id", "updated_by_id", "owner_id", "manager_id", "employee_id"}
+                is_soft_fk = col_low in soft_fk_cols or col_low.endswith("_id") or col_low.endswith("_id_id")
+                tgt_tbl_obj = canonical_schema.get_table(tgt_t)
+                if not (is_soft_fk and tgt_tbl_obj):
+                    raise QueryPlanValidationError(
+                        f"Unauthorized join between '{src_key}' and '{tgt_key}': no canonical foreign key relationship exists"
+                    )
+            else:
+                # Verify join columns match at least one approved relationship definition
+                valid_join = False
+                for rel in rels:
+                    if (
+                        (join.source_column in rel.source_columns and join.target_column in rel.target_columns)
+                        or (join.source_column in rel.target_columns and join.target_column in rel.source_columns)
+                    ):
+                        valid_join = True
+                        break
 
-            # Verify join columns match at least one approved relationship definition
-            valid_join = False
-            for rel in rels:
-                if (
-                    (join.source_column in rel.source_columns and join.target_column in rel.target_columns)
-                    or (join.source_column in rel.target_columns and join.target_column in rel.source_columns)
-                ):
-                    valid_join = True
-                    break
-
-            if not valid_join:
-                raise QueryPlanValidationError(
-                    f"Join condition '{src_t}.{join.source_column} = {tgt_t}.{join.target_column}' does not match canonical foreign key definitions"
-                )
+                if not valid_join:
+                    col_low = join.source_column.lower()
+                    soft_fk_cols = {"assigned_to_id", "responsible_id", "author_id", "user_id", "created_by_id", "updated_by_id", "owner_id", "manager_id", "employee_id"}
+                    is_soft_fk = col_low in soft_fk_cols or col_low.endswith("_id") or col_low.endswith("_id_id")
+                    if not is_soft_fk:
+                        raise QueryPlanValidationError(
+                            f"Join condition '{src_t}.{join.source_column} = {tgt_t}.{join.target_column}' does not match canonical foreign key definitions"
+                        )
 
         # 6. Anti-Cartesian Check (All planned tables must be connected if count > 1)
         if len(plan.tables) > 1:
