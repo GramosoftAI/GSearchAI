@@ -14,6 +14,7 @@ const footerColumns = [
       { label: "AI assistant", href: "#" },
       { label: "Agents & workflows", href: "#" },
       { label: "Integrations", href: "#connectors" },
+      { label: "Slack App", href: "/slack" },
     ],
   },
   {
@@ -31,7 +32,7 @@ const footerColumns = [
       { label: "How it works", href: "#how" },
       { label: "Documentation", href: "#" },
       { label: "Blog", href: "#" },
-      { label: "Help center", href: "#" },
+      { label: "Help center", href: "/support" },
     ],
   },
   {
@@ -40,7 +41,7 @@ const footerColumns = [
       { label: "About Gramosoft", href: "#" },
       { label: "Security", href: "#security" },
       { label: "Book a demo", href: "#cta" },
-      { label: "Contact", href: "#" },
+      { label: "Contact", href: "/support" },
       { label: "Privacy Policy", href: "/privacy-policy" },
       { label: "Terms of Service", href: "/terms-of-service" },
     ],

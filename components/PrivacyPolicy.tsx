@@ -12,12 +12,12 @@ export default function PrivacyPolicy() {
         fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif"
       }}
     >
-      <div style={{ maxWidth: "920px", margin: "0 auto" }}>
+      <div style={{ maxWidth: "960px", margin: "0 auto" }}>
         
         {/* Header Title & Date Badges */}
         <div 
           style={{ 
-            background: "linear-gradient(135deg, rgba(15, 181, 161, 0.05) 0%, rgba(124, 108, 240, 0.05) 100%)",
+            background: "linear-gradient(135deg, rgba(15, 181, 161, 0.05) 0%, rgba(74, 21, 75, 0.05) 50%, rgba(124, 108, 240, 0.05) 100%)",
             border: "1px solid var(--line, #e5e9ef)",
             borderRadius: "20px",
             padding: "40px 28px",
@@ -39,7 +39,7 @@ export default function PrivacyPolicy() {
               letterSpacing: "0.05em" 
             }}
           >
-            Legal &amp; Compliance
+            Legal &amp; Privacy Compliance
           </div>
           <h1 
             style={{ 
@@ -55,14 +55,14 @@ export default function PrivacyPolicy() {
           </h1>
           <p 
             style={{ 
-              maxWidth: "680px", 
+              maxWidth: "760px", 
               margin: "0 auto 24px", 
               fontSize: "16.5px", 
               color: "var(--muted, #6b7280)",
               lineHeight: 1.6
             }}
           >
-            This Privacy Policy explains how GSearchAI collects, uses, processes, stores, and protects user and Google Drive data when using the GSearchAI platform and Google Drive connector.
+            This Privacy Policy details how GSearchAI collects, uses, processes, stores, and protects data when using the GSearchAI platform and third-party integrations, including our <strong>Slack App</strong> and <strong>Google Drive connector</strong>.
           </p>
           
           <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "10px", fontSize: "13px" }}>
@@ -90,7 +90,7 @@ export default function PrivacyPolicy() {
                 boxShadow: "0 2px 4px rgba(0,0,0,0.02)"
               }}
             >
-              <strong>Last Updated:</strong> September 4, 2026
+              <strong>Last Updated:</strong> September 30, 2026
             </span>
             <span 
               style={{ 
@@ -108,64 +108,38 @@ export default function PrivacyPolicy() {
           </div>
         </div>
 
-        {/* Google API Services User Data Policy Banner */}
+        {/* Quick Jump Anchors for Compliance Reviewers */}
         <div 
           style={{ 
-            background: "var(--teal-soft, #e3f7f3)", 
-            border: "1.5px solid rgba(15, 181, 161, 0.3)", 
-            borderRadius: "16px",
-            padding: "24px 28px",
-            marginBottom: "36px",
-            boxShadow: "0 6px 20px -8px rgba(15, 181, 161, 0.2)"
+            background: "#f8fafc", 
+            border: "1px solid #e2e8f0", 
+            borderRadius: "14px", 
+            padding: "16px 20px", 
+            marginBottom: "32px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "12px",
+            fontSize: "13.5px"
           }}
         >
-          <h3 
-            style={{ 
-              color: "var(--teal-deep, #0a8576)", 
-              fontSize: "18px", 
-              fontWeight: 700, 
-              marginTop: 0,
-              marginBottom: "12px" 
-            }}
-          >
-            Google API Services User Data Policy
-          </h3>
-          <p style={{ fontSize: "15px", lineHeight: "1.6", color: "var(--ink, #14161f)", marginBottom: "12px" }}>
-            GSearchAI&apos;s use and transfer to any other app of information received from Google APIs will adhere to the{" "}
-            <a 
-              href="https://developers.google.com/terms/api-services-user-data-policy" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              style={{ color: "var(--teal-deep, #0a8576)", fontWeight: 700, textDecoration: "underline" }}
-            >
-              Google API Services User Data Policy
+          <span style={{ fontWeight: 700, color: "#1e293b" }}>Quick Navigation:</span>
+          <div style={{ display: "flex", gap: "14px", flexWrap: "wrap" }}>
+            <a href="#section-slack" style={{ color: "#4A154B", fontWeight: 700, textDecoration: "underline" }}>
+              Slack Data Policy
             </a>
-            , including the Limited Use requirements.
-          </p>
-          <ul style={{ paddingLeft: "20px", margin: "0 0 16px", color: "var(--ink, #14161f)", fontSize: "14.5px" }}>
-            <li style={{ marginBottom: "6px" }}><strong>GSearchAI does not sell Google user data.</strong></li>
-            <li><strong>GSearchAI does not use Google user data to train, fine-tune, or develop generalized artificial intelligence or machine learning models.</strong></li>
-          </ul>
-          <div style={{ paddingTop: "12px", borderTop: "1px solid rgba(15, 181, 161, 0.2)" }}>
-            <a 
-              href="https://developers.google.com/terms/api-services-user-data-policy" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              style={{ 
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "6px",
-                padding: "7px 16px",
-                borderRadius: "9999px",
-                border: "1.5px solid var(--teal, #0fb5a1)",
-                color: "var(--teal-deep, #0a8576)",
-                background: "#ffffff",
-                fontWeight: 700,
-                fontSize: "13.5px",
-                textDecoration: "none"
-              }}
-            >
-              Read Google API Services User Data Policy &rarr;
+            <a href="#section-google" style={{ color: "#0a8576", fontWeight: 700, textDecoration: "underline" }}>
+              Google Drive Data Policy
+            </a>
+            <a href="#section-passthrough" style={{ color: "#7c6cf0", fontWeight: 700, textDecoration: "underline" }}>
+              Passthrough Data Disclosure
+            </a>
+            <a href="#section-retention" style={{ color: "#0284c7", fontWeight: 700, textDecoration: "underline" }}>
+              Retention &amp; Deletion
+            </a>
+            <a href="#section-contact" style={{ color: "#14161f", fontWeight: 700, textDecoration: "underline" }}>
+              Contact &amp; Requests
             </a>
           </div>
         </div>
@@ -173,7 +147,7 @@ export default function PrivacyPolicy() {
         {/* Policy Content Sections */}
         <div style={{ display: "flex", flexDirection: "column", gap: "24px", fontSize: "15.5px", lineHeight: "1.7" }}>
           
-          {/* Section 1 */}
+          {/* Section 1: Introduction */}
           <section 
             id="section-1" 
             style={{ 
@@ -185,158 +159,109 @@ export default function PrivacyPolicy() {
             }}
           >
             <h2 style={{ color: "var(--ink, #14161f)", fontSize: "20px", fontWeight: 700, marginTop: 0, marginBottom: "14px" }}>
-              1. Introduction
+              1. Introduction &amp; Scope
             </h2>
             <p style={{ marginTop: 0, marginBottom: "12px" }}>
-              GSearchAI is an enterprise AI search and Retrieval-Augmented Generation (RAG) platform that helps users search, retrieve, and analyze documents across cloud applications and databases using natural language.
+              GSearchAI (a product operated by Gramosoft Private Limited) is an enterprise AI search and knowledge intelligence platform. Our platform enables organizations to index, query, analyze, and retrieve information across their connected workplace tools and databases using natural language.
+            </p>
+            <p style={{ marginBottom: "12px" }}>
+              This Privacy Policy applies to all individuals and organizations that interact with our website, software platform, web dashboard, APIs, and connected third-party integrations, specifically including the <strong>GSearchAI Slack Application</strong> and <strong>Google Drive Connector</strong>.
             </p>
             <p style={{ marginBottom: 0 }}>
-              This Privacy Policy explains how GSearchAI collects, accesses, uses, processes, stores, and protects information when you use the GSearchAI website, platform, and third-party integrations, including the Google Drive connector.
+              We are committed to maintaining the highest level of privacy and data security. We do not sell your personal data or your organization&apos;s data, and we do not use your proprietary documents or chat discussions to train generalized or public AI models.
             </p>
           </section>
 
-          {/* Section 2 */}
+          {/* Section 2: SLACK INTEGRATION & THIRD-PARTY WORKPLACE DATA POLICY */}
           <section 
-            id="section-2" 
+            id="section-slack" 
             style={{ 
               background: "#ffffff", 
-              border: "1px solid var(--line, #e5e9ef)", 
+              border: "2px solid #4A154B", 
               borderRadius: "16px", 
-              padding: "28px",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.01)"
+              padding: "32px",
+              boxShadow: "0 6px 24px -8px rgba(74, 21, 75, 0.15)"
             }}
           >
-            <h2 style={{ color: "var(--ink, #14161f)", fontSize: "20px", fontWeight: 700, marginTop: 0, marginBottom: "14px" }}>
-              2. Google Drive Data Access
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
+              <span style={{ background: "#4A154B", color: "#ffffff", padding: "4px 10px", borderRadius: "6px", fontSize: "12px", fontWeight: 800, textTransform: "uppercase" }}>
+                Slack Marketplace Policy
+              </span>
+              <span style={{ fontSize: "14px", color: "#64748b", fontWeight: 600 }}>Third-Party Workplace Data Handling</span>
+            </div>
+
+            <h2 style={{ color: "#4A154B", fontSize: "22px", fontWeight: 800, marginTop: 0, marginBottom: "16px" }}>
+              2. Slack App Data Handling, Collection &amp; Use
             </h2>
             <p style={{ marginTop: 0, marginBottom: "14px" }}>
-              When you connect Google Drive to GSearchAI, the application may access information necessary to provide the requested integration and search functionality.
+              When your workspace administrator installs the GSearchAI app to a Slack workspace or when team members interact with the app in Slack, GSearchAI receives and processes limited third-party data required to provide the search and assistance service.
             </p>
-            <p style={{ fontWeight: 700, color: "var(--ink, #14161f)", marginBottom: "12px" }}>This may include:</p>
-            
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px", marginBottom: "16px" }}>
-              <div style={{ background: "var(--alt, #f5f7fa)", border: "1px solid var(--line, #e5e9ef)", borderRadius: "12px", padding: "18px" }}>
-                <h3 style={{ color: "var(--teal-deep, #0a8576)", fontSize: "15px", fontWeight: 700, marginTop: 0, marginBottom: "10px" }}>
-                  File Metadata
-                </h3>
-                <ul style={{ paddingLeft: "18px", margin: 0, fontSize: "14.5px", color: "var(--body, #414856)" }}>
-                  <li>File names</li>
-                  <li>File IDs</li>
-                  <li>MIME types</li>
-                  <li>Created and modified timestamps</li>
-                  <li>Folder structures</li>
-                </ul>
-              </div>
 
-              <div style={{ background: "var(--alt, #f5f7fa)", border: "1px solid var(--line, #e5e9ef)", borderRadius: "12px", padding: "18px" }}>
-                <h3 style={{ color: "var(--teal-deep, #0a8576)", fontSize: "15px", fontWeight: 700, marginTop: 0, marginBottom: "10px" }}>
-                  Document Content
-                </h3>
-                <p style={{ fontSize: "13.5px", color: "var(--muted, #6b7280)", marginTop: 0, marginBottom: "8px" }}>For files explicitly selected or made available for indexing:</p>
-                <ul style={{ paddingLeft: "18px", margin: 0, fontSize: "14.5px", color: "var(--body, #414856)" }}>
-                  <li>Google Docs</li>
-                  <li>PDF files</li>
-                  <li>Microsoft Word documents</li>
-                  <li>Microsoft Excel files</li>
-                  <li>CSV files</li>
-                </ul>
-              </div>
-            </div>
-
-            <div style={{ background: "var(--alt, #f5f7fa)", border: "1px solid var(--line, #e5e9ef)", borderRadius: "12px", padding: "18px", marginBottom: "16px" }}>
-              <h3 style={{ color: "var(--teal-deep, #0a8576)", fontSize: "15px", fontWeight: 700, marginTop: 0, marginBottom: "8px" }}>
-                User Account Information
+            {/* A: What data is collected from Slack */}
+            <div style={{ marginBottom: "20px" }}>
+              <h3 style={{ color: "var(--ink, #14161f)", fontSize: "17px", fontWeight: 700, marginBottom: "8px" }}>
+                A. What Data is Collected from Slack
               </h3>
-              <p style={{ fontSize: "14.5px", color: "var(--body, #414856)", margin: 0 }}>
-                GSearchAI may access your Google account email address to authenticate your connection and associate the integration with the appropriate GSearchAI workspace or tenant.
+              <p style={{ fontSize: "14.5px", color: "var(--body, #414856)", marginBottom: "10px" }}>
+                GSearchAI only collects information strictly necessary to authenticate your workspace, verify authorizations, and execute AI search queries:
               </p>
+              <ul style={{ paddingLeft: "20px", margin: 0, fontSize: "14.5px", color: "var(--body, #414856)" }}>
+                <li style={{ marginBottom: "6px" }}>
+                  <strong>Workspace &amp; Team Identifiers:</strong> Slack Team ID (<code>team_id</code>), Team Name, and Team Domain to route queries to your organization&apos;s designated agent and knowledge base.
+                </li>
+                <li style={{ marginBottom: "6px" }}>
+                  <strong>Channel Metadata:</strong> Channel ID and Channel Name for public or private channels where the bot has been explicitly invited (via <code>/invite @GSearchAI</code>) or selected in the integration configuration.
+                </li>
+                <li style={{ marginBottom: "6px" }}>
+                  <strong>User Identifiers:</strong> Slack User ID (<code>user_id</code>) and Username of the person invoking a search or sending a prompt, used to verify role-based access permissions and respond in thread context.
+                </li>
+                <li style={{ marginBottom: "6px" }}>
+                  <strong>Query &amp; Prompt Content:</strong> The text content of messages explicitly addressed to <code>@GSearchAI</code>, direct messages sent to the bot, or search terms entered through the <code>/gsearch</code> slash command.
+                </li>
+                <li>
+                  <strong>OAuth Credentials:</strong> Encrypted bot access tokens provided by Slack during the OAuth 2.0 installation flow, stored with AES-256 encryption.
+                </li>
+              </ul>
             </div>
 
-            <h3 style={{ color: "var(--ink, #14161f)", fontSize: "16px", fontWeight: 700, marginBottom: "8px" }}>Purpose of Access</h3>
-            <p style={{ fontSize: "14.5px", color: "var(--muted, #6b7280)", marginTop: 0, marginBottom: "8px" }}>Google Drive data is accessed only to provide functionality such as:</p>
-            <ul style={{ paddingLeft: "20px", margin: 0, fontSize: "14.5px" }}>
-              <li>Searching documents</li>
-              <li>Retrieving relevant information</li>
-              <li>Processing documents</li>
-              <li>Indexing content</li>
-              <li>Generating answers to user queries</li>
-              <li>Supporting knowledge-base functionality</li>
-            </ul>
-          </section>
-
-          {/* Section 3 */}
-          <section 
-            id="section-3" 
-            style={{ 
-              background: "#ffffff", 
-              border: "1px solid var(--line, #e5e9ef)", 
-              borderRadius: "16px", 
-              padding: "28px",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.01)"
-            }}
-          >
-            <h2 style={{ color: "var(--ink, #14161f)", fontSize: "20px", fontWeight: 700, marginTop: 0, marginBottom: "14px" }}>
-              3. How We Use Your Data
-            </h2>
-            <p style={{ marginTop: 0, marginBottom: "14px" }}>GSearchAI may process connected data for the following purposes:</p>
-
-            <div style={{ marginBottom: "16px" }}>
-              <h3 style={{ color: "var(--ink, #14161f)", fontSize: "16px", fontWeight: 700, marginTop: 0, marginBottom: "6px" }}>Document Processing</h3>
-              <p style={{ fontSize: "14.5px", color: "var(--muted, #6b7280)", marginTop: 0, marginBottom: "10px" }}>Documents may be processed through:</p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-                {["Document parsing", "Chunking", "Text extraction", "Vector embedding generation", "Metadata extraction"].map((item, idx) => (
-                  <span 
-                    key={idx} 
-                    style={{ 
-                      background: "var(--alt, #f5f7fa)", 
-                      border: "1px solid var(--line, #e5e9ef)", 
-                      padding: "4px 12px", 
-                      borderRadius: "6px",
-                      fontSize: "13.5px",
-                      fontWeight: 600,
-                      color: "var(--ink, #14161f)"
-                    }}
-                  >
-                    &bull; {item}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div style={{ marginBottom: "16px" }}>
-              <h3 style={{ color: "var(--ink, #14161f)", fontSize: "16px", fontWeight: 700, marginTop: 0, marginBottom: "6px" }}>Tabular Data Processing</h3>
-              <p style={{ fontSize: "14.5px", color: "var(--body, #414856)", margin: 0 }}>
-                Excel and CSV files may be converted into structured formats for analytics and querying.
+            {/* B: How data collected from Slack is used */}
+            <div style={{ marginBottom: "20px" }}>
+              <h3 style={{ color: "var(--ink, #14161f)", fontSize: "17px", fontWeight: 700, marginBottom: "8px" }}>
+                B. How the Collected Data is Used
+              </h3>
+              <p style={{ fontSize: "14.5px", color: "var(--body, #414856)", marginBottom: "8px" }}>
+                Data collected from Slack is used exclusively to:
               </p>
+              <ul style={{ paddingLeft: "20px", margin: 0, fontSize: "14.5px" }}>
+                <li style={{ marginBottom: "6px" }}>Authenticate and route requests between Slack and your configured GSearchAI knowledge agent.</li>
+                <li style={{ marginBottom: "6px" }}>Perform semantic vector search across your authorized connectors (e.g., Google Drive, Confluence, Jira, Notion) matching the user&apos;s query.</li>
+                <li style={{ marginBottom: "6px" }}>Generate concise, citation-backed answers with verifiable document links and post them back into the Slack channel, thread, or direct message via Slack Block Kit.</li>
+                <li>Enforce permission boundaries so users only see search results from documents they are authorized to access.</li>
+              </ul>
             </div>
 
-            <div style={{ marginBottom: "16px" }}>
-              <h3 style={{ color: "var(--ink, #14161f)", fontSize: "16px", fontWeight: 700, marginTop: 0, marginBottom: "6px" }}>Retrieval-Augmented Generation</h3>
-              <p style={{ fontSize: "14.5px", color: "var(--body, #414856)", margin: 0 }}>
-                Relevant document snippets may be temporarily provided to configured AI/LLM services to construct responses to user queries.
-              </p>
-            </div>
-
+            {/* C: Strict Prohibition on Model Training */}
             <div 
               style={{ 
-                background: "#fffbe6", 
-                border: "1px solid #ffe58f", 
+                background: "rgba(74, 21, 75, 0.05)", 
+                border: "1px solid rgba(74, 21, 75, 0.2)", 
                 borderRadius: "10px", 
-                padding: "16px" 
+                padding: "16px 20px", 
+                marginBottom: "20px" 
               }}
             >
-              <h3 style={{ color: "#873800", fontSize: "15px", fontWeight: 700, marginTop: 0, marginBottom: "4px" }}>
-                No AI Model Training
-              </h3>
-              <p style={{ fontSize: "14px", color: "#613400", margin: 0 }}>
-                Google Drive files, document chunks, and search queries are not used by GSearchAI to train, fine-tune, or develop generalized public or foundation AI models.
+              <h4 style={{ color: "#4A154B", fontSize: "15px", fontWeight: 700, margin: "0 0 6px" }}>
+                Zero AI / LLM Model Training Guarantee
+              </h4>
+              <p style={{ fontSize: "14px", color: "#14161f", margin: 0, lineHeight: 1.6 }}>
+                GSearchAI <strong>never</strong> uses Slack messages, user prompts, channel discussions, or returned search results to train, fine-tune, or evaluate generalized foundation or third-party artificial intelligence models. Your data remains strictly private to your tenant.
               </p>
             </div>
           </section>
 
-          {/* Section 4 */}
+          {/* Section 3: PASSTHROUGH & TECHNICAL LOGGING DISCLOSURE */}
           <section 
-            id="section-4" 
+            id="section-passthrough" 
             style={{ 
               background: "#ffffff", 
               border: "1px solid var(--line, #e5e9ef)", 
@@ -346,59 +271,31 @@ export default function PrivacyPolicy() {
             }}
           >
             <h2 style={{ color: "var(--ink, #14161f)", fontSize: "20px", fontWeight: 700, marginTop: 0, marginBottom: "14px" }}>
-              4. How We Store Your Data
+              3. Data Received But Not Used (Passthrough &amp; System Logging)
             </h2>
             <p style={{ marginTop: 0, marginBottom: "12px" }}>
-              Depending on the functionality being used, GSearchAI may store processed information in application infrastructure such as:
+              When interacting with third-party APIs such as Slack or Google, our web servers receive standard protocol payloads and technical metadata that pass through our infrastructure.
             </p>
-
-            <ul style={{ paddingLeft: "20px", marginTop: 0, marginBottom: "16px" }}>
-              <li style={{ marginBottom: "6px" }}><strong>PostgreSQL / pgvector</strong> for text, metadata, and vector embeddings</li>
-              <li style={{ marginBottom: "6px" }}><strong>Neo4j</strong> for graph relationships and topology</li>
-              <li style={{ marginBottom: "6px" }}><strong>Parquet datasets</strong> for tabular data processing</li>
-              <li><strong>DuckDB</strong> for querying structured/tabular datasets</li>
-            </ul>
-
-            <p style={{ marginBottom: "8px" }}>Data is protected using appropriate technical and organizational security measures.</p>
-            <p style={{ marginBottom: "8px" }}>Communication with GSearchAI services is protected using HTTPS/TLS.</p>
-            <p style={{ marginBottom: 0 }}>OAuth credentials and tokens are protected using encryption and appropriate access controls.</p>
-          </section>
-
-          {/* Section 5 */}
-          <section 
-            id="section-5" 
-            style={{ 
-              background: "#ffffff", 
-              border: "1px solid var(--line, #e5e9ef)", 
-              borderRadius: "16px", 
-              padding: "28px",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.01)"
-            }}
-          >
-            <h2 style={{ color: "var(--ink, #14161f)", fontSize: "20px", fontWeight: 700, marginTop: 0, marginBottom: "14px" }}>
-              5. Google Drive Permissions
-            </h2>
-            <p style={{ marginTop: 0, marginBottom: "12px" }}>GSearchAI may request Google permissions necessary to provide the Google Drive integration.</p>
-            <p style={{ fontWeight: 700, color: "var(--ink, #14161f)", marginBottom: "10px" }}>Examples include:</p>
             
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" }}>
-              <code style={{ background: "var(--alt, #f5f7fa)", border: "1px solid var(--line, #e5e9ef)", padding: "8px 14px", borderRadius: "6px", fontSize: "13.5px", color: "var(--ink, #14161f)", wordBreak: "break-all" }}>
-                https://www.googleapis.com/auth/drive.readonly
-              </code>
-              <code style={{ background: "var(--alt, #f5f7fa)", border: "1px solid var(--line, #e5e9ef)", padding: "8px 14px", borderRadius: "6px", fontSize: "13.5px", color: "var(--ink, #14161f)", wordBreak: "break-all" }}>
-                https://www.googleapis.com/auth/userinfo.email
-              </code>
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "18px", marginBottom: "16px" }}>
+              <h3 style={{ fontSize: "15px", fontWeight: 700, color: "#1e293b", marginTop: 0, marginBottom: "8px" }}>
+                Passthrough Payloads &amp; Metadata Received:
+              </h3>
+              <p style={{ fontSize: "14px", color: "#475569", margin: "0 0 10px", lineHeight: 1.6 }}>
+                Slack slash command payloads, interactive Block Kit actions, and webhook events inherently include auxiliary parameters such as <code>trigger_id</code>, <code>response_url</code>, <code>api_app_id</code>, <code>enterprise_id</code>, internal request timestamps, IP addresses, and HTTP user-agent headers.
+              </p>
+              <h4 style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a", margin: "0 0 6px" }}>
+                Our Explicit Commitment Regarding Unused Data:
+              </h4>
+              <p style={{ fontSize: "14px", color: "#334155", margin: 0, lineHeight: 1.6 }}>
+                While this technical data passes through our services during standard HTTPS transmission, <strong>GSearchAI does not store, profile, track, aggregate, or monetize this auxiliary information</strong>. It is processed ephemerally in active memory solely to complete the immediate Slack API request cycle. Technical system logs maintained for server performance and cybersecurity are stripped of sensitive message content and automatically overwritten on a rolling 30-day schedule.
+              </p>
             </div>
-
-            <p style={{ marginBottom: "8px" }}><strong>GSearchAI does not request or store your Google account password.</strong></p>
-            <p style={{ margin: 0, color: "var(--muted, #6b7280)" }}>
-              OAuth credentials are protected and used only to maintain the authorized connection between your Google account and GSearchAI.
-            </p>
           </section>
 
-          {/* Section 6 */}
+          {/* Section 4: GOOGLE DRIVE USER DATA POLICY (Full Limited Use Disclosure) */}
           <section 
-            id="section-6" 
+            id="section-google" 
             style={{ 
               background: "#ffffff", 
               border: "1px solid var(--line, #e5e9ef)", 
@@ -407,111 +304,161 @@ export default function PrivacyPolicy() {
               boxShadow: "0 2px 6px rgba(0,0,0,0.01)"
             }}
           >
-            <h2 style={{ color: "var(--ink, #14161f)", fontSize: "20px", fontWeight: 700, marginTop: 0, marginBottom: "14px" }}>
-              6. Data Sharing
-            </h2>
-            <ul style={{ paddingLeft: "20px", marginTop: 0, marginBottom: "14px" }}>
-              <li style={{ marginBottom: "6px" }}>GSearchAI does not sell, rent, or trade Google Drive data.</li>
-              <li>Google Drive information is not shared with advertisers or data brokers.</li>
-            </ul>
-            <p style={{ margin: 0, color: "var(--muted, #6b7280)" }}>
-              GSearchAI may use third-party infrastructure or AI/cloud service providers to provide application functionality. Such providers may process limited information as necessary to provide the requested service and are subject to applicable contractual and data-protection requirements.
-            </p>
-          </section>
-
-          {/* Section 7 */}
-          <section 
-            id="section-7" 
-            style={{ 
-              background: "#ffffff", 
-              border: "1px solid var(--line, #e5e9ef)", 
-              borderRadius: "16px", 
-              padding: "28px",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.01)"
-            }}
-          >
-            <h2 style={{ color: "var(--ink, #14161f)", fontSize: "20px", fontWeight: 700, marginTop: 0, marginBottom: "14px" }}>
-              7. Data Retention and Deletion
-            </h2>
-            <p style={{ marginTop: 0, marginBottom: "12px" }}>Data may be retained while the associated GSearchAI knowledge base or account remains active.</p>
-            <p style={{ marginBottom: "12px" }}>
-              When a user deletes applicable content, knowledge-base data, or an account, GSearchAI will process the deletion of associated application data according to its operational deletion procedures.
-            </p>
-            <p style={{ fontWeight: 700, color: "var(--ink, #14161f)", marginBottom: "8px" }}>This may include:</p>
-            <ul style={{ paddingLeft: "20px", margin: 0 }}>
-              <li>Document chunks</li>
-              <li>Vector embeddings</li>
-              <li>Graph data</li>
-              <li>Structured datasets</li>
-              <li>OAuth connection information</li>
-            </ul>
-          </section>
-
-          {/* Section 8 */}
-          <section 
-            id="section-8" 
-            style={{ 
-              background: "#ffffff", 
-              border: "1px solid var(--line, #e5e9ef)", 
-              borderRadius: "16px", 
-              padding: "28px",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.01)"
-            }}
-          >
-            <h2 style={{ color: "var(--ink, #14161f)", fontSize: "20px", fontWeight: 700, marginTop: 0, marginBottom: "14px" }}>
-              8. Your Rights
-            </h2>
-            <p style={{ marginTop: 0, marginBottom: "12px" }}>Depending on your location and applicable law, you may have rights including:</p>
-            <ul style={{ paddingLeft: "20px", marginTop: 0, marginBottom: "14px" }}>
-              <li>Access to your personal information</li>
-              <li>Requesting deletion</li>
-              <li>Requesting correction of inaccurate information</li>
-              <li>Requesting restriction of processing</li>
-              <li>Disconnecting third-party integrations</li>
-            </ul>
-            <p style={{ margin: 0, fontSize: "14px", color: "var(--muted, #6b7280)" }}>
-              These rights may be subject to applicable legal requirements and exceptions.
-            </p>
-          </section>
-
-          {/* Section 9 */}
-          <section 
-            id="section-9" 
-            style={{ 
-              background: "#ffffff", 
-              border: "1px solid var(--line, #e5e9ef)", 
-              borderRadius: "16px", 
-              padding: "28px",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.01)"
-            }}
-          >
-            <h2 style={{ color: "var(--ink, #14161f)", fontSize: "20px", fontWeight: 700, marginTop: 0, marginBottom: "14px" }}>
-              9. Disconnecting Google Drive
-            </h2>
-            <p style={{ marginTop: 0, marginBottom: "10px" }}>You can disconnect Google Drive from GSearchAI through:</p>
-            <div style={{ background: "var(--alt, #f5f7fa)", border: "1px solid var(--line, #e5e9ef)", padding: "12px 16px", borderRadius: "8px", marginBottom: "16px", fontWeight: 600, fontSize: "14px", color: "var(--ink, #14161f)" }}>
-              GSearchAI Dashboard &rarr; Settings &rarr; Integrations &rarr; Google Drive &rarr; Disconnect Connection
-            </div>
-            
-            <p style={{ marginBottom: "8px" }}>You can also manage third-party application permissions through your Google Account:</p>
-            <p style={{ marginBottom: "10px" }}>
-              <a 
-                href="https://myaccount.google.com/permissions" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                style={{ color: "var(--teal-deep, #0a8576)", fontWeight: 700, textDecoration: "underline" }}
+            <div 
+              style={{ 
+                background: "var(--teal-soft, #e3f7f3)", 
+                border: "1.5px solid rgba(15, 181, 161, 0.3)", 
+                borderRadius: "12px",
+                padding: "20px 24px",
+                marginBottom: "24px"
+              }}
+            >
+              <h3 
+                style={{ 
+                  color: "var(--teal-deep, #0a8576)", 
+                  fontSize: "17px", 
+                  fontWeight: 700, 
+                  marginTop: 0,
+                  marginBottom: "8px" 
+                }}
               >
-                https://myaccount.google.com/permissions &rarr;
-              </a>
+                Google API Services User Data Policy Compliance
+              </h3>
+              <p style={{ fontSize: "14.5px", lineHeight: "1.6", color: "var(--ink, #14161f)", margin: 0 }}>
+                GSearchAI&apos;s use and transfer to any other app of information received from Google APIs adheres to the{" "}
+                <a 
+                  href="https://developers.google.com/terms/api-services-user-data-policy" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{ color: "var(--teal-deep, #0a8576)", fontWeight: 700, textDecoration: "underline" }}
+                >
+                  Google API Services User Data Policy
+                </a>
+                , including the Limited Use requirements.
+              </p>
+            </div>
+
+            <h2 style={{ color: "var(--ink, #14161f)", fontSize: "20px", fontWeight: 700, marginTop: 0, marginBottom: "14px" }}>
+              4. Google Drive Data Access, Storage &amp; Protection
+            </h2>
+            <p style={{ marginTop: 0, marginBottom: "12px" }}>
+              When you connect Google Drive to GSearchAI, our platform accesses file metadata (file names, IDs, MIME types, timestamps) and document content (Google Docs, PDFs, Word, Excel, CSV files) only for files you explicitly select or make available for indexing.
             </p>
-            <p style={{ margin: 0, fontSize: "14px", color: "var(--muted, #6b7280)" }}>
-              Find GSearchAI and remove its access if you no longer want the application to access your Google account.
-            </p>
+            <ul style={{ paddingLeft: "20px", margin: "0 0 16px", fontSize: "14.5px" }}>
+              <li style={{ marginBottom: "6px" }}><strong>GSearchAI does not sell Google user data.</strong></li>
+              <li style={{ marginBottom: "6px" }}><strong>GSearchAI does not use Google user data to train, fine-tune, or develop generalized AI/ML models.</strong></li>
+              <li><strong>OAuth tokens are protected with AES-256 encryption and TLS 1.3 transmission.</strong></li>
+            </ul>
           </section>
 
-          {/* Section 10 */}
+          {/* Section 5: DATA RETENTION TIMELINES */}
           <section 
-            id="section-10" 
+            id="section-retention" 
+            style={{ 
+              background: "#ffffff", 
+              border: "1px solid var(--line, #e5e9ef)", 
+              borderRadius: "16px", 
+              padding: "28px",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.01)"
+            }}
+          >
+            <h2 style={{ color: "var(--ink, #14161f)", fontSize: "20px", fontWeight: 700, marginTop: 0, marginBottom: "14px" }}>
+              5. How Long Data is Kept (Data Retention Timelines)
+            </h2>
+            <p style={{ marginTop: 0, marginBottom: "14px" }}>
+              We apply strict data minimization principles to ensure information is retained only as long as necessary to provide the services requested:
+            </p>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px", marginBottom: "16px" }}>
+              <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "16px" }}>
+                <div style={{ color: "#0a8576", fontWeight: 700, fontSize: "14px", marginBottom: "6px" }}>
+                  Chat &amp; Search Queries
+                </div>
+                <p style={{ fontSize: "13.5px", color: "#475569", margin: 0, lineHeight: 1.5 }}>
+                  Slack queries and generated answers are held ephemerally in active memory during processing and are not stored in permanent log databases for model mining.
+                </p>
+              </div>
+
+              <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "16px" }}>
+                <div style={{ color: "#0a8576", fontWeight: 700, fontSize: "14px", marginBottom: "6px" }}>
+                  Knowledge Base Indexes
+                </div>
+                <p style={{ fontSize: "13.5px", color: "#475569", margin: 0, lineHeight: 1.5 }}>
+                  Vector embeddings and document chunks are retained only for the active lifespan of the associated GSearchAI workspace or customer account.
+                </p>
+              </div>
+
+              <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "16px" }}>
+                <div style={{ color: "#0a8576", fontWeight: 700, fontSize: "14px", marginBottom: "6px" }}>
+                  OAuth Credentials &amp; Tokens
+                </div>
+                <p style={{ fontSize: "13.5px", color: "#475569", margin: 0, lineHeight: 1.5 }}>
+                  Stored encrypted for the duration of the integration. Immediately revoked and purged when an admin disconnects the Slack app or Google Drive integration.
+                </p>
+              </div>
+
+              <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "16px" }}>
+                <div style={{ color: "#0a8576", fontWeight: 700, fontSize: "14px", marginBottom: "6px" }}>
+                  Technical Diagnostic Logs
+                </div>
+                <p style={{ fontSize: "13.5px", color: "#475569", margin: 0, lineHeight: 1.5 }}>
+                  System diagnostic logs and HTTP error codes are automatically purged on a rolling 30-day lifecycle.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          {/* Section 6: ACCESS, TRANSFER, AND DELETION RIGHTS (GDPR / CCPA) */}
+          <section 
+            id="section-rights" 
+            style={{ 
+              background: "#ffffff", 
+              border: "1px solid var(--line, #e5e9ef)", 
+              borderRadius: "16px", 
+              padding: "28px",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.01)"
+            }}
+          >
+            <h2 style={{ color: "var(--ink, #14161f)", fontSize: "20px", fontWeight: 700, marginTop: 0, marginBottom: "14px" }}>
+              6. How an Individual Can Request Access, Transfer, or Deletion of Data
+            </h2>
+            <p style={{ marginTop: 0, marginBottom: "14px" }}>
+              Regardless of your geographic location, GSearchAI honors global privacy principles aligned with the <strong>European General Data Protection Regulation (GDPR)</strong>, the <strong>California Consumer Privacy Act (CCPA/CPRA)</strong>, and applicable national privacy statutes.
+            </p>
+
+            <h3 style={{ fontSize: "16px", fontWeight: 700, color: "var(--ink, #14161f)", marginBottom: "8px" }}>
+              Your Data Privacy Rights Include:
+            </h3>
+            <ul style={{ paddingLeft: "20px", margin: "0 0 16px", fontSize: "14.5px" }}>
+              <li style={{ marginBottom: "6px" }}>
+                <strong>Right to Access:</strong> You can request a confirmation of whether we process your data and receive a copy of your personal data.
+              </li>
+              <li style={{ marginBottom: "6px" }}>
+                <strong>Right to Data Portability (Transfer):</strong> You can request to receive your stored data in a structured, commonly used, and machine-readable format (JSON or CSV).
+              </li>
+              <li style={{ marginBottom: "6px" }}>
+                <strong>Right to Deletion / Erasure:</strong> You can request complete erasure of your account, indexed documents, chat interactions, vector embeddings, and OAuth tokens from our servers.
+              </li>
+              <li style={{ marginBottom: "6px" }}>
+                <strong>Right to Disconnect:</strong> You can revoke third-party app access at any time through self-service dashboards.
+              </li>
+            </ul>
+
+            <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "10px", padding: "16px 20px", marginBottom: "16px" }}>
+              <h4 style={{ color: "#166534", fontSize: "15px", fontWeight: 700, margin: "0 0 6px" }}>
+                Immediate Self-Service Disconnection:
+              </h4>
+              <p style={{ fontSize: "14px", color: "#14532d", margin: 0, lineHeight: 1.6 }}>
+                <strong>For Slack:</strong> Administrators can remove the app directly via your Slack workspace settings (<em>Slack &gt; Manage Apps &gt; GSearchAI &gt; Remove App</em>) or in the GSearchAI Dashboard under <em>Integrations &gt; Slack &gt; Disconnect</em>. This immediately invalidates the bot token.
+                <br />
+                <strong>For Google Drive:</strong> Disconnect in the GSearchAI Dashboard or via your Google Account permissions page at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer" style={{ color: "#166534", fontWeight: 700, textDecoration: "underline" }}>myaccount.google.com/permissions</a>.
+              </p>
+            </div>
+          </section>
+
+          {/* Section 7: CONTACT INFORMATION FOR DATA REQUESTS */}
+          <section 
+            id="section-contact" 
             style={{ 
               background: "linear-gradient(135deg, #14161f 0%, #1e212f 100%)", 
               border: "1px solid var(--line-2, #d9dfe8)", 
@@ -520,38 +467,54 @@ export default function PrivacyPolicy() {
               color: "#ffffff"
             }}
           >
-            <h2 style={{ color: "#ffffff", fontSize: "20px", fontWeight: 700, marginTop: 0, marginBottom: "14px" }}>
-              10. Contact Us
+            <h2 style={{ color: "#ffffff", fontSize: "22px", fontWeight: 800, marginTop: 0, marginBottom: "12px" }}>
+              7. How to Contact Us to Exercise Your Data Rights
             </h2>
-            <p style={{ fontWeight: 700, margin: "0 0 4px", fontSize: "16px" }}>Gramosoft Private Limited</p>
-            <p style={{ margin: "0 0 20px", color: "rgba(255,255,255,0.8)" }}>GSearchAI</p>
+            <p style={{ fontSize: "15px", color: "rgba(255,255,255,0.85)", margin: "0 0 24px", lineHeight: 1.6 }}>
+              To submit a formal request to access, download, transfer, or permanently delete your data, please use any of our electronic communication channels below. We verify each request to protect your security and respond within <strong>30 calendar days</strong> (or 48 hours for immediate disconnection confirmations).
+            </p>
             
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "16px" }}>
-              <div style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "10px", padding: "14px" }}>
-                <span style={{ display: "block", textTransform: "uppercase", fontSize: "11px", fontWeight: 700, color: "rgba(255,255,255,0.6)", marginBottom: "4px" }}>Privacy</span>
-                <a href="mailto:privacy@gsearchai.com" style={{ color: "#ffffff", fontWeight: 700, textDecoration: "none" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px", marginBottom: "24px" }}>
+              <div style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "12px", padding: "18px" }}>
+                <span style={{ display: "block", textTransform: "uppercase", fontSize: "11px", fontWeight: 700, color: "#2dd4bf", marginBottom: "6px" }}>
+                  Primary Privacy Email
+                </span>
+                <a href="mailto:privacy@gsearchai.com" style={{ color: "#ffffff", fontWeight: 700, fontSize: "16px", textDecoration: "none" }}>
                   privacy@gsearchai.com
                 </a>
+                <p style={{ margin: "6px 0 0", fontSize: "12.5px", color: "rgba(255,255,255,0.65)" }}>
+                  Monitored directly by our Data Protection Officer (DPO).
+                </p>
               </div>
               
-              <div style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "10px", padding: "14px" }}>
-                <span style={{ display: "block", textTransform: "uppercase", fontSize: "11px", fontWeight: 700, color: "rgba(255,255,255,0.6)", marginBottom: "4px" }}>Support</span>
-                <a href="mailto:support@gsearchai.com" style={{ color: "#ffffff", fontWeight: 700, textDecoration: "none" }}>
-                  support@gsearchai.com
+              <div style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "12px", padding: "18px" }}>
+                <span style={{ display: "block", textTransform: "uppercase", fontSize: "11px", fontWeight: 700, color: "#2dd4bf", marginBottom: "6px" }}>
+                  Support &amp; Deletion Inquiries
+                </span>
+                <a href="mailto:gsearchai@gmail.com" style={{ color: "#ffffff", fontWeight: 700, fontSize: "16px", textDecoration: "none" }}>
+                  gsearchai@gmail.com
                 </a>
+                <p style={{ margin: "6px 0 0", fontSize: "12.5px", color: "rgba(255,255,255,0.65)" }}>
+                  General customer care &amp; integration assistance.
+                </p>
               </div>
 
-              <div style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "10px", padding: "14px" }}>
-                <span style={{ display: "block", textTransform: "uppercase", fontSize: "11px", fontWeight: 700, color: "rgba(255,255,255,0.6)", marginBottom: "4px" }}>Website</span>
-                <a href="https://gsearchai.com" target="_blank" rel="noopener noreferrer" style={{ color: "#ffffff", fontWeight: 700, textDecoration: "none" }}>
-                  https://gsearchai.com &rarr;
+              <div style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "12px", padding: "18px" }}>
+                <span style={{ display: "block", textTransform: "uppercase", fontSize: "11px", fontWeight: 700, color: "#2dd4bf", marginBottom: "6px" }}>
+                  Online Privacy Request Webform
+                </span>
+                <a href="https://gsearchai.com" target="_blank" rel="noopener noreferrer" style={{ color: "#ffffff", fontWeight: 700, fontSize: "16px", textDecoration: "none" }}>
+                  gsearchai.com/privacy-policy &rarr;
                 </a>
+                <p style={{ margin: "6px 0 0", fontSize: "12.5px", color: "rgba(255,255,255,0.65)" }}>
+                  Submit data requests directly via our web portal.
+                </p>
               </div>
             </div>
 
-            <p style={{ marginTop: "24px", marginBottom: 0, color: "rgba(255,255,255,0.7)", fontSize: "13.5px" }}>
-              For privacy-related requests, contact us using the privacy email address above.
-            </p>
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.15)", paddingTop: "18px", fontSize: "13.5px", color: "rgba(255,255,255,0.7)" }}>
+              <strong>Operating Entity:</strong> Gramosoft Private Limited &bull; Legal Compliance Office &bull; Website: <a href="https://gsearchai.com" style={{ color: "#ffffff" }}>https://gsearchai.com</a>
+            </div>
           </section>
 
         </div>

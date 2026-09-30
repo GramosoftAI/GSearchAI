@@ -517,10 +517,10 @@ export default function TermsOfService() {
                   Email Support
                 </span>
                 <a
-                  href="mailto:support@gsearchai.com"
+                  href="mailto:gsearchai@gmail.com"
                   style={{ color: "#ffffff", fontWeight: 700, textDecoration: "none" }}
                 >
-                  support@gsearchai.com
+                  gsearchai@gmail.com
                 </a>
               </div>
             </div>
