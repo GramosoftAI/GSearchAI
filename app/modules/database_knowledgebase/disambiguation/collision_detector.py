@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..execution.connection_helper import connect_to_database
 from ..observability.logger import DatabaseAuditLogger
 from .exceptions import DisambiguationRequiredError
+from ..sql_security.policy import DenyPolicyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +28,11 @@ class CollisionDetector:
         canonical_schema: Any,
         table_override: Optional[str] = None,
         column_overrides: Optional[List[str]] = None,
-    ) -> Optional[Tuple[str, str, List[str]]]:
+        security_overrides: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Tuple[str, str, List[str], List[str]]]:
         """
-        Dynamically discover candidate person table, its primary key, and name columns.
-        Returns (table_name, pk_col, name_cols) or None if no person table is identified.
+        Dynamically discover candidate person table, its primary key, name columns, and distinguishing columns.
+        Returns (table_name, pk_col, name_cols, distinguishing_cols) or None if no person table is identified.
         """
         if not canonical_schema or not hasattr(canonical_schema, "schemas"):
             return None
@@ -54,15 +56,21 @@ class CollisionDetector:
                 if re.search(r"(name|login|email)", c.name, re.IGNORECASE)
                 and not c.name.lower().endswith(('_id', '_id_id', '_pk'))
             ]
+            dist_cols = [
+                c.name for c in target_table.columns.values()
+                if re.search(r"(email|login|department|org|title|role|username)", c.name, re.IGNORECASE)
+                and not c.name.lower().endswith(('_id', '_id_id', '_pk'))
+                and not DenyPolicyConfig.is_denied(c.name, overrides=security_overrides, is_column=True)
+            ][:3]
             if cols:
-                return table_override, pk, cols
+                return table_override, pk, cols, dist_cols
 
         # Dynamic discovery based on column names across tables
         best_candidate = None
         best_score = 0
         best_pk = "id"
         best_cols = []
-
+        distinguishing_cols = []
         for t_name, t_schema in tables.items():
             t_lower = t_name.lower()
             name_cols = [
@@ -84,9 +92,17 @@ class CollisionDetector:
                 best_candidate = t_name
                 best_pk = t_schema.primary_key_columns[0] if t_schema.primary_key_columns else "id"
                 best_cols = name_cols
+                
+                # Get non-denied distinguishing columns
+                distinguishing_cols = [
+                    c.name for c in t_schema.columns.values()
+                    if re.search(r"(email|login|department|org|title|role|username|phone)", c.name, re.IGNORECASE)
+                    and not c.name.lower().endswith(('_id', '_id_id', '_pk'))
+                    and not DenyPolicyConfig.is_denied(c.name, overrides=security_overrides, is_column=True)
+                ][:3]
 
         if best_candidate and best_cols:
-            return best_candidate, best_pk, best_cols
+            return best_candidate, best_pk, best_cols, distinguishing_cols
 
         return None
 
@@ -117,6 +133,7 @@ class CollisionDetector:
             canonical_schema=canonical_schema,
             table_override=entity_table_override,
             column_overrides=entity_columns_override,
+            security_overrides=kb_entity.settings.get("security_overrides", {}) if hasattr(kb_entity, "settings") and kb_entity.settings else {},
         )
         if not discovery:
             reason = "Could not determine a person/entity table from schema or settings."
@@ -131,7 +148,7 @@ class CollisionDetector:
             logger.info(f"[DISAMBIGUATION_SKIPPED] {reason}")
             return None
 
-        table_name, pk_col, name_cols = discovery
+        table_name, pk_col, name_cols, distinguishing_cols = discovery
 
         # Step 2: Connect using shared discrete connection helper
         try:
@@ -175,7 +192,7 @@ class CollisionDetector:
 
         # Step 3: Query external database using discovered table & columns
         try:
-            select_cols = ", ".join(dict.fromkeys([pk_col] + name_cols))
+            select_cols = ", ".join(dict.fromkeys([pk_col] + name_cols + distinguishing_cols))
             where_clause = " OR ".join([f"CAST({col} AS TEXT) ILIKE $1" for col in name_cols])
             query = f"SELECT {select_cols} FROM {table_name} WHERE {where_clause}"
             pattern = f"%{extracted_name}%"
@@ -199,12 +216,27 @@ class CollisionDetector:
                 await conn.close()
 
         # Step 4: Disambiguation evaluation
-        if len(rows) > 1:
+        if len(rows) > 20:
+            raise DisambiguationRequiredError(
+                message=f"I found {len(rows)} people matching '{extracted_name}'. Please narrow your search.",
+                options=[],
+                entity_type="user",
+            )
+        elif len(rows) > 1:
             options = []
+            all_ids = []
             for row in rows:
                 label_parts = [str(row[c]) for c in name_cols if row.get(c)]
+                dist_parts = [f"{c}: {row[c]}" for c in distinguishing_cols if row.get(c)]
+                
                 label = " ".join(label_parts) if label_parts else f"ID {row[pk_col]}"
+                if dist_parts:
+                    label += f" ({', '.join(dist_parts)})"
+                    
                 options.append({"id": row[pk_col], "label": label})
+                all_ids.append(row[pk_col])
+
+            options.append({"id": all_ids, "label": f"All {len(rows)} matches"})
 
             raise DisambiguationRequiredError(
                 message=f"I found {len(rows)} people matching '{extracted_name}'. Which one do you mean?",

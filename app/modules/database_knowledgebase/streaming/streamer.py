@@ -36,6 +36,7 @@ async def stream_database_query(
     use_llm: bool = True,
     execution_config: Optional[Any] = None,
     heartbeat_interval_seconds: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+    resolved_entities: Optional[list] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Asynchronously executes a database query and streams lifecycle events as SSE frames.
@@ -48,6 +49,7 @@ async def stream_database_query(
 
     # 1. Start background query pipeline task
     async def _run_query_pipeline():
+        from app.modules.database_knowledgebase.disambiguation.exceptions import DisambiguationRequiredError
         try:
             await service.query_database(
                 kb_id=kb_id,
@@ -58,7 +60,24 @@ async def stream_database_query(
                 execution_config=execution_config,
                 request_id=correlation_id,
                 event_sink=sink,
+                resolved_entities=resolved_entities,
             )
+        except DisambiguationRequiredError as exc:
+            logger.info(f"Disambiguation required for query {query_id}")
+            if not sink.is_terminal:
+                await sink.emit(
+                    DatabaseStreamEventType.QUERY_ERROR,
+                    stage="DISAMBIGUATION",
+                    status="disambiguation_required",
+                    data={
+                        "error_code": 300,
+                        "stage": "DISAMBIGUATION",
+                        "retryable": False,
+                        "message": exc.message,
+                        "options": exc.options,
+                        "correlation_id": correlation_id,
+                    },
+                )
         except asyncio.CancelledError:
             logger.info(f"Query task cancelled for query {query_id}")
             raise

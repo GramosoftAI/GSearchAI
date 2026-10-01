@@ -66,84 +66,7 @@ services:
     networks:
       - graphmind-network
 
-  # ============================================================================
-  # FastAPI Backend Application
-  # ============================================================================
-  api:
-    build: .
-    container_name: graphmind-api
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - .:/app
-    ports:
-      - "8000:8000"
-    healthcheck:
-      disable: true
-    environment:
-      - POSTGRES_USER=graphmind
-      - POSTGRES_PASSWORD=graphmind_password
-      - POSTGRES_HOST=db
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=graphmind
-      - NEO4J_URI=bolt://neo4j:7687
-      - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=graphmind_password
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=graphmind_redis_password
-      - REDIS_DB=0
-      - DEBUG=true
-      - APP_ENV=development
-      - JWT_SECRET_KEY=your-secret-key-change-in-production-at-least-32-chars
-      - DEEPINFRA_API_KEY=${DEEPINFRA_API_KEY:-}
-      - MEMORY_API_BASE_URL=http://memory-api:8001
-      - WATCHFILES_FORCE_POLLING=true
-    depends_on:
-      db:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      memory-api:
-        condition: service_started
-    networks:
-      - graphmind-network
 
-  # ============================================================================
-  # Memory API Microservice: Free, Local CPU Vector Storage Pipeline
-  # ============================================================================
-  memory-api:
-    build:
-      context: ./app/memory/app   
-      dockerfile: Dockerfile
-    container_name: graphmind-memory-api
-    command: python -m uvicorn main:app --host 0.0.0.0 --port 4917 --reload
-    ports:
-      - "4917:4917"
-    volumes:
-      - ./app/memory/app:/app    
-      - hf_model_cache:/root/.cache/huggingface
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    environment:
-      - APP_ENV=development
-      - REDIS_URL=${REDIS_URL:-redis://:graphmind_redis_password@redis:6379/0}
-      - POSTGRES_URL=${POSTGRES_URL:-postgresql+asyncpg://graphmind:graphmind_password@db:5432/graphmind}
-      - WATCHFILES_FORCE_POLLING=true
-      - LLM_BASE_URL=${DEEPINFRA_API_URL:-https://api.deepinfra.com/v1/openai}
-      - LLM_GATEWAY_API_KEY=${DEEPINFRA_API_KEY}
-      - MEMORY_CHAT_MODEL=${MEMORY_CHAT_MODEL}
-      - DEEPINFRA_EMBEDDING_MODEL=${DEEPINFRA_EMBEDDING_MODEL}
-      - EMBEDDING_BASE_URL=${DEEPINFRA_API_URL:-https://api.deepinfra.com/v1/openai}
-      - EMBEDDING_API_KEY=${DEEPINFRA_API_KEY}
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - graphmind-network
 
 networks:
   graphmind-network:
@@ -156,4 +79,3 @@ volumes:
   neo4j_import:
   neo4j_plugins:
   redis_data:
-  hf_model_cache:

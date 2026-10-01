@@ -48,6 +48,7 @@ CRITICAL RULES:
 6. INTENT MAPPING: Must be one of: 'SELECT_POINT', 'SELECT_JOIN', 'SELECT_AGGREGATE', 'SELECT_RANKING', 'SELECT_COMPARISON', 'SELECT_FILTER_MULTI', 'SELECT_TIME_SERIES'. For MIN, MAX, SUM, AVG, or COUNT, use "SELECT_AGGREGATE".
 7. GROUP BY FORMAT: group_by MUST be a list of strings (e.g. ["d.name", "e.department_id"]). Do NOT output an array of objects.
 8. FOREIGN KEY RESOLUTION: For ALL foreign key ID columns (e.g., responsible_id, department_id, project_id, author_id) that are part of the result, you MUST join the referenced table and project its human-readable name column (e.g., firstname, lastname, login, title, or name) alongside the ID. Users cannot read raw IDs, so always provide the associated name.
+9. EXACT PROJECTION: NEVER use `SELECT *`. When answering queries asking for 'details', explicitly list out the exact columns to project.
 
 Target Query: {query}
 

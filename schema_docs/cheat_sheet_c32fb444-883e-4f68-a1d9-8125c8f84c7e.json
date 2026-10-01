@@ -1,0 +1,495 @@
+{
+  "knowledgebase_id": "c32fb444-883e-4f68-a1d9-8125c8f84c7e",
+  "tenant_id": "2b41fa8c-9c12-491d-8199-a75292e683ec",
+  "schema_version": "80a5189e43eebbe79d7de4bcee7bad1464eb2c60dcf5afd077ebddb3087fecff",
+  "table_count": 2,
+  "tables": [
+    {
+      "table_name": "employee_employment",
+      "schema": "public",
+      "status": "draft",
+      "purpose": "The 'employee_employment' table stores detailed employment information for each employee, including their job title, department, employment type, and other related details. It serves as a central record linking employees to their specific roles and organizational structure.",
+      "synonyms": [
+        "employment_details",
+        "employee_job_info"
+      ],
+      "caveats": "All columns are non-nullable, ensuring complete records. The 'employee_id' column references the 'employees' table, maintaining referential integrity.",
+      "relationships": {
+        "table_name": "employee_employment",
+        "schema_name": "public",
+        "child_tables": [],
+        "incoming_fks": [],
+        "outgoing_fks": [
+          {
+            "type": "declared",
+            "source_table": "employee_employment",
+            "target_table": "employees",
+            "source_columns": [
+              "employee_id"
+            ],
+            "target_columns": [
+              "id"
+            ],
+            "constraint_name": "employee_employment_employee_id_fkey",
+            "is_self_reference": false
+          }
+        ],
+        "is_standalone": false,
+        "parent_tables": [
+          "employees"
+        ],
+        "self_references": [],
+        "relationship_summary": "references employees",
+        "inferred_relationships": []
+      },
+      "columns": [
+        {
+          "column_name": "department",
+          "data_type": "character varying",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": false,
+          "meaning": "The organizational department to which the employee belongs.",
+          "synonyms": [
+            "division",
+            "unit"
+          ],
+          "distinct_count": 6,
+          "null_percentage": 0,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": [
+            "Engineering",
+            "Finance",
+            "HR",
+            "Legal",
+            "Marketing",
+            "Sales"
+          ]
+        },
+        {
+          "column_name": "employee_id",
+          "data_type": "integer",
+          "is_primary_key": false,
+          "is_foreign_key": true,
+          "is_sensitive": false,
+          "meaning": "Foreign key referencing the 'employees' table, linking to the specific employee.",
+          "synonyms": [
+            "staff_id",
+            "person_id"
+          ],
+          "distinct_count": 100,
+          "null_percentage": 0,
+          "min_value": "1",
+          "max_value": "100",
+          "distinct_values": null
+        },
+        {
+          "column_name": "employment_type",
+          "data_type": "character varying",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": false,
+          "meaning": "The type of employment contract the employee has.",
+          "synonyms": [
+            "contract_type",
+            "work_status"
+          ],
+          "distinct_count": 4,
+          "null_percentage": 0,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": [
+            "Contractor",
+            "Full-Time",
+            "Intern",
+            "Part-Time"
+          ]
+        },
+        {
+          "column_name": "hire_date",
+          "data_type": "date",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": false,
+          "meaning": "The date the employee was hired.",
+          "synonyms": [
+            "start_date",
+            "joining_date"
+          ],
+          "distinct_count": 99,
+          "null_percentage": 0,
+          "min_value": "2021-10-11",
+          "max_value": "2026-09-18",
+          "distinct_values": null
+        },
+        {
+          "column_name": "id",
+          "data_type": "integer",
+          "is_primary_key": true,
+          "is_foreign_key": false,
+          "is_sensitive": false,
+          "meaning": "Unique identifier for each employment record.",
+          "synonyms": [
+            "record_id",
+            "employment_id"
+          ],
+          "distinct_count": 100,
+          "null_percentage": 0,
+          "min_value": "1",
+          "max_value": "100",
+          "distinct_values": null
+        },
+        {
+          "column_name": "job_title",
+          "data_type": "character varying",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": false,
+          "meaning": "The official title of the employee's role within the organization.",
+          "synonyms": [
+            "position",
+            "role_title"
+          ],
+          "distinct_count": 95,
+          "null_percentage": 0,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": null
+        },
+        {
+          "column_name": "manager_name",
+          "data_type": "character varying",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": false,
+          "meaning": "The name of the employee's direct manager.",
+          "synonyms": [
+            "supervisor",
+            "team_lead"
+          ],
+          "distinct_count": 100,
+          "null_percentage": 0,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": null
+        },
+        {
+          "column_name": "office_location",
+          "data_type": "character varying",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": false,
+          "meaning": "The physical location of the employee's office.",
+          "synonyms": [
+            "work_location",
+            "branch"
+          ],
+          "distinct_count": 100,
+          "null_percentage": 0,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": null
+        },
+        {
+          "column_name": "performance_rating",
+          "data_type": "character varying",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": true,
+          "meaning": "The employee's performance rating.",
+          "synonyms": [
+            "evaluation_score",
+            "performance_score"
+          ],
+          "distinct_count": null,
+          "null_percentage": null,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": null
+        },
+        {
+          "column_name": "salary",
+          "data_type": "numeric",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": true,
+          "meaning": "The employee's salary information.",
+          "synonyms": [
+            "pay",
+            "compensation"
+          ],
+          "distinct_count": null,
+          "null_percentage": null,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": null
+        }
+      ],
+      "examples": [
+        {
+          "question": "Can you show me people who work in the marketing department?",
+          "question_type": "vague",
+          "sql_query": "SELECT * FROM employee_employment WHERE department = 'Marketing' LIMIT 10",
+          "row_count": 10,
+          "execution_time_ms": 4
+        },
+        {
+          "question": "Whos the manager for employees hired in 2022?",
+          "question_type": "typo",
+          "sql_query": "SELECT manager_name FROM employee_employment WHERE hire_date >= '2022-01-01' AND hire_date <= '2022-12-31' LIMIT 10",
+          "row_count": 10,
+          "execution_time_ms": 2
+        }
+      ]
+    },
+    {
+      "table_name": "employees",
+      "schema": "public",
+      "status": "draft",
+      "purpose": "The 'employees' table stores detailed information about individual employees within the organization, serving as a central repository for personal and identification data. It is referenced by the 'employee_employment' table to link employment details to specific employees.",
+      "synonyms": [
+        "staff",
+        "personnel"
+      ],
+      "caveats": "All columns are non-nullable, ensuring complete records for each employee. The 'id' column is the primary key and is unique across all rows.",
+      "relationships": {
+        "table_name": "employees",
+        "schema_name": "public",
+        "child_tables": [
+          "employee_employment"
+        ],
+        "incoming_fks": [
+          {
+            "type": "declared",
+            "source_table": "employee_employment",
+            "target_table": "employees",
+            "source_columns": [
+              "employee_id"
+            ],
+            "target_columns": [
+              "id"
+            ],
+            "constraint_name": "employee_employment_employee_id_fkey",
+            "is_self_reference": false
+          }
+        ],
+        "outgoing_fks": [],
+        "is_standalone": false,
+        "parent_tables": [],
+        "self_references": [],
+        "relationship_summary": "referenced by employee_employment",
+        "inferred_relationships": []
+      },
+      "columns": [
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp without time zone",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": false,
+          "meaning": "The timestamp when the employee record was created.",
+          "synonyms": [
+            "record_created",
+            "creation_time"
+          ],
+          "distinct_count": 1,
+          "null_percentage": 0,
+          "min_value": "2026-09-28 02:08:29.066794",
+          "max_value": "2026-09-28 02:08:29.066794",
+          "distinct_values": null
+        },
+        {
+          "column_name": "date_of_birth",
+          "data_type": "date",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": true,
+          "meaning": "The birth date of the employee.",
+          "synonyms": [
+            "birthdate",
+            "DOB"
+          ],
+          "distinct_count": null,
+          "null_percentage": null,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": null
+        },
+        {
+          "column_name": "email",
+          "data_type": "character varying",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": false,
+          "meaning": "The primary email address of the employee, used for communication.",
+          "synonyms": [
+            "email_address",
+            "contact_email"
+          ],
+          "distinct_count": 99,
+          "null_percentage": 0,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": null
+        },
+        {
+          "column_name": "first_name",
+          "data_type": "character varying",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": false,
+          "meaning": "The given name of the employee.",
+          "synonyms": [
+            "given_name",
+            "forename"
+          ],
+          "distinct_count": 79,
+          "null_percentage": 0,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": null
+        },
+        {
+          "column_name": "gender",
+          "data_type": "character varying",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": true,
+          "meaning": "The gender identity of the employee.",
+          "synonyms": [
+            "sex",
+            "gender_identity"
+          ],
+          "distinct_count": null,
+          "null_percentage": null,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": null
+        },
+        {
+          "column_name": "id",
+          "data_type": "integer",
+          "is_primary_key": true,
+          "is_foreign_key": false,
+          "is_sensitive": false,
+          "meaning": "Unique identifier for each employee record.",
+          "synonyms": [
+            "employee_id",
+            "staff_id"
+          ],
+          "distinct_count": 100,
+          "null_percentage": 0,
+          "min_value": "1",
+          "max_value": "100",
+          "distinct_values": null
+        },
+        {
+          "column_name": "last_name",
+          "data_type": "character varying",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": false,
+          "meaning": "The surname or family name of the employee.",
+          "synonyms": [
+            "surname",
+            "family_name"
+          ],
+          "distinct_count": 88,
+          "null_percentage": 0,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": null
+        },
+        {
+          "column_name": "marital_status",
+          "data_type": "character varying",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": true,
+          "meaning": "The marital status of the employee.",
+          "synonyms": [
+            "marriage_status",
+            "civil_status"
+          ],
+          "distinct_count": null,
+          "null_percentage": null,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": null
+        },
+        {
+          "column_name": "national_id",
+          "data_type": "character varying",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": true,
+          "meaning": "The national identification number of the employee.",
+          "synonyms": [
+            "ID_number",
+            "national_identifier"
+          ],
+          "distinct_count": null,
+          "null_percentage": null,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": null
+        },
+        {
+          "column_name": "phone_number",
+          "data_type": "character varying",
+          "is_primary_key": false,
+          "is_foreign_key": false,
+          "is_sensitive": false,
+          "meaning": "The primary contact phone number of the employee.",
+          "synonyms": [
+            "contact_number",
+            "phone"
+          ],
+          "distinct_count": 100,
+          "null_percentage": 0,
+          "min_value": null,
+          "max_value": null,
+          "distinct_values": null
+        }
+      ],
+      "examples": [
+        {
+          "question": "List all employees",
+          "question_type": "short",
+          "sql_query": "SELECT id, first_name, last_name, email, phone_number, created_at FROM employees LIMIT 10",
+          "row_count": 10,
+          "execution_time_ms": 1
+        },
+        {
+          "question": "Can you show me some people who work here?",
+          "question_type": "vague",
+          "sql_query": "SELECT id, first_name, last_name, email, phone_number, created_at FROM employees LIMIT 10",
+          "row_count": 10,
+          "execution_time_ms": 0
+        },
+        {
+          "question": "Find staff members with their contact details",
+          "question_type": "synonym",
+          "sql_query": "SELECT id, first_name, last_name, email, phone_number, created_at FROM employees LIMIT 10",
+          "row_count": 10,
+          "execution_time_ms": 0
+        },
+        {
+          "question": "Show me employes and their job titles",
+          "question_type": "typo",
+          "sql_query": "SELECT e.id, e.first_name, e.last_name, ee.job_title FROM employees e JOIN employee_employment ee ON e.id = ee.employee_id LIMIT 10",
+          "row_count": 10,
+          "execution_time_ms": 2
+        },
+        {
+          "question": "Get employees along with their department and hire date",
+          "question_type": "multi_table",
+          "sql_query": "SELECT e.id, e.first_name, e.last_name, ee.department, ee.hire_date FROM employees e JOIN employee_employment ee ON e.id = ee.employee_id LIMIT 10",
+          "row_count": 10,
+          "execution_time_ms": 2
+        }
+      ]
+    }
+  ]
+}

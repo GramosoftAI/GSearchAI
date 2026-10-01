@@ -73,6 +73,7 @@ class DatabaseSchemaResponse(BaseModel):
     schema_version: str
     schema_data: DatabaseSchema
     introspected_at: datetime
+    semantic_profile_status: Optional[str] = None
 
 
 class SchemaSnapshotResponse(BaseModel):
@@ -86,6 +87,7 @@ class SchemaSnapshotResponse(BaseModel):
     column_count: int
     relationship_count: int
     created_at: datetime
+    semantic_profile_status: Optional[str] = None
 
 
 class SchemaRetrievalApiRequest(BaseModel):
@@ -127,6 +129,7 @@ class DatabaseQueryApiRequest(BaseModel):
     top_k_columns_per_table: int = Field(default=25, ge=1, le=100, description="Maximum columns per table")
     use_llm: bool = Field(default=True, description="Whether to use LLM for candidate SQL generation")
     timeout_seconds: Optional[int] = Field(default=5, ge=1, le=60, description="Execution timeout budget in seconds")
+    resolved_entities: Optional[List[Dict[str, Any]]] = Field(default=None, description="Pre-resolved entities to bypass extraction/collision checks")
 
 
 class StandardApiResponse(BaseModel):

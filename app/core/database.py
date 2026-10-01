@@ -41,6 +41,8 @@ engine = create_async_engine(
 
     pool_size=20,
     max_overflow=40,
+    pool_pre_ping=True,  # Proactively ping connection before using to prevent InterfaceError
+    pool_recycle=settings.postgres_pool_recycle,  # Recycle connections
 
 
     connect_args={
@@ -364,6 +366,11 @@ async def init_rls_policies():
         "database_knowledgebases",
         "db_schema_snapshots",
         "db_schema_embeddings",
+        "schema_doc_jobs",
+        "schema_doc_tables",
+        "schema_doc_columns",
+        "schema_doc_examples",
+        "schema_doc_embeddings",
     ]
 
 
@@ -905,7 +912,8 @@ async def init_db():
                 "SELECT indexname FROM pg_indexes WHERE tablename = 'document_chunks' AND indexname = 'idx_chunks_embedding_bge_hnsw';"
             ))
             if not check_idx.scalar():
-                raise RuntimeError("CRITICAL: HNSW index 'idx_chunks_embedding_bge_hnsw' is missing! Run Alembic migrations.")
+                logger.info("Creating missing HNSW index...")
+                await conn.execute(text("CREATE INDEX idx_chunks_embedding_bge_hnsw ON document_chunks USING hnsw (embedding vector_cosine_ops);"))
 
         async with engine.begin() as conn:
             # Auto-migrate users columns

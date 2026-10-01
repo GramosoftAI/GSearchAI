@@ -57,6 +57,7 @@ class SchemaKeywordMatcher:
             (r"\bjob\s+positions?\b", "job_position"),
             (r"\bperformance\s+reviews?\b", "performance_review"),
             (r"\bwork\s+informations?\b", "work_information"),
+            (r"\bwork\s+packages?\b", "work_packages"),
             (r"\btime\s+offs?\b", "time_off"),
             (r"\btimesheets?\b", "timesheet"),
             (r"\bsupport\s+tickets?\b", "support_ticket"),

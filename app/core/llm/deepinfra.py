@@ -106,8 +106,8 @@ class DeepInfraEmbeddingClient:
         self.timeout = 60.0  # Request timeout in seconds (increased to prevent timeouts)
         self.max_retries = 3  # Number of retry attempts
         # BGE-large-en-v1.5 has an exact 512-token context window. 
-        # 1800 characters is safely ~450-480 WordPiece/BERT tokens, preventing HTTP 400 '513 input tokens' errors.
-        self.max_text_length = 1800
+        # 1400 characters is safely ~350-400 WordPiece/BERT tokens, preventing HTTP 400 '513 input tokens' errors on dense text.
+        self.max_text_length = 1400
         self.expected_dimension = settings.embedding_dimension  # Dynamic from settings
 
         logger.info(
@@ -261,6 +261,11 @@ class DeepInfraEmbeddingClient:
                     logger.warning(
                         f"  HTTP {e.response.status_code} on attempt {attempt + 1}/{self.max_retries}: {e.response.text}"
                     )
+                    # If model returned context length exceeded (e.g. 513 input tokens vs 512 max), aggressively trim payload input
+                    if e.response.status_code == 400 and "context length" in e.response.text.lower():
+                        if isinstance(payload.get("input"), str):
+                            payload["input"] = payload["input"][: len(payload["input"]) // 2]
+                            logger.info(f"Aggressively halved input text length to {len(payload['input'])} chars for next retry.")
 
                 except (ValueError, KeyError) as e:
                     last_error = e

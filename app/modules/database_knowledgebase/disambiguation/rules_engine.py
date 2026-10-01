@@ -13,10 +13,17 @@ class RulesEngine:
         for entity in resolved_entities:
             if entity.get("type") == "user" and "id" in entity:
                 user_id = entity["id"]
-                system_rules.append(
-                    f"RULE: The user mentioned in the query has exactly ID = {user_id}. "
-                    f"Do NOT search by name strings. Always use ID {user_id} when filtering users."
-                )
+                if isinstance(user_id, list):
+                    id_list = ", ".join(f"'{i}'" if isinstance(i, str) else str(i) for i in user_id)
+                    system_rules.append(
+                        f"RULE: The user mentioned in the query matches IDs IN ({id_list}). "
+                        f"Do NOT search by name strings. Always use ID IN ({id_list}) when filtering users."
+                    )
+                else:
+                    system_rules.append(
+                        f"RULE: The user mentioned in the query has exactly ID = {user_id}. "
+                        f"Do NOT search by name strings. Always use ID {user_id} when filtering users."
+                    )
         
         # 2. Assignee vs Author Clarification
         query_lower = original_query.lower()

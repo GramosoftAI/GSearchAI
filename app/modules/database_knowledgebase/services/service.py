@@ -886,7 +886,14 @@ class DatabaseKnowledgebaseService:
             tracer.schema_version = retrieval_res.schema_version
             table_scores = {}
             for tbl_name, score_obj in retrieval_res.retrieval_scores.items():
-                if hasattr(score_obj, "combined_score"):
+                if hasattr(score_obj, "final_score"):
+                    table_scores[tbl_name] = {
+                        "final_score": round(float(getattr(score_obj, "final_score", 0.0)), 4),
+                        "vector_score": round(float(getattr(score_obj, "vector_score", 0.0)), 4),
+                        "keyword_score": round(float(getattr(score_obj, "keyword_score", 0.0)), 4),
+                        "graph_score": round(float(getattr(score_obj, "graph_score", 0.0)), 4),
+                    }
+                elif hasattr(score_obj, "combined_score"):
                     table_scores[tbl_name] = round(float(score_obj.combined_score), 4)
                 elif hasattr(score_obj, "score"):
                     table_scores[tbl_name] = round(float(score_obj.score), 4)

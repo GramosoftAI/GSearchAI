@@ -102,9 +102,9 @@ class PostgresDiscoveryService(DatabaseDiscoveryService):
                         index_name=idx.name,
                         table_schema=s_name,
                         table_name=t_name,
-                        columns=idx.columns,
+                        columns=idx.column_names,
                         is_unique=idx.is_unique,
-                        index_type=idx.index_type or "btree",
+                        index_type="btree",
                     )
                     for idx in tbl.indexes
                 ]

@@ -67,7 +67,7 @@ class PipelineTracer:
     def record_retrieval(
         self,
         retrieved_tables: List[str],
-        table_scores: Dict[str, float],
+        table_scores: Dict[str, Any],
         omitted_tables: List[str],
         retrieved_columns: Dict[str, List[str]],
         selected_relationships: List[str],
@@ -98,6 +98,7 @@ class PipelineTracer:
             data={
                 "retrieved_tables_count": len(retrieved_tables),
                 "retrieved_tables": retrieved_tables,
+                "table_scores": table_scores,
                 "selected_relationships_count": len(selected_relationships),
             },
         )

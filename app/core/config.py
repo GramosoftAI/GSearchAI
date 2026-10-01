@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     # ============= EXPERIMENTAL FEATURES =============
     chunking_v2_enabled: bool = False
     chunking_v2_kb_ids: str = ""  # Comma separated list of KB IDs
+    schema_cheat_sheet_enabled: bool = False
+    schema_cheat_sheet_kb_ids: str = "c32fb444-883e-4f68-a1d9-8125c8f84c7e"  # Default on for target test KB
     # ============= SERVER SETTINGS =============
 
     host: str = "0.0.0.0"

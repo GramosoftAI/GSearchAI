@@ -283,6 +283,9 @@ async def query_database(
     request: Request,
     service: DatabaseKnowledgebaseService = Depends(get_service),
 ):
+    from fastapi.responses import JSONResponse
+    from .disambiguation.exceptions import DisambiguationRequiredError
+    
     exec_config = None
     if payload.timeout_seconds:
         exec_config = ExecutionConfig(
@@ -290,15 +293,27 @@ async def query_database(
             connection_timeout_seconds=payload.timeout_seconds,
         )
     request_id = getattr(request.state, "request_id", None) if hasattr(request, "state") else None
-    return await service.query_database(
-        kb_id=id,
-        user_query=payload.query,
-        top_k_tables=payload.top_k_tables,
-        top_k_columns_per_table=payload.top_k_columns_per_table,
-        use_llm=payload.use_llm,
-        execution_config=exec_config,
-        request_id=request_id,
-    )
+    
+    try:
+        return await service.query_database(
+            kb_id=id,
+            user_query=payload.query,
+            top_k_tables=payload.top_k_tables,
+            top_k_columns_per_table=payload.top_k_columns_per_table,
+            use_llm=payload.use_llm,
+            execution_config=exec_config,
+            request_id=request_id,
+            resolved_entities=payload.resolved_entities,
+        )
+    except DisambiguationRequiredError as e:
+        return JSONResponse(
+            status_code=300,
+            content={
+                "type": "DISAMBIGUATION_REQUIRED",
+                "message": e.message,
+                "options": e.options
+            }
+        )
 
 
 @router.post(
@@ -336,6 +351,7 @@ async def stream_query_database(
             top_k_columns_per_table=payload.top_k_columns_per_table,
             use_llm=payload.use_llm,
             execution_config=exec_config,
+            resolved_entities=payload.resolved_entities,
         ),
         media_type="text/event-stream",
         headers={
@@ -469,5 +485,72 @@ async def confirm_glossary_entry(
             "confidence_source": entry.confidence_source,
         },
     }
+
+
+# ============= SCHEMA CHEAT SHEET (STEP 1) ENDPOINTS =============
+
+@router.get(
+    "/{id}/schema-doc/job-status",
+    summary="Get Schema Documentation Background Job Status",
+    description="Returns the status of background schema documentation generation: queued | mapping | explaining | embedding | done | failed.",
+)
+async def get_schema_doc_job_status(
+    id: uuid.UUID,
+    service: DatabaseKnowledgebaseService = Depends(get_service),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import select, desc
+    from .models.schema_doc import SchemaDocJob
+    t_uuid = uuid.UUID(str(service.tenant_id))
+    stmt = (
+        select(SchemaDocJob)
+        .where(
+            SchemaDocJob.tenant_id == t_uuid,
+            SchemaDocJob.db_knowledgebase_id == id,
+        )
+        .order_by(desc(SchemaDocJob.created_at))
+        .limit(1)
+    )
+    res = await db.execute(stmt)
+    job = res.scalar_one_or_none()
+    if not job:
+        return {"status": "none", "message": "No documentation job found for this knowledgebase."}
+
+    return {
+        "job_id": str(job.id),
+        "status": job.status,
+        "step": job.current_step,
+        "progress_current": job.progress_current,
+        "progress_total": job.progress_total,
+        "error_message": job.error_message,
+        "table_errors": job.table_errors,
+        "tokens_used": job.tokens_used,
+        "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+    }
+
+
+@router.get(
+    "/{id}/schema-doc/export",
+    summary="Export Schema Cheat Sheet",
+    description="Exports the generated schema documentation as Markdown and JSON for human review and approval.",
+)
+async def export_schema_cheat_sheet(
+    id: uuid.UUID,
+    schema_version: Optional[str] = Query(None, description="Optional schema fingerprint filter"),
+    only_approved: bool = Query(False, description="Whether to include only tables marked 'approved'"),
+    service: DatabaseKnowledgebaseService = Depends(get_service),
+    db: AsyncSession = Depends(get_db),
+):
+    from .schema_doc.exporter import CheatSheetExporter
+    t_uuid = uuid.UUID(str(service.tenant_id))
+    export_result = await CheatSheetExporter.export_cheat_sheet(
+        session=db,
+        tenant_id=t_uuid,
+        kb_id=id,
+        schema_version=schema_version,
+        only_approved=only_approved,
+    )
+    return export_result
+
 
 
