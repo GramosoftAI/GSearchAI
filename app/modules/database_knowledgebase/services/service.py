@@ -297,6 +297,7 @@ class DatabaseKnowledgebaseService:
             )
 
             # 4.1 Build and Sync Universal Semantic Model (Phases C-K)
+            semantic_profile_status = "ok"
             try:
                 from ..semantic.semantic_model_builder import SemanticModelBuilder
                 builder = SemanticModelBuilder()
@@ -307,14 +308,20 @@ class DatabaseKnowledgebaseService:
                     knowledgebase_id=kb_id,
                     database_name=entity.name,
                 )
-                builder.sync_to_legacy_registries(
+                builder.sync_to_registries(
                     profile=profile,
-                    semantic_registry=self._semantic_model_registry,
+                    semantic_model_registry=self._semantic_model_registry,
                     metric_registry=self._metric_registry,
                     relationship_graph=self._relationship_graph,
                 )
             except Exception as sm_exc:
-                logger.warning(f"Universal semantic model build warning: {sm_exc}")
+                import traceback
+                logger.error(f"Universal semantic model build error for KB {kb_id}: {sm_exc}\n{traceback.format_exc()}")
+                semantic_profile_status = "failed"
+            
+            # Update snapshot status
+            snapshot.semantic_profile_status = semantic_profile_status
+            await self.db.flush()
 
             # 4.2 Enqueue Offline Semantic Glossary Enrichment & Schema Drift Handling (Phases 3, 5, 7)
             try:
@@ -392,6 +399,32 @@ class DatabaseKnowledgebaseService:
             except Exception as enrich_err:
                 logger.warning(f"Failed to process semantic glossary drift / enrichment: {enrich_err}")
 
+            # 4.3 Trigger Schema Documentation ("Cheat Sheet") Pipeline (Step 1)
+            try:
+                from ..schema_doc.pipeline import SchemaDocPipeline
+                from app.core.config import get_settings
+                settings = get_settings()
+                tenant_uuid = uuid.UUID(str(self.tenant_id)) if isinstance(self.tenant_id, str) else self.tenant_id
+                
+                # Check feature flag (default off except for test KB)
+                allowed_kb_ids = [k.strip() for k in getattr(settings, "schema_cheat_sheet_kb_ids", "").split(",") if k.strip()]
+                is_cheat_sheet_enabled = getattr(settings, "schema_cheat_sheet_enabled", False) or (str(kb_id) in allowed_kb_ids)
+
+                if is_cheat_sheet_enabled:
+                    logger.info(f"Triggering background SchemaDocPipeline for KB {kb_id} (schema_version={canonical_schema.fingerprint[:8]})")
+                    asyncio.create_task(
+                        SchemaDocPipeline.run_pipeline_background(
+                            tenant_id=tenant_uuid,
+                            kb_id=kb_id,
+                            schema=canonical_schema,
+                            config=config,
+                        )
+                    )
+                else:
+                    logger.debug(f"SchemaDocPipeline feature flag disabled for KB {kb_id}")
+            except Exception as doc_err:
+                logger.warning(f"Non-fatal: failed to enqueue SchemaDocPipeline: {doc_err}")
+
             # 5. Invalidate cached schema retrieval subgraphs for this KB
             from ..retrieval.cache import SchemaRetrievalCache
             SchemaRetrievalCache.get_instance().invalidate_kb(str(self.tenant_id), str(kb_id))
@@ -402,6 +435,7 @@ class DatabaseKnowledgebaseService:
                 schema_version=canonical_schema.fingerprint,
                 schema_data=canonical_schema,
                 introspected_at=canonical_schema.introspected_at,
+                semantic_profile_status=semantic_profile_status,
             )
 
         except Exception as e:
@@ -663,6 +697,7 @@ class DatabaseKnowledgebaseService:
         request_id: Optional[str] = None,
         user_id: Optional[Any] = None,
         event_sink: Optional[DatabasePipelineEventSink] = None,
+        resolved_entities: Optional[list] = None,
     ) -> GroundedDatabaseAnswer:
         """
         Complete end-to-end database knowledgebase querying pipeline with Phase 3A observability
@@ -775,6 +810,55 @@ class DatabaseKnowledgebaseService:
             except Exception:
                 pass  # Natural language query, proceed to retrieval & planning
 
+            # 0.5 Pre-Retrieval Ambiguity Resolution (Entity Extraction)
+            from ..disambiguation.extractor import EntityExtractor
+            from ..disambiguation.collision_detector import CollisionDetector
+            from ..disambiguation.rules_engine import RulesEngine
+            
+            disambiguation_notices: List[str] = []
+            resolved_entities_list = resolved_entities or []
+            if not resolved_entities_list:
+                try:
+                    names = await EntityExtractor.extract_person_names(user_query)
+                    logger.info(f"[DISAMBIGUATION] Extracted candidate names: {names}")
+                    audit_ctx = {
+                        "query_id": query_id,
+                        "tenant_id": self.tenant_id,
+                        "knowledgebase_id": kb_id,
+                    }
+                    for name in names:
+                        extracted_user_id = await CollisionDetector.check_for_user_collisions(
+                            extracted_name=name,
+                            kb_entity=entity,
+                            secret_manager=self.secrets,
+                            canonical_schema=canonical_schema,
+                            audit_context=audit_ctx,
+                            notices_out=disambiguation_notices,
+                        )
+                        if extracted_user_id:
+                            resolved_entities_list.append({"type": "user", "id": extracted_user_id, "name": name})
+                            logger.info(f"[DISAMBIGUATION] Resolved '{name}' -> user ID {extracted_user_id}")
+                except Exception as e:
+                    # DisambiguationRequiredError must propagate up
+                    from ..disambiguation.exceptions import DisambiguationRequiredError
+                    if isinstance(e, DisambiguationRequiredError):
+                        raise
+                    logger.warning(f"[DISAMBIGUATION] Entity resolution failed, proceeding without: {e}")
+                        
+            strict_rules = RulesEngine.apply_glossary_rules(resolved_entities_list, user_query)
+            
+            # Incorporate strict_rules into user_query so retrieval & LLM enforce them
+            query_with_rules = user_query
+            if strict_rules:
+                query_with_rules += "\n\n" + "\n".join(strict_rules)
+                logger.info(f"[DISAMBIGUATION] Injected {len(strict_rules)} rules into query")
+                
+            # If we resolved a user, silently inject candidate table name token if needed
+            for e in resolved_entities_list:
+                e_tbl = e.get("table")
+                if e_tbl and e_tbl.lower() not in query_with_rules.lower():
+                    query_with_rules += f" {e_tbl}"
+
             # 1. Retrieval
             current_stage = "RETRIEVAL"
             if event_sink:
@@ -789,7 +873,7 @@ class DatabaseKnowledgebaseService:
             t_ret_start = time.perf_counter()
             retrieval_res = await self.retrieve_schema(
                 kb_id=kb_id,
-                user_query=user_query,
+                user_query=query_with_rules,
                 top_k_tables=top_k_tables,
                 top_k_columns_per_table=top_k_columns_per_table,
                 include_relationships=True,
@@ -931,7 +1015,7 @@ class DatabaseKnowledgebaseService:
 
             t_sql_start = time.perf_counter()
             candidate_sql = await SQLRepairEngine.generate_and_validate(
-                user_query=user_query,
+                user_query=query_with_rules,
                 plan=plan,
                 canonical_schema=canonical_schema,
                 retrieval_result=retrieval_res,
@@ -1139,6 +1223,8 @@ class DatabaseKnowledgebaseService:
                     logger.warning(f"Failed to record verified query memory: {mem_err}")
 
             # Attach finalized trace
+            if disambiguation_notices:
+                answer.warnings.extend(disambiguation_notices)
             answer.pipeline_trace = tracer.finalize()
 
             # 8. Answer Completed & Stream Completed
