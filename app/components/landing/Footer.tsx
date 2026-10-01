@@ -39,7 +39,7 @@ const footerColumns = [
     title: "Company",
     links: [
       { label: "About Gramosoft", href: "#" },
-      { label: "Security", href: "#security" },
+      { label: "Security & VDP", href: "/security" },
       { label: "Book a demo", href: "#cta" },
       { label: "Contact", href: "/support" },
       { label: "Privacy Policy", href: "/privacy-policy" },
