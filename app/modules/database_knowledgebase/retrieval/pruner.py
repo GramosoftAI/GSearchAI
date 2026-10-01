@@ -30,13 +30,16 @@ class SchemaPruner:
         active_relationships: List[RelationshipSchema],
         top_k_columns_per_table: int = 25,
         glossary_entries: Optional[Dict[Tuple[str, str], Any]] = None,
+        security_overrides: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[TableSchema], List[RelationshipSchema], str]:
         """
         Produce pruned TableSchema list, relevant relationships, and untrusted XML boundary text.
+        Guarantees that denied tables and denied columns are stripped from LLM prompt context.
 
         Returns:
             Tuple of (pruned_tables, pruned_relationships, untrusted_xml_context)
         """
+        from ..sql_security.policy import DenyPolicyConfig
         pruned_tables: List[TableSchema] = []
         selected_table_keys = set(selected_scores.keys())
 
@@ -57,6 +60,8 @@ class SchemaPruner:
         # Build pruned table representations
         for s_name, s_info in canonical_schema.schemas.items():
             for t_name, orig_table in s_info.tables.items():
+                if DenyPolicyConfig.is_denied(orig_table.table_name, overrides=security_overrides, is_column=False):
+                    continue
                 t_key = f"{orig_table.schema_name}.{orig_table.table_name}"
                 if t_key not in selected_table_keys:
                     continue
@@ -67,25 +72,28 @@ class SchemaPruner:
                 matched_cols = set(score_info.matched_columns)
 
                 # Prioritize columns: PKs first, active FKs second, matched columns third, then others
-                mandatory_cols = pk_cols | active_fk_cols | matched_cols
-
+                # But filter out any denied columns completely!
                 ordered_col_names: List[str] = []
                 for c in orig_table.primary_key_columns:
-                    if c not in ordered_col_names and c in orig_table.columns:
-                        ordered_col_names.append(c)
+                    if not DenyPolicyConfig.is_denied(c, overrides=security_overrides, is_column=True):
+                        if c not in ordered_col_names and c in orig_table.columns:
+                            ordered_col_names.append(c)
 
                 for c in sorted(list(active_fk_cols)):
-                    if c not in ordered_col_names and c in orig_table.columns:
-                        ordered_col_names.append(c)
+                    if not DenyPolicyConfig.is_denied(c, overrides=security_overrides, is_column=True):
+                        if c not in ordered_col_names and c in orig_table.columns:
+                            ordered_col_names.append(c)
 
                 for c in score_info.matched_columns:
-                    if c not in ordered_col_names and c in orig_table.columns:
-                        ordered_col_names.append(c)
+                    if not DenyPolicyConfig.is_denied(c, overrides=security_overrides, is_column=True):
+                        if c not in ordered_col_names and c in orig_table.columns:
+                            ordered_col_names.append(c)
 
                 for c_name in orig_table.columns.keys():
-                    if c_name not in ordered_col_names:
-                        if len(ordered_col_names) < top_k_columns_per_table:
-                            ordered_col_names.append(c_name)
+                    if not DenyPolicyConfig.is_denied(c_name, overrides=security_overrides, is_column=True):
+                        if c_name not in ordered_col_names:
+                            if len(ordered_col_names) < top_k_columns_per_table:
+                                ordered_col_names.append(c_name)
 
                 # Construct pruned columns dict capped strictly at top_k_columns_per_table
                 capped_col_names = ordered_col_names[:top_k_columns_per_table]

@@ -2,17 +2,21 @@
 
 Enforces deterministic, multi-layered security gates on parsed SQL ASTs:
 1. SELECT-only Root Statement Gate (Strictly rejects DML/DDL/TCL/DCL)
-2. System Catalog & Metadata Protection Gate
-3. Sub-Schema Table Whitelist Gate
-4. Sub-Schema Column Whitelist Gate
-5. Relational Join Integrity & Anti-Cartesian Gate
-6. Function Allowlist Gate (Blocks filesystem, network, and arbitrary code execution)
-7. Query Complexity Bounding Gate
-8. Mandatory LIMIT Enforcement Gate
+2. Deny Policy Gate (Deny patterns for tables and columns, taking priority over whitelist)
+3. System Catalog and Metadata Protection Gate
+4. Sub-Schema Table Whitelist Gate
+5. Sub-Schema Column Whitelist Gate and SELECT * Expansion Guard
+6. Relational Join Integrity and Anti-Cartesian Gate
+7. Function Allowlist Gate (Blocks filesystem, network, and arbitrary code execution)
+8. Query Complexity Bounding Gate
+9. Mandatory LIMIT Enforcement Gate
 """
 
+import fnmatch
+import logging
 import os
-from typing import Dict, List, Optional, Set
+import re
+from typing import Any, Dict, List, Optional, Set
 import sqlglot
 from sqlglot import exp
 
@@ -20,7 +24,84 @@ from ..schemas.canonical import DatabaseSchema, TableSchema
 from ..retrieval.retriever import SchemaRetrievalResult
 from ..sql_parser.ast_parser import SQLASTParser
 from ..sql_parser.inspector import ASTInspector, ASTInspectionReport
+from ..observability.logger import DatabaseAuditLogger
 from .diagnostics import DiagnosticError, DiagnosticErrorCode, DiagnosticSeverity, ValidationResult
+
+logger = logging.getLogger(__name__)
+
+
+class DenyPolicyConfig:
+    """Config-driven deny patterns for sensitive auth, secret, and token tables/columns."""
+
+    DEFAULT_DENIED_TABLE_PATTERNS: List[str] = [
+        "*token*",
+        "*session*",
+        "*secret*",
+        "*password*",
+        "*api_key*",
+        "*credential*",
+        "oidc_*",
+    ]
+
+    DEFAULT_DENIED_COLUMN_PATTERNS: List[str] = [
+        "*password*",
+        "*token*",
+        "*secret*",
+        "*api_key*",
+        "*access_token*",
+        "*refresh_token*",
+        "*auth_key*",
+        "*credential*",
+        "*private_key*",
+    ]
+
+    @classmethod
+    def is_denied(
+        cls,
+        name: str,
+        denied_patterns: Optional[List[str]] = None,
+        overrides: Optional[Dict[str, Any]] = None,
+        is_column: bool = False,
+    ) -> bool:
+        """
+        Check if a table or column name matches deny glob patterns or regexes.
+        Overrides structure:
+          overrides = {
+              "allowed_tables": [...], "denied_tables": [...],
+              "allowed_columns": [...], "denied_columns": [...]
+          }
+        """
+        clean_name = name.lower().split(".")[-1]
+        ov = overrides or {}
+
+        # 1. Check explicit per-KB allowlist override
+        allowed_list = ov.get("allowed_columns" if is_column else "allowed_tables", [])
+        if not allowed_list:
+            allowed_list = ov.get("allowed_column_patterns" if is_column else "allowed_table_patterns", [])
+        for p in allowed_list:
+            if fnmatch.fnmatch(clean_name, p.lower()):
+                return False
+
+        # 2. Check explicit per-KB denylist override
+        extra_denied = ov.get("denied_columns" if is_column else "denied_tables", [])
+        if not extra_denied:
+            extra_denied = ov.get("denied_column_patterns" if is_column else "denied_table_patterns", [])
+        patterns = (denied_patterns if denied_patterns is not None else (
+            cls.DEFAULT_DENIED_COLUMN_PATTERNS if is_column else cls.DEFAULT_DENIED_TABLE_PATTERNS
+        )) + list(extra_denied)
+
+        # 3. Test pattern matching
+        for p in patterns:
+            p_low = p.lower()
+            if fnmatch.fnmatch(clean_name, p_low):
+                return True
+            try:
+                if re.fullmatch(p_low, clean_name, re.IGNORECASE):
+                    return True
+            except re.error:
+                pass
+
+        return False
 
 
 class SQLSecurityPolicyEngine:
@@ -67,6 +148,8 @@ class SQLSecurityPolicyEngine:
         root: exp.Expression,
         canonical_schema: DatabaseSchema,
         retrieval_result: SchemaRetrievalResult,
+        security_overrides: Optional[Dict[str, Any]] = None,
+        audit_context: Optional[Dict[str, Any]] = None,
     ) -> ValidationResult:
         """
         Evaluate all security policies against the parsed SQL AST.
@@ -78,6 +161,7 @@ class SQLSecurityPolicyEngine:
         warnings: List[str] = []
 
         report = ASTInspector.inspect(root)
+        ctx = audit_context or {}
 
         # 1. Statement Type Gate: SELECT-only
         if not report.is_select_root or report.statement_type not in {"SELECT", "UNION"}:
@@ -90,12 +174,12 @@ class SQLSecurityPolicyEngine:
                     suggested_action="Reformulate query as a read-only SELECT statement",
                 )
             )
-            # If DML/DDL detected, stop immediately
             return ValidationResult(is_valid=False, errors=errors, warnings=warnings)
 
-        # 2. System Catalog & Metadata Protection Gate
+        # 2. Deny Policy Gate: Tables & System Catalogs
         for tbl in report.tables:
-            if tbl.schema_name.lower() in cls.FORBIDDEN_CATALOGS or tbl.table_name.lower() in cls.FORBIDDEN_TABLES:
+            t_clean = tbl.table_name.lower().split(".")[-1]
+            if tbl.schema_name.lower() in cls.FORBIDDEN_CATALOGS or t_clean in cls.FORBIDDEN_TABLES:
                 errors.append(
                     DiagnosticError(
                         error_code=DiagnosticErrorCode.CATALOG_ACCESS_FORBIDDEN,
@@ -105,6 +189,26 @@ class SQLSecurityPolicyEngine:
                         suggested_action="Query approved application business tables only",
                     )
                 )
+
+            # Deny policy for auth/secret tables (takes priority over whitelist)
+            if DenyPolicyConfig.is_denied(t_clean, overrides=security_overrides, is_column=False):
+                err = DiagnosticError(
+                    error_code=DiagnosticErrorCode.DENIED_TABLE,
+                    severity=DiagnosticSeverity.ERROR,
+                    message=f"Access to denied auth/secret table '{tbl.table_name}' is blocked by security policy.",
+                    offending_node=tbl.table_name,
+                    suggested_action="Avoid referencing confidential or token tables.",
+                )
+                errors.append(err)
+                if ctx:
+                    DatabaseAuditLogger.emit_event(
+                        event_name="SECURITY_REJECTED",
+                        query_id=ctx.get("query_id", "unknown"),
+                        tenant_id=ctx.get("tenant_id", "unknown"),
+                        knowledgebase_id=ctx.get("knowledgebase_id", "unknown"),
+                        data={"reason": err.message, "offending_node": tbl.table_name, "policy": "DENY_TABLE"},
+                        level=logging.WARNING,
+                    )
 
         # 3. Table Whitelist Gate (Must exist in Phase 2A retrieved sub-schema or Canonical Schema)
         approved_table_names: Set[str] = {t.table_name.lower() for t in retrieval_result.retrieved_tables}
@@ -132,7 +236,6 @@ class SQLSecurityPolicyEngine:
 
         for tbl in report.tables:
             t_clean = tbl.table_name.lower().split(".")[-1]
-            # If table is part of system catalog, already caught above
             if t_clean in cls.FORBIDDEN_TABLES or tbl.schema_name.lower() in cls.FORBIDDEN_CATALOGS:
                 continue
 
@@ -152,7 +255,7 @@ class SQLSecurityPolicyEngine:
                     )
                 )
 
-        # 4. Column Whitelist Gate (Must exist in approved table schema or canonical schema)
+        # 4. Column Whitelist & Deny Gate
         all_approved_cols: Set[str] = set()
         cols_by_table_alias: Dict[str, Set[str]] = {}
 
@@ -170,10 +273,60 @@ class SQLSecurityPolicyEngine:
                 cols_by_table_alias[alias.lower()] = target_cols
                 all_approved_cols.update(target_cols)
 
+        # Check for SELECT * expansion into denied columns
+        has_wildcard = any(col.column_name == "*" for col in report.columns)
+        if has_wildcard:
+            # Check all tables queried in the AST for any denied column
+            for tbl in report.tables:
+                t_clean = tbl.table_name.lower().split(".")[-1]
+                t_cols = _get_table_columns(t_clean) or set()
+                denied_in_tbl = [
+                    c for c in t_cols
+                    if DenyPolicyConfig.is_denied(c, overrides=security_overrides, is_column=True)
+                ]
+                if denied_in_tbl:
+                    err = DiagnosticError(
+                        error_code=DiagnosticErrorCode.DENIED_COLUMN,
+                        severity=DiagnosticSeverity.ERROR,
+                        message=f"SELECT * expansion on table '{tbl.table_name}' would expose denied column(s): {', '.join(denied_in_tbl)}.",
+                        offending_node=f"{tbl.table_name}.*",
+                        suggested_action="Specify explicit column projections instead of SELECT *.",
+                    )
+                    errors.append(err)
+                    if ctx:
+                        DatabaseAuditLogger.emit_event(
+                            event_name="SECURITY_REJECTED",
+                            query_id=ctx.get("query_id", "unknown"),
+                            tenant_id=ctx.get("tenant_id", "unknown"),
+                            knowledgebase_id=ctx.get("knowledgebase_id", "unknown"),
+                            data={"reason": err.message, "offending_node": f"{tbl.table_name}.*", "policy": "DENY_COLUMN_WILDCARD"},
+                            level=logging.WARNING,
+                        )
+
         for col in report.columns:
             c_clean = col.column_name.lower()
             if c_clean in {"*", "1"}:
                 continue
+
+            # Check column deny patterns (including CTE and subquery expressions)
+            if DenyPolicyConfig.is_denied(c_clean, overrides=security_overrides, is_column=True):
+                err = DiagnosticError(
+                    error_code=DiagnosticErrorCode.DENIED_COLUMN,
+                    severity=DiagnosticSeverity.ERROR,
+                    message=f"Access to denied auth/secret column '{col.column_name}' is blocked by security policy.",
+                    offending_node=col.column_name,
+                    suggested_action="Avoid referencing confidential credential or token columns.",
+                )
+                errors.append(err)
+                if ctx:
+                    DatabaseAuditLogger.emit_event(
+                        event_name="SECURITY_REJECTED",
+                        query_id=ctx.get("query_id", "unknown"),
+                        tenant_id=ctx.get("tenant_id", "unknown"),
+                        knowledgebase_id=ctx.get("knowledgebase_id", "unknown"),
+                        data={"reason": err.message, "offending_node": col.column_name, "policy": "DENY_COLUMN"},
+                        level=logging.WARNING,
+                    )
 
             qualifier = col.table_qualifier.lower() if col.table_qualifier else None
 
@@ -280,7 +433,6 @@ class SQLSecurityPolicyEngine:
                     warnings.append(f"LIMIT {report.limit_value} exceeded {cls.MAX_LIMIT}; clamped to {cls.MAX_LIMIT}")
                     sanitized_ast = sanitized_ast.limit(cls.MAX_LIMIT)
             elif not report.has_limit:
-                # Aggregate queries with no GROUP BY return exactly 1 row, but enforcing LIMIT 100 is harmless & safe
                 warnings.append(f"No LIMIT specified in candidate query; auto-injected LIMIT {cls.DEFAULT_LIMIT}")
                 sanitized_ast = sanitized_ast.limit(cls.DEFAULT_LIMIT)
 
@@ -300,6 +452,8 @@ class SQLSecurityPolicyEngine:
         sql_text: str,
         canonical_schema: DatabaseSchema,
         retrieval_result: SchemaRetrievalResult,
+        security_overrides: Optional[Dict[str, Any]] = None,
+        audit_context: Optional[Dict[str, Any]] = None,
     ) -> ValidationResult:
         """
         Parse and validate raw SQL string.
@@ -321,4 +475,10 @@ class SQLSecurityPolicyEngine:
                 warnings=[],
             )
 
-        return cls.validate_ast(ast, canonical_schema, retrieval_result)
+        return cls.validate_ast(
+            root=ast,
+            canonical_schema=canonical_schema,
+            retrieval_result=retrieval_result,
+            security_overrides=security_overrides,
+            audit_context=audit_context,
+        )

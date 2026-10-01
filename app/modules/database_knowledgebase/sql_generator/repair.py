@@ -96,6 +96,8 @@ class SQLRepairEngine:
         canonical_schema: DatabaseSchema,
         retrieval_result: SchemaRetrievalResult,
         use_llm: bool = True,
+        security_overrides: Optional[Dict[str, Any]] = None,
+        audit_context: Optional[Dict[str, Any]] = None,
     ) -> ValidatedCandidateSQL:
         """
         Generate candidate SQL and validate through security policy engine.
@@ -131,6 +133,8 @@ class SQLRepairEngine:
                     sql_text=compiled_sql,
                     canonical_schema=canonical_schema,
                     retrieval_result=retrieval_result,
+                    security_overrides=security_overrides,
+                    audit_context=audit_context,
                 )
                 if not validation.is_valid:
                     # STRICT SECURITY INVARIANT:
@@ -179,6 +183,8 @@ class SQLRepairEngine:
             sql_text=current_sql,
             canonical_schema=canonical_schema,
             retrieval_result=retrieval_result,
+            security_overrides=security_overrides,
+            audit_context=audit_context,
         )
 
         repair_count = 0
@@ -223,6 +229,8 @@ class SQLRepairEngine:
                 sql_text=current_sql,
                 canonical_schema=canonical_schema,
                 retrieval_result=retrieval_result,
+                security_overrides=security_overrides,
+                audit_context=audit_context,
             )
 
         # Fail-Closed if still invalid

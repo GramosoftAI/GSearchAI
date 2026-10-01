@@ -146,9 +146,16 @@ class SchemaRetriever:
             canonical_overrides = kb.metadata.get("canonical_overrides")
 
         from ..semantic_glossary.canonicality import is_canonical_table
+        from ..sql_security.policy import DenyPolicyConfig
+
+        security_overrides = None
+        if hasattr(kb, "metadata") and isinstance(kb.metadata, dict):
+            security_overrides = kb.metadata.get("security_overrides")
+
         canonical_tables = {
             t.table_name: t for t in canonical_schema.all_tables
-            if allow_non_canonical or is_canonical_table(t, canonical_overrides=canonical_overrides)
+            if (allow_non_canonical or is_canonical_table(t, canonical_overrides=canonical_overrides))
+            and not DenyPolicyConfig.is_denied(t.table_name, overrides=security_overrides, is_column=False)
         }
 
         # Check feature flag for semantic glossary
@@ -220,7 +227,7 @@ class SchemaRetriever:
         # 4. Signal 2: Dense Vector Retrieval with adaptive timeout (600ms if keywords matched, 1.2s otherwise)
         vector_results: Dict[str, VectorMatchResult] = {}
         is_vector_available = False
-        vector_timeout = 0.4 if strong_keyword_matches >= 1 else 0.8
+        vector_timeout = 10 if strong_keyword_matches >= 1 else 20
 
         try:
             query_vector = await asyncio.wait_for(
@@ -411,6 +418,7 @@ class SchemaRetriever:
             active_relationships=active_relationships,
             top_k_columns_per_table=request.top_k_columns_per_table,
             glossary_entries=published_glossary_map if enable_glossary else None,
+            security_overrides=security_overrides,
         )
 
         # 10. Compute Overall Retrieval Confidence

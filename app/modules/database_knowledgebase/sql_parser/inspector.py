@@ -119,6 +119,15 @@ class ASTInspector:
                 )
             )
 
+        for star_expr in root.find_all(exp.Star):
+            t_qualifier = star_expr.table if hasattr(star_expr, "table") and star_expr.table else None
+            columns.append(
+                InspectedColumn(
+                    column_name="*",
+                    table_qualifier=t_qualifier,
+                )
+            )
+
         # 3. Extract Joins & Check for ON condition
         has_cartesian = False
         for join_expr in root.find_all(exp.Join):
