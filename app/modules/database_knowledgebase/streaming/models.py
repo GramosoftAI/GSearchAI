@@ -121,7 +121,7 @@ EVENT_DATA_ALLOWLIST: Dict[DatabaseStreamEventType, Set[str]] = {
         "source_columns", "truncated", "warnings",
     },
     DatabaseStreamEventType.QUERY_ERROR: {
-        "error_code", "stage", "retryable", "message", "correlation_id",
+        "error_code", "stage", "retryable", "message", "correlation_id", "options",
     },
     DatabaseStreamEventType.QUERY_CANCELLED: {
         "stage", "reason", "correlation_id",
