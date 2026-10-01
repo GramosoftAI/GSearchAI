@@ -25,6 +25,9 @@ from .intent_analyzer import QueryIntentAnalyzer, QueryIntentAnalysis, TemporalI
 from .validator import QueryPlanValidator, QueryPlanValidationError
 from ..schema.graph import SchemaGraph
 from ..security.security_classifier import SecurityClassificationEngine, DataClassification
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class QueryPlanner:
@@ -1264,7 +1267,7 @@ class QueryPlanner:
                     path = graph.find_shortest_path(
                         t1_name,
                         t2_name,
-                        max_hops=4,
+                        max_hops=2,
                         allowed_tables=allowed_retrieved_tables,
                         forbidden_hops=forbidden_hops,
                     )
@@ -1289,6 +1292,7 @@ class QueryPlanner:
                                             used_aliases.add(u_alias)
                                             alias_to_table[u_alias] = t_obj
                                             all_table_plans.append(TablePlan(schema_name=t_obj.schema_name, table_name=t_obj.table_name, alias=u_alias, role="BRIDGE"))
+                                            logger.info(f"Added bridge table {u_alias} ({t_obj.table_name}) via shortest path")
                                             break
 
                             # Resolve or register alias for v
@@ -1307,6 +1311,7 @@ class QueryPlanner:
                                             used_aliases.add(v_alias)
                                             alias_to_table[v_alias] = t_obj
                                             all_table_plans.append(TablePlan(schema_name=t_obj.schema_name, table_name=t_obj.table_name, alias=v_alias, role="BRIDGE"))
+                                            logger.info(f"Added bridge table {v_alias} ({t_obj.table_name}) via shortest path")
                                             break
 
                             if u_alias and v_alias:
@@ -1385,7 +1390,7 @@ class QueryPlanner:
 
         SENSITIVE_FINANCIAL = {"basic_salary", "salary", "wage", "gross_pay", "net_pay", "basic_pay", "deduction", "allowance", "bonus", "hourly_rate", "payment_rate", "salary_hour", "revised_salary"}
         SENSITIVE_BANKING = {"bank_name", "account_number", "routing_number", "iban", "swift", "branch", "ifsc"}
-        SENSITIVE_CONTACT = {"phone", "mobile", "telephone", "emergency_contact", "contact_number"}
+        SENSITIVE_CONTACT = {"phone", "phone_number", "mobile", "telephone", "emergency_contact", "contact_number"}
         SENSITIVE_PII = {"dob", "date_of_birth", "age", "marital_status", "children", "passport_number", "ssn", "national_id"}
         SENSITIVE_LOCATION = {"address", "address_line", "postal_code", "zip_code"}
         SENSITIVE_CREDENTIALS = {"password", "secret", "token", "hash", "salt"}
@@ -1610,7 +1615,7 @@ class QueryPlanner:
                                 should_project = True
                             elif c_low == "badge_id" and any(k in q_lower for k in ("badge", "badge id")) and "employee id" not in q_lower:
                                 should_project = True
-                            elif c_low in ("phone", "mobile") and is_phone_auth:
+                            elif c_low in ("phone", "phone_number", "mobile") and is_phone_auth:
                                 should_project = True
                             elif c_low == "email" and is_email_auth:
                                 should_project = True
@@ -1827,6 +1832,30 @@ class QueryPlanner:
                                 should_project = True
                             elif col.is_primary_key and len(projected_cols_per_alias[alias]) == 0:
                                 should_project = True
+                            # Query-token-to-column match: if the user explicitly mentions
+                            # a column name (exact or underscore-separated form) in the
+                            # query, project it (unless it's a credential).
+                            elif not should_project and c_low not in GENERIC_COLUMN_STOPWORDS:
+                                c_spaced = c_low.replace("_", " ")
+                                if c_low in q_tokens or c_spaced in q_lower:
+                                    # Respect sensitive-field authorization gates
+                                    if c_low in SENSITIVE_CONTACT or any(k in c_low for k in ("phone", "mobile", "cell")):
+                                        if is_phone_auth:
+                                            should_project = True
+                                    elif c_low in SENSITIVE_FINANCIAL or "salary" in c_low or "wage" in c_low:
+                                        if is_fin_auth:
+                                            should_project = True
+                                    elif c_low in SENSITIVE_BANKING:
+                                        if is_bank_auth:
+                                            should_project = True
+                                    elif c_low in SENSITIVE_PII:
+                                        if is_dob_auth or is_marital_auth or is_children_auth:
+                                            should_project = True
+                                    elif c_low in SENSITIVE_LOCATION:
+                                        if is_loc_auth:
+                                            should_project = True
+                                    else:
+                                        should_project = True
 
                     if should_project and c_name not in projected_cols_per_alias[alias]:
                         projections.append(
@@ -1866,7 +1895,7 @@ class QueryPlanner:
                         if r_col in ("warranty_date", "warranty_start_date") and any(w in q_lower for w in ("expire", "expired", "expiring", "expiry")):
                             continue
 
-                        if r_col in ("phone", "mobile") and not is_phone_auth:
+                        if (r_col in ("phone", "phone_number", "mobile") or "phone" in r_col or "mobile" in r_col) and not is_phone_auth:
                             continue
                         if r_col == "email" and not is_email_auth:
                             continue
@@ -2515,7 +2544,7 @@ class QueryPlanner:
                 path = graph.find_shortest_path(
                     primary_tbl_name,
                     tgt_tbl_name,
-                    max_hops=4,
+                    max_hops=2,
                     allowed_tables=allowed_for_path,
                     forbidden_hops=forbidden_hops,
                 )
@@ -2531,7 +2560,7 @@ class QueryPlanner:
                     path = graph.find_shortest_path(
                         primary_tbl_name,
                         tgt_tbl_name,
-                        max_hops=4,
+                        max_hops=2,
                         allowed_tables=fallback_allowed,
                         forbidden_hops=forbidden_hops,
                     )
@@ -2554,6 +2583,7 @@ class QueryPlanner:
                                     used_aliases.add(u_alias)
                                     alias_to_table[u_alias] = t_obj
                                     all_table_plans.append(TablePlan(schema_name=t_obj.schema_name, table_name=t_obj.table_name, alias=u_alias, role="BRIDGE"))
+                                    logger.info(f"Added bridge table {u_alias} ({t_obj.table_name}) via shortest path")
                                     break
 
                         v_alias = None
@@ -2570,6 +2600,7 @@ class QueryPlanner:
                                     used_aliases.add(v_alias)
                                     alias_to_table[v_alias] = t_obj
                                     all_table_plans.append(TablePlan(schema_name=t_obj.schema_name, table_name=t_obj.table_name, alias=v_alias, role="BRIDGE"))
+                                    logger.info(f"Added bridge table {v_alias} ({t_obj.table_name}) via shortest path")
                                     break
 
                         if u_alias and v_alias:
