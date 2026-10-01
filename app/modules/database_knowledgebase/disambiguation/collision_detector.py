@@ -176,7 +176,7 @@ class CollisionDetector:
         # Step 3: Query external database using discovered table & columns
         try:
             select_cols = ", ".join(dict.fromkeys([pk_col] + name_cols))
-            where_clause = " OR ".join([f"{col} ILIKE $1" for col in name_cols])
+            where_clause = " OR ".join([f"CAST({col} AS TEXT) ILIKE $1" for col in name_cols])
             query = f"SELECT {select_cols} FROM {table_name} WHERE {where_clause}"
             pattern = f"%{extracted_name}%"
             rows = await conn.fetch(query, pattern)

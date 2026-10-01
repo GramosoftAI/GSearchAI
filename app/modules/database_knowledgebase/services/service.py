@@ -717,6 +717,8 @@ class DatabaseKnowledgebaseService:
         entity = await self.repo.get_by_id(kb_id)
         if not entity:
             raise TenantMismatchError(detail=f"Database knowledgebase '{kb_id}' not found.")
+            
+        security_overrides = getattr(entity, "security_settings", {}) or {}
 
         # Load canonical schema snapshot early for pre-validation and planning
         snapshot = await self.repo.get_latest_schema_snapshot(kb_id)
@@ -1020,6 +1022,8 @@ class DatabaseKnowledgebaseService:
                 canonical_schema=canonical_schema,
                 retrieval_result=retrieval_res,
                 use_llm=use_llm,
+                security_overrides=security_overrides,
+                audit_context=audit_context,
             )
             t_sql_ms = (time.perf_counter() - t_sql_start) * 1000.0
             tracer.record_sql_generation(
