@@ -717,8 +717,13 @@ class DatabaseKnowledgebaseService:
         entity = await self.repo.get_by_id(kb_id)
         if not entity:
             raise TenantMismatchError(detail=f"Database knowledgebase '{kb_id}' not found.")
-            
         security_overrides = entity.settings.get("security_overrides", {}) if hasattr(entity, "settings") and entity.settings else {}
+
+        audit_ctx = {
+            "query_id": query_id,
+            "tenant_id": self.tenant_id,
+            "knowledgebase_id": kb_id,
+        }
 
         # Load canonical schema snapshot early for pre-validation and planning
         snapshot = await self.repo.get_latest_schema_snapshot(kb_id)
@@ -823,11 +828,7 @@ class DatabaseKnowledgebaseService:
                 try:
                     names = await EntityExtractor.extract_person_names(user_query)
                     logger.info(f"[DISAMBIGUATION] Extracted candidate names: {names}")
-                    audit_ctx = {
-                        "query_id": query_id,
-                        "tenant_id": self.tenant_id,
-                        "knowledgebase_id": kb_id,
-                    }
+                    # audit_ctx is defined above
                     for name in names:
                         extracted_user_id = await CollisionDetector.check_for_user_collisions(
                             extracted_name=name,
@@ -1023,7 +1024,7 @@ class DatabaseKnowledgebaseService:
                 retrieval_result=retrieval_res,
                 use_llm=use_llm,
                 security_overrides=security_overrides,
-                audit_context=audit_context,
+                audit_context=audit_ctx,
             )
             t_sql_ms = (time.perf_counter() - t_sql_start) * 1000.0
             tracer.record_sql_generation(
