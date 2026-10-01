@@ -15,7 +15,7 @@ class RetrievalTrace(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     retrieved_tables: List[str] = Field(default_factory=list, description="Tables selected by retriever")
-    table_scores: Dict[str, float] = Field(default_factory=dict, description="Relevance scores per table")
+    table_scores: Dict[str, Any] = Field(default_factory=dict, description="Relevance scores per table")
     omitted_tables: List[str] = Field(default_factory=list, description="Tables evaluated but excluded")
     retrieved_columns: Dict[str, List[str]] = Field(default_factory=dict, description="Columns preserved per table")
     selected_relationships: List[str] = Field(default_factory=list, description="Join paths / relationships selected")
