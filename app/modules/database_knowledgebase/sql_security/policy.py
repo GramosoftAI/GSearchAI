@@ -40,7 +40,8 @@ class DenyPolicyConfig:
         "*password*",
         "*api_key*",
         "*credential*",
-        "oidc_*",
+        "*secret*",
+        "auth_*",
     ]
 
     DEFAULT_DENIED_COLUMN_PATTERNS: List[str] = [

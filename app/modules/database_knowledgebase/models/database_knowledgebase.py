@@ -63,6 +63,9 @@ class DatabaseKnowledgebase(Base):
         index=True,
     )
 
+    # ============= PER-KB CONFIGURATION =============
+    settings = Column(JSONB, nullable=False, server_default='{}')
+
     # ============= METADATA =============
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
@@ -161,6 +164,7 @@ class DatabaseSchemaSnapshot(Base):
     table_count = Column(Integer, nullable=False, default=0)
     column_count = Column(Integer, nullable=False, default=0)
     relationship_count = Column(Integer, nullable=False, default=0)
+    semantic_profile_status = Column(String(20), nullable=True)
 
     # ============= TIMESTAMP =============
     created_at = Column(

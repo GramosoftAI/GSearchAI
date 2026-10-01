@@ -718,7 +718,7 @@ class DatabaseKnowledgebaseService:
         if not entity:
             raise TenantMismatchError(detail=f"Database knowledgebase '{kb_id}' not found.")
             
-        security_overrides = getattr(entity, "security_settings", {}) or {}
+        security_overrides = entity.settings.get("security_overrides", {}) if hasattr(entity, "settings") and entity.settings else {}
 
         # Load canonical schema snapshot early for pre-validation and planning
         snapshot = await self.repo.get_latest_schema_snapshot(kb_id)
