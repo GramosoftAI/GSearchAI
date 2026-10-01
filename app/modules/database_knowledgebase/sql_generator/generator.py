@@ -172,9 +172,11 @@ class CandidateSQLGenerator:
             elif op == "<=":
                 cond = exp.LTE(this=col_expr, expression=_literal(p.value))
             elif op == "LIKE":
-                cond = exp.Like(this=col_expr, expression=exp.Literal.string(str(p.value)))
+                cast_col = exp.Cast(this=col_expr, to=exp.DataType.build("TEXT"))
+                cond = exp.Like(this=cast_col, expression=exp.Literal.string(str(p.value)))
             elif op == "ILIKE":
-                cond = exp.ILike(this=col_expr, expression=exp.Literal.string(str(p.value)))
+                cast_col = exp.Cast(this=col_expr, to=exp.DataType.build("TEXT"))
+                cond = exp.ILike(this=cast_col, expression=exp.Literal.string(str(p.value)))
             elif op == "IS NULL":
                 cond = exp.Is(this=col_expr, expression=exp.Null())
             elif op == "IS NOT NULL":

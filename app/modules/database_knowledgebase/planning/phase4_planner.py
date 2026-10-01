@@ -49,6 +49,7 @@ CRITICAL RULES:
 7. GROUP BY FORMAT: group_by MUST be a list of strings (e.g. ["d.name", "e.department_id"]). Do NOT output an array of objects.
 8. FOREIGN KEY RESOLUTION: For ALL foreign key ID columns (e.g., responsible_id, department_id, project_id, author_id) that are part of the result, you MUST join the referenced table and project its human-readable name column (e.g., firstname, lastname, login, title, or name) alongside the ID. Users cannot read raw IDs, so always provide the associated name.
 9. EXACT PROJECTION: NEVER use `SELECT *`. When answering queries asking for 'details', explicitly list out the exact columns to project.
+10. TYPE SAFETY: NEVER use string operators (LIKE, ILIKE) on numeric or ID columns (e.g. id, _id) without explicitly casting them to TEXT. For example, if you must search an ID column, use CAST(col AS TEXT) ILIKE.
 
 Target Query: {query}
 

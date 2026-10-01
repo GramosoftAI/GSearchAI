@@ -46,7 +46,8 @@ STRICT CONSTRAINTS:
 13. ABSENTEE & LEAVE RESOLUTION:
     - If a user asks for "absentees", "absent list", or "who is absent" on a specific date, do NOT use `LIKE '%Absent%'` on leave types or statuses.
     - Instead, find employees who are absent by checking `leave_leaverequest` (where `status = 'approved'` and the date is between `start_date` and `end_date`), OR find employees who have NO record in `attendance_attendance` for that date (using `LEFT JOIN ... WHERE attendance_date IS NULL`).
-14. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text.
+15. TYPE CASTING: Never use string operators (LIKE, ILIKE) on numeric or ID columns (e.g. id, _id) without explicitly casting them to TEXT. Always use CAST(column AS TEXT) ILIKE '%value%'.
+16. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text.
 """
 
     @classmethod
