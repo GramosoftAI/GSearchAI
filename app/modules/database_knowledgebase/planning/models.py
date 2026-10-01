@@ -108,7 +108,7 @@ class QueryPlanIR(BaseModel):
     schema_version: str = Field(..., min_length=1, description="Pinned SHA-256 schema fingerprint")
     user_query: str = Field(..., min_length=1, description="Original natural-language user query")
     intent: IntentType = Field(..., description="Classified query intent")
-    tables: List[TablePlan] = Field(..., min_length=1, description="List of tables in the query")
+    tables: List[TablePlan] = Field(default_factory=list, description="List of tables in the query")
     projections: List[ColumnProjectionPlan] = Field(default_factory=list, description="Projected SELECT items")
     joins: List[JoinPlan] = Field(default_factory=list, description="Approved relational joins")
     predicates: List[PredicatePlan] = Field(default_factory=list, description="Filtering conditions")

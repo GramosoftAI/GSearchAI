@@ -148,6 +148,11 @@ class SchemaPruner:
                         if role:
                             extra_attrs += f' role="{role}"'
 
+                if col.classification != "GENERAL":
+                    extra_attrs += f' classification="{col.classification}"'
+                if not col.default_projection:
+                    extra_attrs += f' default_projection="false"'
+
                 col_comment = f" -- {col.comment}" if col.comment else ""
                 raw_xml_parts.append(
                     f"    <column name=\"{c_name}\" type=\"{col.raw_data_type}\"{flag_str}{extra_attrs}/>{col_comment}"

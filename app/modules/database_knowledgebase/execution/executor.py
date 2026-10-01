@@ -15,6 +15,7 @@ import asyncpg
 from ..schemas.connection import DatabaseConnectionConfig, SSLMode
 from ..security.sanitizer import sanitize_error_message
 from ..sql_generator.repair import ValidatedCandidateSQL
+from .connection_helper import connect_to_database, resolve_ssl_mode
 from .errors import (
     ExecutionPolicyViolation,
     QueryConnectionError,
@@ -48,53 +49,18 @@ class ReadOnlyDatabaseExecutor:
 
     def _resolve_ssl(self, db_config: DatabaseConnectionConfig) -> Optional[str]:
         """Convert SSLMode to asyncpg ssl argument."""
-        if db_config.ssl_mode == SSLMode.DISABLE:
-            return None
-        elif db_config.ssl_mode in (SSLMode.REQUIRE, SSLMode.VERIFY_CA, SSLMode.VERIFY_FULL):
-            return "require"
-        elif db_config.ssl_mode == SSLMode.PREFER:
-            return "prefer"
-        return None
+        return resolve_ssl_mode(db_config.ssl_mode)
 
     async def _acquire_connection(self, db_config: DatabaseConnectionConfig) -> asyncpg.Connection:
         """Establish a dedicated read-only asyncpg connection (unpooled path)."""
-        ssl_val = self._resolve_ssl(db_config)
         session_settings = TimeoutManager.get_session_settings(self.config)
-        session_settings["default_transaction_read_only"] = "on"
-
-        try:
-            conn = await asyncio.wait_for(
-                asyncpg.connect(
-                    host=db_config.host,
-                    port=db_config.port,
-                    user=db_config.username,
-                    password=db_config.raw_password,
-                    database=db_config.database_name,
-                    ssl=ssl_val,
-                    timeout=self.config.connection_timeout_seconds,
-                    command_timeout=self.config.statement_timeout_ms / 1000.0,
-                    server_settings=session_settings,
-                ),
-                timeout=self.config.connection_timeout_seconds + 1.0,
-            )
-            return conn
-        except asyncio.TimeoutError as e:
-            logger.warning(f"Connection timeout to {db_config.masked_dsn}")
-            raise QueryConnectionError(
-                detail=f"Connection to database timed out after {self.config.connection_timeout_seconds}s.",
-            ) from e
-        except asyncpg.PostgresError as e:
-            safe_msg = sanitize_error_message(e)
-            logger.warning(f"PostgreSQL connection failed: {safe_msg}")
-            raise QueryConnectionError(
-                detail=f"Failed to connect to database: {safe_msg}",
-            ) from e
-        except Exception as e:
-            safe_msg = sanitize_error_message(e)
-            logger.error(f"Unexpected connection failure: {safe_msg}")
-            raise QueryConnectionError(
-                detail=f"Database connection error: {safe_msg}",
-            ) from e
+        return await connect_to_database(
+            db_config=db_config,
+            timeout_seconds=self.config.connection_timeout_seconds,
+            statement_timeout_ms=self.config.statement_timeout_ms,
+            server_settings=session_settings,
+            read_only=True,
+        )
 
     async def _execute_on_connection(
         self,

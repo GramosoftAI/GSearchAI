@@ -5,6 +5,7 @@ an explicit, observable, and deterministic final score per table.
 """
 
 from typing import Any, Dict, List, Optional, Set
+import math
 from pydantic import BaseModel, Field, ConfigDict
 
 from .keyword_matcher import KeywordMatchResult
@@ -102,8 +103,13 @@ class HybridScorer:
             g_boost = graph_boosts.get(t_key, graph_boosts.get(bare_key, 0.0))
 
             v_score = v_res.combined_vector_score if v_res else 0.0
+            if math.isnan(v_score): v_score = 0.0
+            
             k_score = k_res.score if k_res else 0.0
+            if math.isnan(k_score): k_score = 0.0
+            
             g_score = min(1.0, g_boost)
+            if math.isnan(g_score): g_score = 0.0
 
             ordered_matched_cols: List[str] = []
             matched_toks = set()
@@ -140,6 +146,7 @@ class HybridScorer:
                     cls.FALLBACK_KEYWORD_WEIGHT * k_score
                     + cls.FALLBACK_GRAPH_WEIGHT * g_score
                 )
+            if math.isnan(final): final = 0.0
 
             # Extract schema and table name
             parts = t_key.split(".")

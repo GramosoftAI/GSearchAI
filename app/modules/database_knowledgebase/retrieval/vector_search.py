@@ -6,6 +6,7 @@ by tenant_id, database_knowledgebase_id, and schema_version.
 
 import uuid
 import logging
+import math
 from typing import Dict, List, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
@@ -94,6 +95,8 @@ class SchemaVectorSearch:
             entity_key = row.entity_key
             metadata = row.metadata_json or {}
             sim = float(row.similarity)
+            if math.isnan(sim):
+                sim = 0.0
 
             if sim < min_similarity:
                 continue

@@ -1,0 +1,9 @@
+{
+  "total_questions": 5,
+  "successful_sql_generation": 2,
+  "successful_execution": 2,
+  "sql_validity_rate": 0.4,
+  "execution_success_rate": 0.4,
+  "average_latency_ms": 4200.0,
+  "total_latency_ms": 21000.0
+}

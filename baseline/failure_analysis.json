@@ -1,0 +1,17 @@
+[
+  {
+    "question": "What is the total number of employees?",
+    "failure_type": "SCHEMA_ERROR",
+    "error": "Table 'employee' does not exist. Did you mean 'employees'?"
+  },
+  {
+    "question": "What is the average joining date of employees?",
+    "failure_type": "SYNTAX_ERROR",
+    "error": "function avg(date) does not exist."
+  },
+  {
+    "question": "Show me the names of employees in the sales department.",
+    "failure_type": "SCHEMA_ERROR",
+    "error": "Column 'dept_id' does not exist in table 'employees'."
+  }
+]

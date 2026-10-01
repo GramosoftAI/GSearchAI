@@ -123,7 +123,7 @@ class QueryPlanValidator:
 
         q_low = plan.user_query.lower()
 
-        is_fin_auth = any(w in q_low for w in ("salary", "wage", "earn", "earning", "make", "compensation", "payslip", "deduction", "allowance", "bonus", "gross pay", "net pay", "basic pay", "pay", "income", "basic_salary"))
+        is_fin_auth = any(w in q_low for w in ("salary", "wage", "earn", "earning", "make", "compensation", "payslip", "deduction", "allowance", "bonus", "gross pay", "net pay", "basic pay", "pay", "paid", "highest paid", "income", "basic_salary"))
         if is_fin_auth and any(w in q_low for w in ("show employees", "list employees", "which employees", "who are the employees", "employees in", "all employees")):
             if any(kw in q_low for kw in ("whose salary", "with salary", "salary >", "salary above", "salary <", "salary less", "salary greater")):
                 if not any(ask in q_low for ask in ("and their salary", "with their salary", "show salary", "what is their salary")):
