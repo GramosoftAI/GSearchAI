@@ -38,7 +38,7 @@ async def get_neo4j_driver() -> AsyncDriver:
     global _driver
 
     if _driver is None:
-        neo4j_uri = settings.neo4j_uri.replace("localhost", "127.0.0.1")
+        neo4j_uri = settings.neo4j_uri
         logger.info(f"Connecting to Neo4j: {neo4j_uri}")
 
         driver = AsyncGraphDatabase.driver(

@@ -186,16 +186,103 @@ async def generation_node(state: GraphState) -> dict:
         (str(getattr(c, "kb_id", "")), getattr(c, "position", getattr(c, "chunk_index", 0)) or 0)
         for c in reranked_chunks
     }
+
+    # Resolve KB metadata (real document names & IDs) for all chunks
+    import json
+    import uuid
+    from urllib.parse import urlparse
+
+    kb_metadata_map = {}
+    for kb in (state.get("doc_kbs") or []) + (state.get("excel_kbs") or []):
+        kb_metadata_map[str(kb.id)] = {
+            "name": kb.name,
+            "s3_path": getattr(kb, "s3_path", None),
+            "id": str(kb.id)
+        }
+
+    needed_kb_ids = {
+        str(getattr(c, "kb_id", "")) 
+        for c in reranked_chunks 
+        if getattr(c, "kb_id", None) and str(getattr(c, "kb_id", "")) not in kb_metadata_map
+    }
+    if needed_kb_ids and state.get("tenant_id"):
+        try:
+            from app.core.database import get_db_with_tenant
+            from app.modules.knowledge_bases.models import KnowledgeBase
+            from sqlalchemy import select
+            async with get_db_with_tenant(state["tenant_id"]) as db_sess:
+                uuid_list = []
+                for k in needed_kb_ids:
+                    try:
+                        uuid_list.append(uuid.UUID(k))
+                    except Exception:
+                        pass
+                if uuid_list:
+                    res = await db_sess.execute(select(KnowledgeBase).where(KnowledgeBase.id.in_(uuid_list)))
+                    for kb_row in res.scalars():
+                        kb_metadata_map[str(kb_row.id)] = {
+                            "name": kb_row.name,
+                            "s3_path": kb_row.s3_path,
+                            "id": str(kb_row.id)
+                        }
+        except Exception as e:
+            logger.warning(f"[GENERATION_NODE] Failed to resolve missing KB metadata: {e}")
+
+    def _resolve_chunk_metadata(c):
+        kb_id_str = str(getattr(c, "kb_id", "") or "")
+        kb_info = kb_metadata_map.get(kb_id_str, {})
+        kb_name = kb_info.get("name") or kb_info.get("s3_path") or ""
+
+        raw_source = getattr(c, "source", "") or ""
+        # If placeholder or missing, resolve to real document name
+        if not raw_source or raw_source.startswith("DocumentChunk") or raw_source == "Unknown Document":
+            raw_source = kb_name or "Document"
+
+        # Handle Web / Selected Links KBs
+        if " (Selected Links)" in raw_source:
+            clean = raw_source.replace(" (Selected Links)", "").strip()
+            try:
+                parsed = urlparse(clean)
+                display_name = parsed.netloc or parsed.path or clean
+                if display_name:
+                    raw_source = f"{display_name} (Web)"
+            except Exception:
+                raw_source = clean
+        else:
+            if "/" in raw_source and not raw_source.startswith("http"):
+                raw_source = raw_source.split("/")[-1]
+
+        # Extract page number
+        prov = getattr(c, "provenance_metadata", {}) or {}
+        meta = getattr(c, "metadata_json", {}) or {}
+        if isinstance(prov, str):
+            try:
+                prov = json.loads(prov)
+            except Exception:
+                prov = {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+
+        page = (
+            getattr(c, "page", None)
+            or prov.get("page_number")
+            or prov.get("page")
+            or meta.get("page_number")
+            or meta.get("page")
+        )
+        return raw_source, page, kb_id_str
     
     context_text = ""
     for c in reranked_chunks:
-        raw_source = getattr(c, "source", "") or getattr(c, "metadata", {}).get("source", "Unknown Document")
-        filename = raw_source.split("/")[-1]
+        filename, page_num, kb_id_str = _resolve_chunk_metadata(c)
         content = getattr(c, "content", "") or getattr(c, "text", "")
         
         # Phase 2: Strip overlap only if the previous chunk is also retrieved
         prov_metadata = getattr(c, "provenance_metadata", {}) or {}
-        overlap_len = prov_metadata.get("overlap_prefix_len", 0)
+        overlap_len = prov_metadata.get("overlap_prefix_len", 0) if isinstance(prov_metadata, dict) else 0
         if overlap_len and len(content) > overlap_len:
             c_kb_id = str(getattr(c, "kb_id", ""))
             c_pos = getattr(c, "position", getattr(c, "chunk_index", 0)) or 0
@@ -208,7 +295,8 @@ async def generation_node(state: GraphState) -> dict:
         # Enforce max chunk length to prevent LLM prefill bottlenecks (massive stories)
         if len(content) > 2500:
             content = content[:2500] + "... [truncated for brevity]"
-        context_text += f"Document: {filename}\n{content}\n\n"
+        page_suffix = f" (Page {page_num})" if page_num else ""
+        context_text += f"Document: {filename}{page_suffix}\n{content}\n\n"
         
     tabular_results = state.get("tabular_results", "")
     tabular_sources = state.get("tabular_sources", [])
@@ -266,24 +354,39 @@ async def generation_node(state: GraphState) -> dict:
 
     # 3. Citation Formatting
     sources = []
+    seen_sources = set()
+
     graph_triplets = state.get("graph_triplets", [])
     if graph_triplets:
-        sources.append("Knowledge Graph")
+        sources.append({"source": "Knowledge Graph", "name": "Knowledge Graph"})
+        seen_sources.add("Knowledge Graph")
         
     for c in reranked_chunks:
-        raw_source = getattr(c, "source", "") or getattr(c, "metadata", {}).get("source", "Unknown Document")
-        clean_name = raw_source.split("/")[-1]
+        clean_name, page_num, kb_id_str = _resolve_chunk_metadata(c)
         
-        if getattr(c, "is_stitched_neighbor", False):
-            clean_name = f"{clean_name} (Neighbor Context)"
-            
-        if clean_name not in sources:
-            sources.append(clean_name)
+        is_stitched = getattr(c, "is_stitched_neighbor", False)
+        display_name = f"{clean_name} (Neighbor Context)" if is_stitched else clean_name
+        
+        source_key = f"{kb_id_str}_{display_name}_{page_num or 0}"
+        if source_key not in seen_sources:
+            seen_sources.add(source_key)
+            preview_url = f"/api/v1/embed/files/{kb_id_str}/preview" if kb_id_str else None
+            if preview_url and page_num:
+                preview_url += f"#page={page_num}"
+
+            sources.append({
+                "source": display_name,
+                "name": display_name,
+                "kb_id": kb_id_str if kb_id_str else None,
+                "page": page_num,
+                "url": preview_url
+            })
             
     tabular_sources = state.get("tabular_sources", [])
     for ts in tabular_sources:
-        if ts not in sources:
-            sources.append(ts)
+        if ts not in seen_sources:
+            seen_sources.add(ts)
+            sources.append({"source": ts, "name": ts})
             
     return {
         "system_prompt": system_prompt,

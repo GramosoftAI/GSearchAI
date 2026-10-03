@@ -65,6 +65,8 @@ async def stitch_node(state: GraphState) -> GraphState:
                         # Inherit score with a slight discount
                         base_score = getattr(chunk, "reranker_score", 0.0)
                         neighbor.reranker_score = base_score * 0.9
+                        neighbor.source = getattr(chunk, "source", None)
+                        neighbor.s3_path = getattr(chunk, "s3_path", None)
                         seen_ids.add(str(neighbor.id))
                         expanded.append(neighbor)
                         

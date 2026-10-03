@@ -21,7 +21,115 @@ def resolve_memory_api_base_url() -> str:
         return env_host.rstrip("/")
     return "http://127.0.0.1:4917"
 
-async def _persist_partial(db, chat_service, session_id, user_id, query, response_buffer, reason: str, channel: str = "websocket") -> None:
+async def _log_ws_query_analytics(
+    db,
+    tenant_id: str,
+    user_id: str | None,
+    session_id: str | None,
+    query: str,
+    full_response: str,
+    latency_ms: float,
+    sources: list,
+    final_state: dict,
+    has_error: bool = False,
+) -> None:
+    """Log individual query to analytics_query_logs for dashboard & token consumption tracking."""
+    if not query or not query.strip():
+        return
+    try:
+        from app.core.config import get_settings
+        from app.core.llm.pricing import calculate_token_cost
+        from app.modules.analytics.repository import AnalyticsRepository
+        from app.modules.analytics.models import ResponseStatus
+        from app.modules.chats.repository import safe_uuid
+
+        settings = get_settings()
+        model_name = settings.model_answer or "meta-llama/Llama-3.3-70B-Instruct"
+
+        resp_lower = full_response.lower() if full_response else ""
+        is_refusal = (
+            "couldn't find" in resp_lower
+            or "not available within my current knowledge base" in resp_lower
+            or "not available in my current knowledge base" in resp_lower
+        )
+
+        if has_error:
+            resp_status = ResponseStatus.ERROR
+            confidence = 0.0
+        elif is_refusal:
+            resp_status = ResponseStatus.UNANSWERED
+            confidence = 0.0
+        elif sources or final_state.get("tabular_results") or final_state.get("requires_clarification") or final_state.get("graph_triplets"):
+            resp_status = ResponseStatus.SUCCESS
+            reranked_chunks = final_state.get("reranked_chunks") or final_state.get("retrieved_chunks") or []
+            if reranked_chunks:
+                scores = [getattr(c, "score", 0.0) or getattr(c, "relevance_score", 0.0) or 0.85 for c in reranked_chunks]
+                confidence = round(float(max(scores, default=0.85)), 4)
+            else:
+                confidence = 0.95
+        else:
+            if any(greet in query.lower().split() for greet in ["hi", "hello", "hey", "hola"]):
+                resp_status = ResponseStatus.SUCCESS
+                confidence = 1.0
+            else:
+                resp_status = ResponseStatus.UNANSWERED
+                confidence = 0.0
+
+        sys_prompt = final_state.get("system_prompt", "") or ""
+        llm_input_tokens = max(1, (len(query) + len(sys_prompt)) // 4)
+        llm_output_tokens = max(1, len(full_response) // 4)
+        embedding_tokens = max(1, len(query) // 4)
+        total_tokens = llm_input_tokens + llm_output_tokens + embedding_tokens
+
+        llm_cost_usd = calculate_token_cost(
+            model_name=model_name,
+            input_tokens=llm_input_tokens,
+            output_tokens=llm_output_tokens,
+        )
+        embedding_cost_usd = calculate_token_cost(
+            model_name=settings.model_embedding,
+            input_tokens=embedding_tokens,
+            output_tokens=0,
+        )
+        total_cost_usd = llm_cost_usd + embedding_cost_usd
+
+        t_uuid = safe_uuid(tenant_id)
+        u_uuid = safe_uuid(user_id) if user_id else None
+        s_uuid = safe_uuid(session_id) if session_id else None
+
+        analytics_repo = AnalyticsRepository(db, t_uuid)
+        await analytics_repo.create_query_log({
+            "query": query,
+            "response_status": resp_status,
+            "confidence_score": confidence,
+            "latency_ms": latency_ms,
+            "session_id": s_uuid,
+            "user_id": u_uuid,
+            "model_name": model_name,
+            "llm_input_tokens": llm_input_tokens,
+            "llm_output_tokens": llm_output_tokens,
+            "embedding_tokens": embedding_tokens,
+            "total_tokens": total_tokens,
+            "llm_cost_usd": llm_cost_usd,
+            "embedding_cost_usd": embedding_cost_usd,
+            "total_cost_usd": total_cost_usd,
+        })
+        await db.commit()
+    except Exception as e:
+        logger.error(f"Failed to log query analytics in websocket loop: {e}", exc_info=True)
+
+async def _persist_partial(
+    db, 
+    chat_service, 
+    session_id, 
+    user_id, 
+    query, 
+    response_buffer, 
+    reason: str, 
+    channel: str = "websocket",
+    tenant_id: str | None = None,
+    latency_ms: float = 0.0,
+) -> None:
     try:
         try:
             await db.rollback()
@@ -39,6 +147,19 @@ async def _persist_partial(db, chat_service, session_id, user_id, query, respons
             },
         )
         await db.commit()
+        if tenant_id:
+            await _log_ws_query_analytics(
+                db=db,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                session_id=session_id,
+                query=query,
+                full_response="".join(response_buffer),
+                latency_ms=latency_ms,
+                sources=[],
+                final_state={},
+                has_error=True,
+            )
     except Exception as e:
         logger.error(f"Failed to persist partial response: {e}")
 
@@ -96,6 +217,8 @@ async def run_unified_rag_websocket_loop(
         except ValueError as e:
             await adapter.send_error(websocket, str(e))
             continue
+
+        turn_start_time = time.perf_counter()
 
         if not active_session_id and request.session_id:
             active_session_id = request.session_id
@@ -244,14 +367,29 @@ async def run_unified_rag_websocket_loop(
                 )
                 
             if final_state.get("sources"):
-                sources_payload = [{"source": s} for s in final_state["sources"]]
+                sources_payload = [
+                    s if isinstance(s, dict) else {"source": s}
+                    for s in final_state["sources"]
+                ]
                 collected_sources = sources_payload
                 await adapter.send(websocket, LoopEvent(type="sources", sources=sources_payload, triplets=[]))
 
             full_response = "".join(response_buffer)
 
             if has_error:
-                await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, "rag_error")
+                latency_ms = (time.perf_counter() - turn_start_time) * 1000 if "turn_start_time" in locals() else 0.0
+                await _persist_partial(
+                    db=db,
+                    chat_service=chat_service,
+                    session_id=active_session_id,
+                    user_id=user_id,
+                    query=request.query,
+                    response_buffer=response_buffer,
+                    reason="rag_error",
+                    channel=channel,
+                    tenant_id=tenant_id,
+                    latency_ms=latency_ms,
+                )
                 break
 
             # 5. Evaluate Human Support Escalation
@@ -279,12 +417,43 @@ async def run_unified_rag_websocket_loop(
                 except Exception as e:
                     logger.error(f"Failed to persist response: {e}")
 
+            # 6. Log Query Analytics for Dashboard & Token Consumption
+            latency_ms = (time.perf_counter() - turn_start_time) * 1000 if "turn_start_time" in locals() else 0.0
+            await _log_ws_query_analytics(
+                db=db,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                session_id=active_session_id,
+                query=original_query,
+                full_response=full_response,
+                latency_ms=latency_ms,
+                sources=collected_sources,
+                final_state=final_state,
+                has_error=False,
+            )
+
             await adapter.send(websocket, LoopEvent(type="done", escalation_detected=is_escalated))
 
         except WebSocketDisconnect:
             return
         except Exception as e:
             logger.exception("unified_rag_loop_failure", extra={"tenant_id": tenant_id, "agent_id": agent_id})
+            try:
+                latency_ms = (time.perf_counter() - turn_start_time) * 1000 if "turn_start_time" in locals() else 0.0
+                await _log_ws_query_analytics(
+                    db=db,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    session_id=active_session_id,
+                    query=request.query if ("request" in locals() and hasattr(request, "query")) else "",
+                    full_response="",
+                    latency_ms=latency_ms,
+                    sources=[],
+                    final_state={},
+                    has_error=True,
+                )
+            except Exception:
+                pass
             try:
                 await adapter.send_error(websocket, "internal_error")
             except Exception:

@@ -156,6 +156,7 @@ class ChatMessageFeedbackRequest(BaseModel):
     feedback_type: str = Field(..., description="thumbs_up / thumbs_down")
     feedback_reason: Optional[str] = Field(None, max_length=255, description="Optional feedback reason")
     feedback_score: Optional[int] = Field(None, description="Optional feedback score or rating")
+    tenant_id: Optional[UUID] = Field(None, description="Optional Tenant UUID for embed/widget requests")
 
     @field_validator("feedback_type")
     @classmethod

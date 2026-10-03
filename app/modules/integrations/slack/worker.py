@@ -3,6 +3,7 @@
 import logging
 from typing import Optional, Dict, Any
 from uuid import UUID
+import httpx
 from sqlalchemy import select, and_
 
 from app.core.database import AsyncSessionLocal
@@ -57,7 +58,22 @@ async def process_slack_event_task(
         )
         valid_user_id = generate_slack_user_id(user_id)
 
-        # 2. Execute RAG
+        target_thread = thread_ts
+
+        # 1. Immediately post temporary "Thinking..." message
+        thinking_text = "⏳ *GSearch.AI is searching enterprise knowledge and thinking...*"
+        thinking_msg = None
+        try:
+            thinking_msg = await client.post_message(
+                bot_token=bot_token,
+                channel=channel_id,
+                text=thinking_text,
+                thread_ts=target_thread,
+            )
+        except Exception as post_err:
+            logger.warning("Failed to post initial Slack thinking message: %s", post_err)
+
+        # 2. Execute RAG pipeline
         try:
             rag_result = await execute_rag(
                 db=db,
@@ -74,29 +90,47 @@ async def process_slack_event_task(
             sources = rag_result.get("sources", [])
             formatted_text = format_slack_response(answer, sources)
 
-            # If message was in a thread, reply in thread. If top-level, post directly to channel.
-            target_thread = thread_ts
-
-            await client.post_message(
-                bot_token=bot_token,
-                channel=channel_id,
-                text=formatted_text,
-                thread_ts=target_thread,
-            )
-            logger.info("Successfully posted Slack response to channel %s", channel_id)
-
-        except Exception as e:
-            logger.exception("Failed to execute RAG or post response to Slack: %s", e)
-            try:
-                target_thread = thread_ts
+            # 3. Replace "Thinking..." with the complete answer using chat.update
+            if thinking_msg and thinking_msg.get("ts"):
+                await client.update_message(
+                    bot_token=bot_token,
+                    channel=channel_id,
+                    ts=thinking_msg["ts"],
+                    text=formatted_text,
+                )
+                logger.info("Successfully updated Slack message %s with answer in channel %s", thinking_msg["ts"], channel_id)
+            else:
                 await client.post_message(
                     bot_token=bot_token,
                     channel=channel_id,
-                    text="I encountered an error while processing your request. Please try again later.",
+                    text=formatted_text,
                     thread_ts=target_thread,
                 )
-            except Exception as post_err:
-                logger.error("Failed to post error message to Slack: %s", post_err)
+                logger.info("Successfully posted Slack response to channel %s", channel_id)
+
+        except Exception as e:
+            logger.exception("Failed to execute RAG or post response to Slack: %s", e)
+            error_msg = "I encountered an error while processing your request. Please try again later."
+            if thinking_msg and thinking_msg.get("ts"):
+                try:
+                    await client.update_message(
+                        bot_token=bot_token,
+                        channel=channel_id,
+                        ts=thinking_msg["ts"],
+                        text=error_msg,
+                    )
+                except Exception as update_err:
+                    logger.error("Failed to update Slack error message: %s", update_err)
+            else:
+                try:
+                    await client.post_message(
+                        bot_token=bot_token,
+                        channel=channel_id,
+                        text=error_msg,
+                        thread_ts=target_thread,
+                    )
+                except Exception as post_err:
+                    logger.error("Failed to post error message to Slack: %s", post_err)
 
 
 async def slack_event_job(
@@ -121,3 +155,64 @@ async def slack_event_job(
         message_ts=message_ts,
         user_id=user_id,
     )
+
+
+async def process_slack_command_task(
+    tenant_id: str,
+    agent_id: str,
+    query: str,
+    response_url: str,
+    user_id: Optional[str] = None,
+    channel_id: Optional[str] = None,
+    team_id: Optional[str] = None,
+) -> None:
+    """
+    Executes RAG pipeline for a Slack slash command (/gsearch) and posts the result to response_url.
+    """
+    logger.info("Processing Slack slash command for agent %s: '%s'", agent_id, query)
+    valid_user_id = generate_slack_user_id(user_id)
+    session_id = generate_slack_session_id(
+        team_id=team_id or "command",
+        channel_id=channel_id or "command",
+    )
+
+    async with AsyncSessionLocal() as db:
+        try:
+            rag_result = await execute_rag(
+                db=db,
+                tenant_id=str(tenant_id),
+                agent_id=str(agent_id),
+                query=query,
+                session_id=session_id,
+                user_id=valid_user_id,
+                source="slack_command",
+                enable_memory=True,
+            )
+
+            answer = rag_result.get("answer", "")
+            sources = rag_result.get("sources", [])
+            formatted_text = format_slack_response(answer, sources)
+
+            async with httpx.AsyncClient(timeout=30.0) as http_client:
+                await http_client.post(
+                    response_url,
+                    json={
+                        "response_type": "in_channel",
+                        "text": formatted_text,
+                    },
+                )
+            logger.info("Successfully posted slash command result to Slack response_url")
+        except Exception as e:
+            logger.exception("Failed to execute RAG for Slack command: %s", e)
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as http_client:
+                    await http_client.post(
+                        response_url,
+                        json={
+                            "response_type": "ephemeral",
+                            "text": "I encountered an error while searching. Please try again later.",
+                        },
+                    )
+            except Exception as post_err:
+                logger.error("Failed to post slash command error to response_url: %s", post_err)
+

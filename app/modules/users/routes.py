@@ -83,8 +83,10 @@ async def list_users(
     db: Session = Depends(get_db),
     current_user: str = Depends(get_current_user),
 ):
-    """List all users"""
-    return await services.list_users(skip, limit, db)
+    """List users for the current tenant (excluding widget accounts)"""
+    user = await services.get_user(current_user, db)
+    tenant_id = user.tenant_id if user else None
+    return await services.list_users(skip=skip, limit=limit, db=db, tenant_id=tenant_id)
 
 
 @router.put("/{user_id}", response_model=schemas.UserResponse)

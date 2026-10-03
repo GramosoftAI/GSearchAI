@@ -333,3 +333,10 @@ fix_modals.py
 fix_llm3.py
 fix_db.py
 fix_dates.py
+
+# IDE / Agent Tooling & Temp Files
+.gemini/
+.agents/
+*.tmp
+*.bak
+*.swp

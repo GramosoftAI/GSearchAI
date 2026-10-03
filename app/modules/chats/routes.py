@@ -563,17 +563,39 @@ async def save_message_feedback(
 ):
     """
     Save or update thumbs_up/thumbs_down feedback for a chat message.
+    Supports authenticated JWT users as well as embed widget clients passing tenant_id.
 
     Args:
-        body: ChatMessageFeedbackRequest (message_id, feedback_type, feedback_reason)
+        body: ChatMessageFeedbackRequest (message_id, feedback_type, feedback_reason, tenant_id)
 
     Returns:
         ChatMessageFeedbackResponse
     """
-    tenant_id, user_id = get_tenant_and_user(request)
+    req_tenant_id = getattr(request.state, "tenant_id", None)
+    if not req_tenant_id and body.tenant_id:
+        req_tenant_id = str(body.tenant_id)
+    if not req_tenant_id:
+        req_tenant_id = request.headers.get("X-Tenant-ID") or request.query_params.get("tenant_id")
 
     async with AsyncSessionLocal() as db:
-        chat_service = ChatService(db=db, tenant_id=tenant_id)
+        from .models import ChatMessage
+        from .repository import safe_uuid
+        from sqlalchemy import select
+
+        clean_msg_id = safe_uuid(body.message_id)
+        msg_stmt = select(ChatMessage).where(ChatMessage.id == clean_msg_id)
+        if req_tenant_id:
+            msg_stmt = msg_stmt.where(ChatMessage.tenant_id == safe_uuid(req_tenant_id))
+
+        res = await db.execute(msg_stmt)
+        msg = res.scalar_one_or_none()
+        if not msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Message not found",
+            )
+
+        chat_service = ChatService(db=db, tenant_id=str(msg.tenant_id))
 
         try:
             await chat_service.save_message_feedback(

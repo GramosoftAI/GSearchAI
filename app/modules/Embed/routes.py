@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 
 
 from ..chats.service import ChatService
-
+from ..chats.schemas import ChatMessageFeedbackRequest, ChatMessageFeedbackResponse
 from ..chats.knowledge_service import ChatKnowledgeService
 
 from ..agents.repository import AgentRepository
@@ -153,54 +153,59 @@ async def resolve_or_issue_visitor_id(websocket: WebSocket, tenant_id: str) -> s
 
 async def get_or_create_widget_user(db, tenant_id: str, visitor_id: str = None) -> User:
     """
-    Retrieve the primary tenant admin/owner account for widget requests so that ALL token
+    Retrieve the primary tenant account for widget requests so that ALL token
     telemetry (Dashboard + Embed Widget) rolls up under a single unified user account.
+    Never creates dummy/anonymous widget accounts in the users table.
     """
     tenant_uuid = uuid.UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id
 
     # 1. First attempt: Find the primary tenant admin/owner account
     result = await db.execute(
         select(User)
-        .where(User.tenant_id == tenant_uuid, User.is_admin == True)
+        .where(
+            User.tenant_id == tenant_uuid,
+            User.is_admin == True,
+            User.is_active == True,
+            ~User.email.like("widget_%@%")
+        )
         .order_by(User.created_at.asc())
     )
     admin_user = result.scalars().first()
     if admin_user:
         return admin_user
 
-    # 2. Fallback: Any existing tenant user
+    # 2. Fallback: Any active tenant user
     result = await db.execute(
         select(User)
-        .where(User.tenant_id == tenant_uuid)
+        .where(
+            User.tenant_id == tenant_uuid,
+            User.is_active == True,
+            ~User.email.like("widget_%@%")
+        )
         .order_by(User.created_at.asc())
     )
     tenant_user = result.scalars().first()
     if tenant_user:
         return tenant_user
 
-    # 3. Fallback: Create shared widget user if tenant has no user records yet
-    widget_email = f"widget_user_{str(tenant_id)[:8]}@graphmind.local"
+    # 3. Fallback: Any active system admin user
     result = await db.execute(
-        select(User).where(User.email == widget_email)
-    )
-    widget_user = result.scalar_one_or_none()
-
-    if not widget_user:
-        logger.info(f"Creating shared anonymous widget user for tenant {tenant_id}")
-        widget_user = User(
-            id=uuid.uuid4(),
-            tenant_id=tenant_uuid,
-            email=widget_email,
-            first_name="Anonymous",
-            last_name="Visitor",
-            hashed_password="WIDGET_DUMMY_PASSWORD_NOT_AUTHENTICATABLE",
-            is_active=True,
-            is_admin=False
+        select(User)
+        .where(
+            User.is_admin == True,
+            User.is_active == True,
+            ~User.email.like("widget_%@%")
         )
-        db.add(widget_user)
-        await db.flush()
+        .order_by(User.created_at.asc())
+    )
+    system_user = result.scalars().first()
+    if system_user:
+        return system_user
 
-    return widget_user
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="No active user account found for this tenant to associate embed chat activity."
+    )
 
 
 
@@ -1317,6 +1322,71 @@ async def render_widget_logo(tenant_id: str, filename: str):
         media_type=content_type,
         headers={"Cache-Control": "public, max-age=86400"}
     )
+
+
+@router.post(
+    "/messages/feedback",
+    response_model=ChatMessageFeedbackResponse,
+    summary="Save message feedback from embed widget",
+    description="Save thumbs_up/thumbs_down feedback for a chat message from the embed widget without requiring JWT.",
+)
+async def save_embed_message_feedback(
+    request: Request,
+    body: ChatMessageFeedbackRequest,
+):
+    """
+    Save message feedback from embed widget without requiring JWT authentication.
+    Supports optional tenant_id in body, header, or query parameter.
+    """
+    from ..chats.models import ChatMessage
+    from ..chats.repository import safe_uuid
+    from ..chats.service import ChatService
+
+    req_tenant_id = body.tenant_id or request.headers.get("X-Tenant-ID") or request.query_params.get("tenant_id")
+
+    async with AsyncSessionLocal() as db:
+        clean_msg_id = safe_uuid(body.message_id)
+        msg_stmt = select(ChatMessage).where(ChatMessage.id == clean_msg_id)
+        if req_tenant_id:
+            msg_stmt = msg_stmt.where(ChatMessage.tenant_id == safe_uuid(req_tenant_id))
+
+        res = await db.execute(msg_stmt)
+        msg = res.scalar_one_or_none()
+        if not msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Message not found",
+            )
+
+        chat_service = ChatService(db=db, tenant_id=str(msg.tenant_id))
+
+        try:
+            await chat_service.save_message_feedback(
+                message_id=str(body.message_id),
+                feedback_type=body.feedback_type,
+                feedback_reason=body.feedback_reason,
+                feedback_score=body.feedback_score,
+            )
+            return {
+                "success": True,
+                "message": "Feedback saved successfully",
+            }
+        except KeyError as e:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Message not found",
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
+        except Exception as e:
+            logger.error(f"Failed to save embed message feedback: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to save feedback: {str(e)}",
+            )
 
 
 

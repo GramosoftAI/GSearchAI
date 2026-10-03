@@ -1,7 +1,9 @@
 """FastAPI REST routes for Slack Multi-Tenant Integration."""
 
+import os
 import logging
 import json
+import urllib.parse
 from uuid import UUID
 from typing import Optional
 
@@ -23,7 +25,7 @@ from app.utils.formatters import format_success, format_error
 from .service import SlackService
 from .security import verify_slack_signature
 from .events import clean_slack_text, is_bot_event
-from .worker import process_slack_event_task
+from .worker import process_slack_event_task, process_slack_command_task
 from .schemas import (
     SlackConnectResponse,
     SlackChannelInfo,
@@ -75,13 +77,17 @@ async def slack_oauth_callback(
     Public endpoint (state is cryptographically validated via HMAC-SHA256).
     """
     settings = get_settings()
-    frontend_url = (getattr(settings, "FRONTEND_URL", None) or "http://localhost:3000").rstrip("/")
+    frontend_url = (
+        os.getenv("FRONTEND_URL")
+        or getattr(settings, "FRONTEND_URL", None)
+        or "https://uat.gramosoft.tech"
+    ).rstrip("/")
 
     async with AsyncSessionLocal() as db:
         service = SlackService(db)
         try:
             conn = await service.handle_oauth_callback(code, state)
-            redirect_url = f"{frontend_url}/dashboard/integrations?slack=connected&agent_id={conn.agent_id}"
+            redirect_url = f"{frontend_url}/dashboard/integrations/slack?slack=connected&agent_id={conn.agent_id}"
             logger.info("Slack OAuth successful for team %s; redirecting to %s", conn.slack_team_name or conn.slack_team_id, redirect_url)
             return RedirectResponse(url=redirect_url, status_code=302)
         except Exception as e:
@@ -290,3 +296,81 @@ async def slack_events_webhook(
             return {"status": "queued"}
 
     return {"status": "ignored_unknown_type"}
+
+
+@router.post("/commands")
+async def slack_slash_commands(
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Slack Slash Command Webhook endpoint (/gsearch).
+    Handles:
+    - HMAC-SHA256 signature verification & timestamp checking
+    - Form data parsing (command, text, response_url, team_id, user_id)
+    - Fast HTTP 200 response within 3s
+    - Asynchronous RAG processing in background with response posted to response_url
+    """
+    raw_body = await request.body()
+    timestamp = request.headers.get("X-Slack-Request-Timestamp")
+    signature = request.headers.get("X-Slack-Signature")
+
+    settings = get_settings()
+    signing_secret = getattr(settings, "slack_signing_secret", None)
+
+    if not verify_slack_signature(raw_body, timestamp, signature, signing_secret):
+        logger.warning("Rejected Slack command: Invalid signature or timestamp drift")
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"error": "Invalid signature or timestamp"},
+        )
+
+    # Parse urlencoded form data from Slack
+    body_str = raw_body.decode("utf-8")
+    parsed_form = urllib.parse.parse_qs(body_str)
+
+    command = parsed_form.get("command", ["/gsearch"])[0]
+    query = parsed_form.get("text", [""])[0].strip()
+    team_id = parsed_form.get("team_id", [""])[0]
+    channel_id = parsed_form.get("channel_id", [""])[0]
+    user_id = parsed_form.get("user_id", [""])[0]
+    response_url = parsed_form.get("response_url", [""])[0]
+
+    if not query:
+        return JSONResponse(
+            content={
+                "response_type": "ephemeral",
+                "text": f"👋 What would you like to search? Usage: `{command} <your question>`",
+            }
+        )
+
+    async with AsyncSessionLocal() as db:
+        service = SlackService(db)
+        conn = await service.get_connection_for_event(team_id, channel_id)
+        if not conn or not conn.is_active:
+            return JSONResponse(
+                content={
+                    "response_type": "ephemeral",
+                    "text": "⚠️ GSearch.AI is not actively connected to this workspace or channel.",
+                }
+            )
+
+        # Dispatch background task to process query and respond via response_url
+        background_tasks.add_task(
+            process_slack_command_task,
+            tenant_id=str(conn.tenant_id),
+            agent_id=str(conn.agent_id),
+            query=query,
+            response_url=response_url,
+            user_id=user_id,
+            channel_id=channel_id,
+            team_id=team_id,
+        )
+
+        return JSONResponse(
+            content={
+                "response_type": "ephemeral",
+                "text": f"⏳ *GSearch.AI is searching enterprise knowledge for:* \"{query}\"...",
+            }
+        )
+

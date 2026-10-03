@@ -1,6 +1,7 @@
 """Users business logic"""
 
-from sqlalchemy import select
+from typing import Optional
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.models import User
 from . import schemas
@@ -15,9 +16,17 @@ async def get_user(user_id: str, db: AsyncSession):
     return user
 
 
-async def list_users(skip: int, limit: int, db: AsyncSession):
-    """List users with pagination"""
-    result = await db.execute(select(User).offset(skip).limit(limit))
+async def list_users(skip: int, limit: int, db: AsyncSession, tenant_id: Optional[str] = None):
+    """List users with pagination, excluding internal widget accounts"""
+    query = select(User).where(
+        and_(
+            ~User.email.like("widget_%@%"),
+            User.hashed_password != "WIDGET_DUMMY_PASSWORD_NOT_AUTHENTICATABLE"
+        )
+    )
+    if tenant_id:
+        query = query.where(User.tenant_id == tenant_id)
+    result = await db.execute(query.order_by(User.created_at.asc()).offset(skip).limit(limit))
     return result.scalars().all()
 
 

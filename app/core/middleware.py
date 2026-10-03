@@ -67,8 +67,21 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
             or "/sharepoint/callback" in request.url.path
             or request.url.path == "/api/v1/slack/events"
             or request.url.path == "/api/v1/slack/callback"
+            or request.url.path == "/api/v1/chats/messages/feedback"
         ):
             logger.debug(f"Public/Embed/Auth route: {request.method} {request.url.path}")
+            auth_header = request.headers.get("Authorization")
+            if auth_header:
+                try:
+                    parts = auth_header.split()
+                    if len(parts) == 2 and parts[0].lower() == "bearer":
+                        payload = await verify_access_token(parts[1])
+                        if payload:
+                            request.state.user_id = payload.user_id
+                            request.state.tenant_id = payload.tenant_id
+                            request.state.request_id = str(uuid.uuid4())
+                except Exception:
+                    pass
             return await call_next(request)
 
         # ============= EXTRACT JWT =============

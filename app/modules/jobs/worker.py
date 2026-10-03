@@ -265,7 +265,8 @@ async def run_pdf_ingestion_job(
             
             kb_result = await kb_service.create_knowledge_base(user_id, kb_request)
             if not kb_result.get("success"):
-                await job_service.update_job_progress(job_id, status="failed", progress=45, current_step="Creating Knowledge Base Entry", error_message="Failed to create Knowledge Base tracking row in database.")
+                err_msg = kb_result.get("error") or "Failed to create Knowledge Base tracking row in database."
+                await job_service.update_job_progress(job_id, status="failed", progress=45, current_step="Creating Knowledge Base Entry", error_message=err_msg)
                 return
                 
             kb_id = str(kb_result["data"]["kb"].id)
@@ -469,7 +470,8 @@ async def run_excel_ingestion_job(
             
             kb_result = await kb_service.create_knowledge_base(user_id, kb_request)
             if not kb_result.get("success"):
-                await job_service.update_job_progress(job_id, status="failed", progress=10, current_step="Creating Knowledge Base", error_message="Failed to create Knowledge Base tracking row in database.")
+                err_msg = kb_result.get("error") or "Failed to create Knowledge Base tracking row in database."
+                await job_service.update_job_progress(job_id, status="failed", progress=10, current_step="Creating Knowledge Base", error_message=err_msg)
                 return
                 
             kb_id = str(kb_result["data"]["kb"].id)
@@ -657,7 +659,8 @@ async def run_url_ingestion_job(
             
             kb_result = await kb_service.create_knowledge_base(user_id, kb_request)
             if not kb_result.get("success"):
-                await job_service.update_job_progress(job_id, status="failed", progress=40, current_step="Creating Knowledge Base Entry", error_message="Failed to create Knowledge Base tracking row in database.")
+                err_msg = kb_result.get("error") or "Failed to create Knowledge Base tracking row in database."
+                await job_service.update_job_progress(job_id, status="failed", progress=40, current_step="Creating Knowledge Base Entry", error_message=err_msg)
                 return
                 
             kb_id = str(kb_result["data"]["kb"].id)

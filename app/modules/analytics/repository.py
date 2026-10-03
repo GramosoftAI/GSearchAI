@@ -587,6 +587,7 @@ class AnalyticsRepository:
         )
         if self.tenant_id is not None:
             ingest_stmt = ingest_stmt.where(User.tenant_id == self.tenant_id)
+        ingest_stmt = ingest_stmt.where(~User.email.like("widget_%@%"))
         if start_date:
             ingest_stmt = ingest_stmt.where(DocumentIngestionRun.started_at >= start_date)
         if end_date:
@@ -611,6 +612,7 @@ class AnalyticsRepository:
         )
         if self.tenant_id is not None:
             chat_stmt = chat_stmt.where(User.tenant_id == self.tenant_id)
+        chat_stmt = chat_stmt.where(~User.email.like("widget_%@%"))
         if start_date:
             chat_stmt = chat_stmt.where(AnalyticsQueryLog.created_at >= start_date)
         if end_date:

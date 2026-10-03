@@ -52,7 +52,7 @@ class Settings(BaseSettings):
 
     port: int = 8000
 
-    FRONTEND_URL: str = "http://localhost:3000"
+    FRONTEND_URL: str = "https://uat.gramosoft.tech"
 
 
 
