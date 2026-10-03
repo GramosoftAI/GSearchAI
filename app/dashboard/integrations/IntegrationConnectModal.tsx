@@ -52,8 +52,56 @@ export default function IntegrationConnectModal({
     type === "email" ? "email" : "outlook";
 
   
-  const fetchAgentKbId = async (agentId: string, agentName: string) => {
+  const findExistingAgentKb = async (agentId: string) => {
     try {
+      const token = getCookie("AUTH_TOKEN");
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/agents/${agentId}?limit=100&offset=0`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      const currentAgentKBs: any[] = 
+        Array.isArray(data?.data?.kbs) ? data.data.kbs :
+        Array.isArray(data?.data?.sources) ? data.data.sources :
+        Array.isArray(data?.data) ? data.data :
+        Array.isArray(data?.kbs) ? data.kbs :
+        Array.isArray(data?.sources) ? data.sources : [];
+
+      const searchTerms = 
+        type === "google" ? ["google_drive", "google drive"] :
+        type === "sharepoint" ? ["sharepoint", "share point"] :
+        type === "email" ? ["email", "gmail"] :
+        type === "outlook" ? ["outlook"] :
+        [];
+
+      const existingKB = currentAgentKBs.find((kb) => {
+        const conn = (kb.connected_integration || "").toLowerCase();
+        const kbName = (kb.name || kb.source || "").toLowerCase();
+        return searchTerms.some(term => conn === term || kbName.includes(term));
+      });
+
+      return existingKB?.id || null;
+    } catch (err) {
+      console.error(`Error querying existing KBs for agent ${agentId}:`, err);
+      return null;
+    }
+  };
+
+  const getOrCreateAgentKbId = async (agentId: string, agentName: string) => {
+    try {
+      // 1. Reuse Existing Knowledge Base (Singleton per Agent)
+      const existingId = await findExistingAgentKb(agentId);
+      if (existingId) {
+        return existingId;
+      }
+
+      // 2. Only if it does NOT exist: Create a new Knowledge Base via POST /api/v1/knowledge-bases
       const token = getCookie("AUTH_TOKEN");
       const kbName = 
         type === "google" ? "Google Drive Knowledge" :
@@ -76,11 +124,11 @@ export default function IntegrationConnectModal({
           }),
         }
       );
-      if (!res.ok) throw new Error("Failed to fetch/create knowledge base");
+      if (!res.ok) throw new Error("Failed to create knowledge base");
       const data = await res.json();
-      return data?.data?.kb?.id || null;
+      return data?.data?.kb?.id || data?.kb?.id || null;
     } catch (err) {
-      console.error(`Error fetching KB for agent ${agentId}:`, err);
+      console.error(`Error creating KB for agent ${agentId}:`, err);
       return null;
     }
   };
@@ -131,9 +179,10 @@ export default function IntegrationConnectModal({
           const integrations = await checkAgentConnection(agent.id);
           statesMap[agent.id] = integrations;
 
-          const kbId = await fetchAgentKbId(agent.id, agent.name);
-          if (kbId) {
-            kbMap[agent.id] = kbId;
+          // Pure read-only check: do NOT create any KBs during modal list load!
+          const existingKbId = await findExistingAgentKb(agent.id);
+          if (existingKbId) {
+            kbMap[agent.id] = existingKbId;
           }
         })
       );
@@ -207,9 +256,18 @@ export default function IntegrationConnectModal({
     ? connectionStates[selectedAgentId]?.includes(providerKey)
     : false;
 
-  const handleActionClick = () => {
+  const handleActionClick = async () => {
     if (!selectedAgentId || !selectedAgent) return;
-    const kbId = kbIds[selectedAgentId];
+    let kbId = kbIds[selectedAgentId];
+    if (!kbId) {
+      setLoading(true);
+      kbId = await getOrCreateAgentKbId(selectedAgent.id, selectedAgent.name);
+      setLoading(false);
+      if (kbId) {
+        setKbIds((prev) => ({ ...prev, [selectedAgent.id]: kbId }));
+      }
+    }
+
     if (!kbId) {
       notification.error({
         message: "Knowledge Base Error",

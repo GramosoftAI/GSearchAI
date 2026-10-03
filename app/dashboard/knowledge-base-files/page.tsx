@@ -460,6 +460,14 @@ export default function KnowledgeBaseFilesPage() {
 
   // Perform client-side filter on top of server data
   const filteredKbs = kbs.filter((kb) => {
+    // 0. Filter out 0-chunk empty/orphan KBs unless actively syncing or having content
+    const totalChunks = kb.total_chunks ?? kb.chunks_count ?? kb.chunk_count ?? 0;
+    const isSyncing = kb.processing_jobs != null || kb.status === "processing" || kb.status === "indexing" || kb.status === "pending";
+    const hasContent = Boolean(kb.s3_path || kb.parsed_path || kb.content || kb.url || kb.text);
+    if (totalChunks === 0 && !isSyncing && !hasContent) {
+      return false;
+    }
+
     // 1. Search filter
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
