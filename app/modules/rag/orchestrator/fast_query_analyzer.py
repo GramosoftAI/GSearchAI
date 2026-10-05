@@ -73,7 +73,6 @@ COMMON_DOMAIN_VOCAB: Dict[str, str] = {
     "avg": "average",
     "total": "total",
     "totl": "total",
-    "minimum": "minimum",
     "maximum": "maximum"
 }
 
@@ -662,6 +661,41 @@ Return strict JSON only:
         # 5. Fast Local Keyword Extraction
         t0 = time.time()
         keywords = self.extract_keywords(corrected_tokens, extracted_ids, implied_cols)
+        
+        # Dynamic Acronym Expansion (Fully Dynamic, No Hardcoding)
+        potential_acronyms = [t for t in tokens if 2 <= len(t) <= 5 and t.isalpha() and t.lower() not in STOPWORDS]
+        if potential_acronyms:
+            try:
+                acronym_prompt = f"Identify any acronyms in this search query and return their likely full corporate/business forms in a JSON list of strings (e.g., ['Chief Operating Officer']). If none, return []. Query: '{q_strip}'"
+                acronym_resp = await asyncio.wait_for(
+                    self.llm_client.generate_cloud(
+                        prompt=acronym_prompt,
+                        system_prompt="You are an acronym expander. Return only JSON.",
+                        temperature=0.0,
+                        max_tokens=64,
+                        model=self.llm_client.model_intent,
+                        timeout=4.5,
+                        task=LLMTask.INTENT_DETECTION,
+                        tenant_id=tenant_id,
+                        user_id=user_id
+                    ),
+                    timeout=5.0
+                )
+                acronym_match = re.search(r'\[.*\]', acronym_resp, re.DOTALL)
+                if acronym_match:
+                    expanded_list = json.loads(acronym_match.group(0))
+                    for exp in expanded_list:
+                        if exp and isinstance(exp, str):
+                            # Append words of the expansion to keywords to ensure BM25 picks them up
+                            exp_words = [w for w in exp.split() if w.lower() not in STOPWORDS]
+                            for ew in exp_words:
+                                if ew.lower() not in [k.lower() for k in keywords]:
+                                    keywords.append(ew)
+            except asyncio.TimeoutError:
+                logger.warning(f"[FAST_ANALYZER] Dynamic acronym expansion timed out after 5.0s.")
+            except Exception as e:
+                logger.warning(f"[FAST_ANALYZER] Dynamic acronym expansion failed: {e}")
+                
         timings["keyword_extraction"] = (time.time() - t0) * 1000
 
         # 6. Composite Query Decomposition

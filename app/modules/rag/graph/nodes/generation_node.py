@@ -99,6 +99,10 @@ If retrieved passages conflict, state the conflict. Do not resolve it yourself.
   * Answer EVERY part that has grounded information present in the context.
   * For any part where the specific field or information is missing, unstated, or blank in the document, explicitly state that specific part is not specified or left blank in the document (do NOT refuse the entire answer).
   * When answering eligibility or limits questions, extract each distinct condition from the context and present as a compact list (one line per condition, no repetition). Do not paraphrase into a narrative paragraph.
+- STATS, COUNTS & METRICS EXTRACTION:
+  * If the user asks quantitative or factual questions like "how many ...?", "what is the count of ...?", or "number of ...", search the context for numbers, statistics, metrics, or key-value facts (e.g. "50+ Certified RPA Developers", "100K+ Documents", "7+ Years").
+  * Always extract and answer with the exact stated number or range (e.g., "Gramosoft has 50+ Certified RPA Developers.").
+  * DO NOT refuse or say "I couldn't find it" when the number, count, or metric is mentioned in the context.
 - If the user is asking a factual/document question and the requested information is ENTIRELY missing for ALL parts from BOTH the document context AND the user memory section, reply exactly:
   "I couldn't find it."
 - Mention the relevant source at the end.
@@ -127,8 +131,8 @@ Before finalizing a multi-part answer, check whether more than one retrieved cla
 ==================================================
 ENTITY DISAMBIGUATION RULES
 ==================================================
-When the user asks generic questions about team members, roles, or executives (e.g. "who is the CTO?"), assume they are asking about the primary company/organization.
-If the retrieved context contains executives from both the primary company and third-party clients (e.g. inside testimonials or case studies), ONLY return the primary company's executive. Do not list client executives unless explicitly asked.
+When the user asks generic questions about team members, roles, or executives (e.g. "who is the CTO?" or "who is the CEO?"), assume they are asking strictly about the primary organization (e.g., Gramosoft) providing the service.
+If the retrieved context contains executives from third-party companies, clients, partners, or testimonials (e.g., "CTO of X company"), you MUST IGNORE those individuals. ONLY return the primary company's executive. Do not list client executives unless their specific company name is explicitly asked for in the user's prompt.
 
 ==================================================
 FORMATTING RULES
@@ -157,20 +161,25 @@ SOURCE CITATION RULES (STRICT)
 
 2. DOCUMENT CONTENT & ACCURATE CITATIONS:
 - Cite a source ONLY IF information from retrieved document/data chunks or Knowledge Graph was ACTUALLY USED to answer the user's specific question.
-- If the answer came from document chunks, cite ONLY the specific filename(s) from which relevant facts were extracted.
-- Single Source: If the answer came from only one document (e.g. ARUN_N.pdf), cite ONLY that single document: [Source: ARUN_N.pdf]. Do NOT list other unused files.
-- Multi Source: If the answer combined information from multiple documents, list only those specific documents: [Source: file1.pdf, file2.pdf].
-- Knowledge Graph: If the answer came exclusively from the Knowledge Graph relationships without document chunks, cite: [Source: Knowledge Graph].
-- Deduplicate sources so each unique filename appears ONLY ONCE.
+- Primary Source Selection & Specificity:
+  * You MUST cite the page URL that specifically corresponds to the user's topic:
+    - If asking about Services, capabilities, or offerings -> Cite the services page (e.g. <https://domain/services> or the specific service page).
+    - If asking about Leadership, executives (CEO, CTO, COO, founder), mission, or company background -> Cite the about/team page (e.g. <https://domain/about> or <https://domain/team>).
+    - If asking for a general overview, summary of what the company is -> Cite the main domain/landing page (e.g. <https://domain> or <https://domain/>).
+    - NEVER cite a contact page (<https://domain/contact>) unless the user explicitly asks how to contact, call, email, or visit the company.
+- Global Footer/Navigation Exclusion: Many website pages repeat navigation links or footer text across every subpage (e.g., listing all services in the footer of /contact). NEVER cite /contact or an unrelated page merely because that topic appeared in its navigation menu or footer.
+- If the primary source is a URL, write the clean URL directly without any nested brackets, parentheses, or angle brackets:
+  [Source: https://example.com/page]
+- NEVER output nested brackets like ([...](...))] or angle brackets like <...>.
 - Format the citation at the very end of your response on its own single line:
-  [Source: filename1, filename2]
+  [Source: https://example.com/page] or [Source: filename.pdf]
 
 ==================================================
 FINAL RESPONSE FORMAT
 ==================================================
 <grounded answer>
 
-[Source: <only include source file(s) or Knowledge Graph actually used to answer document/graph questions>]
+[Source: https://example.com/page]
 """.strip()
 
     return injected_system_prompt, personality_description
@@ -204,11 +213,12 @@ async def generation_node(state: GraphState) -> dict:
         system_prompt += "\n\n[CONVERSATION HISTORY]\nUse the provided history to answer contextual follow-up questions."
         
     # Format Context from chunks
+    # Keep chunks in relevance ranking order so the most relevant page is presented first to the LLM
     reranked_chunks = state.get("reranked_chunks") or state.get("retrieved_chunks") or []
-    # Sort chunks by kb_id and chunk_index to ensure stitched neighbors are contiguous
     reranked_chunks = sorted(
-        reranked_chunks, 
-        key=lambda c: (str(getattr(c, "kb_id", "")), getattr(c, "chunk_index", 0) or 0)
+        reranked_chunks,
+        key=lambda c: getattr(c, "final_relevance_score", 0.0) or getattr(c, "hybrid_score", 0.0) or 0.0,
+        reverse=True
     )
     
     # Precompute set of (kb_id, position) for adjacency checks
@@ -219,8 +229,20 @@ async def generation_node(state: GraphState) -> dict:
     
     context_text = ""
     for c in reranked_chunks:
-        raw_source = getattr(c, "source", "") or getattr(c, "metadata", {}).get("source", "Unknown Document")
-        filename = raw_source.split("/")[-1]
+        prov = getattr(c, "provenance_metadata", {}) or {}
+        raw_source = getattr(c, "source", "") or prov.get("source", "")
+        url = prov.get("url", "") or prov.get("source_url", "")
+        if url:
+            filename = url
+        elif raw_source and str(raw_source).startswith("http"):
+            filename = raw_source
+        elif raw_source:
+            # Normalize path separators for both Windows and Unix
+            normalized_source = str(raw_source).replace("\\", "/")
+            filename = normalized_source.split("/")[-1]
+        else:
+            filename = f"Document_{getattr(c, 'chunk_id', 'Unknown')}"
+            
         content = getattr(c, "content", "") or getattr(c, "text", "")
         
         # Phase 2: Strip overlap only if the previous chunk is also retrieved
@@ -301,8 +323,19 @@ async def generation_node(state: GraphState) -> dict:
         sources.append("Knowledge Graph")
         
     for c in reranked_chunks:
-        raw_source = getattr(c, "source", "") or getattr(c, "metadata", {}).get("source", "Unknown Document")
-        clean_name = raw_source.split("/")[-1]
+        prov = getattr(c, "provenance_metadata", {}) or {}
+        raw_source = getattr(c, "source", "") or prov.get("source", "") or getattr(c, "metadata", {}).get("source", "")
+        url = prov.get("url", "") or prov.get("source_url", "") or getattr(c, "metadata", {}).get("url", "") or getattr(c, "metadata", {}).get("source_url", "")
+        
+        if url:
+            clean_name = url
+        elif raw_source and str(raw_source).startswith("http"):
+            clean_name = raw_source
+        elif raw_source:
+            normalized_source = str(raw_source).replace("\\", "/")
+            clean_name = normalized_source.split("/")[-1]
+        else:
+            clean_name = f"Document_{getattr(c, 'chunk_id', 'Unknown')}"
         
         if getattr(c, "is_stitched_neighbor", False):
             clean_name = f"{clean_name} (Neighbor Context)"

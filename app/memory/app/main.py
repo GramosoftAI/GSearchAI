@@ -42,8 +42,12 @@ from sqlalchemy import select, delete
 from neo4j import AsyncGraphDatabase
 from dotenv import load_dotenv
 
-# Find and load the root .env file
+# Ensure current directory is in sys.path so 'schema' is importable when run from root
+import sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
 for _ in range(5):
     env_path = os.path.join(current_dir, ".env")
     if os.path.exists(env_path):
@@ -51,7 +55,10 @@ for _ in range(5):
         break
     current_dir = os.path.dirname(current_dir)
 
-from schema.database import AsyncSessionLocal, EpisodicMemory, UserPreference, init_db
+try:
+    from schema.database import AsyncSessionLocal, EpisodicMemory, UserPreference, init_db
+except ModuleNotFoundError:
+    from app.memory.app.schema.database import AsyncSessionLocal, EpisodicMemory, UserPreference, init_db
 import httpx
 
 logging.basicConfig(level=logging.INFO)

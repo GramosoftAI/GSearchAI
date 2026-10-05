@@ -1300,7 +1300,8 @@ class RAGPipeline:
                                         s3_path=s3_path,
                                         engine_name="hybrid_rrf",
                                         section="Unknown",
-                                        ontology_node=None
+                                        ontology_node=None,
+                                        provenance_metadata=row.metadata_json
                                     )
                                     vector_chunk_map[c_id] = rc
                     except Exception as e:
@@ -1639,7 +1640,12 @@ class RAGPipeline:
                         score = getattr(chunk, "final_relevance_score", 0.0)
                         # Drop extreme noise using relative floor gated by top score
                         absolute_min = self.settings.rag_graph_noise_floor
-                        floor = max(absolute_min, max_score * 0.15)
+                        # If the highest score is already low, we must scale down the relative floor 
+                        # to avoid collapsing lists where all items score uniformly low.
+                        if max_score < absolute_min:
+                            floor = max(max_score * 0.02, max_score * 0.05)
+                        else:
+                            floor = max(absolute_min, max_score * 0.15)
                         if len(deduped_chunks) > 0 and score < floor:
                             logger.info(f"[NOISE_FLOOR_DROP] chunk_id={getattr(chunk, 'chunk_id', 'unknown')} score={score:.4f} floor={floor:.4f}")
                             continue
@@ -3118,7 +3124,7 @@ class RAGPipeline:
 
 Rules:
 - Match on semantic and lexical overlap between the query's entities/fields (e.g. "SL.NO", "employee ID", "HSN code") and each source's column/header names AND sampled_values. If the query asks for a specific value (e.g. 'South' or 'Alice') and it appears in a source's sampled_values, that is a strong indicator of a match. Do not assume a match just because a source is the only one of its type.
-- If the query references a field/entity that does not appear in ANY candidate's schema or sampled_values, return "no_match": true for all — do not force a guess.
+- If the query references a field/entity that does not appear in ANY candidate's schema or sampled_values, return "no_match": true for all -- do not force a guess.
 - If multiple sources plausibly match, rank them by field-name overlap and return the top match(es), not just the first one found.
 - Never silently substitute a different field name (e.g. mapping "SL.NO" to "row_id") unless the source's schema has no closer alternative AND you flag it explicitly in "field_mapping_confidence".
 

@@ -880,8 +880,11 @@ async def init_db():
                 )
                 curr_type = check_type.scalar()
                 target_type = f"vector({settings.embedding_dimension})"
-                if curr_type != target_type:
+                if curr_type and curr_type != target_type:
                     logger.info(f"Migrating document_chunks.embedding from {curr_type} to {target_type}...")
+                    # Must drop indexes referencing embedding before altering vector dimensions
+                    await conn.execute(text("DROP INDEX IF EXISTS idx_chunks_embedding_bge_hnsw;"))
+                    await conn.execute(text("DROP INDEX IF EXISTS idx_doc_chunks_embedding_hnsw;"))
                     await conn.execute(
                         text(f"ALTER TABLE document_chunks ALTER COLUMN embedding TYPE {target_type};")
                     )
@@ -894,6 +897,7 @@ async def init_db():
             # Auto-migrate document_chunks columns
             await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS section VARCHAR(255)"))
             await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS metadata_json JSONB"))
+            await conn.execute(text("ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS embedding_bge vector(1024)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chunks_kb_section ON document_chunks(kb_id, section)"))
             # Run migration to add file_hash to knowledge_bases table if not present in older databases
             await conn.execute(text("ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64)"))

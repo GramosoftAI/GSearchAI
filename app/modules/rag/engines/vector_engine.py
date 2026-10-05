@@ -419,6 +419,9 @@ class VectorEngine(BaseEngine):
                     else:
                         final_score = min(base_weighted, 2.0)
 
+                    meta_json = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+                    chunk_source_url = meta_json.get("source_url") or meta_json.get("url")
+
                     chunks.append(RetrievedChunk(
                         chunk_id=str(row.id),
                         text=chunk_text,
@@ -428,13 +431,14 @@ class VectorEngine(BaseEngine):
                         graph_score=0.0,
                         hybrid_score=final_score,
                         reason="VECTOR_SEARCH_HYBRID",
-                        source=row.s3_path or row.name or f"DocumentChunk {row.chunk_index}",
+                        source=chunk_source_url or row.s3_path or row.name or f"DocumentChunk {row.chunk_index}",
                         s3_path=row.s3_path,
                         engine_name="vector",
                         section=row.section or "Unknown",
                         ontology_node=None,
                         retrieval_path=retrieval_path,
                         domain_matched=(row.kb_id in matched_kbs),
+                        provenance_metadata=meta_json,
                     ))
 
                 # Rerank in python
