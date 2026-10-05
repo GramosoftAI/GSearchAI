@@ -11,9 +11,19 @@ async def retrieval_node(state: GraphState) -> GraphState:
     Executes Vector, Graph, and RRF retrieval.
     Deduplicates Triplets and sets the graph_triplets bypass flag.
     """
-    # Only run retrieval if it's not a tabular query (tabular routing handles unstructured fallback if needed)
+    # 1. Skip retrieval for tabular queries
     if state.get("intent") in ["TABULAR_SQL", "DATA_AGGREGATION", "CALCULATION"]:
         return {}
+
+    # 2. Fast-path: Skip retrieval for greetings & casual conversation
+    import re
+    clean_q = state.get("query", "").strip().lower()
+    if re.fullmatch(r"(hello|hi|hey|good\s+morning|good\s+afternoon|good\s+evening|howdy|greetings|thanks|thank\s+you|how\s+are\s+you)(\s+(there|everyone|all|friend))?[!.,?]*", clean_q):
+        logger.info(f"[RETRIEVAL] Fast-path greeting detected for '{clean_q}'. Skipping retrieval.")
+        return {
+            "retrieved_chunks": [],
+            "graph_triplets": []
+        }
 
     from app.core.database import get_db_with_tenant
     

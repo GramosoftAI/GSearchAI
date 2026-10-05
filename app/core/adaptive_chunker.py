@@ -207,7 +207,6 @@ class SemanticChunker:
             if i > 0:
                 prev_text = chunks[i-1]
                 slice_text = prev_text[-target_overlap:]
-                import re
                 match = re.search(r'(?<=[.!?])\s+', slice_text)
                 if match:
                     overlap_text = slice_text[match.end():].strip()

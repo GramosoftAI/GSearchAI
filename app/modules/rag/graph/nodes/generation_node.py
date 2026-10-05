@@ -316,37 +316,42 @@ async def generation_node(state: GraphState) -> dict:
     if not final_answer_text:
         final_answer_text = "I'm sorry, but I don't have that specific information in my current knowledge base."
 
-    # 3. Citation Formatting
+    # 3. Citation Formatting (only for real information queries, never for greetings)
+    import re
+    clean_q = state.get("query", "").strip().lower()
+    is_greeting = bool(re.fullmatch(r"(hello|hi|hey|good\s+morning|good\s+afternoon|good\s+evening|howdy|greetings|thanks|thank\s+you|how\s+are\s+you)(\s+(there|everyone|all|friend))?[!.,?]*", clean_q))
+
     sources = []
-    graph_triplets = state.get("graph_triplets", [])
-    if graph_triplets:
-        sources.append("Knowledge Graph")
-        
-    for c in reranked_chunks:
-        prov = getattr(c, "provenance_metadata", {}) or {}
-        raw_source = getattr(c, "source", "") or prov.get("source", "") or getattr(c, "metadata", {}).get("source", "")
-        url = prov.get("url", "") or prov.get("source_url", "") or getattr(c, "metadata", {}).get("url", "") or getattr(c, "metadata", {}).get("source_url", "")
-        
-        if url:
-            clean_name = url
-        elif raw_source and str(raw_source).startswith("http"):
-            clean_name = raw_source
-        elif raw_source:
-            normalized_source = str(raw_source).replace("\\", "/")
-            clean_name = normalized_source.split("/")[-1]
-        else:
-            clean_name = f"Document_{getattr(c, 'chunk_id', 'Unknown')}"
-        
-        if getattr(c, "is_stitched_neighbor", False):
-            clean_name = f"{clean_name} (Neighbor Context)"
+    if not is_greeting:
+        graph_triplets = state.get("graph_triplets", [])
+        if graph_triplets:
+            sources.append("Knowledge Graph")
             
-        if clean_name not in sources:
-            sources.append(clean_name)
+        for c in reranked_chunks:
+            prov = getattr(c, "provenance_metadata", {}) or {}
+            raw_source = getattr(c, "source", "") or prov.get("source", "") or getattr(c, "metadata", {}).get("source", "")
+            url = prov.get("url", "") or prov.get("source_url", "") or getattr(c, "metadata", {}).get("url", "") or getattr(c, "metadata", {}).get("source_url", "")
             
-    tabular_sources = state.get("tabular_sources", [])
-    for ts in tabular_sources:
-        if ts not in sources:
-            sources.append(ts)
+            if url:
+                clean_name = url
+            elif raw_source and str(raw_source).startswith("http"):
+                clean_name = raw_source
+            elif raw_source:
+                normalized_source = str(raw_source).replace("\\", "/")
+                clean_name = normalized_source.split("/")[-1]
+            else:
+                clean_name = f"Document_{getattr(c, 'chunk_id', 'Unknown')}"
+            
+            if getattr(c, "is_stitched_neighbor", False):
+                clean_name = f"{clean_name} (Neighbor Context)"
+                
+            if clean_name not in sources:
+                sources.append(clean_name)
+                
+        tabular_sources = state.get("tabular_sources", [])
+        for ts in tabular_sources:
+            if ts not in sources:
+                sources.append(ts)
             
     return {
         "system_prompt": system_prompt,
