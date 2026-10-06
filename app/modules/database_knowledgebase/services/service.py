@@ -257,6 +257,10 @@ class DatabaseKnowledgebaseService:
         if not entity:
             raise TenantMismatchError(detail=f"Database knowledgebase '{kb_id}' not found.")
 
+        # Capture pre-update schema version BEFORE snapshot persistence, outside try block
+        old_schema_version = entity.schema_version
+        is_first_snapshot = not old_schema_version
+
         # Decrypt connection config
         config = self.secrets.decrypt_credentials(entity.encrypted_credentials)
 
@@ -287,7 +291,6 @@ class DatabaseKnowledgebaseService:
                 logger.warning(f"Non-fatal warning: background schema indexing encountered error: {index_err}")
 
             # 4. Update DatabaseKnowledgebase status and version
-            old_schema_version = entity.schema_version
             await self.repo.update_db_kb(
                 kb_id=kb_id,
                 status="indexed",
@@ -295,6 +298,37 @@ class DatabaseKnowledgebaseService:
                 last_introspected_at=datetime.utcnow(),
                 last_error=None,
             )
+
+            # Phase 2 Knowledge Layer Trigger Hook (Invoked after Step 4, deferred by 2s so request commit completes)
+            fingerprint_changed = bool(old_schema_version and old_schema_version != canonical_schema.fingerprint)
+            try:
+                from app.core.config import get_settings
+                settings = get_settings()
+                if getattr(settings, "enable_phase2_knowledge_layer", False):
+                    if is_first_snapshot or fingerprint_changed:
+                        from ..knowledge.jobs import trigger_phase2_sync_job
+                        redis_pool = None
+                        try:
+                            from app.worker.queue import get_redis_pool
+                            redis_pool = await get_redis_pool()
+                        except Exception as r_exc:
+                            logger.warning(f"Phase 2 Knowledge Layer skipped: Redis queue unavailable: {r_exc}")
+
+                        if redis_pool:
+                            tenant_uuid = uuid.UUID(str(self.tenant_id)) if isinstance(self.tenant_id, str) else self.tenant_id
+                            await trigger_phase2_sync_job(
+                                tenant_id=tenant_uuid,
+                                kb_id=kb_id,
+                                snapshot_id=snapshot.id,
+                                schema_version=canonical_schema.fingerprint,
+                                redis_pool=redis_pool,
+                                defer_by_seconds=2,
+                            )
+                            logger.info(f"Phase 2 sync job successfully triggered for KB {kb_id}, version {canonical_schema.fingerprint}")
+                        else:
+                            logger.warning(f"Phase 2 Knowledge Layer skipped for KB {kb_id}: Redis pool unavailable (pipeline not executed inline)")
+            except Exception as p2_err:
+                logger.error(f"Non-fatal error: Phase 2 knowledge layer trigger failed for KB {kb_id}: {p2_err}", exc_info=True)
 
             # 4.1 Build and Sync Universal Semantic Model (Phases C-K)
             semantic_profile_status = "ok"

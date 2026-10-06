@@ -553,4 +553,4 @@ async def export_schema_cheat_sheet(
     return export_result
 
 
-
+from .knowledge.api.admin_router import router as knowledge_admin_router; router.include_router(knowledge_admin_router)

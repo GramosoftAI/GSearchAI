@@ -49,7 +49,12 @@ class Settings(BaseSettings):
     chunking_v2_kb_ids: str = ""  # Comma separated list of KB IDs
     schema_cheat_sheet_enabled: bool = False
     schema_cheat_sheet_kb_ids: str = "c32fb444-883e-4f68-a1d9-8125c8f84c7e"  # Default on for target test KB
+    enable_phase2_knowledge_layer: bool = False
+    phase2_job_stale_threshold_seconds: int = 900  # Default 15 minutes
+    phase2_profiler_stats_max_age_days: int = 7  # Re-profile stats after 7 days
     # ============= SERVER SETTINGS =============
+
+
 
     host: str = "0.0.0.0"
 
