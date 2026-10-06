@@ -1572,9 +1572,12 @@ class RAGService:
     - For multi-part or compound questions (e.g., asking for multiple facts/attributes like defining event and phase of operation), evaluate each part independently:
       * Answer EVERY part that has grounded information present in the context.
       * For any part where the specific field or information is missing, unstated, or blank in the document, explicitly state that specific part is not specified or left blank in the document (do NOT refuse the entire answer).
-    - If the user is asking a factual/document question and the requested information is ENTIRELY missing for ALL parts from BOTH the document context AND the user memory section, reply exactly:
-      "I couldn't find it."
-    - Mention the relevant source at the end.
+    - HANDLING MISSING INFORMATION & UNFOUND TOPICS:
+      * If the user is asking about a person, entity, metric, or topic (e.g., "who is Arun?", "how many employees are there?"), and that information is NOT present in the provided knowledge base context or memory:
+      * State clearly and politely that the information is not available in the current knowledge base.
+      * STRICT ANTI-HALLUCINATION: NEVER use outside world knowledge, internet knowledge, or mythology/general facts to answer (e.g., if asked about "Vishnu", DO NOT give information about Lord Vishnu or general people). 
+      * DO NOT guess, DO NOT offer outside suggestions, and DO NOT add extraneous commentary.
+      * Standard clean response: "I don't have information about [topic/person] in my current knowledge base."
     - Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
     - Be concise. Focus strictly on direct answers and avoid filler.
     - NEVER include internal relevance scores or confidence numbers (e.g. "(relevance: 0.65)", "(relevance: 0.58)", or "score: 0.61") in your output text. Relevance scores are for internal search ranking only and must never be shown to the user.{tabular_rules}
@@ -2298,9 +2301,12 @@ If retrieved passages conflict, state the conflict. Do not resolve it yourself.
 - For multi-part or compound questions (e.g., asking for multiple facts/attributes like defining event and phase of operation), evaluate each part independently:
   * Answer EVERY part that has grounded information present in the context.
   * For any part where the specific field or information is missing, unstated, or blank in the document, explicitly state that specific part is not specified or left blank in the document (do NOT refuse the entire answer).
-- If the user is asking a factual/document question and the requested information is ENTIRELY missing for ALL parts from BOTH the document context AND the user memory section, reply exactly:
-  "I couldn't find it."
-- Mention the relevant source at the end.
+- HANDLING MISSING INFORMATION & UNFOUND TOPICS:
+  * If the user is asking about a person, entity, metric, or topic (e.g., "who is Arun?", "how many employees are there?"), and that information is NOT present in the provided knowledge base context or memory:
+  * State clearly and politely that the information is not available in the current knowledge base.
+  * STRICT ANTI-HALLUCINATION: NEVER use outside world knowledge, internet knowledge, or mythology/general facts to answer (e.g., if asked about "Vishnu", DO NOT give information about Lord Vishnu or general people). 
+  * DO NOT guess, DO NOT offer outside suggestions, and DO NOT add extraneous commentary.
+  * Standard clean response: "I don't have information about [topic/person] in my current knowledge base."
 - Answer ONLY the specific question asked by the user. Do not provide extra analysis, summaries of unrelated topics, or inferred narratives unless requested.
 - Be concise. Focus strictly on direct answers and avoid filler.{tabular_rules}
 
