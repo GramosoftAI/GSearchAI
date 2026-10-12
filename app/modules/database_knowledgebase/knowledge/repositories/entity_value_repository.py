@@ -148,51 +148,60 @@ class EntityValueRepository(BaseRepository):
         if not clean_query:
             return []
 
-        # Set similarity limit for session/transaction so % operator utilizes threshold and GIN index
-        await self.db.execute(text("SELECT set_limit(:lim);"), {"lim": float(min_similarity)})
+        async with self.db.begin_nested():
+            # Set similarity limit for session/transaction so % operator utilizes threshold and GIN index
+            try:
+                async with self.db.begin_nested():
+                    await self.db.execute(text("SELECT set_limit(CAST(:lim AS real));"), {"lim": float(min_similarity)})
+            except Exception:
+                try:
+                    async with self.db.begin_nested():
+                        await self.db.execute(text("SELECT set_config('pg_trgm.similarity_threshold', :lim, true);"), {"lim": str(min_similarity)})
+                except Exception as lim_err:
+                    logger.debug(f"Could not set pg_trgm similarity limit: {lim_err}")
 
-        conditions = [
-            "tenant_id = :tenant_id",
-            "db_knowledgebase_id = :db_kb_id",
-            "normalized_value % :q",
-        ]
-        params = {
-            "tenant_id": str(self.tenant_id),
-            "db_kb_id": str(db_knowledgebase_id),
-            "q": clean_query,
-            "limit": limit,
-        }
-
-        if table_name:
-            conditions.append("table_name = :t_name")
-            params["t_name"] = table_name
-        if column_name:
-            conditions.append("column_name = :c_name")
-            params["c_name"] = column_name
-
-        where_clause = " AND ".join(conditions)
-        sql = f"""
-            SELECT id, table_name, column_name, raw_value, normalized_value, frequency_count,
-                   similarity(normalized_value, :q) AS sim_score
-            FROM kb2_entity_values
-            WHERE {where_clause}
-            ORDER BY similarity(normalized_value, :q) DESC, frequency_count DESC NULLS LAST
-            LIMIT :limit;
-        """
-        res = await self.db.execute(text(sql), params)
-        rows = res.fetchall()
-        return [
-            {
-                "id": r[0],
-                "table_name": r[1],
-                "column_name": r[2],
-                "raw_value": r[3],
-                "normalized_value": r[4],
-                "frequency_count": r[5],
-                "similarity": float(r[6]),
+            conditions = [
+                "tenant_id = :tenant_id",
+                "db_knowledgebase_id = :db_kb_id",
+                "normalized_value % :q",
+            ]
+            params = {
+                "tenant_id": str(self.tenant_id),
+                "db_kb_id": str(db_knowledgebase_id),
+                "q": clean_query,
+                "limit": limit,
             }
-            for r in rows
-        ]
+
+            if table_name:
+                conditions.append("table_name = :t_name")
+                params["t_name"] = table_name
+            if column_name:
+                conditions.append("column_name = :c_name")
+                params["c_name"] = column_name
+
+            where_clause = " AND ".join(conditions)
+            sql = f"""
+                SELECT id, table_name, column_name, raw_value, normalized_value, frequency_count,
+                       similarity(normalized_value, :q) AS sim_score
+                FROM kb2_entity_values
+                WHERE {where_clause}
+                ORDER BY similarity(normalized_value, :q) DESC, frequency_count DESC NULLS LAST
+                LIMIT :limit;
+            """
+            res = await self.db.execute(text(sql), params)
+            rows = res.fetchall()
+            return [
+                {
+                    "id": r[0],
+                    "table_name": r[1],
+                    "column_name": r[2],
+                    "raw_value": r[3],
+                    "normalized_value": r[4],
+                    "frequency_count": r[5],
+                    "similarity": float(r[6]),
+                }
+                for r in rows
+            ]
 
     async def search_fts(
         self,

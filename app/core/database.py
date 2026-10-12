@@ -869,6 +869,7 @@ async def init_db():
 
         async with engine.begin() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
             # Ensure generated column SQL functions exist before create_all
             await conn.execute(text("""
                 CREATE OR REPLACE FUNCTION kb2_schema_docs_generate_tsv(title text, body text, aliases text[])

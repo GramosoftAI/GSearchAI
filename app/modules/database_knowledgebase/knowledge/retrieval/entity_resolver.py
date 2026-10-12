@@ -224,22 +224,23 @@ class LiveEntityResolver:
             fuzzy_hits: List[Dict[str, Any]] = []
             if not exact_hits:
                 try:
-                    f_res = await self.entity_repo.search_fuzzy(
-                        db_knowledgebase_id=db_knowledgebase_id,
-                        query_text=norm_span,
-                        limit=5,
-                        min_similarity=self.min_fuzzy_similarity,
-                    )
-                    for fh in f_res:
-                        if fh["similarity"] >= self.min_fuzzy_similarity:
-                            fuzzy_hits.append({
-                                "table_name": fh["table_name"],
-                                "column_name": fh["column_name"],
-                                "raw_value": fh["raw_value"],
-                                "normalized_value": fh["normalized_value"],
-                                "similarity": fh["similarity"],
-                                "match_type": "fuzzy",
-                            })
+                    async with self.db.begin_nested():
+                        f_res = await self.entity_repo.search_fuzzy(
+                            db_knowledgebase_id=db_knowledgebase_id,
+                            query_text=norm_span,
+                            limit=5,
+                            min_similarity=self.min_fuzzy_similarity,
+                        )
+                        for fh in f_res:
+                            if fh["similarity"] >= self.min_fuzzy_similarity:
+                                fuzzy_hits.append({
+                                    "table_name": fh["table_name"],
+                                    "column_name": fh["column_name"],
+                                    "raw_value": fh["raw_value"],
+                                    "normalized_value": fh["normalized_value"],
+                                    "similarity": fh["similarity"],
+                                    "match_type": "fuzzy",
+                                })
                 except Exception as e:
                     logger.warning(f"Fuzzy entity search failed: {e}")
 
