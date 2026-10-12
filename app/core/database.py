@@ -924,6 +924,13 @@ async def init_db():
             await conn.execute(text("ALTER TABLE knowledge_bases DROP COLUMN IF EXISTS language;"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_chunks_tenant_kb ON document_chunks (tenant_id, kb_id);"))
 
+            # Auto-migrate database_knowledgebases & db_schema_snapshots columns
+            await conn.execute(text("ALTER TABLE database_knowledgebases ADD COLUMN IF NOT EXISTS settings JSONB DEFAULT '{}' NOT NULL"))
+            await conn.execute(text("ALTER TABLE db_schema_snapshots ADD COLUMN IF NOT EXISTS semantic_profile_status VARCHAR(20)"))
+            await conn.execute(text("ALTER TABLE db_schema_snapshots ADD COLUMN IF NOT EXISTS relationship_count INTEGER DEFAULT 0 NOT NULL"))
+            await conn.execute(text("ALTER TABLE db_schema_snapshots ADD COLUMN IF NOT EXISTS column_count INTEGER DEFAULT 0 NOT NULL"))
+            await conn.execute(text("ALTER TABLE db_schema_snapshots ADD COLUMN IF NOT EXISTS table_count INTEGER DEFAULT 0 NOT NULL"))
+
         # Ensure HNSW index exists (created by Alembic migration)
         async with engine.begin() as conn:
             check_idx = await conn.execute(text(

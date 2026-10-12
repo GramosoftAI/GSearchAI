@@ -507,11 +507,18 @@ class DatabaseKnowledgebaseService:
 
         except Exception as e:
             safe_err = sanitize_error_message(e)
-            await self.repo.update_db_kb(
-                kb_id=kb_id,
-                status="error",
-                last_error=safe_err,
-            )
+            try:
+                await self.db.rollback()
+            except Exception:
+                pass
+            try:
+                await self.repo.update_db_kb(
+                    kb_id=kb_id,
+                    status="error",
+                    last_error=safe_err,
+                )
+            except Exception as upd_err:
+                logger.warning(f"Failed to record KB error state: {upd_err}")
             raise SchemaIntrospectionError(detail=f"Introspection failed: {safe_err}") from e
 
     async def get_latest_schema(self, kb_id: uuid.UUID) -> DatabaseSchemaResponse:
