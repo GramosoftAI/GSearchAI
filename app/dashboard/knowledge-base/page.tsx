@@ -640,6 +640,30 @@ export default function KnowledgeBasePage() {
     });
   };
 
+  const handleCancelJob = async (jobId: string) => {
+    try {
+      const token = getCookie("AUTH_TOKEN");
+      const fetchUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL}/jobs/${jobId}`;
+      const res = await fetch(fetchUrl, {
+        method: 'DELETE',
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        toast.success("Job cancelled successfully");
+        setActiveJobs(prev => prev.filter(j => j.id !== jobId));
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        toast.error(errData.message || errData.error || "Failed to cancel job");
+      }
+    } catch (err) {
+      console.error("Cancel job error:", err);
+      toast.error("An error occurred while cancelling the job");
+    }
+  };
+
   const tabs = [
     { value: 'url' as const, label: <Flex align="center" gap={6}><Globe size={14} /> URL</Flex> },
     { value: 'pdf' as const, label: <Flex align="center" gap={6}><FileText size={14} /> Docs</Flex> },
@@ -1216,6 +1240,17 @@ export default function KnowledgeBasePage() {
                             <Text style={{ color: 'var(--app-text-muted)', fontSize: 13, fontWeight: 600 }}>
                               {job.progress}%
                             </Text>
+                            {job.status !== 'completed' && job.status !== 'success' && job.status !== 'finished' && job.status !== 'failed' && job.status !== 'error' && (
+                              <Button 
+                                type="text" 
+                                danger 
+                                size="small" 
+                                onClick={() => handleCancelJob(job.id)}
+                                style={{ fontSize: 11, padding: '0 4px', height: 20 }}
+                              >
+                                Cancel
+                              </Button>
+                            )}
                           </Flex>
                         </Flex>
 

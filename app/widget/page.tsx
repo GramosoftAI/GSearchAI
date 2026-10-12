@@ -980,10 +980,11 @@ function WidgetContent() {
     const directUrl = getCleanUrl(targetSrc.url) || getCleanUrl(targetSrc.name) || getCleanUrl(targetSrc.source);
 
     if (directUrl) {
+      const isS3 = directUrl.includes("amazonaws.com") || directUrl.includes("s3.") || directUrl.includes("/grag/uploads/") || directUrl.includes("/uploads/");
       const isPDF = directUrl.toLowerCase().includes(".pdf");
       const isExcel = directUrl.toLowerCase().includes(".xlsx") || directUrl.toLowerCase().includes(".xls") || directUrl.toLowerCase().includes(".csv");
 
-      if (!isPDF && !isExcel) {
+      if (!isPDF && !isExcel && !isS3) {
         window.open(directUrl, "_blank", "noopener,noreferrer");
         setSourceModalLoading(false);
         return;
