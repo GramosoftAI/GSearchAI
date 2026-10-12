@@ -2148,7 +2148,7 @@ export default function DatabaseKnowledgePage() {
         width={schemaFullscreen ? "100vw" : 1200}
         style={schemaFullscreen ? { top: 0, margin: 0, paddingBottom: 0, maxWidth: "100vw" } : { top: 24 }}
         styles={{
-          content: schemaFullscreen ? { borderRadius: 0, height: "100vh", display: "flex", flexDirection: "column" } : undefined,
+          container: schemaFullscreen ? { borderRadius: 0, height: "100vh", display: "flex", flexDirection: "column" } : undefined,
           body: schemaFullscreen ? { flex: 1, overflowY: "auto", padding: "16px 24px" } : undefined,
         }}
       >

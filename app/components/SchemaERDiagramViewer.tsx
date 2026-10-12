@@ -596,10 +596,11 @@ export const SchemaERDiagramViewer: React.FC<SchemaERDiagramViewerProps> = ({
         const srcCol = sourceCols[0] || "";
         const tgtCol = targetCols[0] || "";
 
-        const isDirectConnection =
+        const isDirectConnection = Boolean(
           (activeSrcTable && activeTgtTable && tblName === activeSrcTable && targetTable === activeTgtTable) ||
           (activeSrcTable && tblName === activeSrcTable) ||
-          (activeTgtTable && targetTable === activeTgtTable);
+          (activeTgtTable && targetTable === activeTgtTable)
+        );
 
         const strokeColor = isDirectConnection ? "#2563eb" : "#059669";
         const strokeWidth = isDirectConnection ? 3.5 : 2.5;
