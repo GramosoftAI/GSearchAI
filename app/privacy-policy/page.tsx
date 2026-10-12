@@ -5,16 +5,16 @@ import Footer from "@/app/components/landing/Footer";
 import PrivacyPolicy from "@/components/PrivacyPolicy";
 
 export const metadata: Metadata = {
-  title: "GSearchAI Privacy Policy",
+  title: "GSearchAI Privacy Policy | Slack & Google Drive Third-Party Data Handling",
   description:
-    "GSearchAI Privacy Policy explains how we collect, use, process, store, and protect user and Google Drive data when using the GSearchAI platform and Google Drive connector.",
+    "GSearchAI Privacy Policy details how we collect, use, process, store, and protect third-party data from Slack, Google Drive, and workplace connectors, including data retention and deletion procedures.",
   alternates: {
     canonical: "https://gsearchai.com/privacy-policy",
   },
   openGraph: {
-    title: "GSearchAI Privacy Policy",
+    title: "GSearchAI Privacy Policy | Slack & Google Drive Third-Party Data Handling",
     description:
-      "GSearchAI Privacy Policy explains how we collect, use, process, store, and protect user and Google Drive data when using the GSearchAI platform and Google Drive connector.",
+      "GSearchAI Privacy Policy details how we collect, use, process, store, and protect third-party data from Slack, Google Drive, and workplace connectors, including data retention and deletion procedures.",
     url: "https://gsearchai.com/privacy-policy",
     siteName: "GSearchAI",
     type: "website",

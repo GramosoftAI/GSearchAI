@@ -19,6 +19,7 @@ type SourceItem = {
   page_content?: string;
   snippet?: string;
   file_path?: string;
+  page?: number | string;
 };
 
 type ClarificationCandidate = {
@@ -1098,6 +1099,7 @@ function WidgetContent() {
       if (matched.content) targetSrc.content = matched.content;
       if (matched.text) targetSrc.text = matched.text;
       if (matched.name && !targetSrc.name) targetSrc.name = getCleanDisplayName(matched.name);
+      if (matched.page && !targetSrc.page) targetSrc.page = matched.page;
     }
 
     const matchedUrl = getCleanUrl(targetSrc.url) || getCleanUrl(targetSrc.name) || getCleanUrl(targetSrc.source);
@@ -1120,8 +1122,16 @@ function WidgetContent() {
 
     // 1. Try targetSrc.url if present (e.g. /api/v1/embed/files/{id}/preview returned by backend)
     if (targetSrc.url) {
+      if (!targetSrc.page && targetSrc.url.includes("#page=")) {
+        const pageMatch = targetSrc.url.match(/#page=(\d+)/);
+        if (pageMatch) {
+          targetSrc.page = pageMatch[1];
+          setActiveSourceModal({ ...targetSrc });
+        }
+      }
       try {
-        const fullUrl = getFullUrl(targetSrc.url);
+        const cleanFetchUrl = targetSrc.url.split("#")[0];
+        const fullUrl = getFullUrl(cleanFetchUrl);
         const res = await fetch(fullUrl);
         if (res.ok) {
           const blob = await res.blob();
@@ -1301,7 +1311,11 @@ function WidgetContent() {
   const handleFeedback = async (index: number, msgId?: string, type?: "thumbs_up" | "thumbs_down") => {
     if (!type) return;
 
-    const targetMsgId = msgId || (messages[index] && (messages[index].id || (messages[index] as any).message_id)) || `widget_msg_${index}_${Date.now()}`;
+    const targetMsgId = msgId || (messages[index] && (messages[index].id || (messages[index] as any).message_id)) || currentMsgIdRef.current;
+    if (!targetMsgId) {
+      console.warn("Feedback: missing message_id for message at index", index);
+      return;
+    }
 
     if (type === "thumbs_up") {
       const currentFb = feedbackMap[index];
@@ -1320,15 +1334,21 @@ function WidgetContent() {
 
         try {
           const baseUrl = getApiBaseUrl();
-          await fetch(`${baseUrl}/chats/messages/feedback`, {
+          const res = await fetch(`${baseUrl}/embed/messages/feedback`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               message_id: targetMsgId,
               feedback_type: "thumbs_up",
               feedback_reason: "Correct response",
+              feedback_score: 1,
+              tenant_id: tenantId || undefined,
             }),
           });
+          const data = await res.json().catch(() => null);
+          if (!res.ok) {
+            console.warn("Feedback API response error:", data);
+          }
         } catch (err) {
           console.warn("Feedback API call attempted:", err);
         }
@@ -1357,15 +1377,21 @@ function WidgetContent() {
 
     try {
       const baseUrl = getApiBaseUrl();
-      await fetch(`${baseUrl}/chats/messages/feedback`, {
+      const res = await fetch(`${baseUrl}/embed/messages/feedback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message_id: feedbackMessageId,
           feedback_type: "thumbs_down",
           feedback_reason: finalReason,
+          feedback_score: 0,
+          tenant_id: tenantId || undefined,
         }),
       });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        console.warn("Feedback API response error:", data);
+      }
     } catch (err) {
       console.warn("Feedback API call attempted:", err);
     } finally {
@@ -1462,7 +1488,7 @@ function WidgetContent() {
             {
               ...lastMsg,
               content: cleanedText,
-              id: lastMsg.id || currentMsgIdRef.current || undefined,
+              id: currentMsgIdRef.current || lastMsg.id || undefined,
               sources: finalSources,
               escalation_detected: lastMsg.escalation_detected || currentEscalationRef.current === true,
               timestamp: lastMsg.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
@@ -2889,7 +2915,15 @@ function WidgetContent() {
                                             }}>
                                               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
                                             </div>
-                                            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cleanName}</span>
+                                            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{cleanName}</span>
+                                            {(() => {
+                                              const itemPage = src.page || (typeof src.url === "string" ? src.url.match(/#page=(\d+)/)?.[1] : null);
+                                              return itemPage ? (
+                                                <span style={{ fontSize: "10px", fontWeight: "700", color: "#0369a1", background: "#e0f2fe", padding: "1px 5px", borderRadius: "4px", marginLeft: "auto", flexShrink: 0 }}>
+                                                  p.{itemPage}
+                                                </span>
+                                              ) : null;
+                                            })()}
                                           </div>
                                         );
                                       })}
@@ -3289,13 +3323,21 @@ function WidgetContent() {
             {/* Header */}
             <div style={{ borderBottom: "1px solid #f1f5f9", paddingBottom: "10px" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", overflow: "hidden", flex: 1 }}>
                   <div style={{ width: "28px", height: "28px", borderRadius: "8px", background: "#f0f9ff", color: "#0066cc", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <SiCrowdsource size={16} />
                   </div>
                   <span style={{ fontWeight: "700", fontSize: "13px", color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {(activeSourceModal.name || activeSourceModal.source || activeSourceModal.file_name || "Source Document").replace(/^(pdf|doc|docx|csv|xlsx|image|img|txt):\s*/i, "").trim()}
                   </span>
+                  {(() => {
+                    const modalPage = activeSourceModal?.page || (typeof activeSourceModal?.url === "string" ? activeSourceModal.url.match(/#page=(\d+)/)?.[1] : null);
+                    return modalPage ? (
+                      <span style={{ fontSize: "11px", fontWeight: "700", background: "#e0f2fe", color: "#0369a1", padding: "2px 7px", borderRadius: "6px", flexShrink: 0 }}>
+                        Page {modalPage}
+                      </span>
+                    ) : null;
+                  })()}
                 </div>
                 <button
                   onClick={closeSourceModal}
@@ -3347,11 +3389,20 @@ function WidgetContent() {
                   <span>Loading document preview...</span>
                 </div>
               ) : sourceModalPreviewType === "pdf" && sourceModalPreviewUrl ? (
-                <iframe
-                  src={allowDownloads ? `${sourceModalPreviewUrl}#navpanes=0` : `${sourceModalPreviewUrl}#toolbar=0&navpanes=0&scrollbar=0`}
-                  style={{ width: "100%", height: "260px", border: "none", borderRadius: "12px", background: "#f8fafc" }}
-                  title="PDF Preview"
-                />
+                (() => {
+                  const modalPage = activeSourceModal?.page || (typeof activeSourceModal?.url === "string" ? activeSourceModal.url.match(/#page=(\d+)/)?.[1] : null);
+                  const pageParam = modalPage ? `page=${modalPage}&` : "";
+                  const iframeSrc = allowDownloads
+                    ? `${sourceModalPreviewUrl}#${pageParam}navpanes=0`
+                    : `${sourceModalPreviewUrl}#${pageParam}toolbar=0&navpanes=0&scrollbar=0`;
+                  return (
+                    <iframe
+                      src={iframeSrc}
+                      style={{ width: "100%", height: "260px", border: "none", borderRadius: "12px", background: "#f8fafc" }}
+                      title="PDF Preview"
+                    />
+                  );
+                })()
               ) : sourceModalPreviewType === "image" && sourceModalPreviewUrl ? (
                 <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "240px", overflow: "hidden", borderRadius: "12px", background: "#f8fafc", border: "1px solid #e2e8f0", padding: "8px" }}>
                   <img src={sourceModalPreviewUrl} alt="Source Preview" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: "6px" }} />
@@ -3423,7 +3474,9 @@ function WidgetContent() {
                   const baseUrl = getApiBaseUrl();
                   const rawPath = activeSourceModal?.s3_path || activeSourceModal?.file_path || "";
                   const s3Key = getS3Key(rawPath);
-                  const suffix = allowDownloads ? "#navpanes=0" : "#toolbar=0&navpanes=0";
+                  const modalPage = activeSourceModal?.page || (typeof activeSourceModal?.url === "string" ? activeSourceModal.url.match(/#page=(\d+)/)?.[1] : null);
+                  const pageParam = modalPage ? `page=${modalPage}&` : "";
+                  const suffix = allowDownloads ? `#${pageParam}navpanes=0` : `#${pageParam}toolbar=0&navpanes=0`;
 
                   let targetUrl = "";
                   if (kbId) {
