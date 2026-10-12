@@ -381,9 +381,11 @@ export default function KnowledgeBasePage() {
 
     const kbId = item.id || item.kb_id;
 
-    const isText = nameStr.includes("text");
+    const isText = nameStr.includes("text") || nameStr.endsWith(".txt") || nameStr.endsWith(".md");
     const isPdf = nameStr.endsWith(".pdf");
-    if (isPdf && (isText || (item.parsed_path && !item.s3_path))) {
+    const isDoc = nameStr.endsWith(".doc") || nameStr.endsWith(".docx");
+
+    if (isDoc || isText || (item.parsed_path && !item.s3_path)) {
       setPreviewTab('parsed');
     } else {
       setPreviewTab('original');
@@ -414,11 +416,15 @@ export default function KnowledgeBasePage() {
           const isExcel = contentType.includes("excel") || contentType.includes("spreadsheet") ||
             contentType.includes("vnd.ms-excel") || contentType.includes("vnd.openxmlformats-officedocument.spreadsheetml.sheet") ||
             nameStr.endsWith(".xls") || nameStr.endsWith(".xlsx");
+          const isDocFile = contentType.includes("word") || contentType.includes("officedocument.wordprocessingml") ||
+            nameStr.endsWith(".doc") || nameStr.endsWith(".docx");
 
           if (isPDF) {
             setPreviewType("pdf");
           } else if (isImage) {
             setPreviewType("image");
+          } else if (isDocFile) {
+            setPreviewType("doc");
           } else if (isCSV || isExcel) {
             setPreviewType(isCSV ? "csv" : "excel");
             const arrayBuffer = await blob.arrayBuffer();
@@ -458,7 +464,7 @@ export default function KnowledgeBasePage() {
       }
 
       
-      if (isPdf && item.parsed_path && kbId) {
+      if (item.parsed_path && kbId) {
         const fetchUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL}/files/${kbId}/content`;
         const res = await fetch(fetchUrl, {
           headers: {
@@ -818,10 +824,8 @@ export default function KnowledgeBasePage() {
   if (previewItem?.s3_path) {
     modalTabs.push({ value: 'original', label: 'Original Document' });
   }
-  const previewItemName = (previewItem?.name || previewItem?.source || "").toLowerCase();
-  const isPdfFile = previewItemName.endsWith(".pdf");
-  if (previewItem?.parsed_path && isPdfFile) {
-    modalTabs.push({ value: 'parsed', label: 'Extracted Text' });
+  if (previewItem?.parsed_path || parsedUrl || parsedText) {
+    modalTabs.push({ value: 'parsed', label: 'Extracted / Parsed Content' });
   }
 
   return (
@@ -1035,7 +1039,7 @@ export default function KnowledgeBasePage() {
                           const file = e.dataTransfer.files?.[0];
                           if (!file) return;
                           if (!validateFileType(file)) {
-                            toast.error(`Unsupported file type "${getFileExtension(file.name)}". Only PDF, Excel, CSV, and Images are allowed.`);
+                            toast.error(`Unsupported file type "${getFileExtension(file.name)}". Supported files: PDF, Word (.doc, .docx), Excel, CSV, Text, and Images.`);
                             return;
                           }
                           setSelectedFile(file);
@@ -1044,10 +1048,10 @@ export default function KnowledgeBasePage() {
                       >
                         <Upload size={32} color="var(--app-primary)" />
                         <Text style={{ color: 'var(--app-text-muted)', fontSize: 15, textAlign: 'center' }}>
-                          Click or drag to upload PDF, Excel, CSV, or Image
+                          Click or drag to upload Document, PDF, Excel, CSV, or Image
                         </Text>
                         <Text style={{ color: 'var(--app-text-soft)', fontSize: 11, textAlign: 'center' }}>
-                          Supported: .pdf · .xls · .xlsx · .csv · .png · .jpg · .jpeg · .gif · .webp
+                          Supported: .pdf · .doc · .docx · .xls · .xlsx · .csv · .txt · .md · .png · .jpg · .jpeg · .gif · .webp
                         </Text>
                       </div>
                     )}
@@ -1055,13 +1059,13 @@ export default function KnowledgeBasePage() {
                     <input
                       id="pdf-input"
                       type="file"
-                      accept=".pdf,.csv,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp"
+                      accept=".pdf,.doc,.docx,.csv,.xls,.xlsx,.txt,.md,.png,.jpg,.jpeg,.gif,.webp"
                       style={{ display: 'none' }}
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (!file) return;
                         if (!validateFileType(file)) {
-                          toast.error(`Unsupported file type "${getFileExtension(file.name)}". Only PDF, Excel, CSV, and Images are allowed.`);
+                          toast.error(`Unsupported file type "${getFileExtension(file.name)}". Supported files: PDF, Word (.doc, .docx), Excel, CSV, Text, and Images.`);
                           e.target.value = '';
                           return;
                         }
@@ -1558,6 +1562,37 @@ export default function KnowledgeBasePage() {
                       )}
                     </div>
                   </div>
+                ) : previewType === "doc" ? (
+                  <Flex vertical align="center" justify="center" className="h-full py-16 gap-4 text-center px-4">
+                    <div className="w-16 h-16 rounded-2xl bg-[var(--app-primary)]/10 flex items-center justify-center text-[var(--app-primary)]">
+                      <FileText size={36} />
+                    </div>
+                    <div>
+                      <Text strong className="text-base block mb-1 text-[var(--app-text)]">
+                        {previewItem?.name || previewItem?.source || "Word Document"}
+                      </Text>
+                      <Text className="text-xs text-[var(--app-text-muted)] block max-w-md mb-4">
+                        Word document uploaded and indexed in your knowledge base. You can view the extracted content in the Parsed tab or download the original file.
+                      </Text>
+                    </div>
+                    <Flex gap={10} wrap="wrap" justify="center">
+                      {(parsedUrl || parsedText) && (
+                        <Button type="primary" onClick={() => setPreviewTab("parsed")} style={{ borderRadius: 8, fontWeight: 600 }}>
+                          View Extracted Content
+                        </Button>
+                      )}
+                      {previewUrl && (
+                        <Button
+                          href={previewUrl}
+                          download={previewItem?.name || "document.docx"}
+                          target="_blank"
+                          style={{ borderRadius: 8 }}
+                        >
+                          Download Original File
+                        </Button>
+                      )}
+                    </Flex>
+                  </Flex>
                 ) : previewUrl ? (
                   <iframe
                     src={`${previewUrl}#navpanes=0`}

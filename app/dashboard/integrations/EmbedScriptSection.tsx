@@ -1762,29 +1762,29 @@ export default function EmbedScriptSection() {
                       border: `2px solid ${draftBtnBorderColor || draftBtnBgColor || draftThemeColor}`,
                       color: draftThemeTextColor,
                     }}
-                    className={`absolute bottom-5 z-30 px-3.5 py-2.5 rounded-full shadow-xl flex items-center gap-2 cursor-pointer hover:scale-105 transition-all duration-200 animate-bounce [animation-duration:3s] ${draftButtonAlignment === "left" ? "left-5" : "right-5"
+                    className={`absolute bottom-5 z-30 px-3.5 py-2.5 rounded-full shadow-xl flex items-center gap-2 cursor-pointer hover:scale-105 transition-all duration-200 animate-bounce [animation-duration:3s] whitespace-nowrap select-none shrink-0 ${draftButtonAlignment === "left" ? "left-5" : "right-5"
                       }`}
                   >
                    
                     {draftButtonIcon.startsWith("http") || draftButtonIcon.startsWith("blob:") || draftButtonIcon.startsWith("data:") ? (
-                      <img src={draftButtonIcon} alt="Icon" className="w-5 h-5 rounded-full object-contain" />
+                      <img src={draftButtonIcon} alt="Icon" className="w-5 h-5 rounded-full object-contain shrink-0" />
                     ) : draftButtonIcon === "robot" ? (
                       <CustomRobotIcon size={18} color={draftThemeTextColor} />
                     ) : draftButtonIcon === "setting" ? (
-                      <SettingOutlined className="text-lg" style={{ color: draftThemeTextColor }} />
+                      <SettingOutlined className="text-lg shrink-0" style={{ color: draftThemeTextColor }} />
                     ) : draftButtonIcon === "question" ? (
-                      <QuestionCircleOutlined className="text-lg" style={{ color: draftThemeTextColor }} />
+                      <QuestionCircleOutlined className="text-lg shrink-0" style={{ color: draftThemeTextColor }} />
                     ) : draftButtonIcon === "book" ? (
-                      <BookOutlined className="text-lg" style={{ color: draftThemeTextColor }} />
+                      <BookOutlined className="text-lg shrink-0" style={{ color: draftThemeTextColor }} />
                     ) : draftButtonIcon === "chat2" ? (
-                      <CommentOutlined className="text-lg" style={{ color: draftThemeTextColor }} />
+                      <CommentOutlined className="text-lg shrink-0" style={{ color: draftThemeTextColor }} />
                     ) : (
-                      <MessageOutlined className="text-lg" style={{ color: draftThemeTextColor }} />
+                      <MessageOutlined className="text-lg shrink-0" style={{ color: draftThemeTextColor }} />
                     )}
 
                    
                     {draftShowButtonText && (
-                      <span className="text-xs font-bold pr-0.5 select-none" style={{ color: draftThemeTextColor }}>{draftButtonText || "Help"}</span>
+                      <span className="text-xs font-bold pr-0.5 select-none whitespace-nowrap shrink-0" style={{ color: draftThemeTextColor }}>{draftButtonText || "Help"}</span>
                     )}
                   </div>
                 )}

@@ -316,10 +316,11 @@ export default function KnowledgeBaseFilesPage() {
     setPreviewUrl("");
     setParsedText("");
 
-    // Set initial tab: parsed content first if it's text or pdf without original
-    const isText = nameStr.includes("text");
+    // Set initial tab: parsed content first if it's text or doc or pdf without original
+    const isText = nameStr.includes("text") || nameStr.endsWith(".txt") || nameStr.endsWith(".md");
     const isPdf = nameStr.endsWith(".pdf");
-    if (isPdf && (isText || (item.parsed_path && !item.s3_path))) {
+    const isDoc = nameStr.endsWith(".doc") || nameStr.endsWith(".docx");
+    if (isDoc || isText || (item.parsed_path && !item.s3_path)) {
       setPreviewTab("parsed");
     } else {
       setPreviewTab("original");
@@ -359,11 +360,18 @@ export default function KnowledgeBaseFilesPage() {
             contentType.includes("vnd.openxmlformats-officedocument.spreadsheetml.sheet") ||
             nameStr.endsWith(".xls") ||
             nameStr.endsWith(".xlsx");
+          const isDocFile =
+            contentType.includes("word") ||
+            contentType.includes("officedocument.wordprocessingml") ||
+            nameStr.endsWith(".doc") ||
+            nameStr.endsWith(".docx");
 
           if (isPDF) {
             setPreviewType("pdf");
           } else if (isImage) {
             setPreviewType("image");
+          } else if (isDocFile) {
+            setPreviewType("doc");
           } else if (isCSV || isExcel) {
             try {
               const arrayBuffer = await blob.arrayBuffer();
@@ -560,7 +568,7 @@ export default function KnowledgeBaseFilesPage() {
   if (previewItem?.s3_path) {
     modalTabs.push({ value: "original", label: "Original Document" });
   }
-  if (previewItem?.parsed_path) {
+  if (previewItem?.parsed_path || parsedText) {
     modalTabs.push({ value: "parsed", label: "Extracted Text" });
   }
 

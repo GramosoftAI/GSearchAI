@@ -260,6 +260,15 @@
         z-index: 999999;
         transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
         animation: floatPulse 3s ease-in-out infinite;
+        white-space: nowrap !important;
+        flex-shrink: 0 !important;
+        box-sizing: border-box !important;
+        max-width: fit-content !important;
+      }
+      .grag-icon-btn span {
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+        flex-shrink: 0 !important;
       }
       .grag-icon-btn:hover {
         transform: scale(1.05) !important;
@@ -317,10 +326,13 @@
       if (!el || !el.style.left) return;
       const left = parseFloat(el.style.left);
       const top = parseFloat(el.style.top);
-      const maxLeft = window.innerWidth - el.offsetWidth;
-      const maxTop = window.innerHeight - el.offsetHeight;
-      el.style.left = Math.max(0, Math.min(maxLeft, left)) + "px";
-      el.style.top = Math.max(0, Math.min(maxTop, top)) + "px";
+      const rect = el.getBoundingClientRect();
+      const elWidth = rect.width || el.offsetWidth || 60;
+      const elHeight = rect.height || el.offsetHeight || 60;
+      const maxLeft = Math.max(0, window.innerWidth - elWidth - 8);
+      const maxTop = Math.max(0, window.innerHeight - elHeight - 8);
+      el.style.left = Math.max(8, Math.min(maxLeft, left)) + "px";
+      el.style.top = Math.max(8, Math.min(maxTop, top)) + "px";
     };
 
     const makeDraggable = (el, onClickHandler) => {
@@ -409,11 +421,14 @@
           let newLeft = startElLeft + dx;
           let newTop = startElTop + dy;
 
-          const maxLeft = window.innerWidth - el.offsetWidth;
-          const maxTop = window.innerHeight - el.offsetHeight;
+          const rect = el.getBoundingClientRect();
+          const elWidth = rect.width || el.offsetWidth || 60;
+          const elHeight = rect.height || el.offsetHeight || 60;
+          const maxLeft = Math.max(0, window.innerWidth - elWidth - 8);
+          const maxTop = Math.max(0, window.innerHeight - elHeight - 8);
 
-          newLeft = Math.max(0, Math.min(maxLeft, newLeft));
-          newTop = Math.max(0, Math.min(maxTop, newTop));
+          newLeft = Math.max(8, Math.min(maxLeft, newLeft));
+          newTop = Math.max(8, Math.min(maxTop, newTop));
 
           el.style.left = newLeft + "px";
           el.style.top = newTop + "px";
@@ -966,6 +981,8 @@
       button.className = "grag-icon-btn";
       if (showButtonText && buttonText) {
         button.style.width = "auto";
+        button.style.minWidth = "max-content";
+        button.style.whiteSpace = "nowrap";
         button.style.borderRadius = "30px";
         button.style.padding = "0 18px";
         button.style.gap = "8px";
@@ -973,18 +990,18 @@
 
       let iconHtml = "";
       if (resolvedButtonIcon && (resolvedButtonIcon.startsWith("http") || resolvedButtonIcon.startsWith("blob:") || resolvedButtonIcon.startsWith("data:"))) {
-        iconHtml = `<img src="${resolvedButtonIcon}" style="width: 28px; height: 28px; border-radius: 50%; object-fit: contain;" />`;
+        iconHtml = `<img src="${resolvedButtonIcon}" style="width: 28px; height: 28px; border-radius: 50%; object-fit: contain; flex-shrink: 0;" />`;
       } else if (resolvedButtonIcon === "robot") {
-        iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2" fill="none"/><circle cx="8.5" cy="15.5" r="1.5" fill="${themeTextColor}"/><circle cx="15.5" cy="15.5" r="1.5" fill="${themeTextColor}"/><path d="M12 2v6M9 5h6"/></svg></div>`;
+        iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2" fill="none"/><circle cx="8.5" cy="15.5" r="1.5" fill="${themeTextColor}"/><circle cx="15.5" cy="15.5" r="1.5" fill="${themeTextColor}"/><path d="M12 2v6M9 5h6"/></svg></div>`;
       } else if (resolvedButtonIcon === "setting") {
-        iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3" fill="none"/></svg></div>`;
+        iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3" fill="none"/></svg></div>`;
       } else if (resolvedButtonIcon === "question") {
-        iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>`;
+        iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>`;
       } else if (resolvedButtonIcon === "book") {
-        iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div>`;
+        iconHtml = `<div style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div>`;
       } else {
         iconHtml = `
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink: 0;">
             <path d="M21 11.5C21 16.7467 16.9706 21 12 21C10.1302 21 8.39632 20.3992 6.97743 19.3722L3 20.5L4.15064 16.6329C3.41732 15.1543 3 13.4754 3 11.5C3 6.25329 7.02944 2 12 2C16.9706 2 21 6.25329 21 11.5Z" fill="${themeTextColor}" stroke="${themeTextColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             <circle cx="8" cy="11.5" r="1.3" fill="${btnBgColor}"/>
             <circle cx="12" cy="11.5" r="1.3" fill="${btnBgColor}"/>
@@ -993,7 +1010,8 @@
         `;
       }
 
-      button.innerHTML = iconHtml + (showButtonText && buttonText ? `<span style="font-weight: 700; font-size: 14px; color: ${themeTextColor}; font-family: sans-serif;">${buttonText}</span>` : "");
+      const textHtml = (showButtonText && buttonText) ? `<span style="font-weight: 700; font-size: 14px; color: ${themeTextColor}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; white-space: nowrap !important; word-break: keep-all !important; flex-shrink: 0 !important; display: inline-block;">${buttonText}</span>` : "";
+      button.innerHTML = iconHtml + textHtml;
 
       document.body.appendChild(button);
 
@@ -1007,8 +1025,8 @@
               const data = result.data || result;
               if (data && data.logo_url && data.show_in_embed && button && (buttonIcon === "chat" || !buttonIcon)) {
                 const proxyLogo = toProxyUrl(data.logo_url);
-                const imgHtml = `<img src="${proxyLogo}" style="width: 28px; height: 28px; border-radius: 50%; object-fit: contain;" />`;
-                button.innerHTML = imgHtml + (showButtonText && buttonText ? `<span style="font-weight: 700; font-size: 14px; color: ${themeTextColor}; font-family: sans-serif;">${buttonText}</span>` : "");
+                const imgHtml = `<img src="${proxyLogo}" style="width: 28px; height: 28px; border-radius: 50%; object-fit: contain; flex-shrink: 0;" />`;
+                button.innerHTML = imgHtml + textHtml;
               }
             })
             .catch(e => console.warn("GragWidget: Customization fetch error", e));
