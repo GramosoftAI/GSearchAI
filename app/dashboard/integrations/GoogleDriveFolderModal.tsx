@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { Modal, Button, Spin, Input, message, notification } from "antd";
+import { toast } from "react-hot-toast";
 import {
   FolderOpenOutlined,
   FileOutlined,
@@ -311,22 +312,31 @@ export default function GoogleDriveFolderModal({
           body: JSON.stringify({ file_ids: selectedFiles, folder_ids: selectedFolders, email: session }),
         }
       );
-      if (!res.ok) throw new Error("Sync failed");
-      const data = await res.json();
-      const jobId = data?.data?.job_id;
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || (data && data.success === false)) {
+        const errorMsg = data?.error || data?.detail || data?.message || "Failed to start sync";
+        throw new Error(errorMsg);
+      }
+
+      const jobId = data?.data?.job_id || data?.job_id;
 
       // Close modal immediately so the user can continue their work without being blocked!
       onClose();
 
+      toast.success("Google Drive sync started in background!");
+      message.success("Google Drive sync started in background!");
+
       if (jobId) {
         pollJobStatus(jobId);
       } else {
-        message.success("Google Drive synced successfully");
         onSuccess?.();
       }
-    } catch (err) {
-      console.error(err);
-      message.error("Sync failed to start");
+    } catch (err: any) {
+      console.error("Google Drive sync error:", err);
+      const errorMsg = err?.message || "Failed to start sync";
+      toast.error(errorMsg);
+      message.error(errorMsg);
     } finally {
       setLoading(false);
     }

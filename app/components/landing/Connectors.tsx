@@ -70,18 +70,35 @@ export default function Connectors() {
           Gsearch connects to more than 100 workplace apps, including document stores, chat platforms, ticketing systems, CRMs, and wikis. Setup takes minutes per tool, content stays current automatically, and the permissions already configured in each app carry over unchanged.
         </Paragraph>
       </div>
-      <div className="gs-conn-grid" aria-hidden="true">
+      <div className="gs-conn-grid">
         {connectorApps.map((app) => {
           const Icon = appIcons[app.name];
+          const isSlack = app.name === "Slack";
+          const content = Icon ? (
+            <Icon size={32} style={{ color: app.color }} />
+          ) : (
+            <span className="mark" style={{ background: app.color }}>
+              {app.name.charAt(0)}
+            </span>
+          );
+
+          if (isSlack) {
+            return (
+              <a
+                href="/slack"
+                className="gs-conn"
+                key={app.name}
+                title="GSearchAI for Slack (Click to learn more)"
+                style={{ cursor: "pointer", transition: "transform 0.2s ease" }}
+              >
+                {content}
+              </a>
+            );
+          }
+
           return (
             <div className="gs-conn" key={app.name} title={app.name}>
-              {Icon ? (
-                <Icon size={32} style={{ color: app.color }} />
-              ) : (
-                <span className="mark" style={{ background: app.color }}>
-                  {app.name.charAt(0)}
-                </span>
-              )}
+              {content}
             </div>
           );
         })}

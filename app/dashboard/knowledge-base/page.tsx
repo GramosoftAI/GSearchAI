@@ -325,7 +325,7 @@ export default function KnowledgeBasePage() {
   const [crawledUrls, setCrawledUrls] = useState<string[]>([]);
   const [selectedUrls, setSelectedUrls] = useState<string[]>([]);
 
-  const sourcesList = Array.isArray(agentlistres)
+  const rawSourcesList = Array.isArray(agentlistres)
     ? agentlistres
     : Array.isArray(agentlistres?.data)
       ? agentlistres.data
@@ -338,6 +338,14 @@ export default function KnowledgeBasePage() {
             : Array.isArray(agentlistres?.kbs)
               ? agentlistres.kbs
               : [];
+
+  const sourcesList = rawSourcesList.filter((kb: any) => {
+    // Show if it has chunks OR if it's currently syncing/processing
+    const totalChunks = kb.total_chunks ?? kb.chunks_count ?? kb.chunk_count ?? 0;
+    const isSyncing = kb.processing_jobs != null || kb.status === "processing" || kb.status === "indexing" || kb.status === "pending";
+    const hasContent = Boolean(kb.s3_path || kb.parsed_path || kb.content || kb.url || kb.text);
+    return totalChunks > 0 || isSyncing || hasContent;
+  });
 
   useEffect(() => {
     console.log("KNOWLEDGEBASE API RESPONSE:", agentlistres);
