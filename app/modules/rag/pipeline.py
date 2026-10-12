@@ -1230,6 +1230,31 @@ class RAGPipeline:
                 if not exploded_keywords:
                     exploded_keywords = {w.lower() for w in original_query.split() if len(w) > 4 and w.isalnum() and w.lower() not in STOPWORDS}
 
+                # Dynamically extract and expand acronyms directly from retrieved chunks (< 0.1ms)
+                try:
+                    from app.modules.rag.orchestrator.fast_query_analyzer import (
+                        dynamic_extract_acronyms_from_text,
+                        _DYNAMIC_ACRONYM_CACHE
+                    )
+                    dyn_query_tokens = [
+                        w.strip() for w in re.findall(r'[a-zA-Z]+', original_query)
+                        if 2 <= len(w.strip()) <= 5 and w.strip().lower() not in STOPWORDS
+                    ]
+                    if dyn_query_tokens and vector_chunk_map:
+                        combined_chunk_text = " \n".join(
+                            getattr(rc, "text", "")[:1200] for rc in list(vector_chunk_map.values())[:10]
+                        )
+                        dyn_extracted = dynamic_extract_acronyms_from_text(dyn_query_tokens, combined_chunk_text)
+                        for dyn_ac, dyn_exp_list in dyn_extracted.items():
+                            _DYNAMIC_ACRONYM_CACHE[dyn_ac] = dyn_exp_list
+                            for dexp in dyn_exp_list:
+                                for dew in dexp.split():
+                                    dew_c = ''.join(c for c in dew if c.isalnum()).lower()
+                                    if len(dew_c) > 2 and dew_c not in STOPWORDS:
+                                        exploded_keywords.add(dew_c)
+                except Exception as dyn_err:
+                    logger.debug(f"[RRF_FLOW] Dynamic chunk acronym extraction skipped: {dyn_err}")
+
                 # 4a. Fetch missing chunks from postgres *BEFORE* Domain Boost
                 missing_cids = [cid for cid in fused_scores.keys() if cid not in vector_chunk_map]
             
@@ -1510,32 +1535,30 @@ class RAGPipeline:
                                 from app.core.llm.deepinfra_llm import get_llm_client
                                 llm = await get_llm_client()
                             
-                                # Extract texts for top candidates (reranking top 10 chunks reduces latency by 50%+ without dropping quality)
-                                rerank_pool_size = min(len(final_chunks), 10)
-                                candidate_chunks = final_chunks[:rerank_pool_size]
-                                doc_texts = [c.text for c in candidate_chunks]
+                                # Extract texts
+                                doc_texts = [c.text for c in final_chunks]
                             
                                 # Call API with explicit timeout
                                 reranked_results = await asyncio.wait_for(
                                     llm.rerank_documents(
                                         query=original_query,
                                         documents=doc_texts,
-                                        top_n=min(len(doc_texts), getattr(self.settings, "rag_final_chunk_limit", 10)),
+                                        top_n=min(len(doc_texts), getattr(self.settings, "rag_final_chunk_limit", 20)),
                                         model=get_settings().model_reranker,
                                         tenant_id=self.tenant_id,
                                         user_id=user_id
                                     ),
-                                    timeout=2.0
+                                    timeout=2.5
                                 )
                         
-                                # Reorder candidate_chunks based on reranker results
+                                # Reorder final_chunks based on reranker results
                                 import math
                                 new_final_chunks = []
                                 seen_cids = set()
                                 for rank, r in enumerate(reranked_results):
                                     orig_idx = r.get("original_index")
-                                    if orig_idx is not None and orig_idx < len(candidate_chunks):
-                                        chunk = candidate_chunks[orig_idx]
+                                    if orig_idx is not None and orig_idx < len(final_chunks):
+                                        chunk = final_chunks[orig_idx]
                                         raw_score = r.get("relevance_score", 0.0)
                                         chunk.reranker_raw_score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
                                         if isinstance(raw_score, (int, float)):
@@ -1555,19 +1578,17 @@ class RAGPipeline:
                                         new_final_chunks.append(chunk)
                                         seen_cids.add(chunk.chunk_id)
 
-                                # Preserving narrative and remaining chunks: ensure all other chunks from final_chunks remain preserved
+                                # Preserving narrative quota: if any narrative chunk (<90000) was in pre-reranked final_chunks but dropped by top_n, preserve it.
+                                # Clearly document meaning: Assign narrative chunk a score relative to lowest reranked item so it cannot outrank verified reranked signal.
                                 min_reranked_score = min((c.final_relevance_score for c in new_final_chunks), default=0.50)
                                 for orig_chunk in final_chunks:
-                                    if orig_chunk.chunk_id not in seen_cids:
-                                        if getattr(orig_chunk, "position", 99999) < 90000:
-                                            orig_chunk.reason = "LLM_RERANKED_NARRATIVE_PRESERVED"
-                                            orig_chunk.reranker_raw_score = None
-                                            orig_chunk.reranker_score = None
-                                            narrative_score = min_reranked_score * 0.85
-                                            orig_chunk.final_relevance_score = narrative_score
-                                            orig_chunk.hybrid_score = narrative_score
-                                        else:
-                                            orig_chunk.reason = orig_chunk.reason or "RRF_PRESERVED"
+                                    if orig_chunk.chunk_id not in seen_cids and getattr(orig_chunk, "position", 99999) < 90000:
+                                        orig_chunk.reason = "LLM_RERANKED_NARRATIVE_PRESERVED"
+                                        orig_chunk.reranker_raw_score = None
+                                        orig_chunk.reranker_score = None
+                                        narrative_score = min_reranked_score * 0.85
+                                        orig_chunk.final_relevance_score = narrative_score
+                                        orig_chunk.hybrid_score = narrative_score
                                         new_final_chunks.append(orig_chunk)
                                         seen_cids.add(orig_chunk.chunk_id)
 
