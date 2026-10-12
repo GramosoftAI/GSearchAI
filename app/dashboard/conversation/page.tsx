@@ -467,11 +467,20 @@ function useProgressLabel(isLoading: boolean) {
 
 function getSourceType(source: string, kb_id?: string): 'url' | 'pdf' | 'excel' | 'csv' | 'image' | 'text' {
   const s = source.toLowerCase();
+  const cleanPath = s.split('?')[0];
+
+  const isS3 = s.includes('s3.') || s.includes('amazonaws.com') || s.startsWith('s3://') || s.includes('/grag/uploads/') || s.includes('/uploads/');
+
+  if (cleanPath.endsWith('.pdf') || (isS3 && cleanPath.includes('.pdf'))) return 'pdf';
+  if (cleanPath.endsWith('.xls') || cleanPath.endsWith('.xlsx') || (isS3 && (cleanPath.includes('.xls') || cleanPath.includes('.xlsx')))) return 'excel';
+  if (cleanPath.endsWith('.csv') || (isS3 && cleanPath.includes('.csv'))) return 'csv';
+  if (cleanPath.endsWith('.png') || cleanPath.endsWith('.jpg') || cleanPath.endsWith('.jpeg') || cleanPath.endsWith('.gif') || cleanPath.endsWith('.webp')) return 'image';
+
+  if (isS3) {
+    return kb_id ? 'pdf' : 'text';
+  }
+
   if (s.startsWith('http://') || s.startsWith('https://') || s.includes('www.')) return 'url';
-  if (s.endsWith('.pdf')) return 'pdf';
-  if (s.endsWith('.xls') || s.endsWith('.xlsx')) return 'excel';
-  if (s.endsWith('.csv')) return 'csv';
-  if (s.endsWith('.png') || s.endsWith('.jpg') || s.endsWith('.jpeg') || s.endsWith('.gif') || s.endsWith('.webp')) return 'image';
   
   if (kb_id) return 'pdf';
   return 'text';
@@ -1895,12 +1904,26 @@ export default function ChatPlaygroundPage() {
       return;
     }
 
+    if (!kbId && src.source && currentSources.length > 0) {
+      const uuidMatch = src.source.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      if (uuidMatch) {
+        const foundByUuid = currentSources.find(as => (as.id && as.id.toLowerCase() === uuidMatch[0].toLowerCase()) || (as.kb_id && as.kb_id.toLowerCase() === uuidMatch[0].toLowerCase()));
+        if (foundByUuid) {
+          kbId = foundByUuid.id || foundByUuid.kb_id;
+          matchedKb = foundByUuid;
+        }
+      }
+    }
+
     if (stype === 'url') {
       const rawSrc = src.source || '';
-      const urlMatch = rawSrc.match(/(https?:\/\/[^\s]+)/i);
-      const openUrl = urlMatch ? urlMatch[1] : (rawSrc.startsWith('http') ? rawSrc : `https://${rawSrc}`);
-      window.open(openUrl, '_blank', 'noopener,noreferrer');
-      return;
+      const isS3OrDoc = rawSrc.includes('amazonaws.com') || rawSrc.includes('s3.') || rawSrc.toLowerCase().includes('.pdf');
+      if (!isS3OrDoc || !kbId) {
+        const urlMatch = rawSrc.match(/(https?:\/\/[^\s]+)/i);
+        const openUrl = urlMatch ? urlMatch[1] : (rawSrc.startsWith('http') ? rawSrc : `https://${rawSrc}`);
+        window.open(openUrl, '_blank', 'noopener,noreferrer');
+        return;
+      }
     }
 
     

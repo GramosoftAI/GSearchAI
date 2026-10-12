@@ -28,6 +28,7 @@ import {
   Empty,
   Popconfirm,
   Radio,
+  Segmented,
 } from "antd";
 import {
   DatabaseOutlined,
@@ -51,6 +52,8 @@ import {
   FileTextOutlined,
   DownOutlined,
   FilterOutlined,
+  FullscreenOutlined,
+  FullscreenExitOutlined,
 } from "@ant-design/icons";
 import { BsDatabaseFillGear } from "react-icons/bs";
 import { marked } from "marked";
@@ -59,6 +62,7 @@ import { getCookie } from "../../config/cookies";
 import { API_BASE_URL } from "../../config/config";
 import { DatabaseStreamClient, DatabaseStreamEvent } from "../../services/databaseStreamClient";
 import { DatabasePipelineProgress } from "../../components/DatabasePipelineProgress";
+import { SchemaERDiagramViewer } from "../../components/SchemaERDiagramViewer";
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -286,6 +290,8 @@ export default function DatabaseKnowledgePage() {
   const [schemaLoading, setSchemaLoading] = useState(false);
   const [schemaData, setSchemaData] = useState<SchemaResponse | null>(null);
   const [schemaSearchQuery, setSchemaSearchQuery] = useState("");
+  const [schemaViewMode, setSchemaViewMode] = useState<"list" | "diagram">("diagram");
+  const [schemaFullscreen, setSchemaFullscreen] = useState(false);
 
   // Query Agent State
   const [userQuery, setUserQuery] = useState("");
@@ -610,6 +616,27 @@ export default function DatabaseKnowledgePage() {
       toast.error("Failed to load schema.");
     } finally {
       setSchemaLoading(false);
+    }
+  };
+
+  const handleSaveCustomMappings = async (mappings: Array<{ sourceTable: string; sourceColumn: string; targetTable: string; targetColumn: string }>) => {
+    if (!selectedKb?.id) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/user-mappings`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ mappings }),
+      });
+      if (res.ok) {
+        toast.success("Relationships saved to database and pipeline updated!");
+        handleViewSchema(selectedKb.id);
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        toast.error(errJson.detail || "Failed to save mappings to database.");
+      }
+    } catch (err) {
+      console.error("Error saving user mappings:", err);
+      toast.error("Failed to persist mappings to backend.");
     }
   };
 
@@ -2113,10 +2140,17 @@ export default function DatabaseKnowledgePage() {
           </div>
         }
         open={schemaModalOpen}
-        onCancel={() => setSchemaModalOpen(false)}
+        onCancel={() => {
+          setSchemaModalOpen(false);
+          setSchemaFullscreen(false);
+        }}
         footer={null}
-        width={1050}
-        style={{ top: 24 }}
+        width={schemaFullscreen ? "100vw" : 1200}
+        style={schemaFullscreen ? { top: 0, margin: 0, paddingBottom: 0, maxWidth: "100vw" } : { top: 24 }}
+        styles={{
+          content: schemaFullscreen ? { borderRadius: 0, height: "100vh", display: "flex", flexDirection: "column" } : undefined,
+          body: schemaFullscreen ? { flex: 1, overflowY: "auto", padding: "16px 24px" } : undefined,
+        }}
       >
         {schemaLoading ? (
           <div className="py-20 text-center">
@@ -2155,16 +2189,35 @@ export default function DatabaseKnowledgePage() {
               </Card>
             </div>
 
-            {/* Toolbar: Search Filter & Fingerprint */}
+            {/* Toolbar: Search Filter, View Switcher & Fingerprint */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 p-3 rounded-xl bg-[var(--app-surface-muted)] border border-[var(--app-border)]">
-              <Input
-                prefix={<SearchOutlined style={{ color: "#8c8c8c" }} />}
-                placeholder="Search tables or columns (e.g. employee, salary, department)..."
-                value={schemaSearchQuery}
-                onChange={(e) => setSchemaSearchQuery(e.target.value)}
-                allowClear
-                style={{ maxWidth: 420 }}
-              />
+              <div className="flex items-center gap-3 flex-1">
+                <Input
+                  prefix={<SearchOutlined style={{ color: "#8c8c8c" }} />}
+                  placeholder="Search tables or columns (e.g. employee, salary, department)..."
+                  value={schemaSearchQuery}
+                  onChange={(e) => setSchemaSearchQuery(e.target.value)}
+                  allowClear
+                  style={{ maxWidth: 360 }}
+                />
+                <Segmented
+                  value={schemaViewMode}
+                  onChange={(val) => setSchemaViewMode(val as "list" | "diagram")}
+                  options={[
+                    {
+                      label: "ER Diagram",
+                      value: "diagram",
+                      icon: <ApartmentOutlined />,
+                    },
+                    {
+                      label: "Table List",
+                      value: "list",
+                      icon: <TableOutlined />,
+                    },
+                  ]}
+                />
+              </div>
+
               <div className="flex items-center gap-3 text-xs text-gray-400">
                 <span>
                   Showing <strong className="text-[var(--app-primary)]">{filteredSchemaTables.length}</strong> of {allSchemaTables.length} tables
@@ -2173,11 +2226,30 @@ export default function DatabaseKnowledgePage() {
                 <span className="font-mono text-gray-400">
                   Fingerprint: {schemaData.fingerprint ? schemaData.fingerprint.substring(0, 10) : "N/A"}
                 </span>
+                <Button
+                  size="small"
+                  type="text"
+                  icon={schemaFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+                  onClick={() => setSchemaFullscreen(!schemaFullscreen)}
+                  title={schemaFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+                />
               </div>
             </div>
 
-            {/* Tables Accordion or Empty State */}
-            {filteredSchemaTables.length === 0 ? (
+            {/* View Switching: ER Diagram vs Table List */}
+            {schemaViewMode === "diagram" ? (
+              <SchemaERDiagramViewer
+                onSaveCustomMapping={handleSaveCustomMappings}
+                tables={
+                  schemaData?.schemas?.public?.tables ||
+                  (schemaData?.schemas ? Object.values(schemaData.schemas)[0]?.tables : {}) ||
+                  {}
+                }
+                filterQuery={schemaSearchQuery}
+                isFullscreen={schemaFullscreen}
+                kbId={selectedKb?.id || "default_kb"}
+              />
+            ) : filteredSchemaTables.length === 0 ? (
               <div className="py-12 text-center">
                 <Empty description="No tables match your search query." />
               </div>
@@ -2429,9 +2501,13 @@ export default function DatabaseKnowledgePage() {
                   <div>
                     <Text strong>Relevance Scores: </Text>
                     <div className="font-mono text-gray-300 mt-1">
-                      {Object.entries(groundedAnswer.pipeline_trace.retrieval.table_scores).map(([tbl, sc]) => (
+                      {Object.entries(groundedAnswer.pipeline_trace.retrieval.table_scores).map(([tbl, sc]: [string, any]) => (
                         <span key={tbl} className="mr-3">
-                          {tbl}: <b>{sc}</b>
+                          {tbl}: <b>
+                            {typeof sc === "object" 
+                              ? (sc.final_score !== undefined ? sc.final_score.toFixed(3) : JSON.stringify(sc)) 
+                              : (typeof sc === "number" ? sc.toFixed(3) : String(sc))}
+                          </b>
                         </span>
                       ))}
                     </div>
