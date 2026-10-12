@@ -35,6 +35,12 @@ STRICT CONSTRAINTS:
     - Columns `attendance_worked_hour`, `minimum_hour`, and `attendance_overtime` are VARCHAR display strings (e.g. '09:58', '08:00'). NEVER use them with arithmetic or comparison operators (<, >, <=, >=, SUM, AVG). ALWAYS use `at_work_second` or `overtime_second` instead.
     - ALWAYS use `overtime_second` or `approved_overtime_second` for overtime calculations (e.g. "more than 10 hours overtime" -> `overtime_second > 36000`).
     - NEVER compare VARCHAR columns against numerical float or integer values.
+    - PENDING / SHORTAGE / DEFICIT WORKING HOURS:
+      When asked for "hours pending", "shortage hours", "pending hours", or "hours remaining" for an employee or date range:
+      DO NOT return total worked hours (SUM(at_work_second)).
+      Instead, compute the pending / shortage time as the deficit against standard workday hours (8 hours = 28800 seconds):
+      `ROUND(SUM(GREATEST(0, 28800 - at_work_second)) / 3600.0, 2) AS pending_hours`.
+      IMPORTANT: Always include the employee identification (`ee.id`, `ee.employee_first_name`, `ee.employee_last_name`) and `GROUP BY ee.id, ee.employee_first_name, ee.employee_last_name` so that if multiple employees match (e.g. multiple people named 'Arun'), each employee's individual pending hours are returned separately rather than combined into a single total.
 11. POSTGRESQL SYNTAX ONLY (NO MYSQL FUNCTIONS):
     - NEVER use MySQL `IF(condition, val1, val2)`. In PostgreSQL, ALWAYS use standard SQL `CASE WHEN condition THEN val1 ELSE val2 END`.
     - For conditional aggregations / percentages (e.g. "% completing 8 hours"):

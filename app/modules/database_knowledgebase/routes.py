@@ -32,6 +32,7 @@ from .schemas.api import (
     DatabaseQueryApiRequest,
     StandardApiResponse,
     GlossaryConfirmApiRequest,
+    UserMappingBatchRequest,
 )
 from .retrieval.retriever import SchemaRetrievalResult
 from .planning.models import QueryPlanIR
@@ -551,6 +552,39 @@ async def export_schema_cheat_sheet(
         only_approved=only_approved,
     )
     return export_result
+
+
+@router.get(
+    "/{id}/user-mappings",
+    summary="Get User Custom Mappings",
+    description="Returns all user-configured ER diagram table/column relationships.",
+)
+async def get_user_mappings(
+    id: uuid.UUID,
+    service: DatabaseKnowledgebaseService = Depends(get_service),
+):
+    mappings = await service.get_user_mappings(kb_id=id)
+    return {"mappings": mappings}
+
+
+@router.post(
+    "/{id}/user-mappings",
+    summary="Save User Custom Mappings",
+    description="Persists user-configured schema relationships and triggers schema pipeline sync.",
+)
+async def save_user_mappings(
+    id: uuid.UUID,
+    payload: UserMappingBatchRequest,
+    trigger_sync: bool = Query(True, description="Whether to immediately re-sync canonical schema and semantic graph"),
+    service: DatabaseKnowledgebaseService = Depends(get_service),
+):
+    raw_mappings = [m.model_dump(by_alias=True) for m in payload.mappings]
+    result = await service.save_user_mappings(
+        kb_id=id,
+        mappings=raw_mappings,
+        trigger_sync=trigger_sync,
+    )
+    return result
 
 
 from .knowledge.api.admin_router import router as knowledge_admin_router; router.include_router(knowledge_admin_router)

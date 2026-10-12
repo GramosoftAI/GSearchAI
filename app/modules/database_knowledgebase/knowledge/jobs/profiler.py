@@ -35,7 +35,7 @@ import asyncpg
 from app.core.config import get_settings
 from ..adapters.phase1_adapter import Phase1Adapter, SchemaView, TableView, ColumnView
 from ..repositories.knowledge_item_repository import KnowledgeItemRepository
-from ..sensitivity import is_sensitive_column, check_values_sensitivity
+from ..sensitivity import is_sensitive_column, is_sensitive_for_values, check_values_sensitivity
 from .profiler_rules import infer_role_and_unit
 
 logger = logging.getLogger(__name__)
@@ -142,8 +142,15 @@ async def profile_single_table(
         stats_info = pg_stats_map.get(col.name)
 
         null_frac = float(stats_info["null_frac"]) if stats_info and stats_info["null_frac"] is not None else None
-        n_distinct = int(stats_info["n_distinct"]) if stats_info and stats_info["n_distinct"] is not None else None
-        distinct_est = abs(n_distinct) if n_distinct is not None else None
+        n_distinct = float(stats_info["n_distinct"]) if stats_info and stats_info["n_distinct"] is not None else None
+        tbl_row_est = max(1, int(profile_data["row_estimate"]))
+        if n_distinct is not None:
+            if n_distinct < 0:
+                distinct_est = max(1, int(round(abs(n_distinct) * tbl_row_est)))
+            else:
+                distinct_est = max(1, int(round(n_distinct)))
+        else:
+            distinct_est = tbl_row_est
 
         min_val = None
         max_val = None
@@ -152,7 +159,7 @@ async def profile_single_table(
         # Numerical or date min/max (never on sensitive columns)
         is_num_or_date = any(t in col.data_type.lower() for t in ("int", "float", "numeric", "decimal", "date", "timestamp", "time", "real", "double"))
         
-        if not col_sensitive:
+        if not col_sensitive and not is_sensitive_for_values(col.name):
             if is_num_or_date:
                 try:
                     min_max_row = await conn.fetchrow(
@@ -360,7 +367,7 @@ async def run_stage_profiler(
                 col_stats = col_prof_info.get("stats", {})
                 col_role = col_prof_info.get("role", "unknown")
                 col_unit = col_prof_info.get("unit_hint")
-                is_sensitive = col_prof_info.get("is_sensitive", is_sensitive_column(col.name))
+                is_sensitive = col_prof_info.get("is_sensitive", False) if col_prof_info else is_sensitive_column(col.name)
 
                 col_payload = {
                     "table_name": table_key,
@@ -397,11 +404,12 @@ async def run_stage_profiler(
             if heartbeat_cb:
                 await heartbeat_cb()
 
-    tasks = []
     for t_name, tbl in schema_view.tables.items():
         table_key = f"{tbl.schema_name}.{tbl.table_name}"
-        tasks.append(_profile_table_worker(table_key, tbl))
-    await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            await _profile_table_worker(table_key, tbl)
+        except Exception as res:
+            logger.error(f"[Stage: Profiler] Table worker encountered exception: {res}", exc_info=res)
 
     # Mark dropped items as 'stale'
     dropped_keys = []

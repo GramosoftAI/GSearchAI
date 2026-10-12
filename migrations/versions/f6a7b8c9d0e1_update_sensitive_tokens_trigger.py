@@ -19,7 +19,7 @@ SENSITIVE_TOKENS_SQL = """
         'password', 'passwd', 'pwd', 'secret', 'token', 'jwt', 'apikey',
         'key', 'auth', 'privatekey', 'passphrase', 'salt', 'hash',
         'credential', 'pin', 'cvv', 'otp',
-        'salary', 'compensation', 'wage', 'creditcard', 'bankaccount',
+        'salary', 'compensation', 'wage', 'pay', 'income', 'creditcard', 'bankaccount',
         'routing', 'iban', 'swift', 'cardnumber', 'card', 'pan',
         'accountnumber',
         'ssn', 'socialsecurity', 'passport', 'nationalid', 'taxid',

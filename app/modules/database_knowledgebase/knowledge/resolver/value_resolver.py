@@ -40,6 +40,8 @@ class ValueResolutionResult:
     candidates: List[ResolvedCandidate]
     ambiguous: bool = False
     best_match: Optional[ResolvedCandidate] = None
+    matching_columns: List[str] = field(default_factory=list)
+    match_count: int = 1
 
 
 class ValueResolver:
@@ -89,39 +91,44 @@ class ValueResolver:
                 candidates_map[f"{cand.table_name}.{cand.column_name}.{cand.normalized_value}"] = cand
 
         # ----------------------------------------------------------------------
-        # 2. Fuzzy Match (pg_trgm)
+        # 2. Fuzzy Match (pg_trgm) - query text and tokens
         # ----------------------------------------------------------------------
-        try:
-            fuzzy_hits = await self.entity_repo.search_fuzzy(
-                db_knowledgebase_id=db_knowledgebase_id,
-                query_text=norm_text,
-                table_name=table_filter,
-                column_name=column_filter,
-                limit=limit * 2,
-                min_similarity=min_score,
-            )
-            for f_hit in fuzzy_hits:
-                key = f"{f_hit['table_name']}.{f_hit['column_name']}.{f_hit['normalized_value']}"
-                sim = round(float(f_hit["similarity"]), 4)
-                # Exact match promotion
-                if f_hit["normalized_value"] == norm_text:
-                    sim = 1.0
-                    mtype = "exact"
-                else:
-                    mtype = "fuzzy"
+        search_terms = [norm_text]
+        for token in norm_text.split():
+            if len(token) >= 3 and token not in search_terms:
+                search_terms.append(token)
 
-                if key not in candidates_map or sim > candidates_map[key].score:
-                    candidates_map[key] = ResolvedCandidate(
-                        table_name=f_hit["table_name"],
-                        column_name=f_hit["column_name"],
-                        raw_value=f_hit["raw_value"],
-                        normalized_value=f_hit["normalized_value"],
-                        score=sim,
-                        match_type=mtype,
-                        frequency_count=f_hit["frequency_count"],
-                    )
-        except Exception as fz_exc:
-            logger.debug(f"[ValueResolver] Fuzzy search error: {fz_exc}")
+        for term in search_terms:
+            try:
+                fuzzy_hits = await self.entity_repo.search_fuzzy(
+                    db_knowledgebase_id=db_knowledgebase_id,
+                    query_text=term,
+                    table_name=table_filter,
+                    column_name=column_filter,
+                    limit=limit * 2,
+                    min_similarity=min_score,
+                )
+                for f_hit in fuzzy_hits:
+                    key = f"{f_hit['table_name']}.{f_hit['column_name']}.{f_hit['normalized_value']}"
+                    sim = round(float(f_hit["similarity"]), 4)
+                    if f_hit["normalized_value"] == term:
+                        sim = 1.0
+                        mtype = "exact"
+                    else:
+                        mtype = "fuzzy"
+
+                    if key not in candidates_map or sim > candidates_map[key].score:
+                        candidates_map[key] = ResolvedCandidate(
+                            table_name=f_hit["table_name"],
+                            column_name=f_hit["column_name"],
+                            raw_value=f_hit["raw_value"],
+                            normalized_value=f_hit["normalized_value"],
+                            score=sim,
+                            match_type=mtype,
+                            frequency_count=f_hit["frequency_count"],
+                        )
+            except Exception as fz_exc:
+                logger.debug(f"[ValueResolver] Fuzzy search error: {fz_exc}")
 
         # ----------------------------------------------------------------------
         # 3. FTS Match (PostgreSQL tsvector)
@@ -192,14 +199,26 @@ class ValueResolver:
 
         best = ranked[0]
         ambiguous = False
+        matching_columns = [f"{best.table_name}.{best.column_name}"]
+        match_count = best.frequency_count or 1
+
         if len(ranked) > 1:
             diff = abs(best.score - ranked[1].score)
             if diff <= ambiguity_threshold and ranked[0].raw_value.lower() != ranked[1].raw_value.lower():
                 ambiguous = True
+
+        # X1: Set ambiguous=true when matched value has frequency_count > 1 in a name-like column
+        name_indicators = ("name", "first_name", "last_name", "full_name", "username")
+        if any(ind in best.column_name.lower() for ind in name_indicators):
+            if (best.frequency_count or 1) > 1:
+                ambiguous = True
+                match_count = best.frequency_count
 
         return ValueResolutionResult(
             query_text=text,
             candidates=ranked,
             ambiguous=ambiguous,
             best_match=best,
+            matching_columns=matching_columns,
+            match_count=match_count,
         )

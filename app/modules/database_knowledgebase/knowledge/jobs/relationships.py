@@ -135,6 +135,8 @@ async def _sample_value_overlap(
     child_col_name: str,
     parent_table_name: str,
     parent_col_name: str,
+    child_schema_name: Optional[str] = None,
+    parent_schema_name: Optional[str] = None,
 ) -> Tuple[float, str]:
     """Sample distinct child values and check overlap with parent column.
     
@@ -143,9 +145,12 @@ async def _sample_value_overlap(
     """
     try:
         async with adapter.open_readonly_connection(tenant_id, kb_id) as conn:
-            # Safe quoting
+            # Safe schema-qualified quoting
+            child_tbl_ref = f'"{child_schema_name}"."{child_table_name}"' if child_schema_name else f'"{child_table_name}"'
+            parent_tbl_ref = f'"{parent_schema_name}"."{parent_table_name}"' if parent_schema_name else f'"{parent_table_name}"'
+
             # Query child distinct sample (up to 200 non-null values)
-            c_query = f'SELECT "{child_col_name}" FROM "{child_table_name}" WHERE "{child_col_name}" IS NOT NULL LIMIT 200;'
+            c_query = f'SELECT "{child_col_name}" FROM {child_tbl_ref} WHERE "{child_col_name}" IS NOT NULL LIMIT 200;'
             child_rows = await conn.fetch(c_query)
             if not child_rows:
                 return 0.0, "1:N"
@@ -160,24 +165,26 @@ async def _sample_value_overlap(
             is_child_unique = child_unique_ratio > 0.95 and len(raw_child_vals) > 5
 
             # Sample parent values matching child values
-            # Using parameter array
-            p_query = f'SELECT DISTINCT "{parent_col_name}" FROM "{parent_table_name}" WHERE "{parent_col_name}" = ANY($1::text[]) LIMIT 200;'
-            # Convert values to strings for matching
             child_str_vals = [str(v) for v in list(child_set)[:100]]
-            # Fallback if types don't cast to text directly: query by IN clause with parameterized query
+            sample_size = len(child_str_vals)
+            
+            # Require minimum sample size: if sample is tiny (< 5), scale down overlap ratio
+            sample_discount = min(1.0, sample_size / 5.0)
+
             placeholders = ", ".join(f"${i+1}" for i in range(len(child_str_vals)))
-            p_sql = f'SELECT DISTINCT "{parent_col_name}"::text FROM "{parent_table_name}" WHERE "{parent_col_name}"::text IN ({placeholders});'
+            p_sql = f'SELECT DISTINCT "{parent_col_name}"::text FROM {parent_tbl_ref} WHERE "{parent_col_name}"::text IN ({placeholders});'
             matched_rows = await conn.fetch(p_sql, *child_str_vals)
 
             matched_count = len(matched_rows)
-            overlap_ratio = matched_count / max(1, len(child_str_vals))
+            raw_overlap_ratio = matched_count / max(1, len(child_str_vals))
+            overlap_ratio = raw_overlap_ratio * sample_discount
 
             # Cardinality determination
             cardinality = "1:1" if is_child_unique else "1:N"
             return float(overlap_ratio), cardinality
     except Exception as exc:
-        logger.debug(f"Overlap check skipped or failed for {child_table_name}.{child_col_name} -> {parent_table_name}.{parent_col_name}: {exc}")
-        return 0.0, "1:N"
+        logger.warning(f"Overlap check query error for {child_table_name}.{child_col_name} -> {parent_table_name}.{parent_col_name}: {exc}")
+        raise exc
 
 
 async def run_stage_relationships(
@@ -191,7 +198,14 @@ async def run_stage_relationships(
 ) -> Dict[str, Any]:
     """Execute Stage 2: Declared and Inferred Relationship Discovery."""
     logger.info(f"[Stage: Relationships] Starting for KB={kb_id}, schema_version={schema_version}")
-    schema_view = await adapter.get_current_schema(tenant_id, kb_id)
+    try:
+        schema_view = await adapter.get_schema_by_version(tenant_id, kb_id, schema_version)
+        if not schema_view:
+            schema_view = await adapter.get_current_schema(tenant_id, kb_id)
+    except Exception as exc:
+        logger.info(f"[Stage: Relationships] No schema view found ({exc}). Returning 0 relationships.")
+        return {"declared_relationships": 0, "inferred_relationships": 0}
+
     if not schema_view or not schema_view.tables:
         logger.info("[Stage: Relationships] No tables found in schema view.")
         return {"declared_relationships": 0, "inferred_relationships": 0}
@@ -199,6 +213,7 @@ async def run_stage_relationships(
     tables = schema_view.tables
     declared_count = 0
     inferred_count = 0
+    failed_overlap_checks = 0
 
     declared_rel_pairs: Set[Tuple[str, str, str, str]] = set()
 
@@ -310,18 +325,29 @@ async def run_stage_relationships(
                     target_score = 0.15 if p_col.is_primary_key else 0.05
 
                     # 2d. Value overlap sampling (bounded 5s)
-                    overlap_ratio, sampled_cardinality = await _sample_value_overlap(
-                        adapter=adapter,
-                        tenant_id=tenant_id,
-                        kb_id=kb_id,
-                        child_table_name=c_table.table_name,
-                        child_col_name=c_colname,
-                        parent_table_name=p_table.table_name,
-                        parent_col_name=p_colname,
-                    )
+                    try:
+                        overlap_ratio, sampled_cardinality = await _sample_value_overlap(
+                            adapter=adapter,
+                            tenant_id=tenant_id,
+                            kb_id=kb_id,
+                            child_table_name=c_table.table_name,
+                            child_col_name=c_colname,
+                            parent_table_name=p_table.table_name,
+                            parent_col_name=p_colname,
+                            child_schema_name=c_table.schema_name,
+                            parent_schema_name=p_table.schema_name,
+                        )
+                    except Exception as ov_err:
+                        failed_overlap_checks += 1
+                        logger.warning(
+                            f"[Stage: Relationships] Overlap check failed for {c_table.table_name}.{c_colname} -> {p_table.table_name}.{p_colname}: {ov_err}"
+                        )
+                        overlap_ratio, sampled_cardinality = 0.0, "1:N"
 
                     overlap_score = min(0.25, overlap_ratio * 0.25)
-                    confidence = round(name_score + type_score + target_score + overlap_score, 2)
+                    raw_confidence = name_score + type_score + target_score + overlap_score
+                    # Cap inferred relationship confidence strictly below 0.95 (e.g. max 0.90)
+                    confidence = round(min(0.90, raw_confidence), 2)
 
                     if confidence >= min_inferred_confidence and (overlap_ratio > 0.0 or name_score >= 0.35):
                         item_key = f"rel:{c_table.schema_name}.{c_table.table_name}.{c_colname}->{p_table.schema_name}.{p_table.table_name}.{p_colname}"
@@ -362,9 +388,10 @@ async def run_stage_relationships(
 
     logger.info(
         f"[Stage: Relationships] Finished for KB={kb_id}. "
-        f"Declared: {declared_count}, Inferred: {inferred_count}"
+        f"Declared: {declared_count}, Inferred: {inferred_count}, Failed Overlaps: {failed_overlap_checks}"
     )
     return {
         "declared_relationships": declared_count,
         "inferred_relationships": inferred_count,
+        "failed_overlap_checks": failed_overlap_checks,
     }

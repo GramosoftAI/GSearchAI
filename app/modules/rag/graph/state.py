@@ -61,4 +61,6 @@ class GraphState(TypedDict):
     system_prompt: Optional[str]
     final_answer: Optional[str]
     sources: List[str]
+    source_documents: Optional[List[Dict[str, Any]]]
     error: Optional[str]
+

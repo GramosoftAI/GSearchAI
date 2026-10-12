@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.llm.deepinfra_llm import DeepInfraLLMClient, strip_think_tags
 from ..repositories.knowledge_item_repository import KnowledgeItemRepository
 from ..models.knowledge_items import KB2KnowledgeItem
-from ..sensitivity import is_sensitive_column
+from ..sensitivity import is_sensitive_column, is_sensitive_for_values
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +148,8 @@ async def run_stage_enrich(
             table_items[tbl_name] = it
         elif it.item_type == "column":
             tbl_name = (it.payload or {}).get("table_name")
+            if tbl_name and "." in tbl_name:
+                tbl_name = tbl_name.split(".")[-1]
             if not tbl_name and "." in it.item_key:
                 tbl_name = it.item_key.split(".")[-2]
             if tbl_name:
@@ -178,9 +180,12 @@ async def run_stage_enrich(
     )
 
     total_tokens_used = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
     tables_enriched = 0
     tables_skipped = 0
     tables_failed = 0
+    last_enrich_prompt: Optional[str] = None
 
     all_suggested_metrics: List[SuggestedMetric] = []
     all_candidate_glossary: List[CandidateGlossaryTerm] = []
@@ -188,7 +193,7 @@ async def run_stage_enrich(
     semaphore = asyncio.Semaphore(max_concurrent_calls)
 
     async def _enrich_table(tbl_name: str) -> Optional[Dict[str, Any]]:
-        nonlocal total_tokens_used, tables_enriched, tables_skipped, tables_failed
+        nonlocal total_tokens_used, total_input_tokens, total_output_tokens, tables_enriched, tables_skipped, tables_failed, last_enrich_prompt
         t_item = table_items[tbl_name]
         cols = column_items_by_table.get(tbl_name, [])
 
@@ -207,16 +212,23 @@ async def run_stage_enrich(
                 c_name = cp.get("column_name") or c_it.item_key.split(".")[-1]
                 is_sens = c_it.is_sensitive or cp.get("is_sensitive", False) or is_sensitive_column(c_name)
 
+                role = cp.get("role", "general")
                 col_repr = {
                     "column_name": c_name,
                     "data_type": cp.get("data_type", "unknown"),
-                    "role": cp.get("role", "general"),
+                    "role": role,
                     "unit_hint": cp.get("unit_hint"),
                 }
-                if not is_sens:
-                    stats = cp.get("stats", {})
-                    col_repr["distinct_count"] = stats.get("distinct_count")
-                    col_repr["top_values"] = stats.get("top_values", [])[:5]
+                stats = cp.get("stats", {})
+                d_count = stats.get("distinct_estimate") if stats.get("distinct_estimate") is not None else stats.get("distinct_count")
+                if d_count is None:
+                    d_count = stats.get("row_estimate", 1) or 1
+                col_repr["distinct_count"] = max(1, int(d_count))
+
+                if not is_sens and not is_sensitive_for_values(c_name):
+                    # Roles name, id, code, text get NO top_values in prompt
+                    if role not in ("name", "id", "code", "text"):
+                        col_repr["top_values"] = stats.get("top_values", [])[:5]
                 else:
                     col_repr["is_sensitive"] = True  # strictly no values
 
@@ -283,15 +295,28 @@ Return ONLY a valid JSON object matching this exact schema:
 
             # Call LLM with 2 retries
             parsed_json = None
+            prompt_tokens_this_batch = 0
+            completion_tokens_this_batch = 0
             async with semaphore:
                 for attempt in range(2):
                     try:
-                        raw_output = await client.generate(
-                            prompt=prompt,
-                            system_prompt="You are an expert database catalogist. Output ONLY valid JSON without explanation.",
-                            temperature=0.1,
-                            max_tokens=2048,
-                        )
+                        if callable(getattr(client, "generate_with_usage", None)) and "generate_with_usage" in client.__class__.__dict__:
+                            llm_resp = await client.generate_with_usage(
+                                prompt=prompt,
+                                system_prompt="You are an expert database catalogist. Output ONLY valid JSON without explanation.",
+                                temperature=0.1,
+                                max_tokens=2048,
+                            )
+                            raw_output = llm_resp.get("content", "")
+                            prompt_tokens_this_batch = llm_resp.get("prompt_tokens", 0)
+                            completion_tokens_this_batch = llm_resp.get("completion_tokens", 0)
+                        else:
+                            raw_output = await client.generate(
+                                prompt=prompt,
+                                system_prompt="You are an expert database catalogist. Output ONLY valid JSON without explanation.",
+                                temperature=0.1,
+                                max_tokens=2048,
+                            )
                         parsed = _extract_json_block(raw_output)
                         if parsed:
                             parsed_json = TableEnrichmentOutput(**parsed)
@@ -305,8 +330,18 @@ Return ONLY a valid JSON object matching this exact schema:
                 tables_failed += 1
                 continue
 
-            # Approximate tokens used
-            total_tokens_used += 1200
+            # Record real tokens used
+            if prompt_tokens_this_batch > 0 or completion_tokens_this_batch > 0:
+                total_input_tokens += prompt_tokens_this_batch
+                total_output_tokens += completion_tokens_this_batch
+                total_tokens_used += (prompt_tokens_this_batch + completion_tokens_this_batch)
+            else:
+                total_input_tokens += 900
+                total_output_tokens += 300
+                total_tokens_used += 1200
+
+            if tbl_name == "employees" or "employees" in tbl_name:
+                last_enrich_prompt = prompt
 
             # Store enrichment into payload.semantic
             semantic_data = {
@@ -377,7 +412,11 @@ Return ONLY a valid JSON object matching this exact schema:
         "tables_enriched": tables_enriched,
         "tables_skipped": tables_skipped,
         "tables_failed": tables_failed,
+        "model": getattr(client, "model_extraction", "deepinfra"),
+        "input_tokens": total_input_tokens,
+        "output_tokens": total_output_tokens,
         "approx_tokens_used": total_tokens_used,
+        "employees_enrich_prompt": last_enrich_prompt,
         "suggested_metrics": [m.model_dump() for m in all_suggested_metrics],
         "candidate_glossary": [g.model_dump() for g in all_candidate_glossary],
     }

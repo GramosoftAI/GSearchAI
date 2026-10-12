@@ -182,29 +182,35 @@ class CandidateSQLGenerator:
             elif op == "IS NOT NULL":
                 cond = exp.Not(this=exp.Is(this=col_expr, expression=exp.Null()))
             elif op == "IN":
-                # Support raw SQL subquery values like "(SELECT id FROM ... WHERE ...)"
-                val_str = str(p.value).strip()
-                if val_str.startswith("("):
-                    try:
-                        inner = sqlglot.parse_one(val_str, read="postgres")
-                        cond = exp.In(this=col_expr, query=inner)
-                    except Exception:
-                        cond = exp.In(this=col_expr, expressions=[exp.Literal.string(val_str)])
+                if isinstance(p.value, (list, tuple, set)):
+                    expressions = [_literal(v) for v in p.value]
+                    cond = exp.In(this=col_expr, expressions=expressions)
                 else:
-                    # Comma-separated literal list
-                    items = [v.strip().strip("'") for v in val_str.strip("()").split(",")]
-                    cond = exp.In(this=col_expr, expressions=[exp.Literal.string(v) for v in items])
+                    val_str = str(p.value).strip()
+                    if val_str.startswith("(") and ("select" in val_str.lower() or "SELECT" in val_str):
+                        try:
+                            inner = sqlglot.parse_one(val_str, read="postgres")
+                            cond = exp.In(this=col_expr, query=inner)
+                        except Exception:
+                            cond = exp.In(this=col_expr, expressions=[exp.Literal.string(val_str)])
+                    else:
+                        items = [v.strip().strip("'\"[]()") for v in val_str.strip("[]()").split(",") if v.strip()]
+                        cond = exp.In(this=col_expr, expressions=[_literal(v) for v in items])
             elif op == "NOT IN":
-                val_str = str(p.value).strip()
-                if val_str.startswith("("):
-                    try:
-                        inner = sqlglot.parse_one(val_str, read="postgres")
-                        cond = exp.Not(this=exp.In(this=col_expr, query=inner))
-                    except Exception:
-                        cond = exp.Not(this=exp.In(this=col_expr, expressions=[exp.Literal.string(val_str)]))
+                if isinstance(p.value, (list, tuple, set)):
+                    expressions = [_literal(v) for v in p.value]
+                    cond = exp.Not(this=exp.In(this=col_expr, expressions=expressions))
                 else:
-                    items = [v.strip().strip("'") for v in val_str.strip("()").split(",")]
-                    cond = exp.Not(this=exp.In(this=col_expr, expressions=[exp.Literal.string(v) for v in items]))
+                    val_str = str(p.value).strip()
+                    if val_str.startswith("(") and ("select" in val_str.lower() or "SELECT" in val_str):
+                        try:
+                            inner = sqlglot.parse_one(val_str, read="postgres")
+                            cond = exp.Not(this=exp.In(this=col_expr, query=inner))
+                        except Exception:
+                            cond = exp.Not(this=exp.In(this=col_expr, expressions=[exp.Literal.string(val_str)]))
+                    else:
+                        items = [v.strip().strip("'\"[]()") for v in val_str.strip("[]()").split(",") if v.strip()]
+                        cond = exp.Not(this=exp.In(this=col_expr, expressions=[_literal(v) for v in items]))
             else:
                 cond = exp.EQ(this=col_expr, expression=_literal(p.value))
 

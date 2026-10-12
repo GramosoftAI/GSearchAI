@@ -11,7 +11,7 @@ Coordinates:
 import uuid
 import logging
 import asyncio
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Any
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
@@ -54,7 +54,7 @@ class SchemaRetrievalRequest(BaseModel):
 
 class SchemaRetrievalResult(BaseModel):
     """Structured, version-pinned sub-schema retrieval outcome."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
 
     database_name: str
     database_type: str
@@ -64,6 +64,7 @@ class SchemaRetrievalResult(BaseModel):
     join_paths: List[RelationshipSchema]
     overall_confidence: float = Field(..., ge=0.0, le=1.0)
     untrusted_boundary_text: str = Field(..., description="Prompt-injection safe schema XML string")
+    context_pack: Optional[Any] = Field(default=None, description="Phase 3 grounded ContextPack")
 
 
 class SchemaRetriever:
@@ -313,18 +314,49 @@ class SchemaRetriever:
             best_t_key = max(initial_fused.keys(), key=lambda k: initial_fused[k].final_score)
             candidate_seeds.add(best_t_key)
 
-        # 6. Signal 3: Relationship Graph Expansion (Multi-Hop Join Resolution)
+        # 6. Signal 3: Phase 3 FK Expander (Multi-Hop FK Graph Expansion)
         active_relationships: List[RelationshipSchema] = []
         graph_boosts: Dict[str, float] = {}
 
         if request.include_relationships and candidate_seeds:
+            # Phase 3 FK Expander: Traverses canonical foreign key topology to find forward/reverse FKs and bridge tables
+            from .phase3_expander import Phase3Expander
+            phase3_expander = Phase3Expander(session=self.session, tenant_id=self.tenant_id)
+            seed_docs = [
+                {"table_name": t_key.split(".")[-1], "schema_name": t_key.split(".")[0] if "." in t_key else "public"}
+                for t_key in candidate_seeds
+            ]
+            try:
+                phase3_result = await phase3_expander.expand(
+                    seed_documents=seed_docs,
+                    kb_id=kb.id,
+                    schema_hash=schema_version,
+                    canonical_schema=canonical_schema,
+                    max_hops=2,
+                    max_related_tables=request.top_k_tables,
+                )
+                for exp_tbl in phase3_result.expanded_tables:
+                    t_name = exp_tbl.get("table_name")
+                    if t_name:
+                        for k in allowed_table_keys:
+                            if k.lower() == t_name.lower() or k.split(".")[-1].lower() == t_name.lower():
+                                graph_boosts[k] = max(graph_boosts.get(k, 0.0), 0.88)
+                                break
+                logger.info(
+                    f"[PHASE_3_RETRIEVAL] Successfully expanded {len(candidate_seeds)} seeds -> "
+                    f"{len(phase3_result.expanded_tables)} related tables via paths: {phase3_result.expansion_paths}"
+                )
+            except Exception as e:
+                logger.warning(f"[PHASE_3_RETRIEVAL] Phase 3 expansion encountered error: {e}")
+
             expansion = SchemaGraphExpander.expand_seeds(
                 seed_tables=candidate_seeds,
                 schema=canonical_schema,
                 max_hops=3,
                 bridge_table_boost=0.85,
             )
-            graph_boosts = expansion.graph_boosts
+            for k, v in expansion.graph_boosts.items():
+                graph_boosts[k] = max(graph_boosts.get(k, 0.0), v)
             active_relationships = expansion.active_relationships
 
         # 7. Final Score Fusion (combining vector, keyword, and graph signals)

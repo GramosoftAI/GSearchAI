@@ -17,7 +17,7 @@ class EntityExtractor:
         "and", "or", "not", "no", "nor", "but", "if", "then", "else", "so", "than",
         "show", "me", "my", "mine", "your", "yours", "his", "her", "hers", "its",
         "our", "ours", "their", "theirs", "this", "that", "these", "those",
-        "what", "which", "who", "whom", "whose", "how", "where", "when", "why",
+        "what", "which", "who", "whom", "whose", "how", "nhow", "where", "when", "why",
         "i", "you", "he", "she", "it", "we", "they",
         "am", "im",
         "get", "got", "find", "list", "give", "tell", "name", "named",
@@ -28,17 +28,19 @@ class EntityExtractor:
         "between", "through", "during", "before", "after", "above", "below",
         # Time words
         "yesterday", "today", "tomorrow", "last", "next", "ago", "since",
-        "week", "month", "year", "day", "date", "time", "hour", "minute",
+        "week", "month", "year", "day", "date", "time", "hour", "hours", "minute", "minutes", "second", "seconds",
         "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
         "january", "february", "march", "april", "may", "june", 
         "july", "august", "september", "october", "november", "december",
         # Database / business domain
-        "work", "package", "packages", "task", "tasks", "project", "projects",
+        "work", "worked", "working", "package", "packages", "task", "tasks", "project", "projects",
         "user", "users", "author", "assignee", "assigned", "created", "updated",
         "status", "type", "priority", "id", "total", "count", "number", "sum", "average",
         "table", "column", "row", "data", "database", "query", "report", "result",
         "select", "filter", "sort", "group", "order", "limit",
         "first", "second", "third", "new", "old", "recent", "current", "previous",
+        "pending", "approved", "rejected", "completed", "cancelled", "attendance",
+        "leave", "leaves", "timesheet", "overtime", "shortage", "balance", "deficit",
     }
     
     @staticmethod

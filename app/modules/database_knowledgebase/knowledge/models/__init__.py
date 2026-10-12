@@ -4,6 +4,8 @@ from .knowledge_items import (
     KB2EntityValue,
     KB2QueryMemory,
     KB2JobRun,
+    KB2AuditLog,
+    KB2SchemaDoc,
 )
 
 __all__ = [
@@ -11,5 +13,7 @@ __all__ = [
     "KB2EntityValue",
     "KB2QueryMemory",
     "KB2JobRun",
+    "KB2AuditLog",
+    "KB2SchemaDoc",
 ]
 

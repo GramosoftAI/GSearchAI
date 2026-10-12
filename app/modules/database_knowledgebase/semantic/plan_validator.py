@@ -209,7 +209,7 @@ class PlanValidator:
             # Check aggregation function
             if proj.aggregation and getattr(proj.aggregation, "value", str(proj.aggregation)) not in {"NONE", None}:
                 agg_val = getattr(proj.aggregation, "value", str(proj.aggregation)).upper()
-                if agg_val not in {"COUNT", "SUM", "AVG", "MIN", "MAX"}:
+                if agg_val not in {"COUNT", "COUNT_DISTINCT", "SUM", "AVG", "MIN", "MAX"}:
                     return PlanValidationResult(
                         outcome=ValidationOutcome.REJECT,
                         reason_code=ValidationReasonCode.INVALID_AGGREGATION,

@@ -43,7 +43,7 @@ class KB2KnowledgeItem(Base):
     __tablename__ = "kb2_knowledge_items"
 
     id = Column(SQLAlchemyUUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    tenant_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     db_knowledgebase_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("database_knowledgebases.id", ondelete="CASCADE"), nullable=False, index=True)
 
     item_type = Column(String(50), nullable=False)
@@ -98,7 +98,7 @@ class KB2EntityValue(Base):
     __tablename__ = "kb2_entity_values"
 
     id = Column(SQLAlchemyUUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    tenant_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     db_knowledgebase_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("database_knowledgebases.id", ondelete="CASCADE"), nullable=False, index=True)
 
     table_name = Column(String(255), nullable=False)
@@ -141,7 +141,7 @@ class KB2QueryMemory(Base):
     __tablename__ = "kb2_query_memory"
 
     id = Column(SQLAlchemyUUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    tenant_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     db_knowledgebase_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("database_knowledgebases.id", ondelete="CASCADE"), nullable=False, index=True)
     schema_version = Column(String(64), nullable=False, index=True)
 
@@ -181,7 +181,7 @@ class KB2JobRun(Base):
     __tablename__ = "kb2_job_runs"
 
     id = Column(SQLAlchemyUUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    tenant_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     db_knowledgebase_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("database_knowledgebases.id", ondelete="CASCADE"), nullable=False, index=True)
     schema_version = Column(String(64), nullable=False)
 
@@ -218,7 +218,7 @@ class KB2AuditLog(Base):
     __tablename__ = "kb2_audit_log"
 
     id = Column(SQLAlchemyUUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    tenant_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     db_knowledgebase_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("database_knowledgebases.id", ondelete="CASCADE"), nullable=False, index=True)
 
     actor = Column(String(255), nullable=False)
@@ -241,5 +241,64 @@ class KB2AuditLog(Base):
             f"<KB2AuditLog id={self.id} kb={self.db_knowledgebase_id} "
             f"action='{self.action}' item='{self.item_key}'>"
         )
+
+
+class KB2SchemaDoc(Base):
+    """Unified hybrid schema search index document (Phase 3)."""
+    __tablename__ = "kb2_schema_docs"
+
+    id = Column(SQLAlchemyUUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    tenant_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    db_knowledgebase_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey("database_knowledgebases.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    doc_type = Column(String(50), nullable=False)
+    item_key = Column(String(512), nullable=False)
+    title = Column(Text, nullable=False)
+    body = Column(Text, nullable=False)
+    aliases = Column(ARRAY(Text), server_default="{}", nullable=False)
+    unit = Column(String(100), nullable=True)
+    role = Column(String(100), nullable=True)
+    status = Column(String(30), nullable=False)
+    source = Column(String(30), nullable=False)
+    schema_version = Column(String(64), nullable=False)
+    input_hash = Column(String(64), nullable=True)
+
+    # Generated TSV computed column using PostgreSQL function
+    tsv = Column(
+        TSVECTOR,
+        Computed("kb2_schema_docs_generate_tsv(title, body, aliases)", persisted=True),
+        nullable=True,
+    )
+    embedding = Column(Vector(settings.embedding_dimension), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("db_knowledgebase_id", "doc_type", "item_key", name="uq_kb2_schema_docs_kb_type_key"),
+        CheckConstraint(
+            "doc_type IN ('table', 'column', 'metric', 'glossary')",
+            name="ck_kb2_schema_docs_doc_type",
+        ),
+        CheckConstraint(
+            "source IN ('declared', 'inferred', 'llm', 'admin')",
+            name="ck_kb2_schema_docs_source",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'confirmed', 'rejected', 'conflict', 'stale')",
+            name="ck_kb2_schema_docs_status",
+        ),
+        Index("ix_kb2_schema_docs_tenant_id", "tenant_id"),
+        Index("ix_kb2_schema_docs_lookup", "db_knowledgebase_id", "doc_type", "status"),
+        Index("ix_kb2_schema_docs_tsv", "tsv", postgresql_using="gin"),
+        {"extend_existing": True},
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<KB2SchemaDoc id={self.id} kb={self.db_knowledgebase_id} "
+            f"type='{self.doc_type}' key='{self.item_key}' title='{self.title[:30]}'>"
+        )
+
 
 

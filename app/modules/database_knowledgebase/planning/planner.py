@@ -333,6 +333,7 @@ class QueryPlanner:
         retrieval_result: SchemaRetrievalResult,
         default_limit: Optional[int] = None,
         semantic_context: Optional[Any] = None,
+        resolved_entities: Optional[List[Dict[str, Any]]] = None,
     ) -> QueryPlanIR:
         """
         Create a machine-validated QueryPlanIR from user query and retrieved sub-schema.
@@ -382,17 +383,18 @@ class QueryPlanner:
 
         from app.core.config import get_settings
         settings = get_settings()
-        resolved_entities: List[Any] = []
+        disambiguation_entities: List[Dict[str, Any]] = resolved_entities or []
+        schema_resolved_entities: List[Any] = []
 
         if getattr(settings, "entity_resolution_mode", "schema_grounded") == "schema_grounded" and getattr(analysis, "candidates", None):
             from .schema_entity_resolver import SchemaEntityResolver, EntityConfidence
             try:
-                resolved_entities = SchemaEntityResolver.resolve_candidates_sync(
+                schema_resolved_entities = SchemaEntityResolver.resolve_candidates_sync(
                     candidates=analysis.candidates,
                     canonical_schema=canonical_schema,
                     candidate_tables=list(alias_to_table.values()),
                 )
-                for r in resolved_entities:
+                for r in schema_resolved_entities:
                     # Strict precision criteria for primary entity tables:
                     # 1. Must be HIGH confidence (>= 0.70)
                     # 2. Must be entity_type == "TABLE" (columns are not entity tables)
@@ -436,7 +438,7 @@ class QueryPlanner:
                                     used_for_entity.add(a)
                                 break
             except Exception:
-                resolved_entities = []
+                schema_resolved_entities = []
 
         for ent in analysis.detected_entities:
             best_score = -1.0
@@ -730,9 +732,9 @@ class QueryPlanner:
         needed_aliases: Set[str] = {a for a in ({primary_alias} | set(primary_entity_aliases) | named_aliases) if a in alias_to_table}
 
         # Add host tables of resolved COLUMN entities to needed_aliases
-        if resolved_entities:
+        if schema_resolved_entities:
             from .schema_entity_resolver import EntityConfidence
-            for r in resolved_entities:
+            for r in schema_resolved_entities:
                 if (
                     r.entity_type == "COLUMN"
                     and r.resolved_to
@@ -998,7 +1000,7 @@ class QueryPlanner:
             else:
                 # Standalone asset query
                 active_target_aliases = {a for a in active_target_aliases if alias_to_table[a].table_name.lower() == "asset_asset"}
-            if any(w in q_lower for w in ("category", "asset category")):
+            if any(w in q_lower for w in ("category", "asset category", "laptop", "desktop", "phone", "tablet", "device", "cables")):
                 cat_a = _ensure_canonical_table("asset_assetcategory")
                 if cat_a:
                     active_target_aliases.add(cat_a)
@@ -1144,7 +1146,7 @@ class QueryPlanner:
 
         # Enforce strict domain boundaries on active_target_aliases
         ALLOWED_ASSET_TABLES = {"asset_asset", "asset_assetassignment", "employee_employee", "employee_employeeworkinformation", "base_department"}
-        if any(w in q_lower for w in ("category", "asset category")):
+        if any(w in q_lower for w in ("category", "asset category", "laptop", "desktop", "phone", "tablet", "device", "cables")):
             ALLOWED_ASSET_TABLES.add("asset_assetcategory")
         ALLOWED_ATTENDANCE_TABLES = {
             "attendance_attendance",
@@ -1867,9 +1869,9 @@ class QueryPlanner:
                         )
                         projected_cols_per_alias[alias].add(c_name)
 
-            if resolved_entities:
+            if schema_resolved_entities:
                 from .schema_entity_resolver import EntityConfidence
-                for r in resolved_entities:
+                for r in schema_resolved_entities:
                     if r.entity_type == "COLUMN" and r.resolved_to and r.confidence in (EntityConfidence.HIGH, EntityConfidence.MEDIUM):
                         r_clean = r.resolved_to.lower()
                         r_parts = r_clean.split(".")
@@ -1962,10 +1964,10 @@ class QueryPlanner:
             matched_col = None
 
             # Schema-Grounded candidate column binding
-            if resolved_entities and p.target_concept in ("amount/price", "predicate", "comparison"):
+            if schema_resolved_entities and p.target_concept in ("amount/price", "predicate", "comparison"):
                 from .schema_entity_resolver import EntityConfidence
                 best_score = -1.0
-                for r in resolved_entities:
+                for r in schema_resolved_entities:
                     if r.entity_type == "COLUMN" and r.resolved_to and r.confidence != EntityConfidence.UNRESOLVED:
                         r_clean = r.resolved_to.lower()
                         r_parts = r_clean.split(".")
@@ -2200,7 +2202,14 @@ class QueryPlanner:
                                     matched_col = c_name
                                     break
                             elif p.target_concept == "asset_name":
-                                if "asset" in tbl.table_name.lower() and c_lower == "asset_name":
+                                # If asset_assetcategory is present in the plan, bind category terms (like laptop) to category name!
+                                cat_alias = next((a for a, t in alias_to_table.items() if t.table_name.lower() == "asset_assetcategory"), None)
+                                if cat_alias:
+                                    cat_col = next((c for c in alias_to_table[cat_alias].columns if "name" in c.lower() or "category" in c.lower()), "asset_category_name")
+                                    matched_alias = cat_alias
+                                    matched_col = cat_col
+                                    break
+                                elif "asset" in tbl.table_name.lower() and c_lower == "asset_name":
                                     matched_alias = alias
                                     matched_col = c_name
                                     break
@@ -2417,10 +2426,63 @@ class QueryPlanner:
 
         # Inject entity value resolution: check for literal value mentions (e.g. employee names like "Kannan")
         if user_query:
+            # 1. First, check if disambiguation already resolved this person to exact database IDs!
+            if disambiguation_entities:
+                for de in disambiguation_entities:
+                    if de.get("type") == "user" and de.get("id"):
+                        de_name = de.get("name", "").lower()
+                        de_tbl = (de.get("table") or "").lower()
+                        de_col = de.get("pk_column") or "id"
+                        de_ids = de["id"] if isinstance(de["id"], list) else [de["id"]]
+                        
+                        # Find matching table alias in our planned tables
+                        target_alias = None
+                        target_col = de_col
+                        for a, tbl in alias_to_table.items():
+                            t_low = tbl.table_name.lower()
+                            if de_tbl and t_low == de_tbl:
+                                target_alias = a
+                                break
+                            elif not de_tbl and "employee" in t_low:
+                                target_alias = a
+                                break
+
+                        if target_alias:
+                            needed_aliases.add(target_alias)
+                            # Remove any prior string-based predicate matching this person's name
+                            predicates = [
+                                p for p in predicates
+                                if not (p.table_alias == target_alias and any(de_name in str(p.value).lower() for de_name in (de_name, f"%{de_name}%")))
+                            ]
+                            if len(de_ids) == 1:
+                                predicates.append(
+                                    PredicatePlan(
+                                        table_alias=target_alias,
+                                        column_name=target_col,
+                                        operator="=",
+                                        value=de_ids[0],
+                                        logical_operator="AND",
+                                    )
+                                )
+                            else:
+                                predicates.append(
+                                    PredicatePlan(
+                                        table_alias=target_alias,
+                                        column_name=target_col,
+                                        operator="IN",
+                                        value=de_ids,
+                                        logical_operator="AND",
+                                    )
+                                )
+                            logger.info(f"[PLANNER] Bound disambiguation entity '{de_name}' to {target_alias}.{target_col} IN {de_ids}")
+
             from .entity_value_resolver import EntityValueResolver
             literals = EntityValueResolver.extract_literal_candidates(user_query, canonical_schema=canonical_schema)
             if literals:
                 for lit in literals:
+                    # If this literal was already resolved by disambiguation to IDs, skip literal fallback
+                    if disambiguation_entities and any(de.get("name", "").lower() == lit.lower() for de in disambiguation_entities):
+                        continue
                     # Check if already bound to an existing predicate
                     if any(pred.value == lit or pred.value == f"%{lit}%" for pred in predicates):
                         continue
@@ -2930,7 +2992,7 @@ class QueryPlanner:
                 plan,
                 canonical_schema,
                 expected_entities=analysis.detected_entities,
-                resolved_entities=resolved_entities if resolved_entities else None,
+                resolved_entities=schema_resolved_entities if schema_resolved_entities else None,
             )
         except QueryPlanValidationError as e:
             print(f"DEBUG: Deterministic plan failed validation: {e}. Falling back to LLM.")
@@ -2953,17 +3015,35 @@ class QueryPlanner:
         # Mandatory Semantic Plan Validation Gate
         from ..semantic.plan_validator import PlanValidator
         from ..semantic.models import ValidationOutcome
+        from ..services.service import DatabaseKnowledgebaseService
+
+        # Resolve registries from semantic_context or fallback to service shared singletons
+        sem_reg = getattr(semantic_context, "semantic_registry", None) or getattr(DatabaseKnowledgebaseService, "_semantic_model_registry", None)
+        met_reg = getattr(semantic_context, "metric_registry", None) or getattr(DatabaseKnowledgebaseService, "_metric_registry", None)
+        rel_graph = getattr(semantic_context, "relationship_graph", None) or getattr(DatabaseKnowledgebaseService, "_relationship_graph", None)
+        
+        # Resolve tenant_id
+        t_id = getattr(semantic_context, "tenant_id", None)
+        if not t_id and hasattr(plan, "tenant_id") and plan.tenant_id:
+            t_id = plan.tenant_id
+        if not t_id and hasattr(canonical_schema, "metadata") and canonical_schema.metadata:
+            t_id = canonical_schema.metadata.get("tenant_id")
+
+        req_metric_id = None
+        if semantic_context and getattr(semantic_context, "resolved_metric", None):
+            req_metric_id = semantic_context.resolved_metric.metric_id
+
         val_res = PlanValidator.validate(
             plan=plan,
             canonical_schema=canonical_schema,
-            semantic_registry=getattr(semantic_context, "semantic_registry", None) if semantic_context else None,
-            metric_registry=getattr(semantic_context, "metric_registry", None) if semantic_context else None,
-            relationship_graph=getattr(semantic_context, "relationship_graph", None) if semantic_context else None,
-            tenant_id=getattr(semantic_context, "tenant_id", None) if semantic_context else None,
+            semantic_registry=sem_reg,
+            metric_registry=met_reg,
+            relationship_graph=rel_graph,
+            tenant_id=t_id,
             knowledgebase_id=database_knowledgebase_id,
-            requested_metric_id=semantic_context.resolved_metric.metric_id if (semantic_context and getattr(semantic_context, "resolved_metric", None)) else None,
+            requested_metric_id=req_metric_id,
             expected_entities=analysis.detected_entities,
-            resolved_entities=resolved_entities if resolved_entities else None,
+            resolved_entities=schema_resolved_entities if schema_resolved_entities else None,
         )
         if val_res.outcome == ValidationOutcome.REJECT:
             raise QueryPlanValidationError(
@@ -3241,7 +3321,10 @@ class QueryPlanner:
                 is_agg = any(w in q_low for w in ("how many", "total", "sum", "average", "avg", "how much", "amount of"))
                 if is_agg:
                     func_str = "AVG" if ("average" in q_low or "avg" in q_low) else "SUM"
-                    if "second" in q_low:
+                    if any(w in q_low for w in ("pending", "shortage", "deficit", "remaining", "short of")):
+                        col_str = "ROUND(SUM(GREATEST(0, 28800 - at_work_second)) / 3600.0, 2)"
+                        alias_str = "pending_hours"
+                    elif "second" in q_low:
                         col_str = f"{func_str}(at_work_second)"
                         alias_str = "avg_working_seconds" if func_str == "AVG" else "total_working_seconds"
                     else:
@@ -3517,8 +3600,8 @@ class QueryPlanner:
                         )
                     )
 
-        # J. Absent Today Active Span Predicate (Blocker 2)
-        if "absent" in q_low and any(w in q_low for w in ("today", "this morning", "currently", "now")):
+        # J. Absent / On Leave Today Active Span Predicate (Blocker 2)
+        if any(w in q_low for w in ("absent", "leave", "on leave")) and any(w in q_low for w in ("today", "this morning", "currently", "now")):
             lea_alias = next((a for a in needed_aliases if alias_to_table[a].table_name.lower() == "leave_leaverequest"), None)
             if lea_alias:
                 # Remove single-point date predicates like end_date = CURRENT_DATE or start_date = CURRENT_DATE
@@ -3554,6 +3637,16 @@ class QueryPlanner:
                             logical_operator="AND",
                         )
                     )
+                # If query asks for count of employees (e.g. "how many employees taken leave today"), project COUNT(DISTINCT employee_id_id)
+                if any(w in q_low for w in ("employee", "employees", "staff", "people", "person", "who")):
+                    emp_col = next((c for c in alias_to_table[lea_alias].columns if c in ("employee_id_id", "employee_id", "employee")), "id")
+                    projections = [
+                        ColumnProjectionPlan(
+                            table_alias=lea_alias,
+                            column_name=emp_col,
+                            aggregation=AggregateFunction.COUNT_DISTINCT,
+                        )
+                    ]
 
         # K. Absent Days & Absenteeism Department Ranking (Blockers 1, 3, 4)
         if "absenteeism" in q_low or ("department" in q_low and "highest" in q_low and "absent" in q_low):

@@ -268,6 +268,39 @@ class DatabaseKnowledgebaseService:
             # 1. Run deterministic introspection
             canonical_schema = await DatabaseIntrospector.introspect(config=config, schemas=schemas)
 
+            # 1.1 Ingest user-defined ER mappings from k2b_user_mapping
+            try:
+                user_mappings = await self.repo.get_user_mappings(kb_id=kb_id, only_active=True)
+                if user_mappings:
+                    from ..schemas.canonical import ForeignKeySchema
+                    table_lookup = {t.name.lower(): t for t in canonical_schema.all_tables}
+                    added_count = 0
+                    for um in user_mappings:
+                        src_tbl = table_lookup.get(um.source_table.lower())
+                        if src_tbl:
+                            # Avoid duplicates
+                            existing = any(
+                                fk.referred_table.lower() == um.target_table.lower()
+                                and um.source_column.lower() in [c.lower() for c in fk.constrained_columns]
+                                and um.target_column.lower() in [c.lower() for c in fk.referred_columns]
+                                for fk in src_tbl.foreign_keys
+                            )
+                            if not existing:
+                                src_tbl.foreign_keys.append(
+                                    ForeignKeySchema(
+                                        name=f"fk_user_{um.source_table}_{um.source_column}",
+                                        constrained_columns=[um.source_column],
+                                        referred_schema=src_tbl.schema_name or "public",
+                                        referred_table=um.target_table,
+                                        referred_columns=[um.target_column],
+                                    )
+                                )
+                                added_count += 1
+                    if added_count > 0:
+                        logger.info(f"Ingested {added_count} user mappings into canonical schema for KB {kb_id}")
+            except Exception as um_err:
+                logger.warning(f"Failed to ingest user mappings into canonical schema for KB {kb_id}: {um_err}")
+
             # 2. Persist Schema Snapshot
             schema_json = canonical_schema.model_dump(mode="json")
             snapshot = await self.repo.save_schema_snapshot(
@@ -548,6 +581,236 @@ class DatabaseKnowledgebaseService:
             database_description=entity.description or "",
         )
 
+    async def retrieve_schema_phase3(
+        self,
+        kb_id: uuid.UUID,
+        user_query: str,
+        conversation_context: Optional[List[str]] = None,
+        top_k_tables: int = 5,
+        top_k_columns_per_table: int = 25,
+        include_relationships: bool = True,
+        canonical_schema: Optional[DatabaseSchema] = None,
+        reference_date: Optional[Any] = None,
+        clarification_answers: Optional[Dict[str, Any]] = None,
+    ) -> SchemaRetrievalResult:
+        """
+        Execute Phase 3 Grounded Schema & Context Retrieval via ContextPackBuilder (Steps 3.1 - 3.10).
+        Coordinates:
+        - QuestionAnalyzer (time range, unit values, comparisons, tokens)
+        - LiveEntityResolver (checks sensitive fields, unanswerable guard)
+        - TableRetriever (RRF multi-signal fusion: FTS, Vector, Glossary, Metrics, Value Index)
+        - ColumnRetriever (prunes columns, identifies metrics)
+        - JoinPathFinder (connective join paths)
+        - QueryMemory & KnowledgeItem rules
+        - Converts token-bounded ContextPack into version-pinned SchemaRetrievalResult with grounded XML.
+        """
+        from ..knowledge.retrieval.context_pack import ContextPackBuilder, ContextPack
+        from ..retrieval.scorer import TableRetrievalScore
+        from ..retrieval.pruner import SchemaPruner
+        from ..schemas.canonical import RelationshipSchema, RelationshipType
+
+        tenant_uuid = uuid.UUID(str(self.tenant_id))
+
+        # 1. Fetch canonical schema snapshot if not provided
+        if canonical_schema is None:
+            snapshot = await self.repo.get_latest_schema_snapshot(kb_id)
+            if not snapshot:
+                raise DatabaseKnowledgebaseNotFoundError(f"No schema snapshot found for KB {kb_id}")
+            canonical_schema = DatabaseSchema(**snapshot.schema_data)
+
+        # 2. Execute Phase 3 ContextPackBuilder
+        builder = ContextPackBuilder(db=self.db, tenant_id=tenant_uuid)
+        pack: ContextPack = await builder.build(
+            db_knowledgebase_id=kb_id,
+            question=user_query,
+            reference_date=reference_date,
+            clarification_answers=clarification_answers,
+        )
+
+        # 3. Fail-closed security guard on unanswerable sensitive access
+        if pack.unanswerable and pack.unanswerable.get("flag"):
+            reason = pack.unanswerable.get("reason", "Question references restricted/sensitive data.")
+            raise SQLValidationError(f"Security policy rejection: {reason}")
+
+        # 4. Map candidate tables against canonical schema
+        canonical_tables_map: Dict[str, Any] = {}
+        for s_info in canonical_schema.schemas.values():
+            for t_name, t_schema in s_info.tables.items():
+                canonical_tables_map[t_name.lower()] = t_schema
+                canonical_tables_map[f"{t_schema.schema_name.lower()}.{t_name.lower()}"] = t_schema
+
+        selected_scores: Dict[str, TableRetrievalScore] = {}
+        retrieved_table_schemas: List[Any] = []
+
+        for cand in pack.tables:
+            tbl_clean = cand.get("name", "").lower()
+            matching_schema = canonical_tables_map.get(tbl_clean)
+            if matching_schema:
+                t_key = f"{matching_schema.schema_name}.{matching_schema.table_name}"
+                matched_cols = [
+                    c.get("name") for c in pack.columns
+                    if c.get("table", "").lower() in (tbl_clean, matching_schema.table_name.lower())
+                ]
+                score_val = float(cand.get("score", 1.0))
+                score_obj = TableRetrievalScore(
+                    table_name=matching_schema.table_name,
+                    final_score=score_val,
+                    vector_score=score_val,
+                    keyword_score=score_val,
+                    graph_score=1.0,
+                    matched_columns=matched_cols,
+                )
+                selected_scores[t_key] = score_obj
+                selected_scores[matching_schema.table_name] = score_obj
+                if matching_schema not in retrieved_table_schemas:
+                    retrieved_table_schemas.append(matching_schema)
+            if len(retrieved_table_schemas) >= top_k_tables:
+                break
+
+        # Fallback to Phase 2A hybrid if Phase 3 yields no candidate tables (e.g. unindexed KB or cold start)
+        if not retrieved_table_schemas:
+            logger.info("[PHASE_3_RETRIEVAL] Phase 3 returned 0 candidate tables; falling back to Phase 2A hybrid retriever")
+            fallback_res = await self.retrieve_schema(
+                kb_id=kb_id,
+                user_query=user_query,
+                conversation_context=conversation_context,
+                top_k_tables=top_k_tables,
+                top_k_columns_per_table=top_k_columns_per_table,
+                include_relationships=include_relationships,
+                canonical_schema=canonical_schema,
+                use_phase3=False,
+            )
+            fallback_res.context_pack = pack
+            return fallback_res
+
+        # 5. Build active relationships from Phase 3 join tree
+        active_relationships: List[RelationshipSchema] = []
+        for j in pack.joins:
+            l_tbl_name = j.get("left_table", "").lower()
+            r_tbl_name = j.get("right_table", "").lower()
+            l_schema = canonical_tables_map.get(l_tbl_name)
+            r_schema = canonical_tables_map.get(r_tbl_name)
+            if l_schema and r_schema:
+                active_relationships.append(
+                    RelationshipSchema(
+                        source_schema=l_schema.schema_name,
+                        source_table=l_schema.table_name,
+                        source_columns=[j.get("left_col", "id")],
+                        target_schema=r_schema.schema_name,
+                        target_table=r_schema.table_name,
+                        target_columns=[j.get("right_col", "id")],
+                        relationship_type=RelationshipType.MANY_TO_ONE,
+                    )
+                )
+
+        if include_relationships:
+            retrieved_names = {t.table_name.lower() for t in retrieved_table_schemas}
+            for rel in getattr(canonical_schema, "relationships", []):
+                if (
+                    rel.source_table.lower() in retrieved_names
+                    and rel.target_table.lower() in retrieved_names
+                    and rel not in active_relationships
+                ):
+                    active_relationships.append(rel)
+
+            # Ingest active user mappings dynamically into active relationships
+            try:
+                user_maps = await self.repo.get_user_mappings(kb_id=kb_id, only_active=True)
+                for um in user_maps:
+                    if (
+                        um.source_table.lower() in retrieved_names
+                        and um.target_table.lower() in retrieved_names
+                    ):
+                        user_rel = RelationshipSchema(
+                            source_schema=canonical_tables_map.get(um.source_table.lower(), {}).schema_name or "public" if hasattr(canonical_tables_map.get(um.source_table.lower()), "schema_name") else "public",
+                            source_table=um.source_table,
+                            source_columns=[um.source_column],
+                            target_schema=canonical_tables_map.get(um.target_table.lower(), {}).schema_name or "public" if hasattr(canonical_tables_map.get(um.target_table.lower()), "schema_name") else "public",
+                            target_table=um.target_table,
+                            target_columns=[um.target_column],
+                            relationship_type=RelationshipType.MANY_TO_ONE,
+                        )
+                        if user_rel not in active_relationships:
+                            active_relationships.append(user_rel)
+            except Exception as um_ret_err:
+                logger.debug(f"User mapping retrieval injection ignored: {um_ret_err}")
+
+        # 6. Hierarchical Sub-Schema Pruning
+        pruned_tables, pruned_rels, untrusted_xml = SchemaPruner.prune_schema(
+            canonical_schema=canonical_schema,
+            selected_scores=selected_scores,
+            active_relationships=active_relationships,
+            top_k_columns_per_table=top_k_columns_per_table,
+        )
+
+        # 7. Enrich XML with Phase 3 Grounded Context Pack
+        grounded_lines = ["\n<!-- PHASE 3 GROUNDED CONTEXT PACK -->\n<grounded_context>"]
+        if pack.entities:
+            grounded_lines.append("  <resolved_entities>")
+            for ent in pack.entities:
+                grounded_lines.append(
+                    f'    <entity span="{ent.get("span")}" table="{ent.get("table")}" '
+                    f'column="{ent.get("column")}" resolved_pk="{ent.get("pk")}" '
+                    f'status="{ent.get("status")}"/>'
+                )
+            grounded_lines.append("  </resolved_entities>")
+        if pack.time_range:
+            tr = pack.time_range
+            grounded_lines.append(
+                f'  <time_range start="{tr.get("start_date")}" end="{tr.get("end_date")}" '
+                f'expression="{tr.get("expression")}"/>'
+            )
+        if pack.comparisons:
+            grounded_lines.append("  <comparisons>")
+            for cmp in pack.comparisons:
+                grounded_lines.append(
+                    f'    <comparison operator="{cmp.get("operator")}" target="{cmp.get("target_value")}" '
+                    f'unit="{cmp.get("target_unit")}"/>'
+                )
+            grounded_lines.append("  </comparisons>")
+        if pack.metrics:
+            grounded_lines.append("  <metrics>")
+            for m in pack.metrics:
+                grounded_lines.append(
+                    f'    <metric name="{m.get("name")}" expression="{m.get("expression")}" '
+                    f'unit="{m.get("unit")}"/>'
+                )
+            grounded_lines.append("  </metrics>")
+        if pack.rules:
+            grounded_lines.append("  <business_rules>")
+            for r in pack.rules:
+                grounded_lines.append(
+                    f'    <rule name="{r.get("name")}" description="{r.get("description")}" '
+                    f'expression="{r.get("rule_expression")}"/>'
+                )
+            grounded_lines.append("  </business_rules>")
+        if pack.similar_queries:
+            grounded_lines.append("  <similar_queries>")
+            for sq in pack.similar_queries:
+                grounded_lines.append(
+                    f'    <query question="{sq.get("question")}" sql="{sq.get("compiled_sql")}"/>'
+                )
+            grounded_lines.append("  </similar_queries>")
+        grounded_lines.append("</grounded_context>")
+        grounded_xml = "\n".join(grounded_lines)
+
+        if "</database>" in untrusted_xml:
+            enriched_xml = untrusted_xml.replace("</database>", f"{grounded_xml}\n</database>")
+        else:
+            enriched_xml = f"{untrusted_xml}\n{grounded_xml}"
+
+        return SchemaRetrievalResult(
+            database_name=canonical_schema.database_name,
+            database_type=canonical_schema.database_type,
+            schema_version=canonical_schema.fingerprint,
+            retrieved_tables=pruned_tables,
+            retrieval_scores=selected_scores,
+            join_paths=pruned_rels,
+            overall_confidence=float(pack.confidence),
+            untrusted_boundary_text=enriched_xml,
+            context_pack=pack,
+        )
+
     async def retrieve_schema(
         self,
         kb_id: uuid.UUID,
@@ -557,8 +820,19 @@ class DatabaseKnowledgebaseService:
         top_k_columns_per_table: int = 25,
         include_relationships: bool = True,
         canonical_schema: Optional[DatabaseSchema] = None,
+        use_phase3: bool = True,
     ) -> SchemaRetrievalResult:
-        """Execute hybrid schema retrieval scoped by tenant_id and kb_id."""
+        """Execute schema retrieval scoped by tenant_id and kb_id. Defaults to Phase 3 ContextPack."""
+        if use_phase3:
+            return await self.retrieve_schema_phase3(
+                kb_id=kb_id,
+                user_query=user_query,
+                conversation_context=conversation_context,
+                top_k_tables=top_k_tables,
+                top_k_columns_per_table=top_k_columns_per_table,
+                include_relationships=include_relationships,
+                canonical_schema=canonical_schema,
+            )
         retriever = SchemaRetriever(session=self.db, tenant_id=uuid.UUID(str(self.tenant_id)))
         request = SchemaRetrievalRequest(
             tenant_id=uuid.UUID(str(self.tenant_id)),
@@ -724,7 +998,7 @@ class DatabaseKnowledgebaseService:
         self,
         kb_id: uuid.UUID,
         user_query: str,
-        top_k_tables: int = 5,
+        top_k_tables: int = 8,
         top_k_columns_per_table: int = 25,
         use_llm: bool = True,
         execution_config: Optional[ExecutionConfig] = None,
@@ -864,7 +1138,7 @@ class DatabaseKnowledgebaseService:
                     logger.info(f"[DISAMBIGUATION] Extracted candidate names: {names}")
                     # audit_ctx is defined above
                     for name in names:
-                        extracted_user_id = await CollisionDetector.check_for_user_collisions(
+                        collision_result = await CollisionDetector.check_for_user_collisions(
                             extracted_name=name,
                             kb_entity=entity,
                             secret_manager=self.secrets,
@@ -872,9 +1146,23 @@ class DatabaseKnowledgebaseService:
                             audit_context=audit_ctx,
                             notices_out=disambiguation_notices,
                         )
-                        if extracted_user_id:
-                            resolved_entities_list.append({"type": "user", "id": extracted_user_id, "name": name})
-                            logger.info(f"[DISAMBIGUATION] Resolved '{name}' -> user ID {extracted_user_id}")
+                        if collision_result:
+                            if isinstance(collision_result, dict):
+                                extracted_user_id = collision_result.get("ids")
+                                ent_table = collision_result.get("table")
+                                ent_col = collision_result.get("pk_column")
+                            else:
+                                extracted_user_id = collision_result
+                                ent_table = None
+                                ent_col = None
+                            resolved_entities_list.append({
+                                "type": "user",
+                                "id": extracted_user_id,
+                                "name": name,
+                                "table": ent_table,
+                                "pk_column": ent_col,
+                            })
+                            logger.info(f"[DISAMBIGUATION] Resolved '{name}' -> user ID {extracted_user_id} in {ent_table}")
                 except Exception as e:
                     # DisambiguationRequiredError must propagate up
                     from ..disambiguation.exceptions import DisambiguationRequiredError
@@ -908,15 +1196,20 @@ class DatabaseKnowledgebaseService:
                 )
 
             t_ret_start = time.perf_counter()
-            retrieval_res = await self.retrieve_schema(
+            retrieval_res = await self.retrieve_schema_phase3(
                 kb_id=kb_id,
-                user_query=query_with_rules,
+                user_query=user_query,
                 top_k_tables=top_k_tables,
                 top_k_columns_per_table=top_k_columns_per_table,
                 include_relationships=True,
                 canonical_schema=canonical_schema,
             )
             t_ret_ms = (time.perf_counter() - t_ret_start) * 1000.0
+
+            if hasattr(retrieval_res, "context_pack") and retrieval_res.context_pack:
+                if getattr(retrieval_res.context_pack, "clarifications", None):
+                    disambiguation_notices.extend(retrieval_res.context_pack.clarifications)
+
             tracer.schema_version = retrieval_res.schema_version
             table_scores = {}
             for tbl_name, score_obj in retrieval_res.retrieval_scores.items():
@@ -994,6 +1287,7 @@ class DatabaseKnowledgebaseService:
                 canonical_schema=canonical_schema,
                 retrieval_result=retrieval_res,
                 semantic_context=semantic_res,
+                resolved_entities=resolved_entities_list,
             )
             # Ensure all tables planned from canonical schema are registered in retrieval_res.retrieved_tables
             # so AST security policy recognizes valid schema bridges and anchors
@@ -1160,6 +1454,45 @@ class DatabaseKnowledgebaseService:
                 normalization_latency_ms=t_norm_ms,
                 error=None,
             )
+
+            # =========================================================================
+            # STEP 5b: Zero-Row Recovery Gate
+            # If deterministic SQL returned 0 rows and contains WHERE filters,
+            # retry via LLM candidate generation with schema context to relax or repair filters!
+            # =========================================================================
+            if (
+                canonical_result.row_count == 0
+                and candidate_sql.deterministic_sql_compilation
+                and use_llm
+            ):
+                logger.info(
+                    "[ZERO_ROW_RECOVERY] Deterministic query returned 0 rows. "
+                    "Triggering LLM SQL generation and repair for zero-row recovery."
+                )
+                try:
+                    retry_candidate = await SQLRepairEngine.generate_and_validate(
+                        user_query=query_with_rules,
+                        plan=plan,
+                        canonical_schema=canonical_schema,
+                        retrieval_result=retrieval_res,
+                        use_llm=True,
+                        security_overrides=security_overrides,
+                        audit_context=audit_ctx,
+                    )
+                    retry_result = await self.execute_candidate_sql(
+                        kb_id=kb_id,
+                        candidate_sql=retry_candidate,
+                        execution_config=execution_config,
+                    )
+                    if retry_result.row_count > 0:
+                        logger.info(
+                            f"[ZERO_ROW_RECOVERY] LLM retry succeeded with {retry_result.row_count} rows! "
+                            f"Adopting recovered result."
+                        )
+                        candidate_sql = retry_candidate
+                        canonical_result = retry_result
+                except Exception as retry_err:
+                    logger.warning(f"[ZERO_ROW_RECOVERY] Recovery attempt failed: {retry_err}")
 
             if event_sink:
                 await event_sink.emit(
@@ -1455,5 +1788,99 @@ class DatabaseKnowledgebaseService:
                 metrics_summary=metrics_summary,
                 error=safe_msg,
             )
+
+    # ============= USER MAPPINGS (ER DIAGRAM) =============
+
+    async def get_user_mappings(self, kb_id: uuid.UUID) -> List[Dict[str, Any]]:
+        """Fetch all user-defined schema mappings."""
+        records = await self.repo.get_user_mappings(kb_id=kb_id, only_active=True)
+        return [
+            {
+                "id": str(r.id),
+                "sourceTable": r.source_table,
+                "sourceColumn": r.source_column,
+                "targetTable": r.target_table,
+                "targetColumn": r.target_column,
+                "relationshipType": r.relationship_type,
+                "sync_status": getattr(r, "sync_status", "SUCCESS") or "SUCCESS",
+                "sync_error": getattr(r, "sync_error", None),
+                "description": r.description,
+                "metadata": r.extra_metadata or {},
+                "is_active": r.is_active,
+            }
+            for r in records
+        ]
+
+    async def save_user_mappings(
+        self,
+        kb_id: uuid.UUID,
+        mappings: List[Dict[str, Any]],
+        trigger_sync: bool = True,
+    ) -> Dict[str, Any]:
+        """Save user mappings and set sync_status to SUCCESS or FAILED in the database."""
+        saved = await self.repo.save_user_mappings(kb_id=kb_id, mappings=mappings, replace=True)
+        await self.db.commit()
+
+        synced = False
+        error_msg = None
+
+        if trigger_sync:
+            try:
+                # 1. Try full live introspection and sync
+                await self.introspect_and_snapshot_schema(kb_id=kb_id)
+                synced = True
+            except Exception as e:
+                error_msg = str(e)
+                logger.warning(f"Live database sync failed ({e}); falling back to local snapshot patch")
+                # 2. Resilient Fallback: Patch existing snapshot with the newly added foreign keys
+                try:
+                    snapshot = await self.repo.get_latest_schema_snapshot(kb_id)
+                    if snapshot and snapshot.schema_data:
+                        schema_dict = dict(snapshot.schema_data)
+                        schemas = schema_dict.get("schemas", {})
+                        for m in mappings:
+                            src_tbl = (m.get("sourceTable") or m.get("source_table") or "").lower()
+                            src_col = m.get("sourceColumn") or m.get("source_column")
+                            tgt_tbl = m.get("targetTable") or m.get("target_table")
+                            tgt_col = m.get("targetColumn") or m.get("target_column")
+                            
+                            for s_val in schemas.values():
+                                tbl_obj = s_val.get("tables", {}).get(src_tbl)
+                                if tbl_obj:
+                                    fks = tbl_obj.setdefault("foreign_keys", [])
+                                    # Avoid duplicates
+                                    if not any(fk.get("referred_table", "").lower() == tgt_tbl.lower() and src_col in fk.get("constrained_columns", []) for fk in fks):
+                                        fks.append({
+                                            "name": f"fk_user_{src_tbl}_{src_col}",
+                                            "constrained_columns": [src_col],
+                                            "referred_schema": "public",
+                                            "referred_table": tgt_tbl,
+                                            "referred_columns": [tgt_col],
+                                        })
+                        
+                        snapshot.schema_data = schema_dict
+                        await self.db.commit()
+                        synced = True
+                        error_msg = None
+                        logger.info(f"Successfully patched existing snapshot with user mappings for KB {kb_id}")
+                except Exception as patch_err:
+                    error_msg = f"Live sync failed: {e}; Patch failed: {patch_err}"
+                    logger.error(f"Failed to patch local snapshot with user mappings: {patch_err}")
+
+        # Update sync_status directly on saved records
+        final_status = "SUCCESS" if synced else "FAILED"
+        for entity in saved:
+            entity.sync_status = final_status
+            entity.sync_error = error_msg
+        await self.db.commit()
+
+        return {
+            "status": "success",
+            "saved_count": len(saved),
+            "sync_status": final_status,
+            "sync_error": error_msg,
+            "synced": synced,
+        }
+
 
 

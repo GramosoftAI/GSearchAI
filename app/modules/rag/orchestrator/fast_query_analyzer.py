@@ -107,6 +107,92 @@ STRUCTURED_ID_RE = re.compile(r'\b([A-Za-z]{2,5})[-_\s]?(\d{3,8})\b', re.IGNOREC
 PARTIAL_ID_RE = re.compile(r'\b(?:employee|emp|worker|staff|id|user|policy|pol|claim|inv|invoice|record)\s*(?:#|no\.?|num|number)?\s*(\d{1,6})\b', re.IGNORECASE)
 ALPHANUM_ID_RE = re.compile(r'\b(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]{4,15}\b')
 
+# Comprehensive zero-latency dictionary for enterprise, leadership, tech, and operational acronyms
+COMMON_ACRONYM_MAP: Dict[str, str] = {
+    # C-Suite & Leadership
+    "cto": "Chief Technology Officer",
+    "ceo": "Chief Executive Officer",
+    "cfo": "Chief Financial Officer",
+    "coo": "Chief Operating Officer",
+    "cmo": "Chief Marketing Officer",
+    "cio": "Chief Information Officer",
+    "cso": "Chief Security Officer",
+    "cro": "Chief Revenue Officer",
+    "cpo": "Chief Product Officer",
+    "chro": "Chief Human Resources Officer",
+    "vp": "Vice President",
+    "svp": "Senior Vice President",
+    "avp": "Assistant Vice President",
+    "evp": "Executive Vice President",
+    "md": "Managing Director",
+    "gm": "General Manager",
+    "pm": "Product Manager",
+    "hr": "Human Resources",
+    "pr": "Public Relations",
+    "qa": "Quality Assurance",
+    "qc": "Quality Control",
+    "sre": "Site Reliability Engineer",
+    "ba": "Business Analyst",
+    # Tech & Architecture
+    "ai": "Artificial Intelligence",
+    "ml": "Machine Learning",
+    "dl": "Deep Learning",
+    "nlp": "Natural Language Processing",
+    "llm": "Large Language Model",
+    "rag": "Retrieval Augmented Generation",
+    "api": "Application Programming Interface",
+    "sdk": "Software Development Kit",
+    "ui": "User Interface",
+    "ux": "User Experience",
+    "db": "Database",
+    "sql": "Structured Query Language",
+    "rpa": "Robotic Process Automation",
+    "ocr": "Optical Character Recognition",
+    "saas": "Software as a Service",
+    "paas": "Platform as a Service",
+    "iaas": "Infrastructure as a Service",
+    "aws": "Amazon Web Services",
+    "gcp": "Google Cloud Platform",
+    "crm": "Customer Relationship Management",
+    "erp": "Enterprise Resource Planning",
+    "etl": "Extract Transform Load",
+    "ci": "Continuous Integration",
+    "cd": "Continuous Deployment",
+    "iot": "Internet of Things",
+    "it": "Information Technology",
+    "os": "Operating System",
+    "vpn": "Virtual Private Network",
+    "lan": "Local Area Network",
+    "wan": "Wide Area Network",
+    "url": "Uniform Resource Locator",
+    "uri": "Uniform Resource Identifier",
+    "json": "JavaScript Object Notation",
+    "html": "Hypertext Markup Language",
+    "css": "Cascading Style Sheets",
+    # Business & Operations
+    "roi": "Return on Investment",
+    "kpi": "Key Performance Indicator",
+    "okr": "Objectives and Key Results",
+    "sla": "Service Level Agreement",
+    "sop": "Standard Operating Procedure",
+    "poc": "Proof of Concept",
+    "mvp": "Minimum Viable Product",
+    "b2b": "Business to Business",
+    "b2c": "Business to Consumer",
+    "nda": "Non Disclosure Agreement",
+    "mou": "Memorandum of Understanding",
+    "fy": "Fiscal Year",
+    "ytd": "Year to Date",
+    "mom": "Month over Month",
+    "yoy": "Year over Year",
+    "faq": "Frequently Asked Questions",
+    "eod": "End of Day",
+    "eta": "Estimated Time of Arrival",
+    "wfh": "Work from Home",
+}
+
+_DYNAMIC_ACRONYM_CACHE: Dict[str, List[str]] = {}
+
 
 class FastQueryAnalyzer:
     """
@@ -662,9 +748,26 @@ Return strict JSON only:
         t0 = time.time()
         keywords = self.extract_keywords(corrected_tokens, extracted_ids, implied_cols)
         
-        # Dynamic Acronym Expansion (Fully Dynamic, No Hardcoding)
+        # Dynamic Acronym Expansion (Zero-Latency Map + Cached Cloud Fallback)
         potential_acronyms = [t for t in tokens if 2 <= len(t) <= 5 and t.isalpha() and t.lower() not in STOPWORDS]
-        if potential_acronyms:
+        unresolved_acronyms: List[str] = []
+        for t in potential_acronyms:
+            t_low = t.lower()
+            if t_low in COMMON_ACRONYM_MAP:
+                exp = COMMON_ACRONYM_MAP[t_low]
+                for ew in exp.split():
+                    if ew.lower() not in STOPWORDS and ew.lower() not in [k.lower() for k in keywords]:
+                        keywords.append(ew)
+            elif t_low in _DYNAMIC_ACRONYM_CACHE:
+                for exp in _DYNAMIC_ACRONYM_CACHE[t_low]:
+                    for ew in exp.split():
+                        if ew.lower() not in STOPWORDS and ew.lower() not in [k.lower() for k in keywords]:
+                            keywords.append(ew)
+            elif t.isupper() and len(t) >= 2:
+                # Only consult cloud LLM if explicitly entered in uppercase (e.g. HIPAA, GDPR)
+                unresolved_acronyms.append(t)
+
+        if unresolved_acronyms:
             try:
                 acronym_prompt = f"Identify any acronyms in this search query and return their likely full corporate/business forms in a JSON list of strings (e.g., ['Chief Operating Officer']). If none, return []. Query: '{q_strip}'"
                 acronym_resp = await asyncio.wait_for(
@@ -674,27 +777,32 @@ Return strict JSON only:
                         temperature=0.0,
                         max_tokens=64,
                         model=self.llm_client.model_intent,
-                        timeout=4.5,
+                        timeout=1.5,
                         task=LLMTask.INTENT_DETECTION,
                         tenant_id=tenant_id,
                         user_id=user_id
                     ),
-                    timeout=5.0
+                    timeout=2.0
                 )
                 acronym_match = re.search(r'\[.*\]', acronym_resp, re.DOTALL)
                 if acronym_match:
                     expanded_list = json.loads(acronym_match.group(0))
+                    for un_tok in unresolved_acronyms:
+                        _DYNAMIC_ACRONYM_CACHE[un_tok.lower()] = expanded_list
                     for exp in expanded_list:
                         if exp and isinstance(exp, str):
-                            # Append words of the expansion to keywords to ensure BM25 picks them up
                             exp_words = [w for w in exp.split() if w.lower() not in STOPWORDS]
                             for ew in exp_words:
                                 if ew.lower() not in [k.lower() for k in keywords]:
                                     keywords.append(ew)
             except asyncio.TimeoutError:
-                logger.warning(f"[FAST_ANALYZER] Dynamic acronym expansion timed out after 5.0s.")
+                logger.warning(f"[FAST_ANALYZER] Dynamic acronym expansion timed out.")
+                for un_tok in unresolved_acronyms:
+                    _DYNAMIC_ACRONYM_CACHE[un_tok.lower()] = []
             except Exception as e:
                 logger.warning(f"[FAST_ANALYZER] Dynamic acronym expansion failed: {e}")
+                for un_tok in unresolved_acronyms:
+                    _DYNAMIC_ACRONYM_CACHE[un_tok.lower()] = []
                 
         timings["keyword_extraction"] = (time.time() - t0) * 1000
 

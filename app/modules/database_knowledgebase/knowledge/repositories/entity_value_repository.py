@@ -46,7 +46,11 @@ class EntityValueRepository(BaseRepository):
 
         # Enforce write-time sensitivity guard across all records
         now_utc = datetime.now(timezone.utc)
-        insert_rows = []
+        
+        # Deduplicate and aggregate across the same batch by unique constraint key
+        # (db_knowledgebase_id, table_name, column_name, normalized_value)
+        # to avoid PostgreSQL CardinalityViolationError on duplicate constrained values in one INSERT.
+        deduped_rows: dict[tuple[str, str, str], dict] = {}
         for val in values:
             col_name = val["column_name"]
             validate_not_sensitive(col_name)
@@ -55,19 +59,32 @@ class EntityValueRepository(BaseRepository):
             if len(norm_val) > 255:
                 norm_val = norm_val[:255]
 
-            insert_rows.append({
-                "id": val.get("id") or uuid.uuid4(),
-                "tenant_id": self.tenant_id,
-                "db_knowledgebase_id": db_knowledgebase_id,
-                "table_name": val["table_name"],
-                "column_name": col_name,
-                "raw_value": val["raw_value"],
-                "normalized_value": norm_val,
-                "frequency_count": val.get("frequency_count", 1),
-                "embedding": val.get("embedding"),
-                "last_seen_at": now_utc,
-                "created_at": now_utc,
-            })
+            key = (val["table_name"], col_name, norm_val)
+            freq = val.get("frequency_count", 1)
+
+            if key in deduped_rows:
+                deduped_rows[key]["frequency_count"] += freq
+                # Keep embedding if not already set
+                if not deduped_rows[key].get("embedding") and val.get("embedding"):
+                    deduped_rows[key]["embedding"] = val.get("embedding")
+            else:
+                deduped_rows[key] = {
+                    "id": val.get("id") or uuid.uuid4(),
+                    "tenant_id": self.tenant_id,
+                    "db_knowledgebase_id": db_knowledgebase_id,
+                    "table_name": val["table_name"],
+                    "column_name": col_name,
+                    "raw_value": val["raw_value"],
+                    "normalized_value": norm_val,
+                    "frequency_count": freq,
+                    "embedding": val.get("embedding"),
+                    "last_seen_at": now_utc,
+                    "created_at": now_utc,
+                }
+
+        insert_rows = list(deduped_rows.values())
+        if not insert_rows:
+            return 0
 
         stmt = pg_insert(KB2EntityValue).values(insert_rows)
         upsert_stmt = stmt.on_conflict_do_update(

@@ -29,7 +29,7 @@ from app.core.embeddings import EmbeddingGenerator
 from ..adapters.phase1_adapter import Phase1Adapter
 from ..repositories.entity_value_repository import EntityValueRepository
 from ..models.knowledge_items import KB2KnowledgeItem
-from ..sensitivity import is_sensitive_column
+from ..sensitivity import is_sensitive_column, is_sensitive_for_values
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +81,9 @@ async def run_stage_value_index(
         # Skip non-candidate roles
         if role not in ("name", "enum", "code"):
             continue
-        # Skip sensitive columns
-        if is_sens or is_sensitive_column(payload.get("column_name", "")):
+        # Skip sensitive and PII columns
+        col_n = payload.get("column_name", "")
+        if is_sens or is_sensitive_column(col_n) or is_sensitive_for_values(col_n):
             continue
         # Check distinct count cap
         if distinct_count and distinct_count > distinct_count_cap:
@@ -121,11 +122,17 @@ async def run_stage_value_index(
         if not tbl or not col:
             continue
 
+        if "." in tbl:
+            parts = tbl.split(".", 1)
+            quoted_tbl = f'"{parts[0]}"."{parts[1]}"'
+        else:
+            quoted_tbl = f'"{tbl}"'
+
         try:
             async with adapter.open_readonly_connection(tenant_id, kb_id) as conn:
                 query = f"""
                     SELECT "{col}"::text AS raw_val, COUNT(*) AS freq
-                    FROM "{tbl}"
+                    FROM {quoted_tbl}
                     WHERE "{col}" IS NOT NULL
                     GROUP BY "{col}"
                     ORDER BY freq DESC

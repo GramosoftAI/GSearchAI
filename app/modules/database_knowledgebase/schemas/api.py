@@ -150,3 +150,23 @@ class GlossaryConfirmApiRequest(BaseModel):
     business_description: Optional[str] = Field(default=None, max_length=1000)
     semantic_role: Optional[str] = Field(default=None, max_length=100)
 
+
+class UserMappingItem(BaseModel):
+    """Single relationship mapping from frontend ER diagram viewer."""
+    model_config = ConfigDict(extra="ignore")
+
+    sourceTable: str = Field(..., alias="sourceTable")
+    sourceColumn: str = Field(..., alias="sourceColumn")
+    targetTable: str = Field(..., alias="targetTable")
+    targetColumn: str = Field(..., alias="targetColumn")
+    relationshipType: str = Field(default="many_to_one", alias="relationshipType")
+    description: Optional[str] = Field(default=None)
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+
+class UserMappingBatchRequest(BaseModel):
+    """Batch user mapping update payload."""
+    model_config = ConfigDict(extra="ignore")
+
+    mappings: List[UserMappingItem] = Field(default_factory=list)
+

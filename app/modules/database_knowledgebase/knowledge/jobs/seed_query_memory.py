@@ -123,7 +123,14 @@ async def run_seed_query_memory(
     logger.info(f"[Seed Query Memory] Starting generation for KB={kb_id}, version={schema_version}")
     client = llm_client or DeepInfraLLMClient.get_instance()
 
-    schema_view = await adapter.get_current_schema(tenant_id, kb_id)
+    try:
+        schema_view = await adapter.get_schema_by_version(tenant_id, kb_id, schema_version)
+        if not schema_view:
+            schema_view = await adapter.get_current_schema(tenant_id, kb_id)
+    except Exception as exc:
+        logger.info(f"[Seed Query Memory] No schema snapshot found ({exc}). Returning empty generation metrics.")
+        return {"generated": 0, "verified": 0, "failed": 0}
+
     if not schema_view or not schema_view.tables:
         return {"generated": 0, "verified": 0, "failed": 0}
 
@@ -188,7 +195,14 @@ Output ONLY valid JSON matching this schema:
         logger.warning(f"[Seed Query Memory] LLM question generation failed: {exc}")
 
     verified_count = 0
-    failed_count = 0
+    rejections = {
+        "parse_error": 0,
+        "non_select": 0,
+        "unknown_table": 0,
+        "execution_error": 0,
+        "empty_result": 0,
+    }
+    sample_execution_error: Optional[Dict[str, str]] = None
 
     # Test and execute each query on customer database
     for pair in pairs_data:
@@ -198,7 +212,17 @@ Output ONLY valid JSON matching this schema:
             valid_columns_by_table=valid_columns_by_table,
         )
         if not is_valid or not final_sql:
-            failed_count += 1
+            if parse_err:
+                if "parse error" in parse_err.lower():
+                    rejections["parse_error"] += 1
+                elif "select" in parse_err.lower() or "destructive" in parse_err.lower():
+                    rejections["non_select"] += 1
+                elif "unknown table" in parse_err.lower():
+                    rejections["unknown_table"] += 1
+                else:
+                    rejections["parse_error"] += 1
+            else:
+                rejections["parse_error"] += 1
             continue
 
         # Execute read-only with 5s timeout
@@ -215,11 +239,22 @@ Output ONLY valid JSON matching this schema:
                 row_count = len(rows)
                 execution_success = True
         except Exception as exec_err:
+            rejections["execution_error"] += 1
+            if not sample_execution_error:
+                sample_execution_error = {
+                    "sql": final_sql,
+                    "error": str(exec_err)
+                }
             logger.debug(f"[Seed Query Memory] Discarding SQL execution failure: {exec_err}")
-            failed_count += 1
             continue
 
         if not execution_success:
+            continue
+
+        # Reject empty-result queries: must return at least 1 row to be verified
+        if row_count == 0:
+            rejections["empty_result"] += 1
+            logger.debug(f"[Seed Query Memory] Discarding empty-result query (0 rows returned): {final_sql}")
             continue
 
         # Compute question embedding
@@ -255,15 +290,19 @@ Output ONLY valid JSON matching this schema:
 
     await query_repo.db.commit()
 
+    total_failed = sum(rejections[k] for k in ["parse_error", "non_select", "unknown_table", "execution_error", "empty_result"])
+
     logger.info(
         f"[Seed Query Memory] Finished. Generated: {len(pairs_data)}, "
-        f"Verified: {verified_count}, Discarded: {failed_count}"
+        f"Verified: {verified_count}, Discarded: {total_failed}, Rejections: {rejections}"
     )
 
     return {
         "generated": len(pairs_data),
         "verified": verified_count,
-        "failed": failed_count,
+        "failed": total_failed,
+        "rejections": rejections,
+        "sample_execution_error": sample_execution_error,
     }
 
 

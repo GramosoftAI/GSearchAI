@@ -243,10 +243,17 @@ async def run_unified_rag_websocket_loop(
                     )
                 )
                 
-            if final_state.get("sources"):
+            if final_state.get("source_documents"):
+                sources_payload = final_state["source_documents"]
+            elif final_state.get("sources"):
                 sources_payload = [{"source": s} for s in final_state["sources"]]
+            else:
+                sources_payload = []
+
+            if sources_payload:
                 collected_sources = sources_payload
                 await adapter.send(websocket, LoopEvent(type="sources", sources=sources_payload, triplets=[]))
+
 
             full_response = "".join(response_buffer)
 

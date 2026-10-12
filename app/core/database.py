@@ -869,6 +869,20 @@ async def init_db():
 
         async with engine.begin() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            # Ensure generated column SQL functions exist before create_all
+            await conn.execute(text("""
+                CREATE OR REPLACE FUNCTION kb2_schema_docs_generate_tsv(title text, body text, aliases text[])
+                RETURNS tsvector
+                LANGUAGE sql
+                IMMUTABLE
+                AS $$
+                    SELECT to_tsvector('simple',
+                        coalesce(title, '') || ' ' ||
+                        coalesce(body, '') || ' ' ||
+                        coalesce(array_to_string(aliases, ' '), '')
+                    );
+                $$;
+            """))
             # Create tables first if they don't exist
             await conn.run_sync(Base.metadata.create_all)
 

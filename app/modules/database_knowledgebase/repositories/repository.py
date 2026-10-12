@@ -246,3 +246,88 @@ class DatabaseKnowledgebaseRepository(BaseRepository):
         items = list(result.scalars().all())
 
         return items, total_count
+
+    async def get_user_mappings(
+        self, kb_id: uuid.UUID, only_active: bool = True
+    ) -> List[Any]:
+        """Fetch all user mappings for a knowledge base."""
+        from ..models.user_mapping import KBUserMapping
+
+        conditions = [
+            KBUserMapping.db_knowledgebase_id == kb_id,
+        ]
+        if self.tenant_id:
+            try:
+                t_uuid = uuid.UUID(str(self.tenant_id))
+                conditions.append(KBUserMapping.tenant_id == t_uuid)
+            except Exception:
+                pass
+
+        if only_active:
+            conditions.append(KBUserMapping.is_active == True)
+
+        stmt = select(KBUserMapping).where(*conditions)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def save_user_mappings(
+        self,
+        kb_id: uuid.UUID,
+        mappings: List[Dict[str, Any]],
+        replace: bool = True,
+    ) -> List[Any]:
+        """Save user-defined ER diagram mappings."""
+        from ..models.user_mapping import KBUserMapping
+        from sqlalchemy import delete
+
+        t_uuid = None
+        if self.tenant_id:
+            try:
+                t_uuid = uuid.UUID(str(self.tenant_id))
+            except Exception:
+                pass
+
+        if replace:
+            del_stmt = delete(KBUserMapping).where(
+                KBUserMapping.db_knowledgebase_id == kb_id,
+            )
+            if t_uuid:
+                del_stmt = del_stmt.where(KBUserMapping.tenant_id == t_uuid)
+            await self.db.execute(del_stmt)
+
+        created_entities = []
+        for m in mappings:
+            src_table = m.get("sourceTable") or m.get("source_table")
+            src_col = m.get("sourceColumn") or m.get("source_column")
+            tgt_table = m.get("targetTable") or m.get("target_table")
+            tgt_col = m.get("targetColumn") or m.get("target_column")
+            rel_type = m.get("relationshipType") or m.get("relationship_type") or "many_to_one"
+            desc_text = m.get("description")
+            meta = m.get("metadata") or m.get("extra_metadata") or {}
+            s_status = m.get("sync_status") or m.get("syncStatus") or "SUCCESS"
+            s_error = m.get("sync_error") or m.get("syncError")
+
+            if not (src_table and src_col and tgt_table and tgt_col):
+                continue
+
+            entity = KBUserMapping(
+                id=uuid.uuid4(),
+                db_knowledgebase_id=kb_id,
+                tenant_id=t_uuid,
+                source_table=str(src_table),
+                source_column=str(src_col),
+                target_table=str(tgt_table),
+                target_column=str(tgt_col),
+                relationship_type=str(rel_type),
+                is_active=True,
+                sync_status=str(s_status),
+                sync_error=s_error,
+                description=desc_text,
+                extra_metadata=meta,
+            )
+            self.db.add(entity)
+            created_entities.append(entity)
+
+        await self.db.flush()
+        return created_entities
+

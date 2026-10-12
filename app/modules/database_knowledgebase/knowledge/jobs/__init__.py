@@ -23,6 +23,7 @@ from .pipeline import (
     run_phase2_pipeline,
     trigger_phase2_sync_job,
 )
+from .schema_indexer import build_and_index_schema_docs
 
 __all__ = [
     "JobStatus",
@@ -36,4 +37,6 @@ __all__ = [
     "stage_enrich_stub",
     "run_phase2_pipeline",
     "trigger_phase2_sync_job",
+    "build_and_index_schema_docs",
 ]
+

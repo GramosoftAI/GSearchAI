@@ -145,3 +145,72 @@ class QueryMemoryRepository(BaseRepository):
         )
         res = await self.db.execute(stmt)
         return list(res.scalars().all())
+
+    async def save_verified(
+        self,
+        db_knowledgebase_id: uuid.UUID,
+        schema_version: str,
+        natural_query: str,
+        compiled_sql: str,
+        plan_ir: Dict[str, Any],
+        referenced_items: List[str],
+        normalized_query: Optional[str] = None,
+        execution_stats: Optional[Dict[str, Any]] = None,
+        embedding: Optional[List[float]] = None,
+    ) -> KB2QueryMemory:
+        """Alias helper for upsert_query_memory with status='verified'."""
+        return await self.upsert_query_memory(
+            db_knowledgebase_id=db_knowledgebase_id,
+            schema_version=schema_version,
+            natural_query=natural_query,
+            compiled_sql=compiled_sql,
+            plan_ir=plan_ir,
+            referenced_items=referenced_items,
+            execution_stats=execution_stats or {"provenance": "seed"},
+            embedding=embedding,
+            status="verified",
+        )
+
+    async def find_by_normalized_query(
+        self,
+        db_knowledgebase_id: uuid.UUID,
+        schema_version: str,
+        normalized_query: str,
+        status: Optional[str] = None,
+    ) -> Optional[KB2QueryMemory]:
+        """Find query memory entry by normalized query string."""
+        conditions = [
+            KB2QueryMemory.tenant_id == self.tenant_id,
+            KB2QueryMemory.db_knowledgebase_id == db_knowledgebase_id,
+            KB2QueryMemory.schema_version == schema_version,
+            KB2QueryMemory.normalized_query == normalized_query.strip().lower(),
+        ]
+        if status:
+            conditions.append(KB2QueryMemory.status == status)
+
+        stmt = select(KB2QueryMemory).where(and_(*conditions))
+        res = await self.db.execute(stmt)
+        return res.scalar_one_or_none()
+
+    async def invalidate_by_referenced_items(
+        self,
+        db_knowledgebase_id: uuid.UUID,
+        item_keys: List[str],
+    ) -> int:
+        """Mark query memory items referencing any of the item_keys as deprecated."""
+        if not item_keys:
+            return 0
+        from sqlalchemy import text
+        stmt = (
+            update(KB2QueryMemory)
+            .where(
+                KB2QueryMemory.tenant_id == self.tenant_id,
+                KB2QueryMemory.db_knowledgebase_id == db_knowledgebase_id,
+                KB2QueryMemory.status != "deprecated",
+                KB2QueryMemory.referenced_items.overlap(item_keys),
+            )
+            .values(status="deprecated")
+        )
+        res = await self.db.execute(stmt)
+        await self.db.flush()
+        return res.rowcount

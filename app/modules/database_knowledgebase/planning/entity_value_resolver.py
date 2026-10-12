@@ -107,6 +107,7 @@ class EntityValueResolver:
         "budget", "budgets", "cost", "costs", "price", "prices", "title", "role",
         "position", "company", "firm", "team", "organization", "system",
         "attendance", "leave", "shift", "status", "rate", "fee", "hours", "balance",
+        "attend", "attends", "attended", "attending",
         "assigned", "allocated", "given", "returned", "present", "absent", "current", "objective", "objectives", "asset", "assets",
         "of", "for", "about", "to", "on", "in", "at", "by", "from", "with", "without", "against",
         "candidate", "candidates", "contract", "contracts", "payslip", "payslips", "action", "actions",
@@ -155,8 +156,8 @@ class EntityValueResolver:
         for pat in cls._EXTRACTION_PATTERNS:
             for match in pat.finditer(q_clean):
                 val = match.group(1).strip(" ?.,'\"")
-                # Exclude dates (e.g. 2026-03-01) and pure numbers
-                if re.match(r"^\d{4}-\d{2}-\d{2}$", val) or val.isdigit():
+                # Exclude dates (e.g. 2026-03-01, 03/10/2026) and pure numbers
+                if re.match(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}$", val) or re.match(r"^\d{1,2}[-/]\d{1,2}[-/]\d{4}$", val) or val.isdigit():
                     continue
                 val_low = val.lower()
                 if (

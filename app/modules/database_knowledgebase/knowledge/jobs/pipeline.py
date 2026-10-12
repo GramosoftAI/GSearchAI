@@ -16,12 +16,14 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, Dict, Any, List, Callable
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import text, select, desc
 
 from arq import Retry
+from app.models.base import Base
+from app.modules.database_knowledgebase.models.database_knowledgebase import DatabaseSchemaSnapshot
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
-from ..adapters.phase1_adapter import Phase1Adapter
+from ..adapters.phase1_adapter import Phase1Adapter, SchemaView
 from ..repositories.job_run_repository import JobRunRepository
 from ..repositories.knowledge_item_repository import KnowledgeItemRepository
 from .profiler import run_stage_profiler
@@ -43,6 +45,7 @@ class StageStatus(str, Enum):
     VALUE_INDEX = "value_index"
     ENRICH = "enrich"
     GLOSSARY_SEED = "glossary_seed"
+    SCHEMA_INDEX = "schema_index"
     EXAMPLES = "examples"
 
 
@@ -311,9 +314,18 @@ async def run_phase2_pipeline(
         from ..repositories.query_memory_repository import QueryMemoryRepository
 
         # Compute schema drift diff from previous snapshot if available
-        curr_schema_view = await adapter.get_schema_by_version(t_id, k_id, schema_version)
-        if not curr_schema_view:
-            curr_schema_view = await adapter.get_current_schema(t_id, k_id)
+        try:
+            curr_schema_view = await adapter.get_schema_by_version(t_id, k_id, schema_version)
+            if not curr_schema_view:
+                curr_schema_view = await adapter.get_current_schema(t_id, k_id)
+        except Exception as schema_err:
+            logger.debug(f"[Phase 2 Pipeline] No schema snapshot found ({schema_err}). Using empty schema view.")
+            curr_schema_view = SchemaView(
+                database_name="unknown",
+                database_type="postgresql",
+                schema_version=schema_version,
+                tables={},
+            )
 
         # Look for previous snapshot
         prev_stmt = (
@@ -406,6 +418,15 @@ async def run_phase2_pipeline(
             seed_res.update(drift_invalidation_summary)
             return seed_res
 
+        async def _run_schema_index_wrapper(tid, kid, ver, heartbeat_cb=None):
+            from .schema_indexer import build_and_index_schema_docs
+            return await build_and_index_schema_docs(
+                tenant_id=tid,
+                kb_id=kid,
+                schema_version=ver,
+                db_session=session,
+            )
+
         async def _run_examples_wrapper(tid, kid, ver, heartbeat_cb=None):
             q_repo = QueryMemoryRepository(db=session, tenant_id=tid)
             return await run_seed_query_memory(
@@ -424,6 +445,7 @@ async def run_phase2_pipeline(
             (StageStatus.VALUE_INDEX, _run_value_index_wrapper),
             (StageStatus.ENRICH, _run_enrich_wrapper),
             (StageStatus.GLOSSARY_SEED, _run_glossary_seed_wrapper),
+            (StageStatus.SCHEMA_INDEX, _run_schema_index_wrapper),
             (StageStatus.EXAMPLES, _run_examples_wrapper),
         ]
 

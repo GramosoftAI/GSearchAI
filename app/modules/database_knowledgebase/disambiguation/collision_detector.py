@@ -82,8 +82,10 @@ class CollisionDetector:
                 continue
 
             score = len(name_cols) * 10
-            if re.search(r"(user|employee|person|member|account|contact)", t_lower):
-                score += 50
+            if re.search(r"(employee|staff|worker)", t_lower):
+                score += 80
+            elif re.search(r"(user|person|member|account|contact)", t_lower):
+                score += 40
             if t_schema.primary_key_columns:
                 score += 10
 
@@ -117,7 +119,7 @@ class CollisionDetector:
         entity_table_override: Optional[str] = None,
         entity_columns_override: Optional[List[str]] = None,
         notices_out: Optional[List[str]] = None,
-    ) -> Optional[int]:
+    ) -> Optional[Any]:
         """
         Checks the EXTERNAL connected database for users matching the extracted name.
         Uses shared discrete connection helper, discovers person table from schema/config,
@@ -216,37 +218,31 @@ class CollisionDetector:
                 await conn.close()
 
         # Step 4: Disambiguation evaluation
-        if len(rows) > 20:
-            raise DisambiguationRequiredError(
-                message=f"I found {len(rows)} people matching '{extracted_name}'. Please narrow your search.",
-                options=[],
-                entity_type="user",
-            )
-        elif len(rows) > 1:
-            options = []
-            all_ids = []
-            for row in rows:
+        if len(rows) > 1:
+            all_ids = [row[pk_col] for row in rows]
+            names_found = []
+            for row in rows[:5]:
                 label_parts = [str(row[c]) for c in name_cols if row.get(c)]
-                dist_parts = [f"{c}: {row[c]}" for c in distinguishing_cols if row.get(c)]
-                
-                label = " ".join(label_parts) if label_parts else f"ID {row[pk_col]}"
-                if dist_parts:
-                    label += f" ({', '.join(dist_parts)})"
-                    
-                options.append({"id": row[pk_col], "label": label})
-                all_ids.append(row[pk_col])
-
-            options.append({"id": all_ids, "label": f"All {len(rows)} matches"})
-
-            raise DisambiguationRequiredError(
-                message=f"I found {len(rows)} people matching '{extracted_name}'. Which one do you mean?",
-                options=options,
-                entity_type="user",
+                names_found.append(" ".join(label_parts) if label_parts else f"ID {row[pk_col]}")
+            logger.info(
+                f"[DISAMBIGUATION] Found {len(rows)} matching people for '{extracted_name}' "
+                f"({', '.join(names_found)}...). Returning ALL matching IDs: {all_ids}"
             )
+            return {
+                "ids": all_ids,
+                "table": table_name,
+                "pk_column": pk_col,
+                "is_multiple": True,
+            }
         elif len(rows) == 1:
             resolved_id = rows[0][pk_col]
             logger.info(f"[DISAMBIGUATION] Resolved '{extracted_name}' -> ID {resolved_id} in {table_name}")
-            return resolved_id
+            return {
+                "ids": resolved_id,
+                "table": table_name,
+                "pk_column": pk_col,
+                "is_multiple": False,
+            }
 
         # 0 rows matched: candidate name is NOT a person, drop it
         logger.info(f"[DISAMBIGUATION] Candidate '{extracted_name}' matched 0 rows in '{table_name}'. Dropping candidate.")

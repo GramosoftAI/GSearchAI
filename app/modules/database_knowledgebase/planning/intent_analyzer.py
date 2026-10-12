@@ -97,9 +97,9 @@ class QueryIntentAnalyzer:
         (r"\b(lowest|minimum|min|least|bottom)\b", AggregateFunction.MIN),
     ]
 
-    # Year regex & Exact ISO Date regex
+    # Year regex & Exact ISO/Slash Date regex
     YEAR_PATTERN = re.compile(r"\b(19\d\d|20\d\d)\b")
-    DATE_PATTERN = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+    DATE_PATTERN = re.compile(r"\b(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})\b")
 
     WORD_TO_NUM = {
         "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
@@ -216,27 +216,48 @@ class QueryIntentAnalyzer:
                 )
             )
         else:
-            for match in cls.DATE_PATTERN.finditer(query):
-                date_str = match.group(1)
+            # Check ISO dates (YYYY-MM-DD) and slash/hyphen dates (DD/MM/YYYY, MM/DD/YYYY)
+            date_matches: List[Tuple[str, str]] = []  # (normalized_iso, raw_str)
+            for m in cls.DATE_PATTERN.finditer(query):
+                raw_d = m.group(1)
+                # If YYYY-MM-DD
+                if re.match(r"^\d{4}-\d{2}-\d{2}$", raw_d):
+                    date_matches.append((raw_d, raw_d))
+                else:
+                    # Parse DD/MM/YYYY or MM/DD/YYYY or DD-MM-YYYY
+                    parts = [int(p) for p in re.split(r"[-/]", raw_d)]
+                    if len(parts) == 3:
+                        if parts[2] >= 1900:  # e.g. 03/10/2026 -> day=03, month=10, year=2026
+                            # Default to DD/MM/YYYY unless month part is > 12
+                            if parts[1] <= 12 and parts[0] <= 31:
+                                d_day, d_month, d_year = parts[0], parts[1], parts[2]
+                            elif parts[0] <= 12 and parts[1] <= 31:
+                                d_month, d_day, d_year = parts[0], parts[1], parts[2]
+                            else:
+                                d_day, d_month, d_year = parts[0], parts[1], parts[2]
+                            iso_str = f"{d_year:04d}-{d_month:02d}-{d_day:02d}"
+                            date_matches.append((iso_str, raw_d))
+
+            for iso_str, raw_match_str in date_matches:
                 temporals.append(
                     ExtractedTemporalConstraint(
                         constraint_type="EXACT_DATE",
-                        value=date_str,
-                        raw_match=match.group(0),
+                        value=iso_str,
+                        raw_match=raw_match_str,
                     )
                 )
                 predicates.append(
                     ExtractedPredicate(
                         target_concept="date",
                         operator="=",
-                        value=date_str,
-                        raw_match=match.group(0),
+                        value=iso_str,
+                        raw_match=raw_match_str,
                     )
                 )
 
         for match in cls.YEAR_PATTERN.finditer(query):
-            # Avoid matching year inside YYYY-MM-DD
-            if re.search(r"\d{4}-\d{2}-\d{2}", query[max(0, match.start() - 1):min(len(query), match.end() + 7)]):
+            # Avoid matching year inside dates
+            if re.search(r"[-/]\d{4}", query[max(0, match.start() - 1):min(len(query), match.end() + 1)]) or re.search(r"\d{4}[-/]", query[max(0, match.start() - 1):min(len(query), match.end() + 1)]):
                 continue
             year_val = int(match.group(1))
             temporals.append(

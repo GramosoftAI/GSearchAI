@@ -10,6 +10,7 @@ from .schema_doc import (
     SchemaDocExample,
     SchemaDocEmbedding,
 )
+from .user_mapping import KBUserMapping
 
 __all__ = [
     "DatabaseKnowledgebase",
@@ -22,5 +23,6 @@ __all__ = [
     "SchemaDocColumn",
     "SchemaDocExample",
     "SchemaDocEmbedding",
+    "KBUserMapping",
 ]
 

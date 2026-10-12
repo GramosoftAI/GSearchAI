@@ -599,3 +599,44 @@ async def get_quality_report(
     )
     return report.model_dump()
 
+
+class RetrieveRequest(BaseModel):
+    question: str
+    reference_date: Optional[str] = None
+    clarification_answers: Optional[Dict[str, Any]] = None
+    debug: bool = False
+
+
+@router.post("/retrieve", summary="Phase 3 Grounded Schema & Context Retrieval")
+async def retrieve_knowledge_context(
+    kb_id: uuid.UUID,
+    body: RetrieveRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Executes Step 3.8 ContextPackBuilder pipeline returning grounded ContextPack."""
+    from datetime import datetime
+    from ..retrieval.context_pack import ContextPackBuilder
+
+    tenant_id, _ = _get_tenant_and_actor(request)
+    ref_d = None
+    if body.reference_date:
+        try:
+            ref_d = datetime.strptime(body.reference_date, "%Y-%m-%d").date()
+        except Exception:
+            pass
+
+    builder = ContextPackBuilder(db=db, tenant_id=tenant_id)
+    pack = await builder.build(
+        db_knowledgebase_id=kb_id,
+        question=body.question,
+        reference_date=ref_d,
+        clarification_answers=body.clarification_answers,
+    )
+
+    resp = pack.model_dump()
+    if not body.debug:
+        resp.pop("timings_ms", None)
+    return resp
+
+

@@ -237,6 +237,14 @@ class Phase1Adapter:
 
         timeout_sec = min(float(config.connection_timeout or 5.0), 5.0)
 
+        server_settings = {
+            "application_name": "Phase2_Knowledge_ReadOnly",
+            "default_transaction_read_only": "on",
+            "statement_timeout": "5000",  # 5s statement timeout
+        }
+        if getattr(config, "schema_filter", None):
+            server_settings["search_path"] = ", ".join(f'"{s}"' for s in config.schema_filter) + ", public"
+
         conn: Optional[asyncpg.Connection] = None
         try:
             conn = await asyncpg.connect(
@@ -248,11 +256,7 @@ class Phase1Adapter:
                 ssl=ssl_val,
                 timeout=timeout_sec,
                 command_timeout=5.0,
-                server_settings={
-                    "application_name": "Phase2_Knowledge_ReadOnly",
-                    "default_transaction_read_only": "on",
-                    "statement_timeout": "5000",  # 5s statement timeout
-                },
+                server_settings=server_settings,
             )
             yield conn
         finally:

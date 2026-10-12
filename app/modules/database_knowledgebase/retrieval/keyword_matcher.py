@@ -106,6 +106,9 @@ class SchemaKeywordMatcher:
             (r"\bshift\s+schedule\b", "shift_schedule"),
             # Activity Sessions
             (r"\b(?:activity\s+sessions?|sessions?|clock\s+activity|punch\s+activity)\b", "attendance_attendanceactivity clock_in clock_out"),
+            # Assets & Hardware Assignments
+            (r"\b(?:laptop|computer|desktop|macbook|notebook|hardware|device|equipment)s?\b", "asset asset_asset asset_name asset_category"),
+            (r"\b(?:assign|assigned|assignment|allotted)s?\b", "asset_assetassignment assigned_to_employee assigned_by_employee"),
         ]
         norm_q = query.lower()
         for pat, canonical_ent in compound_patterns:
