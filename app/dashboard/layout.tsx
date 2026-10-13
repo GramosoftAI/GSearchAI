@@ -103,7 +103,7 @@ export default function DashboardLayout({
         open={mobileMenuOpen}
         styles={{
           body: { padding: 0, background: 'var(--app-surface)' },
-          content: { background: 'var(--app-surface)' }
+          section: { background: 'var(--app-surface)' }
         }}
         width="100%"
         closeIcon={null}
