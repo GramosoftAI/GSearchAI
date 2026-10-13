@@ -25,7 +25,7 @@ STRICT CONSTRAINTS:
 5. All queries must include a LIMIT clause (maximum 1000).
 6. Select descriptive and requested columns (e.g. first/last names, cities, states, countries, dates, titles, metrics) needed to directly and informatively answer the user query.
 7. MINIMAL & RELEVANT JOINS: Only join tables strictly necessary to satisfy the user query. Do NOT join 1-to-many child tables (such as employee_projects, employee_contacts, employee_addresses, attendance, payroll) unless the user query explicitly requests project, contact, address, attendance, or payroll data.
-8. PREVENT DUPLICATE ROWS: When querying primary entities (like employees), do NOT cause duplicate parent rows via 1-to-many joins; use LEFT JOIN or SELECT DISTINCT when necessary.
+8. PREVENT DUPLICATE ROWS: When querying primary entities (like employees or work packages), NEVER cause duplicate parent rows via 1-to-many joins. ALWAYS use `SELECT DISTINCT` when joining tables that may contain multiple records per parent entity (e.g. `work_packages` joined with `time_entries` or `journals`).
 9. GROUP BY CONSISTENCY: Whenever any aggregation function (SUM, AVG, MIN, MAX, COUNT) is present alongside non-aggregated columns in SELECT, EVERY single non-aggregated column in the SELECT clause MUST be explicitly included in the GROUP BY clause.
 10. CANONICAL DURATION & NUMERIC COMPARISONS:
     - ALWAYS use integer `at_work_second` for working time comparisons, filters, SUM, and AVG (1 hr = 3600s, 6 hrs = 21600s, 8 hrs = 28800s, 10 hrs = 36000s).
@@ -54,7 +54,16 @@ STRICT CONSTRAINTS:
     - Instead, find employees who are absent by checking `leave_leaverequest` (where `status = 'approved'` and the date is between `start_date` and `end_date`), OR find employees who have NO record in `attendance_attendance` for that date (using `LEFT JOIN ... WHERE attendance_date IS NULL`).
 14. DATE PARSING & FORMAT RESOLUTION:
     - User dates written in DD/MM/YYYY format (such as '09/10/2026' representing 9th October 2026, or '05/06/2026' representing 5th June 2026) MUST be parsed as DD/MM/YYYY and converted to standard ISO 'YYYY-MM-DD' ('2026-10-09'). ALWAYS default to DD/MM/YYYY (Day/Month/Year) interpretation for slash-separated dates.
-    - WORK PACKAGES & USERS: When asked for "work packages" for a user or employee, do NOT exclusively require an INNER JOIN on time_entries unless hours/logged time are explicitly requested. Work packages can be assigned to the user (`wp.assigned_to_id = u.id`) or authored by the user (`wp.author_id = u.id`). Use LEFT JOIN time_entries or join on `(wp.assigned_to_id = u.id OR te.user_id = u.id)` so work packages are not dropped when no time entry is logged.
+    - WORK PACKAGES & TASKS:
+      * When asked for "work packages", "tasks", or "OP" for a user or employee:
+        Query `work_packages` directly via `wp.assigned_to_id = u.id` (or `wp.author_id = u.id`).
+      * DO NOT join `time_entries` unless the user explicitly asks for logged hours, time spent, or timesheets. Joining `time_entries` causes 1-to-many row multiplication and duplicates work packages!
+      * When any join is used on `work_packages`, ALWAYS use `SELECT DISTINCT wp.id, wp.subject, ...` to ensure each work package appears exactly once without duplication.
+      * For queries asking for "today's work packages" or "work packages for today":
+        Select active work packages where:
+        (`wp.start_date = CURRENT_DATE` OR `wp.due_date = CURRENT_DATE` OR (`wp.start_date <= CURRENT_DATE AND (wp.due_date >= CURRENT_DATE OR wp.due_date IS NULL)`))
+        And if a status column or status table exists, exclude closed/rejected statuses.
+      * Always explicitly project key informative columns: `wp.id`, `wp.subject`, `wp.start_date`, `wp.due_date`, `wp.estimated_hours`, `wp.remaining_hours`.
 15. TYPE CASTING: Never use string operators (LIKE, ILIKE) on numeric or ID columns (e.g. id, _id) without explicitly casting them to TEXT. Always use CAST(column AS TEXT) ILIKE '%value%'.
 16. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text.
 """

@@ -36,6 +36,19 @@ class EvidenceExtractor:
         columns = result.columns or []
         row_count = result.row_count
 
+        # Deduplicate identical dictionary rows to protect prompt from accidental join duplication
+        if rows and len(rows) > 1:
+            deduped_rows = []
+            seen_signatures = set()
+            for r in rows:
+                sig = tuple(sorted((k, str(v)) for k, v in r.items()))
+                if sig not in seen_signatures:
+                    seen_signatures.add(sig)
+                    deduped_rows.append(r)
+            if len(deduped_rows) < len(rows):
+                rows = deduped_rows
+                row_count = len(rows)
+
         # 1. Register column names and their title-cased labels as supported entities
         for col in columns:
             supported_entities.add(col)

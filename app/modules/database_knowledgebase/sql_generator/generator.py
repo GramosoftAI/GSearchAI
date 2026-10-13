@@ -392,6 +392,10 @@ class CandidateSQLGenerator:
                                 sql_candidate,
                                 flags=re.IGNORECASE,
                             )
+                        # Avoid 1-to-many row multiplication on work_packages queries
+                        if re.search(r"\bFROM\s+work_packages\b", sql_candidate, re.IGNORECASE) and re.search(r"\bJOIN\s+time_entries\b", sql_candidate, re.IGNORECASE):
+                            if not re.search(r"\bSELECT\s+DISTINCT\b", sql_candidate, re.IGNORECASE):
+                                sql_candidate = re.sub(r"\bSELECT\b", "SELECT DISTINCT", sql_candidate, count=1, flags=re.IGNORECASE)
                         return sql_candidate
             except Exception as e:
                 logger.warning(f"LLM candidate SQL generation failed, falling back to deterministic compiler: {e}")
