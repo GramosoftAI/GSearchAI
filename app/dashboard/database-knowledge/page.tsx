@@ -279,7 +279,21 @@ export default function DatabaseKnowledgePage() {
   const [testResult, setTestResult] = useState<{ success: boolean; latency_ms?: number; message?: string } | null>(null);
 
   // Form State
+  const [formDbType, setFormDbType] = useState<"postgresql" | "mariadb" | "mysql">("postgresql");
   const [formName, setFormName] = useState("HRMS Enterprise Database (Demo)");
+
+  const handleDbTypeChange = (newType: "postgresql" | "mariadb" | "mysql") => {
+    setFormDbType(newType);
+    if (newType === "mariadb" || newType === "mysql") {
+      if (formPort === 5432 || formPort === 5433) {
+        setFormPort(3306);
+      }
+    } else if (newType === "postgresql") {
+      if (formPort === 3306 || formPort === 3307) {
+        setFormPort(5432);
+      }
+    }
+  };
   const [formDesc, setFormDesc] = useState("14-table HRMS demo database covering employees, departments, payroll, attendance, and projects");
   const [formHost, setFormHost] = useState("localhost");
   const [formPort, setFormPort] = useState(5433);
@@ -298,11 +312,20 @@ export default function DatabaseKnowledgePage() {
   const [schemaEditMode, setSchemaEditMode] = useState(false);
   const isDiagramHeaderHidden = (schemaFullscreen || schemaEditMode) && schemaViewMode === "diagram";
 
+  function getAuthHeaders() {
+    const token = getCookie("AUTH_TOKEN");
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    };
+  }
+
   // Table view custom names & expansion state
   const [expandedTableKeys, setExpandedTableKeys] = useState<string[]>([]);
   const [tableCustomNames, setTableCustomNames] = useState<Record<string, string[]>>({});
   const [newTableTagInput, setNewTableTagInput] = useState<Record<string, string>>({});
 
+  // Load table aliases from PostgreSQL DB API with localStorage fallback
   useEffect(() => {
     if (typeof window !== "undefined" && selectedKb?.id) {
       try {
@@ -313,6 +336,19 @@ export default function DatabaseKnowledgePage() {
       } catch (err) {
         console.error("Failed to load saved table names:", err);
       }
+
+      // Fetch persistent table aliases from backend PostgreSQL API
+      fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/table-aliases`, {
+        headers: getAuthHeaders(),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => {
+          if (json && json.table_aliases) {
+            setTableCustomNames(json.table_aliases);
+            localStorage.setItem(`k2b_table_names_${selectedKb.id}`, JSON.stringify(json.table_aliases));
+          }
+        })
+        .catch((err) => console.warn("Failed to load table aliases from server:", err));
     }
   }, [selectedKb?.id]);
 
@@ -353,23 +389,33 @@ export default function DatabaseKnowledgePage() {
     setNewTableTagInput((prev) => ({ ...prev, [tableName]: "" }));
   };
 
-  const handleRemoveTableSingleName = (tableName: string, nameToRemove: string) => {
-    setTableCustomNames((prev) => {
-      const existingList = prev[tableName] || [];
-      const updatedList = existingList.filter((n) => n !== nameToRemove);
-      const nextState = {
-        ...prev,
-        [tableName]: updatedList,
-      };
-      if (selectedKb?.id) {
-        localStorage.setItem(`k2b_table_names_${selectedKb.id}`, JSON.stringify(nextState));
+  const handleRemoveTableSingleName = async (tableName: string, nameToRemove: string) => {
+    const existingList = tableCustomNames[tableName] || [];
+    const updatedList = existingList.filter((n) => n !== nameToRemove);
+    const nextState = {
+      ...tableCustomNames,
+      [tableName]: updatedList,
+    };
+    setTableCustomNames(nextState);
+    if (selectedKb?.id) {
+      localStorage.setItem(`k2b_table_names_${selectedKb.id}`, JSON.stringify(nextState));
+      try {
+        await fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/table-aliases`, {
+          method: "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            table_name: tableName,
+            aliases: updatedList,
+          }),
+        });
+      } catch (err) {
+        console.warn("Failed to sync alias deletion to server:", err);
       }
-      return nextState;
-    });
+    }
     toast.success(`Removed "${nameToRemove}" from "${tableName}"`);
   };
 
-  const handleSaveTableName = (tableName: string) => {
+  const handleSaveTableName = async (tableName: string) => {
     const pendingText = (newTableTagInput[tableName] || "").trim();
     let currentNames = tableCustomNames[tableName] || [];
     if (pendingText && !currentNames.includes(pendingText)) {
@@ -383,22 +429,44 @@ export default function DatabaseKnowledgePage() {
     setTableCustomNames(nextState);
     if (selectedKb?.id) {
       localStorage.setItem(`k2b_table_names_${selectedKb.id}`, JSON.stringify(nextState));
+      try {
+        const res = await fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/table-aliases`, {
+          method: "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            table_name: tableName,
+            aliases: currentNames,
+          }),
+        });
+        if (res.ok) {
+          toast.success(`Saved alternative names for "${tableName}" in AI Knowledgebase!`);
+          return;
+        }
+      } catch (err) {
+        console.warn("Failed to save table aliases to server:", err);
+      }
     }
     toast.success(`Saved names for table "${tableName}" successfully!`);
   };
 
-  const handleClearTableNames = (tableName: string) => {
-    setTableCustomNames((prev) => {
-      const nextState = {
-        ...prev,
-        [tableName]: [],
-      };
-      if (selectedKb?.id) {
-        localStorage.setItem(`k2b_table_names_${selectedKb.id}`, JSON.stringify(nextState));
-      }
-      return nextState;
-    });
+  const handleClearTableNames = async (tableName: string) => {
+    const nextState = {
+      ...tableCustomNames,
+      [tableName]: [],
+    };
+    setTableCustomNames(nextState);
     setNewTableTagInput((prev) => ({ ...prev, [tableName]: "" }));
+    if (selectedKb?.id) {
+      localStorage.setItem(`k2b_table_names_${selectedKb.id}`, JSON.stringify(nextState));
+      try {
+        await fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/table-aliases/${encodeURIComponent(tableName)}`, {
+          method: "DELETE",
+          headers: getAuthHeaders(),
+        });
+      } catch (err) {
+        console.warn("Failed to delete table alias from server:", err);
+      }
+    }
     toast.success(`Removed names for table "${tableName}"`);
   };
 
@@ -426,14 +494,6 @@ export default function DatabaseKnowledgePage() {
   const [auditStatusFilter, setAuditStatusFilter] = useState<string>("ALL");
   const [auditLoading, setAuditLoading] = useState(false);
   const [inspectedTrace, setInspectedTrace] = useState<any>(null);
-
-  const getAuthHeaders = () => {
-    const token = getCookie("AUTH_TOKEN");
-    return {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    };
-  };
 
   const fetchKnowledgebases = async () => {
     setLoading(true);
@@ -522,7 +582,7 @@ export default function DatabaseKnowledgePage() {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({
-          db_type: "postgresql",
+          db_type: formDbType,
           host: formHost,
           port: formPort,
           database_name: formDbName,
@@ -568,7 +628,7 @@ export default function DatabaseKnowledgePage() {
           name: formName,
           description: formDesc,
           connection: {
-            db_type: "postgresql",
+            db_type: formDbType,
             host: formHost,
             port: formPort,
             database_name: formDbName,
@@ -2797,6 +2857,35 @@ export default function DatabaseKnowledgePage() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
+              <Text strong>Database Engine</Text>
+              <Select
+                value={formDbType}
+                onChange={handleDbTypeChange}
+                className="w-full mt-1"
+                options={[
+                  { label: "PostgreSQL", value: "postgresql" },
+                  { label: "MariaDB", value: "mariadb" },
+                  { label: "MySQL", value: "mysql" },
+                ]}
+              />
+            </div>
+            <div>
+              <Text strong>SSL Mode</Text>
+              <Select
+                value={formSsl}
+                onChange={(v) => setFormSsl(v)}
+                className="w-full mt-1"
+                options={[
+                  { label: "Disable (Local / Internal)", value: "disable" },
+                  { label: "Prefer (Opportunistic TLS)", value: "prefer" },
+                  { label: "Require (Strict TLS)", value: "require" },
+                ]}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
               <Text strong>Host</Text>
               <Input
                 value={formHost}
@@ -2809,7 +2898,7 @@ export default function DatabaseKnowledgePage() {
               <Text strong>Port</Text>
               <InputNumber
                 value={formPort}
-                onChange={(v) => setFormPort(v || 5432)}
+                onChange={(v) => setFormPort(v || (formDbType === "postgresql" ? 5432 : 3306))}
                 className="w-full mt-1"
               />
             </div>
@@ -2844,20 +2933,6 @@ export default function DatabaseKnowledgePage() {
                 className="mt-1"
               />
             </div>
-          </div>
-
-          <div>
-            <Text strong>SSL Mode</Text>
-            <Select
-              value={formSsl}
-              onChange={(v) => setFormSsl(v)}
-              className="w-full mt-1"
-              options={[
-                { label: "Disable (Local / Internal)", value: "disable" },
-                { label: "Prefer (Opportunistic TLS)", value: "prefer" },
-                { label: "Require (Strict TLS)", value: "require" },
-              ]}
-            />
           </div>
 
           {/* Test Connection Result Alert */}
