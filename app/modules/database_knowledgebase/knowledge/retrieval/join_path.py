@@ -94,9 +94,11 @@ class JoinPathFinder:
         self,
         db_knowledgebase_id: uuid.UUID,
         schema_version: Optional[str] = None,
+        session: Optional[AsyncSession] = None,
     ):
         """Construct weighted graph from relationship items."""
         self._graph.clear()
+        target_db = session or self.db
 
         stmt = select(KB2KnowledgeItem).where(
             KB2KnowledgeItem.tenant_id == self.tenant_id,
@@ -104,7 +106,7 @@ class JoinPathFinder:
             KB2KnowledgeItem.item_type == "relationship",
             KB2KnowledgeItem.status.in_(["confirmed", "draft"]),
         )
-        res = await self.db.execute(stmt)
+        res = await target_db.execute(stmt)
         items = res.scalars().all()
 
         for it in items:

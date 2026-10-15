@@ -33,6 +33,9 @@ from .schemas.api import (
     StandardApiResponse,
     GlossaryConfirmApiRequest,
     UserMappingBatchRequest,
+    TableAliasSaveRequest,
+    TableAliasResponse,
+    TableAliasItem,
 )
 from .retrieval.retriever import SchemaRetrievalResult
 from .planning.models import QueryPlanIR
@@ -585,6 +588,63 @@ async def save_user_mappings(
         trigger_sync=trigger_sync,
     )
     return result
+
+
+# ============= TABLE ALIASES (ALTERNATIVE NAMES) ENDPOINTS =============
+
+@router.get(
+    "/{id}/table-aliases",
+    response_model=TableAliasResponse,
+    summary="Get Table Aliases",
+    description="Returns all user-configured alternative names / aliases for database tables.",
+)
+async def get_table_aliases(
+    id: uuid.UUID,
+    service: DatabaseKnowledgebaseService = Depends(get_service),
+):
+    aliases = await service.get_table_aliases(kb_id=id)
+    return TableAliasResponse(success=True, table_aliases=aliases)
+
+
+@router.post(
+    "/{id}/table-aliases",
+    response_model=TableAliasResponse,
+    summary="Save Table Aliases",
+    description="Persists user-configured alternative names (aliases) for tables to empower conversational queries.",
+)
+async def save_table_aliases(
+    id: uuid.UUID,
+    payload: TableAliasSaveRequest,
+    service: DatabaseKnowledgebaseService = Depends(get_service),
+):
+    result = await service.save_table_aliases(
+        kb_id=id,
+        table_aliases_data=payload,
+    )
+    return TableAliasResponse(
+        success=result.get("success", True),
+        table_aliases=result.get("table_aliases", {}),
+        message=f"Successfully saved {result.get('saved_count', 0)} table aliases",
+    )
+
+
+@router.delete(
+    "/{id}/table-aliases/{table_name}",
+    response_model=TableAliasResponse,
+    summary="Delete Table Aliases",
+    description="Removes alternative names for a specific table.",
+)
+async def delete_table_aliases(
+    id: uuid.UUID,
+    table_name: str,
+    service: DatabaseKnowledgebaseService = Depends(get_service),
+):
+    result = await service.delete_table_alias(kb_id=id, table_name=table_name)
+    return TableAliasResponse(
+        success=result.get("success", True),
+        table_aliases=result.get("table_aliases", {}),
+        message=f"Removed aliases for table {table_name}",
+    )
 
 
 from .knowledge.api.admin_router import router as knowledge_admin_router; router.include_router(knowledge_admin_router)

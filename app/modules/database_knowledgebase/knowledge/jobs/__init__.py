@@ -22,6 +22,7 @@ from .pipeline import (
     stage_enrich_stub,
     run_phase2_pipeline,
     trigger_phase2_sync_job,
+    run_pipeline_for_kb_local,
 )
 from .schema_indexer import build_and_index_schema_docs
 
@@ -37,6 +38,7 @@ __all__ = [
     "stage_enrich_stub",
     "run_phase2_pipeline",
     "trigger_phase2_sync_job",
+    "run_pipeline_for_kb_local",
     "build_and_index_schema_docs",
 ]
 

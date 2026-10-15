@@ -61,33 +61,64 @@ class SchemaGraph:
                                 relationship_type=RelationshipType.MANY_TO_ONE,
                             )
                         )
-        pub_s = schema.get_schema("public")
-        if pub_s:
-            implicit_links = [
-                ("attendance_attendanceactivity", "employee_id_id", "employee_employee", "id"),
-                ("attendance_attendanceactivity", "attendance_id_id", "attendance_attendance", "id"),
-                ("attendance_attendancelatecomeearlyout", "employee_id_id", "employee_employee", "id"),
-                ("attendance_attendancelatecomeearlyout", "attendance_id_id", "attendance_attendance", "id"),
-            ]
-            for src_t, src_c, tgt_t, tgt_c in implicit_links:
-                if src_t in pub_s.tables and tgt_t in pub_s.tables:
-                    s_tbl = pub_s.tables[src_t]
-                    if src_c in s_tbl.columns:
-                        rel_key = f"public.{src_t}->public.{tgt_t}:implicit_{src_t}_{src_c}"
-                        if rel_key not in seen_keys:
-                            seen_keys.add(rel_key)
-                            all_rels.append(
-                                RelationshipSchema(
-                                    source_schema="public",
-                                    source_table=src_t,
-                                    source_columns=[src_c],
-                                    target_schema="public",
-                                    target_table=tgt_t,
-                                    target_columns=[tgt_c],
-                                    foreign_key_name=f"implicit_{src_t}_{src_c}",
-                                    relationship_type=RelationshipType.MANY_TO_ONE,
-                                )
+        import re
+        all_canonical_tables = {}
+        for s_name, s_val in schema.schemas.items():
+            for t_name, t_val in s_val.tables.items():
+                all_canonical_tables[t_name.lower()] = (s_name, t_val)
+
+        for t_low, (src_s_name, src_tbl) in all_canonical_tables.items():
+            for c_name, c_obj in src_tbl.columns.items():
+                c_low = c_name.lower()
+                target_cand = None
+                target_pk_col = "id"
+
+                if c_low.endswith("_id") or c_low.endswith("_id_id"):
+                    stem = re.sub(r"_id(_id)?$", "", c_low)
+                    candidates = [stem, stem + "s", stem + "es", f"base_{stem}", f"tab{stem.capitalize()}", f"tab{stem}"]
+                    if stem in ("assigned_to", "author", "responsible", "created_by", "updated_by", "owner", "member", "user"):
+                        for cand_t in all_canonical_tables.keys():
+                            if any(tok in cand_t for tok in ("user", "employee", "member", "person", "staff")) and not any(aux in cand_t for aux in ("setting", "preference", "role", "work", "bank", "bonus")):
+                                candidates.append(cand_t)
+                    for cand in candidates:
+                        if cand in all_canonical_tables:
+                            target_cand = cand
+                            cand_tbl = all_canonical_tables[cand][1]
+                            target_pk_col = next(
+                                (pk for pk in cand_tbl.primary_key_columns if pk in cand_tbl.columns),
+                                "id" if "id" in cand_tbl.columns else ("name" if "name" in cand_tbl.columns else next(iter(cand_tbl.columns.keys()), "id"))
                             )
+                            break
+                elif c_low in all_canonical_tables and c_low != t_low:
+                    target_cand = c_low
+                    cand_tbl = all_canonical_tables[c_low][1]
+                    target_pk_col = "id" if "id" in cand_tbl.columns else ("name" if "name" in cand_tbl.columns else "id")
+                elif ("tab" + c_low.capitalize()) in all_canonical_tables and ("tab" + c_low.capitalize()) != t_low:
+                    target_cand = "tab" + c_low.capitalize()
+                    cand_tbl = all_canonical_tables[target_cand][1]
+                    target_pk_col = "name" if "name" in cand_tbl.columns else "id"
+                elif ("tab" + c_low) in all_canonical_tables and ("tab" + c_low) != t_low:
+                    target_cand = "tab" + c_low
+                    cand_tbl = all_canonical_tables[target_cand][1]
+                    target_pk_col = "name" if "name" in cand_tbl.columns else "id"
+
+                if target_cand and target_cand != t_low:
+                    tgt_s_name, tgt_tbl = all_canonical_tables[target_cand]
+                    rel_key = f"{src_s_name}.{src_tbl.table_name}->{tgt_s_name}.{tgt_tbl.table_name}:implicit_{c_name}"
+                    if rel_key not in seen_keys:
+                        seen_keys.add(rel_key)
+                        all_rels.append(
+                            RelationshipSchema(
+                                source_schema=src_s_name,
+                                source_table=src_tbl.table_name,
+                                source_columns=[c_name],
+                                target_schema=tgt_s_name,
+                                target_table=tgt_tbl.table_name,
+                                target_columns=[target_pk_col],
+                                foreign_key_name=f"implicit_{src_tbl.table_name}_{c_name}",
+                                relationship_type=RelationshipType.MANY_TO_ONE,
+                            )
+                        )
         instance = cls(all_rels)
         if fp:
             cls._GRAPH_CACHE[fp] = instance
@@ -140,7 +171,12 @@ class SchemaGraph:
         queue = deque([(start, [start])])
         visited = {start}
 
-        ADMIN_TABLES = {"auth_user", "auth_group", "django_content_type", "base_company", "django_migrations", "django_session", "base_company_id"}
+        def _is_admin_or_system_table(t_name: str) -> bool:
+            t_low = t_name.lower().split(".")[-1]
+            return (
+                t_low.startswith(("auth_", "django_", "pg_", "sys", "__", "information_schema"))
+                or any(tok in t_low for tok in ("_migrations", "_migration", "session", "contenttype", "content_type", "schema_migrations", "spatial_ref_sys", "historical", "backup", "_bak", "history_"))
+            )
         start_clean = start.split(".")[-1].lower()
         end_clean = end.split(".")[-1].lower()
         allowed_clean = {t.split(".")[-1].lower() for t in allowed_tables} if allowed_tables else None
@@ -154,13 +190,42 @@ class SchemaGraph:
             c_base = current.split(".")[-1].lower()
 
             def _neighbor_priority(item):
-                n_name, _ = item
+                n_name, rel = item
                 if n_name == end:
-                    return (-1, -1)
+                    return (-100, 0, "")
                 n_base = n_name.split(".")[-1].lower()
-                is_admin = 1 if (n_base in ADMIN_TABLES or any(a in n_base for a in ("auth_", "django_"))) else 0
-                has_domain_tokens = 0 if any(tok in n_base for tok in (start_clean, end_clean)) else 1
-                return (is_admin, has_domain_tokens)
+                is_admin = 1 if _is_admin_or_system_table(n_base) else 0
+                if is_admin:
+                    return (10, 0, n_base)
+
+                AUXILIARY_TOKENS = (
+                    "journal", "cost_", "cost", "time_entry", "time_entries", "notification",
+                    "setting", "storage", "audit", "log", "token", "session", "favorite",
+                    "reminder", "reaction", "recaptcha", "query", "queries", "comment",
+                    "message", "feed", "event", "history", "backup", "rate", "grid", "news"
+                )
+                is_aux = any(tok in n_base for tok in AUXILIARY_TOKENS)
+
+                JUNCTION_TOKENS = (
+                    "member", "members", "assignment", "assigned", "team", "participant",
+                    "allocat", "user_project", "project_user"
+                )
+                is_junction = any(tok in n_base for tok in JUNCTION_TOKENS)
+
+                src_cols = [c.lower() for c in (rel.source_columns or [])]
+                tgt_cols = [c.lower() for c in (rel.target_columns or [])]
+                all_cols = src_cols + tgt_cols
+                is_audit_fk = any(c in all_cols for c in ("author_id", "creator_id", "logged_by_id", "updater_id", "modifier_id", "presenter_id"))
+
+                tier = 2
+                if is_junction and not is_aux:
+                    tier = 0
+                elif any(tok in n_base for tok in (start_clean, end_clean)) and not is_aux:
+                    tier = 1
+                elif is_aux or is_audit_fk:
+                    tier = 5
+
+                return (tier, 1 if is_audit_fk else 0, n_base)
 
             sorted_neighbors = sorted(self.adj.get(current, []), key=_neighbor_priority)
             for neighbor, _ in sorted_neighbors:
@@ -174,10 +239,7 @@ class SchemaGraph:
                     return path + [neighbor]
 
                 # Never traverse admin, audit, historical, or backup tables as intermediate bridges
-                if (
-                    n_base in ADMIN_TABLES
-                    or any(a in n_base for a in ("auth_", "django_", "historical", "backup", "_bak", "audit", "history_"))
-                ):
+                if _is_admin_or_system_table(n_base):
                     continue
 
                 # If allowed_tables is constrained, bridge tables must be in allowed_clean

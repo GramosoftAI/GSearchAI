@@ -170,3 +170,33 @@ class UserMappingBatchRequest(BaseModel):
 
     mappings: List[UserMappingItem] = Field(default_factory=list)
 
+
+class TableAliasItem(BaseModel):
+    """Single table alias definition."""
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    table_name: str = Field(..., alias="tableName")
+    aliases: List[str] = Field(default_factory=list)
+    description: Optional[str] = Field(default=None)
+
+
+class TableAliasSaveRequest(BaseModel):
+    """Save table aliases payload (supports single table or batch dictionary/list)."""
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    table_name: Optional[str] = Field(default=None, alias="tableName")
+    aliases: Optional[List[str]] = Field(default=None)
+    table_aliases: Optional[Dict[str, List[str]]] = Field(default=None, alias="tableAliases")
+    items: Optional[List[TableAliasItem]] = Field(default=None)
+    description: Optional[str] = Field(default=None)
+
+
+class TableAliasResponse(BaseModel):
+    """Response containing table aliases mapping."""
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    success: bool = True
+    table_aliases: Dict[str, List[str]] = Field(default_factory=dict)
+    message: Optional[str] = None
+
+

@@ -11,6 +11,7 @@ Coordinates:
 import uuid
 import logging
 import asyncio
+import re
 from typing import Dict, List, Optional, Set, Any
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -213,12 +214,35 @@ class SchemaRetriever:
             f"{t.schema_name}.{t.table_name}" for t in canonical_tables.values()
         } | set(canonical_tables.keys())
 
+        # Fetch user-configured Table Aliases (Alternative Words) for this KB
+        table_aliases_map: Dict[str, List[str]] = {}
+        try:
+            from ..models.table_alias import KBTableAlias
+            alias_stmt = select(KBTableAlias).where(
+                KBTableAlias.db_knowledgebase_id == kb.id
+            )
+            alias_res = await self.session.execute(alias_stmt)
+            alias_records = alias_res.scalars().all()
+            for ar in alias_records:
+                if ar.aliases and isinstance(ar.aliases, list):
+                    table_aliases_map[ar.table_name] = [str(a).strip() for a in ar.aliases if str(a).strip()]
+        except Exception as alias_err:
+            logger.debug(f"Failed to fetch table aliases: {alias_err}")
+
+        # Check for user query alias matches to augment vector retrieval & XML prompt
+        expanded_mentions = []
+        for tbl_name, a_list in table_aliases_map.items():
+            for a_str in a_list:
+                if a_str and re.search(r"\b" + re.escape(a_str.lower()) + r"\b", request.user_query.lower()):
+                    expanded_mentions.append(f"{a_str} -> {tbl_name}")
+
         # 3. Signal 1: Instant Deterministic Keyword / Identifier Matching (0.2 ms)
         keyword_results: Dict[str, KeywordMatchResult] = SchemaKeywordMatcher.match_schema(
             query=request.user_query,
             schema=canonical_schema,
             allowed_tables=allowed_table_keys,
             glossary_entries=published_glossary_map if enable_glossary else None,
+            table_aliases=table_aliases_map,
         )
 
         strong_keyword_matches = sum(
@@ -230,9 +254,14 @@ class SchemaRetriever:
         is_vector_available = False
         vector_timeout = 10 if strong_keyword_matches >= 1 else 20
 
+        # Augment user query with mapped table names for vector similarity
+        vector_query = request.user_query
+        if expanded_mentions:
+            vector_query = f"{request.user_query} (referencing tables: {', '.join(set(expanded_mentions))})"
+
         try:
             query_vector = await asyncio.wait_for(
-                EmbeddingGenerator.generate_embedding(request.user_query),
+                EmbeddingGenerator.generate_embedding(vector_query),
                 timeout=vector_timeout,
             )
             if query_vector and any(query_vector):
@@ -273,41 +302,58 @@ class SchemaRetriever:
             elif max_initial_score >= 0.20 and score.final_score >= max(0.25, max_initial_score * 0.80):
                 candidate_seeds.add(t_key)
 
-        # 5.1 If query mentions an entity literal (e.g. employee name like 'Girinath'), anchor on core employee table
+        # 5.1 If query mentions an entity literal (e.g. employee/user name like 'Arun' or 'Girinath'), anchor on core person/user table
         if canonical_schema:
             from ..planning.entity_value_resolver import EntityValueResolver
             literal_candidates = EntityValueResolver.extract_literal_candidates(request.user_query, canonical_schema=canonical_schema)
             if literal_candidates:
+                best_anchor_tbl = None
+                best_anchor_score = 0.0
                 for s_name, s_val in canonical_schema.schemas.items():
                     for t_name, t_obj in s_val.tables.items():
-                        if t_name.lower() == "employee_employee" or (
-                            "employee" in t_name.lower()
-                            and "employee_first_name" in {c.lower() for c in t_obj.columns.keys()}
-                            and not any(h in t_name.lower() for h in ("historical", "backup", "audit", "note", "tag", "detail"))
-                        ):
-                            t_key = f"{t_obj.schema_name}.{t_obj.table_name}"
-                            candidate_seeds.add(t_key)
-                            if t_key not in initial_fused:
-                                initial_fused[t_key] = TableRetrievalScore(
-                                    table_name=t_obj.table_name,
-                                    schema_name=t_obj.schema_name,
-                                    keyword_score=0.95,
-                                    final_score=0.95,
-                                    retrieval_source="anchor",
-                                    retrieval_reason="Employee anchor match",
-                                )
-                            else:
-                                initial_fused[t_key].final_score = max(initial_fused[t_key].final_score, 0.95)
-                            keyword_results[t_key] = KeywordMatchResult(
-                                table_name=t_obj.table_name,
-                                schema_name=t_obj.schema_name,
-                                score=0.95,
-                                matched_table_name=True,
-                                matched_columns=[],
-                                matched_tokens=["employee_anchor"],
-                                retrieval_reason="Employee anchor match",
-                            )
-                            break
+                        t_low = t_name.lower()
+                        if any(p in t_low for p in ("auth_", "django_", "sys_", "pg_", "information_schema", "migration", "spatial_ref_sys", "sqlite_")):
+                            continue
+                        if any(h in t_low for h in ("historical", "backup", "audit", "note", "tag", "detail")):
+                            continue
+                        cols_low = {c.lower() for c in t_obj.columns.keys()}
+                        score = 0.0
+                        if any(tok in t_low for tok in ("employee", "user", "staff", "person", "customer", "member")) and not any(aux in t_low for aux in ("setting", "preference", "role", "work", "bank", "bonus", "log")):
+                            score += 100.0
+                        elif any(fn in cols_low for fn in ("first_name", "firstname", "full_name", "employee_first_name", "employee_name")):
+                            score += 80.0
+                        elif any(ln in cols_low for ln in ("last_name", "lastname", "surname", "employee_last_name")):
+                            score += 60.0
+                        elif any(nm in cols_low for nm in ("login", "username", "user_name")):
+                            score += 50.0
+
+                        if score > best_anchor_score:
+                            best_anchor_score = score
+                            best_anchor_tbl = t_obj
+
+                if best_anchor_tbl and best_anchor_score >= 50.0:
+                    t_key = f"{best_anchor_tbl.schema_name}.{best_anchor_tbl.table_name}"
+                    candidate_seeds.add(t_key)
+                    if t_key not in initial_fused:
+                        initial_fused[t_key] = TableRetrievalScore(
+                            table_name=best_anchor_tbl.table_name,
+                            schema_name=best_anchor_tbl.schema_name,
+                            keyword_score=0.95,
+                            final_score=0.95,
+                            retrieval_source="anchor",
+                            retrieval_reason="Person anchor match",
+                        )
+                    else:
+                        initial_fused[t_key].final_score = max(initial_fused[t_key].final_score, 0.95)
+                    keyword_results[t_key] = KeywordMatchResult(
+                        table_name=best_anchor_tbl.table_name,
+                        schema_name=best_anchor_tbl.schema_name,
+                        score=0.95,
+                        matched_table_name=True,
+                        matched_columns=[],
+                        matched_tokens=["person_anchor"],
+                        retrieval_reason="Person anchor match",
+                    )
 
         # If no seeds pass threshold, pick highest scoring single candidate
         if not candidate_seeds and initial_fused:
@@ -387,7 +433,7 @@ class SchemaRetriever:
         detected_entities = analysis.detected_entities
 
         primary_entity_seeds: List[str] = []
-        if detected_entities and len(detected_entities) >= 2:
+        if detected_entities:
             for ent in detected_entities:
                 ent_clean = ent.lower()
                 ent_stem = ent_clean[:-1] if (ent_clean.endswith("s") and len(ent_clean) > 3) else ent_clean
@@ -413,8 +459,13 @@ class SchemaRetriever:
                 if best_seed and best_seed not in primary_entity_seeds:
                     primary_entity_seeds.append(best_seed)
 
-            # Ensure all tables along the shortest connective path between primary entity seeds are included
-            if len(primary_entity_seeds) >= 2:
+        # Also include anchor candidate seeds (e.g., person table resolved for literal) in primary_entity_seeds
+        for cs in candidate_seeds:
+            if cs not in primary_entity_seeds:
+                primary_entity_seeds.append(cs)
+
+        # Ensure all tables along the shortest connective path between primary entity seeds are included
+        if len(primary_entity_seeds) >= 2 and canonical_schema:
                 graph = SchemaGraph.from_database_schema(canonical_schema)
                 for i in range(len(primary_entity_seeds)):
                     for j in range(i + 1, len(primary_entity_seeds)):
@@ -425,11 +476,26 @@ class SchemaRetriever:
                             for tbl in path:
                                 if len(selected_table_keys) >= request.top_k_tables:
                                     break
+                                tbl_key = tbl if "." in tbl else f"public.{tbl}"
+                                matched_k = None
                                 for k in final_scores.keys():
                                     if k.lower() == tbl.lower() or k.split(".")[-1].lower() == tbl.split(".")[-1].lower():
-                                        if k not in selected_table_keys:
-                                            selected_table_keys[k] = final_scores[k]
+                                        matched_k = k
                                         break
+                                if matched_k:
+                                    if matched_k not in selected_table_keys:
+                                        selected_table_keys[matched_k] = final_scores[matched_k]
+                                else:
+                                    t_short = tbl.split(".")[-1]
+                                    s_name = tbl.split(".")[0] if "." in tbl else "public"
+                                    selected_table_keys[tbl_key] = TableRetrievalScore(
+                                        table_name=t_short,
+                                        schema_name=s_name,
+                                        keyword_score=0.90,
+                                        final_score=0.90,
+                                        retrieval_source="graph",
+                                        retrieval_reason="Connective bridge path between primary entity seeds",
+                                    )
 
         # 8.2 Fill remaining slots with highest-ranked candidate tables
         for t_key in ranked_tables:
@@ -452,6 +518,11 @@ class SchemaRetriever:
             glossary_entries=published_glossary_map if enable_glossary else None,
             security_overrides=security_overrides,
         )
+
+        # 9.1 Inject matched table aliases into untrusted_xml for LLM SQL Generator
+        if expanded_mentions:
+            alias_annotations = "\n".join([f'  <mapping user_phrase="{m.split(" -> ")[0]}" table="{m.split(" -> ")[1]}" />' for m in set(expanded_mentions)])
+            untrusted_xml += f"\n<active_table_aliases description=\"User words mapped to tables\">\n{alias_annotations}\n</active_table_aliases>\n"
 
         # 10. Compute Overall Retrieval Confidence
         if selected_table_keys:

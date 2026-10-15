@@ -226,6 +226,10 @@ class Phase1Adapter:
             config = self.secrets.decrypt_credentials(kb_entity.encrypted_credentials)
             self._cached_configs[cache_key] = config
 
+        db_type_str = str(getattr(config, "db_type", "")).lower()
+        if "mariadb" in db_type_str or "mysql" in db_type_str or getattr(config, "port", None) in (3306, 3307):
+            raise NotImplementedError("Phase1 live query adapter does not support MySQL/MariaDB connections via asyncpg.")
+
         # Resolve SSL mode
         ssl_val = None
         if hasattr(config, "ssl_mode"):

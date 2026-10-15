@@ -94,41 +94,105 @@ def build_schema_doc_data(
 
     if doc_type == "table":
         table_name = payload.get("table_name") or item_key.split(".")[-1]
+        schema_name = payload.get("schema_name") or "public"
+        kind = payload.get("kind") or semantic.get("kind") or "entity"
         domain = semantic.get("domain") or payload.get("domain") or ""
-        row_grain = semantic.get("row_grain") or ""
+        grain = semantic.get("grain") or semantic.get("row_grain") or ""
         description = semantic.get("description") or payload.get("comment") or ""
-        aliases = semantic.get("aliases") or []
+        synonyms = semantic.get("synonyms") or []
+        key_columns = semantic.get("key_columns") or {}
+        
+        # Merge synonyms into aliases column
+        aliases = sorted(list(set((payload.get("aliases") or []) + (semantic.get("aliases") or []) + synonyms)))
+        pk_cols = payload.get("primary_key") or []
+        fks = payload.get("foreign_keys") or []
+        row_est = (payload.get("stats") or {}).get("row_estimate")
 
         title = f"Table {table_name}"
         body_parts = []
+        if kind:
+            body_parts.append(f"Kind: {kind}")
         if domain:
             body_parts.append(f"Domain: {domain}")
-        if row_grain:
-            body_parts.append(f"Row Grain: {row_grain}")
         if description:
             body_parts.append(f"Description: {description}")
-        body = ". ".join(body_parts) if body_parts else f"Table {table_name}"
+        if grain:
+            body_parts.append(f"Row Grain: {grain}")
+        if synonyms:
+            body_parts.append(f"Synonyms: {', '.join(synonyms)}")
+        if key_columns:
+            if isinstance(key_columns, dict):
+                kc_str = ", ".join(f"{k}: {v}" for k, v in key_columns.items() if v)
+                if kc_str:
+                    body_parts.append(f"Key Columns: {kc_str}")
+            elif isinstance(key_columns, list):
+                body_parts.append(f"Key Columns: {', '.join(str(k) for k in key_columns)}")
+        if pk_cols:
+            body_parts.append(f"Primary Key: {', '.join(pk_cols)}")
+        if fks:
+            fk_summaries = []
+            for fk in fks[:5]:
+                if isinstance(fk, dict):
+                    rt = fk.get("referred_table")
+                    if rt:
+                        fk_summaries.append(f"references {rt}")
+            if fk_summaries:
+                body_parts.append(f"Relationships: {'; '.join(fk_summaries)}")
+        if row_est is not None and row_est > 0:
+            body_parts.append(f"Approx Rows: {row_est}")
+
+        if not body_parts:
+            body_parts.append(f"Database table {table_name} in schema {schema_name}")
+        body = ". ".join(body_parts)
 
     elif doc_type == "column":
         col_name = payload.get("column_name") or item_key.split(".")[-1]
         table_name = payload.get("table_name") or ".".join(item_key.split(".")[:-1])
+        data_type = payload.get("data_type") or "unknown"
+        is_pk = payload.get("is_primary_key", False)
+        is_fk = payload.get("is_foreign_key", False)
+        is_nullable = payload.get("is_nullable", True)
         meaning = semantic.get("meaning") or payload.get("comment") or ""
+        synonyms = semantic.get("synonyms") or []
+        coded_values = semantic.get("coded_values") or {}
         usage_note = semantic.get("usage_note") or ""
-        aliases = semantic.get("aliases") or []
+        
+        # Merge synonyms into aliases column
+        aliases = sorted(list(set((payload.get("aliases") or []) + (semantic.get("aliases") or []) + synonyms)))
         unit = semantic.get("unit") or payload.get("unit_hint")
-        role = payload.get("role")
+        role = payload.get("role") or semantic.get("role") or ""
 
         title = f"Column {table_name}.{col_name}"
-        body_parts = []
+        body_parts = [f"Type: {data_type}"]
+        if is_pk:
+            body_parts.append("Primary Key: YES")
+        if is_fk:
+            body_parts.append("Foreign Key: YES")
+        if not is_nullable:
+            body_parts.append("NOT NULL")
         if role:
             body_parts.append(f"Role: {role}")
         if unit:
             body_parts.append(f"Unit: {unit}")
         if meaning:
             body_parts.append(f"Meaning: {meaning}")
+        if synonyms:
+            body_parts.append(f"Synonyms: {', '.join(synonyms)}")
+        if coded_values:
+            if isinstance(coded_values, dict):
+                cv_str = ", ".join(f"{k}={v}" for k, v in coded_values.items())
+                if cv_str:
+                    body_parts.append(f"Coded Values: {cv_str}")
         if usage_note:
             body_parts.append(f"Usage: {usage_note}")
-        body = ". ".join(body_parts) if body_parts else f"Column {col_name}"
+
+        # Profiled categorical sample values if non-sensitive
+        stats = payload.get("stats") or {}
+        top_vals = stats.get("top_values") or []
+        if top_vals and not is_sensitive_column(col_name) and role not in ("name", "id", "code", "text"):
+            body_parts.append(f"Sample values: {', '.join(str(v) for v in top_vals[:5])}")
+
+        body = ". ".join(body_parts)
 
     elif doc_type == "metric":
         metric_name = payload.get("name") or semantic.get("name") or item_key.replace("metric:", "").replace("_", " ").title()
@@ -272,12 +336,14 @@ async def build_and_index_schema_docs(
             try:
                 batch_vectors = await EmbeddingGenerator.generate_embeddings_batch(text_slice)
                 for doc_obj, vec in zip(batch_slice, batch_vectors):
+                    if not vec or len(vec) == 0:
+                        raise ValueError(f"Empty embedding vector generated for doc '{doc_obj.get('item_key')}'")
                     doc_obj["embedding"] = vec
                 embeddings_generated += len(batch_vectors)
             except Exception as emb_exc:
-                logger.error(f"[Schema Index Builder] Batch embedding generation error: {emb_exc}")
-                for doc_obj in batch_slice:
-                    doc_obj["embedding"] = None
+                err_msg = f"[Schema Index Builder] Fatal embedding failure on batch {i // EMBEDDING_BATCH_SIZE + 1} ({len(batch_slice)} docs): {emb_exc}"
+                logger.error(err_msg, exc_info=True)
+                raise RuntimeError(err_msg) from emb_exc
 
     # 7. Bulk upsert docs
     upserted = await doc_repo.bulk_upsert(candidate_docs)

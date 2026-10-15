@@ -53,12 +53,62 @@ from dataclasses import dataclass
 from ..config import get_settings
 
 import re
+import random
 from ..billing.utils import is_billing_enabled
 from app.core.llm.routing import LLMTask
 
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+
+class LLMAuthOrBillingError(Exception):
+    """Raised when LLM provider returns non-retryable 4xx client errors (401, 402, 403, etc.)."""
+    def __init__(self, message: str, status_code: Optional[int] = None, raw_response: Optional[str] = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.raw_response = raw_response
+
+
+class LLMRequestError(Exception):
+    """Raised on per-request 4xx client errors (400, 404, 413, 422, etc.) that do not warrant aborting the entire pipeline."""
+    def __init__(self, message: str, status_code: Optional[int] = None, raw_response: Optional[str] = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.raw_response = raw_response
+
+
+def _handle_llm_http_status(response: httpx.Response, url: str) -> None:
+    """Check response status.
+    Raises LLMAuthOrBillingError ONLY on 401, 402, 403 (aborts whole stage).
+    Raises LLMRequestError for other 4xx (400, 404, 413, 422, etc., except 429).
+    429 and 5xx continue to backoff retries.
+    """
+    status = response.status_code
+    if status in (401, 402, 403):
+        err_msg = f"Auth or billing LLM error '{status}' for url '{url}': {response.text}"
+        logger.error(err_msg)
+        raise LLMAuthOrBillingError(err_msg, status_code=status, raw_response=response.text)
+    elif 400 <= status < 500 and status != 429:
+        err_msg = f"Client request error '{status}' for url '{url}': {response.text}"
+        logger.warning(err_msg)
+        raise LLMRequestError(err_msg, status_code=status, raw_response=response.text)
+
+
+def _compute_retry_delay(response: Optional[httpx.Response], attempt: int, max_delay: float = 15.0) -> float:
+    """Compute backoff delay with jitter, honoring Retry-After header if present."""
+    if response is not None:
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                val = float(retry_after)
+                if val > 0:
+                    return min(val, max_delay)
+            except ValueError:
+                pass
+    base = 1.0 * (2 ** attempt)
+    jitter = random.uniform(0.1, 0.5)
+    return min(max_delay, base + jitter)
 
 
 def strip_think_tags(text: str) -> str:
@@ -402,13 +452,28 @@ class DeepInfraLLMClient:
             "reasoning_effort": "none",
         }
         
-        # Retry logic (3 attempts with backoff)
+        # Retry logic with fail-fast on non-retryable client errors
         last_error = None
         for attempt in range(self.max_retries):
             try:
                 client = await self.get_client()
                 async with _llm_semaphore:
                     response = await client.post(self.deepinfra_base_url, headers=headers, json=payload, timeout=self.timeout)
+
+                # Fail-fast on 401, 402, 403, and other non-retryable 4xx
+                _handle_llm_http_status(response, self.deepinfra_base_url)
+
+                if response.status_code == 429 or response.status_code >= 500:
+                    delay = _compute_retry_delay(response, attempt)
+                    logger.warning(
+                        f"generate() received HTTP {response.status_code}. "
+                        f"Retrying in {delay:.2f}s (attempt {attempt+1}/{self.max_retries})..."
+                    )
+                    if attempt < self.max_retries - 1:
+                        await asyncio.sleep(delay)
+                        continue
+                    else:
+                        response.raise_for_status()
 
                 response.raise_for_status()
 
@@ -432,19 +497,14 @@ class DeepInfraLLMClient:
                     
                 return strip_think_tags(content)
 
+            except (LLMAuthOrBillingError, LLMRequestError):
+                raise
             except Exception as e:
-
                 last_error = e
-
-                logger.warning(f"generate() attempt {attempt+1}/{self.max_retries} failed: {e}")
-
+                delay = _compute_retry_delay(None, attempt)
+                logger.warning(f"generate() attempt {attempt+1}/{self.max_retries} failed: {e}. Retrying in {delay:.2f}s...")
                 if attempt < self.max_retries - 1:
-
-                    import asyncio
-
-                    await asyncio.sleep(1.0)
-
-        
+                    await asyncio.sleep(delay)
 
         logger.error(f"generate() all {self.max_retries} attempts failed. Last error: {last_error}")
         raise last_error
@@ -576,6 +636,22 @@ class DeepInfraLLMClient:
                 client = await self.get_client()
                 async with _llm_semaphore:
                     response = await client.post(self.deepinfra_base_url, headers=headers, json=payload, timeout=self.timeout)
+
+                # Fail-fast on 401, 402, 403, and other non-retryable 4xx
+                _handle_llm_http_status(response, self.deepinfra_base_url)
+
+                if response.status_code == 429 or response.status_code >= 500:
+                    delay = _compute_retry_delay(response, attempt)
+                    logger.warning(
+                        f"generate_with_usage() received HTTP {response.status_code}. "
+                        f"Retrying in {delay:.2f}s (attempt {attempt+1}/{self.max_retries})..."
+                    )
+                    if attempt < self.max_retries - 1:
+                        await asyncio.sleep(delay)
+                        continue
+                    else:
+                        response.raise_for_status()
+
                 response.raise_for_status()
                 data = response.json()
                 content = data["choices"][0]["message"]["content"].strip()
@@ -587,12 +663,14 @@ class DeepInfraLLMClient:
                     "prompt_tokens": usage.get("prompt_tokens", 0),
                     "completion_tokens": usage.get("completion_tokens", 0)
                 }
+            except (LLMAuthOrBillingError, LLMRequestError):
+                raise
             except Exception as e:
                 last_error = e
-                logger.warning(f"generate_with_usage() attempt {attempt+1}/{self.max_retries} failed: {e}")
+                delay = _compute_retry_delay(None, attempt)
+                logger.warning(f"generate_with_usage() attempt {attempt+1}/{self.max_retries} failed: {e}. Retrying in {delay:.2f}s...")
                 if attempt < self.max_retries - 1:
-                    import asyncio
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(delay)
         
         logger.error(f"generate_with_usage() all {self.max_retries} attempts failed. Last error: {last_error}")
         raise last_error

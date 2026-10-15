@@ -1,6 +1,6 @@
 """Database Connection Configuration & Validation Schemas"""
 
-from pydantic import BaseModel, Field, SecretStr, field_validator, ConfigDict
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator, ConfigDict
 from typing import Optional, List, Dict, Any
 from enum import Enum
 import urllib.parse
@@ -9,6 +9,7 @@ import urllib.parse
 class DatabaseType(str, Enum):
     POSTGRESQL = "postgresql"
     MYSQL = "mysql"
+    MARIADB = "mariadb"
     SQLSERVER = "sqlserver"
     ORACLE = "oracle"
     SNOWFLAKE = "snowflake"
@@ -36,6 +37,18 @@ class DatabaseConnectionConfig(BaseModel):
     - Default read_only=True enforces the read-only principle.
     """
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_db_type(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            port = data.get("port")
+            db_type = data.get("db_type")
+            # If port is 3306 or 3307 and db_type was not explicitly set or was defaulted to postgresql
+            if port in (3306, 3307, "3306", "3307"):
+                if not db_type or db_type in ("postgresql", DatabaseType.POSTGRESQL):
+                    data["db_type"] = DatabaseType.MARIADB
+        return data
 
     db_type: DatabaseType = Field(default=DatabaseType.POSTGRESQL, description="Relational database engine type")
     host: str = Field(..., min_length=1, max_length=255, description="Database server hostname or IP address")
@@ -99,8 +112,8 @@ class DatabaseConnectionConfig(BaseModel):
             if self.ssl_mode != SSLMode.DISABLE:
                 dsn += f"?ssl={self.ssl_mode.value}"
             return dsn
-        elif self.db_type == DatabaseType.MYSQL:
-            prefix = "mysql+aiomysql" if async_driver else "mysql+pymysql"
+        elif self.db_type in (DatabaseType.MYSQL, DatabaseType.MARIADB):
+            prefix = "mysql+asyncmy" if async_driver else "mysql+pymysql"
             return f"{prefix}://{encoded_user}:{encoded_pw}@{self.host}:{self.port}/{self.database_name}"
         elif self.db_type == DatabaseType.SQLITE:
             prefix = "sqlite+aiosqlite" if async_driver else "sqlite"

@@ -331,3 +331,82 @@ class DatabaseKnowledgebaseRepository(BaseRepository):
         await self.db.flush()
         return created_entities
 
+    async def get_table_aliases(self, kb_id: uuid.UUID) -> List[Any]:
+        """Fetch all table aliases for a knowledge base."""
+        from ..models.table_alias import KBTableAlias
+
+        conditions = [KBTableAlias.db_knowledgebase_id == kb_id]
+        if self.tenant_id:
+            try:
+                t_uuid = uuid.UUID(str(self.tenant_id))
+                conditions.append(KBTableAlias.tenant_id == t_uuid)
+            except Exception:
+                pass
+
+        stmt = select(KBTableAlias).where(*conditions)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def save_table_aliases(
+        self,
+        kb_id: uuid.UUID,
+        aliases_map: Dict[str, List[str]],
+    ) -> List[Any]:
+        """Save or update alternative table names for a knowledge base."""
+        from ..models.table_alias import KBTableAlias
+        from sqlalchemy.dialects.postgresql import insert
+
+        t_uuid = None
+        if self.tenant_id:
+            try:
+                t_uuid = uuid.UUID(str(self.tenant_id))
+            except Exception:
+                pass
+
+        for table_name, alias_list in aliases_map.items():
+            clean_table = str(table_name).strip()
+            if not clean_table:
+                continue
+
+            clean_aliases = list(dict.fromkeys([str(a).strip() for a in alias_list if str(a).strip()]))
+
+            insert_stmt = insert(KBTableAlias).values(
+                id=uuid.uuid4(),
+                db_knowledgebase_id=kb_id,
+                tenant_id=t_uuid,
+                table_name=clean_table,
+                aliases=clean_aliases,
+            )
+            on_conflict_stmt = insert_stmt.on_conflict_do_update(
+                constraint="uq_k2b_table_aliases_kb_tbl",
+                set_={
+                    "aliases": clean_aliases,
+                    "updated_at": func.now(),
+                },
+            )
+            await self.db.execute(on_conflict_stmt)
+
+        await self.db.commit()
+        return await self.get_table_aliases(kb_id)
+
+    async def delete_table_alias(self, kb_id: uuid.UUID, table_name: str) -> bool:
+        """Remove aliases for a specific table."""
+        from ..models.table_alias import KBTableAlias
+        from sqlalchemy import delete
+
+        del_stmt = delete(KBTableAlias).where(
+            KBTableAlias.db_knowledgebase_id == kb_id,
+            KBTableAlias.table_name == table_name,
+        )
+        if self.tenant_id:
+            try:
+                t_uuid = uuid.UUID(str(self.tenant_id))
+                del_stmt = del_stmt.where(KBTableAlias.tenant_id == t_uuid)
+            except Exception:
+                pass
+
+        await self.db.execute(del_stmt)
+        await self.db.commit()
+        return True
+
+

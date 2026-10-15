@@ -640,3 +640,35 @@ async def retrieve_knowledge_context(
     return resp
 
 
+@router.post("/pipeline/run", summary="Trigger Phase 2/3 Knowledge Pipeline manually")
+async def run_pipeline_manual_endpoint(
+    kb_id: uuid.UUID,
+    request: Request,
+    force_recompute: bool = Query(False, description="Re-run all stages ignoring previous successes"),
+    run_inline: bool = Query(True, description="Run inline synchronously or background task"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually triggers the Phase 2/3 knowledge pipeline for this KB without Redis."""
+    tenant_id, actor = _get_tenant_and_actor(request)
+    from ..jobs.pipeline import run_pipeline_for_kb_local
+
+    if run_inline:
+        run_record = await run_pipeline_for_kb_local(
+            kb_id=kb_id,
+            tenant_id=tenant_id,
+            force_recompute=force_recompute,
+        )
+        return run_record.model_dump(mode="json")
+    else:
+        import asyncio
+        asyncio.create_task(
+            run_pipeline_for_kb_local(
+                kb_id=kb_id,
+                tenant_id=tenant_id,
+                force_recompute=force_recompute,
+            )
+        )
+        return {"status": "enqueued_locally", "kb_id": str(kb_id), "force_recompute": force_recompute}
+
+
+

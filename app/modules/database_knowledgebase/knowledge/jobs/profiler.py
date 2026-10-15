@@ -75,8 +75,13 @@ async def profile_single_table(
     
     If customer connection is not available or query fails, falls back gracefully.
     """
+    is_empty_fallback = (table.row_count_estimate == 0) if table.row_count_estimate is not None else False
     profile_data: Dict[str, Any] = {
         "row_estimate": table.row_count_estimate or 0,
+        "row_count": table.row_count_estimate or 0,
+        "row_count_capped": False,
+        "row_count_label": str(table.row_count_estimate or 0),
+        "is_empty": is_empty_fallback,
         "columns": {},
         "error": None,
     }
@@ -93,6 +98,10 @@ async def profile_single_table(
             profile_data["columns"][col_name] = {
                 "stats": {
                     "row_estimate": table.row_count_estimate or 0,
+                    "row_count": table.row_count_estimate or 0,
+                    "row_count_capped": False,
+                    "row_count_label": str(table.row_count_estimate or 0),
+                    "is_empty": is_empty_fallback,
                     "null_fraction": None,
                     "distinct_estimate": None,
                     "min_value": None,
@@ -105,21 +114,89 @@ async def profile_single_table(
             }
         return profile_data
 
-    # 1. Fetch table row estimate from pg_class
-    row_est = await conn.fetchval(
-        """
-        SELECT reltuples::bigint 
-        FROM pg_class c 
-        JOIN pg_namespace n ON n.oid = c.relnamespace 
-        WHERE n.nspname = $1 AND c.relname = $2;
-        """,
-        schema_name,
-        table.table_name,
-    )
-    if row_est is not None and row_est >= 0:
-        profile_data["row_estimate"] = row_est
+    quoted_table = f'"{schema_name}"."{table.table_name}"'
 
-    # 2. Fetch column stats from pg_stats (never read most_common_vals for sensitive columns)
+    # 1. Bounded exact count (do not rely on reltuples):
+    # SELECT count(*) FROM (SELECT 1 FROM t LIMIT 100001) x
+    # Flag ">100000" when capped.
+    # Read-only pool connection enforces statement_timeout=5000ms.
+    exact_count: Optional[int] = None
+    row_count_capped = False
+    row_count_label = "0"
+    is_empty = False
+
+    try:
+        raw_count = await conn.fetchval(
+            f"SELECT count(*) FROM (SELECT 1 FROM {quoted_table} LIMIT 100001) x;"
+        )
+        if raw_count is not None:
+            raw_count = int(raw_count)
+            if raw_count > 100000:
+                row_count_capped = True
+                exact_count = 100000
+                row_count_label = ">100000"
+                is_empty = False
+            elif raw_count == 0:
+                row_count_capped = False
+                exact_count = 0
+                row_count_label = "0"
+                is_empty = True
+            else:
+                row_count_capped = False
+                exact_count = raw_count
+                row_count_label = str(raw_count)
+                is_empty = False
+    except Exception as count_err:
+        logger.warning(f"Could not compute bounded row count for {quoted_table}: {count_err}. Falling back to reltuples.")
+        try:
+            rel_est = await conn.fetchval(
+                """
+                SELECT reltuples::bigint 
+                FROM pg_class c 
+                JOIN pg_namespace n ON n.oid = c.relnamespace 
+                WHERE n.nspname = $1 AND c.relname = $2;
+                """,
+                schema_name,
+                table.table_name,
+            )
+            if rel_est is not None and rel_est >= 0:
+                exact_count = int(rel_est)
+                if exact_count > 100000:
+                    row_count_capped = True
+                    row_count_label = ">100000"
+                else:
+                    row_count_label = str(exact_count)
+                is_empty = False
+        except Exception:
+            exact_count = table.row_count_estimate or 0
+            is_empty = False
+
+    effective_row_count = exact_count if exact_count is not None else (table.row_count_estimate or 0)
+    # If capped, attempt to inspect reltuples for distinct scaling on massive tables
+    if row_count_capped:
+        try:
+            rel_est = await conn.fetchval(
+                """
+                SELECT reltuples::bigint 
+                FROM pg_class c 
+                JOIN pg_namespace n ON n.oid = c.relnamespace 
+                WHERE n.nspname = $1 AND c.relname = $2;
+                """,
+                schema_name,
+                table.table_name,
+            )
+            if rel_est is not None and rel_est > 100000:
+                effective_row_count = int(rel_est)
+        except Exception:
+            pass
+
+    profile_data["row_estimate"] = effective_row_count
+    profile_data["row_count"] = exact_count if exact_count is not None else effective_row_count
+    profile_data["row_count_capped"] = row_count_capped
+    profile_data["row_count_label"] = row_count_label
+    profile_data["is_empty"] = is_empty
+
+    # 2. Fetch column stats from pg_stats
     pg_stats_map: Dict[str, Any] = {}
     stats_rows = await conn.fetch(
         """
@@ -134,73 +211,91 @@ async def profile_single_table(
         pg_stats_map[r["attname"]] = r
 
     # 3. Profile each column
-    quoted_table = f'"{schema_name}"."{table.table_name}"'
-
     for col_name, col in table.columns.items():
         quoted_col = f'"{col.name}"'
         col_sensitive = is_sensitive_column(col.name)
         stats_info = pg_stats_map.get(col.name)
 
-        null_frac = float(stats_info["null_frac"]) if stats_info and stats_info["null_frac"] is not None else None
-        n_distinct = float(stats_info["n_distinct"]) if stats_info and stats_info["n_distinct"] is not None else None
-        tbl_row_est = max(1, int(profile_data["row_estimate"]))
-        if n_distinct is not None:
-            if n_distinct < 0:
-                distinct_est = max(1, int(round(abs(n_distinct) * tbl_row_est)))
-            else:
-                distinct_est = max(1, int(round(n_distinct)))
+        if is_empty:
+            null_frac = None
+            distinct_est = 0
+            min_val = None
+            max_val = None
+            top_values = []
         else:
-            distinct_est = tbl_row_est
+            # null_frac
+            if stats_info and stats_info["null_frac"] is not None:
+                null_frac = float(stats_info["null_frac"])
+            elif not col.is_nullable:
+                null_frac = 0.0
+            else:
+                null_frac = None
 
-        min_val = None
-        max_val = None
-        top_values = []
-
-        # Numerical or date min/max (never on sensitive columns)
-        is_num_or_date = any(t in col.data_type.lower() for t in ("int", "float", "numeric", "decimal", "date", "timestamp", "time", "real", "double"))
-        
-        if not col_sensitive and not is_sensitive_for_values(col.name):
-            if is_num_or_date:
-                try:
-                    min_max_row = await conn.fetchrow(
-                        f"SELECT min({quoted_col})::text AS min_val, max({quoted_col})::text AS max_val FROM {quoted_table};"
-                    )
-                    if min_max_row:
-                        min_val = min_max_row["min_val"]
-                        max_val = min_max_row["max_val"]
-                except Exception as e:
-                    logger.debug(f"Could not compute min/max for {col.name}: {e}")
-
-            # Top values for low cardinality non-sensitive columns (capped at 20, truncated)
-            try:
-                # Sample values for value-pattern sensitivity check and top values
-                sample_rows = await conn.fetch(
-                    f"SELECT {quoted_col}::text AS val, count(*) AS cnt "
-                    f"FROM {quoted_table} "
-                    f"WHERE {quoted_col} IS NOT NULL "
-                    f"GROUP BY {quoted_col} "
-                    f"ORDER BY cnt DESC "
-                    f"LIMIT 25;"
-                )
-                sample_vals = [r["val"] for r in sample_rows if r["val"] is not None]
-                if check_values_sensitivity(sample_vals):
-                    col_sensitive = True
-                    sample_vals = []
-                    top_values = []
+            # distinct_estimate handling pg_stats.n_distinct:
+            # - negative = fraction of row count (-distinct / rows), convert with row count: round(abs(n_distinct) * row_count)
+            # - positive = absolute distinct count
+            # - zero = unknown
+            # - None = no stats in pg_stats (do not fabricate row count unless is_primary_key)
+            n_distinct = float(stats_info["n_distinct"]) if stats_info and stats_info["n_distinct"] is not None else None
+            if n_distinct is not None:
+                if n_distinct < 0:
+                    distinct_est = max(1, int(round(abs(n_distinct) * effective_row_count)))
+                    distinct_est = min(distinct_est, effective_row_count)
+                elif n_distinct > 0:
+                    distinct_est = max(1, min(int(round(n_distinct)), effective_row_count))
                 else:
-                    # Safe: if low cardinality or small table, cap at 20 truncated top values
-                    for val in sample_vals[:20]:
-                        s_val = str(val)[:128]
-                        top_values.append(s_val)
-            except Exception as e:
-                logger.debug(f"Could not compute top values for {col.name}: {e}")
+                    # 0 in pg_stats means unknown
+                    distinct_est = effective_row_count if col.is_primary_key else None
+            else:
+                distinct_est = effective_row_count if col.is_primary_key else None
+
+            min_val = None
+            max_val = None
+            top_values = []
+
+            # Numerical or date min/max (never on sensitive columns)
+            is_num_or_date = any(t in col.data_type.lower() for t in ("int", "float", "numeric", "decimal", "date", "timestamp", "time", "real", "double"))
+            
+            if not col_sensitive and not is_sensitive_for_values(col.name):
+                if is_num_or_date:
+                    try:
+                        min_max_row = await conn.fetchrow(
+                            f"SELECT min({quoted_col})::text AS min_val, max({quoted_col})::text AS max_val FROM {quoted_table};"
+                        )
+                        if min_max_row:
+                            min_val = min_max_row["min_val"]
+                            max_val = min_max_row["max_val"]
+                    except Exception as e:
+                        logger.debug(f"Could not compute min/max for {col.name}: {e}")
+
+                # Top values for low cardinality non-sensitive columns (capped at 20, truncated)
+                try:
+                    sample_rows = await conn.fetch(
+                        f"SELECT {quoted_col}::text AS val, count(*) AS cnt "
+                        f"FROM {quoted_table} "
+                        f"WHERE {quoted_col} IS NOT NULL "
+                        f"GROUP BY {quoted_col} "
+                        f"ORDER BY cnt DESC "
+                        f"LIMIT 25;"
+                    )
+                    sample_vals = [r["val"] for r in sample_rows if r["val"] is not None]
+                    if check_values_sensitivity(sample_vals):
+                        col_sensitive = True
+                        sample_vals = []
+                        top_values = []
+                    else:
+                        for val in sample_vals[:20]:
+                            s_val = str(val)[:128]
+                            top_values.append(s_val)
+                except Exception as e:
+                    logger.debug(f"Could not compute top values for {col.name}: {e}")
 
         role, unit_hint = infer_role_and_unit(
             column_name=col.name,
             data_type=col.data_type,
             is_primary_key=col.is_primary_key,
             is_foreign_key=col.is_foreign_key,
-            distinct_count=distinct_est,
+            distinct_count=distinct_est if not is_empty else None,
             min_val=min_val,
             max_val=max_val,
         )
@@ -208,6 +303,10 @@ async def profile_single_table(
         profile_data["columns"][col_name] = {
             "stats": {
                 "row_estimate": profile_data["row_estimate"],
+                "row_count": profile_data["row_count"],
+                "row_count_capped": profile_data["row_count_capped"],
+                "row_count_label": profile_data["row_count_label"],
+                "is_empty": is_empty,
                 "null_fraction": null_frac,
                 "distinct_estimate": distinct_est,
                 "min_value": min_val if not col_sensitive else None,
@@ -278,6 +377,8 @@ async def run_stage_profiler(
     def _is_stats_expired(item: Optional[Any]) -> bool:
         if not item or not item.payload:
             return True
+        if "is_empty" not in item.payload:
+            return True
         refreshed_at_str = item.payload.get("stats_refreshed_at")
         if not refreshed_at_str:
             return True
@@ -303,7 +404,14 @@ async def run_stage_profiler(
             tbl_stats_need_refresh = force_refresh_stats or _is_stats_expired(existing_tbl_item)
             tbl_skipped = existing_tbl_item and existing_tbl_item.object_hash == tbl_hash and existing_tbl_item.status != "stale" and not tbl_stats_need_refresh
 
-            tbl_profile: Dict[str, Any] = {"columns": {}, "row_estimate": tbl.row_count_estimate or 0}
+            tbl_profile: Dict[str, Any] = {
+                "columns": {},
+                "row_estimate": tbl.row_count_estimate or 0,
+                "row_count": tbl.row_count_estimate or 0,
+                "row_count_capped": False,
+                "row_count_label": str(tbl.row_count_estimate or 0),
+                "is_empty": False,
+            }
             
             # Profile with isolated connection per worker table
             try:
@@ -332,8 +440,13 @@ async def run_stage_profiler(
                     }
                     for fk in tbl.foreign_keys
                 ],
+                "is_empty": tbl_profile.get("is_empty", False),
                 "stats": {
                     "row_estimate": tbl_profile.get("row_estimate", tbl.row_count_estimate or 0),
+                    "row_count": tbl_profile.get("row_count", tbl_profile.get("row_estimate", 0)),
+                    "row_count_capped": tbl_profile.get("row_count_capped", False),
+                    "row_count_label": tbl_profile.get("row_count_label", str(tbl_profile.get("row_estimate", 0))),
+                    "is_empty": tbl_profile.get("is_empty", False),
                 },
                 "stats_refreshed_at": now_utc.isoformat(),
             }

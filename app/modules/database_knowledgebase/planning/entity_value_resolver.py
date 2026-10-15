@@ -98,27 +98,49 @@ class EntityValueResolver:
         "friday", "monday", "tuesday", "wednesday", "thursday", "saturday", "sunday",
         "morning", "evening", "night", "week", "month", "year", "daily", "weekly", "monthly", "quarterly", "yearly", "hourly",
         "who", "whose", "whom", "what", "which", "where", "when", "why", "how",
-        "time", "spend", "spent", "work", "worked", "working", "recorded", "hours", "hour", "clock", "clock-in", "clock-out", "check-in", "check-out", "punch", "punch-in", "punch-out",
+        "time", "spend", "spent", "work", "worked", "working", "works", "recorded", "hours", "hour", "clock", "clock-in", "clock-out", "check-in", "check-out", "punch", "punch-in", "punch-out",
         "is", "are", "was", "were", "do", "does", "did", "have", "has", "had", "be", "been", "being",
         "can", "could", "will", "would", "shall", "should", "may", "might", "must",
-        "give", "tell", "show", "list", "find", "get", "fetch", "display", "check", "verify", "me", "us", "them", "him", "her",
-        "staff", "person", "people", "number", "numbers", "code", "id", "value", "values", "type",
+        "give", "gives", "giving", "given", "tell", "tells", "telling", "told", "show", "shows", "showing", "showed", "shown",
+        "list", "find", "finds", "finding", "found", "get", "gets", "getting", "got", "gotten", "fetch", "display",
+        "check", "checks", "checking", "checked", "verify", "verifies", "verifying", "verified",
+        "know", "knows", "knowing", "knew", "known", "see", "sees", "seeing", "saw", "seen", "look", "looks", "looking", "looked",
+        "me", "us", "them", "him", "her",
+        "staff", "person", "people", "number", "numbers", "code", "id", "value", "values", "type", "types",
         "salary", "salaries", "wage", "wages", "pay", "payment", "amount", "amounts",
-        "budget", "budgets", "cost", "costs", "price", "prices", "title", "role",
+        "budget", "budgets", "cost", "costs", "price", "prices", "title", "role", "roles",
         "position", "company", "firm", "team", "organization", "system",
         "attendance", "leave", "shift", "status", "rate", "fee", "hours", "balance",
         "attend", "attends", "attended", "attending",
-        "assigned", "allocated", "given", "returned", "present", "absent", "current", "objective", "objectives", "asset", "assets",
+        "assign", "assigns", "assigned", "assigning", "assignment", "assignments", "reassign", "reassigned", "reassigning",
+        "allocate", "allocates", "allocated", "allocating", "allocation", "allocations",
+        "attach", "attaches", "attached", "attaching",
+        "belong", "belongs", "belonged", "belonging",
+        "associate", "associates", "associated", "associating",
+        "connect", "connects", "connected", "connecting",
+        "link", "links", "linked", "linking",
+        "relate", "relates", "related", "relating",
+        "own", "owns", "owned", "owning", "owner", "owners",
+        "manage", "manages", "managed", "managing", "manager", "managers", "management",
+        "lead", "leads", "led", "leading", "leader", "leaders",
+        "report", "reports", "reported", "reporting",
+        "handle", "handles", "handled", "handling",
+        "create", "creates", "created", "creating",
+        "update", "updates", "updated", "updating",
+        "delete", "deletes", "deleted", "deleting",
+        "view", "views", "viewed", "viewing",
+        "returned", "present", "absent", "current", "objective", "objectives", "asset", "assets",
+        "project", "projects", "task", "tasks", "issue", "issues", "item", "items", "member", "members", "user", "users",
         "of", "for", "about", "to", "on", "in", "at", "by", "from", "with", "without", "against",
         "candidate", "candidates", "contract", "contracts", "payslip", "payslips", "action", "actions",
         "notice", "notices", "inquiry", "notes", "progress", "target", "review", "reviews", "appraisal",
         "goals", "goal", "roster", "device", "devices", "hardware", "equipment", "lot", "return",
         "timing", "overtime", "punch", "clock", "arrival", "annual", "deductions", "allowances", "allowance",
-        "stub", "stubs", "checklist", "pipeline", "stage", "task", "tasks",
+        "stub", "stubs", "checklist", "pipeline", "stage",
         "never", "ever", "not", "no", "none", "neither", "nor", "nothing",
         "submitted", "submit", "submitting", "submits", "applied", "apply", "applying", "applies",
         "requested", "request", "requesting", "requests", "taken", "take", "taking", "takes",
-        "joined", "join", "joining", "joins", "worked", "work", "working", "works",
+        "joined", "join", "joining", "joins",
         "above", "below", "greater", "less", "than", "over", "under", "between", "equal", "equals", "exceeding", "exceeds",
         "it", "its", "laptop", "laptops", "purchase", "purchased", "warranty", "expire", "expired", "expiring", "expiration", "bought",
         "late", "early", "arrival", "arrivals", "absent", "absenteeism", "checkin", "checkout", "clockin", "clockout", "out", "in", "check", "clock", "cost", "soon",
@@ -142,12 +164,29 @@ class EntityValueResolver:
             try:
                 for s_info in getattr(canonical_schema, "schemas", {}).values():
                     for tbl_name, t_obj in getattr(s_info, "tables", {}).items():
-                        schema_tbl_names.add(tbl_name.lower())
-                        for part in tbl_name.lower().split("_"):
+                        tbl_low = tbl_name.lower()
+                        schema_tbl_names.add(tbl_low)
+                        if tbl_low.endswith("s"):
+                            schema_tbl_names.add(tbl_low[:-1])
+                        else:
+                            schema_tbl_names.add(tbl_low + "s")
+                        for part in tbl_low.split("_"):
                             if len(part) > 2:
                                 schema_tbl_names.add(part)
+                                if part.endswith("s"):
+                                    schema_tbl_names.add(part[:-1])
+                                else:
+                                    schema_tbl_names.add(part + "s")
                         for c_name in getattr(t_obj, "columns", {}).keys():
-                            schema_col_names.add(c_name.lower())
+                            c_low = c_name.lower()
+                            schema_col_names.add(c_low)
+                            if c_low.endswith("s"):
+                                schema_col_names.add(c_low[:-1])
+                            else:
+                                schema_col_names.add(c_low + "s")
+                            for part in c_low.split("_"):
+                                if len(part) > 2:
+                                    schema_col_names.add(part)
             except Exception:
                 pass
 

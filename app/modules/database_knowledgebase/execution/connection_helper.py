@@ -6,10 +6,13 @@ to avoid URI / DSN parsing errors when passwords or usernames contain reserved c
 
 import asyncio
 import logging
+import ssl
 from typing import Any, Dict, Optional
 import asyncpg
+import asyncmy
+from asyncmy.cursors import DictCursor
 
-from ..schemas.connection import DatabaseConnectionConfig, SSLMode
+from ..schemas.connection import DatabaseConnectionConfig, DatabaseType, SSLMode
 from ..security.sanitizer import sanitize_error_message
 from .errors import QueryConnectionError
 
@@ -33,19 +36,59 @@ async def connect_to_database(
     statement_timeout_ms: Optional[float] = None,
     server_settings: Optional[Dict[str, str]] = None,
     read_only: bool = True,
-) -> asyncpg.Connection:
+) -> Any:
     """
-    Establish a dedicated asyncpg connection using discrete connection parameters.
+    Establish a dedicated connection using discrete connection parameters.
+    Supports PostgreSQL (via asyncpg) and MariaDB/MySQL (via asyncmy).
     
     CRITICAL: Never formats a string DSN with credentials. Passing discrete parameters
-    guarantees that passwords with special characters (e.g., '@', ':', '/') do not
-    corrupt host/port resolution and cause getaddrinfo errors.
+    guarantees that passwords with special characters do not corrupt host/port resolution.
     """
     logger.info(
-        f"[DB_CONNECT] Connecting to external database host='{db_config.host}', port={db_config.port}, "
+        f"[DB_CONNECT] Connecting to external database type='{db_config.db_type}' host='{db_config.host}', port={db_config.port}, "
         f"db='{db_config.database_name}', user='{db_config.username}', ssl_mode='{db_config.ssl_mode}'"
     )
 
+    if db_config.db_type in (DatabaseType.MARIADB, DatabaseType.MYSQL) or getattr(db_config, "port", None) in (3306, 3307):
+        ssl_ctx = None
+        if db_config.ssl_mode != SSLMode.DISABLE:
+            try:
+                ssl_ctx = ssl.create_default_context()
+                if db_config.ssl_mode in (SSLMode.DISABLE, SSLMode.ALLOW, SSLMode.PREFER):
+                    ssl_ctx.check_hostname = False
+                    ssl_ctx.verify_mode = ssl.CERT_NONE
+            except Exception:
+                ssl_ctx = None
+
+        try:
+            conn = await asyncio.wait_for(
+                asyncmy.connect(
+                    host=db_config.host,
+                    port=db_config.port or 3306,
+                    user=db_config.username,
+                    password=db_config.raw_password,
+                    database=db_config.database_name,
+                    connect_timeout=timeout_seconds,
+                    ssl=ssl_ctx,
+                    autocommit=True,
+                    cursor_cls=DictCursor,
+                ),
+                timeout=timeout_seconds + 1.0,
+            )
+            return conn
+        except asyncio.TimeoutError as e:
+            logger.warning(f"Connection timeout to {db_config.masked_dsn}")
+            raise QueryConnectionError(
+                detail=f"Connection to database timed out after {timeout_seconds}s.",
+            ) from e
+        except Exception as e:
+            safe_msg = sanitize_error_message(e)
+            logger.error(f"MariaDB connection failure: {safe_msg}")
+            raise QueryConnectionError(
+                detail=f"Database connection error: {safe_msg}",
+            ) from e
+
+    # Default path: PostgreSQL via asyncpg
     ssl_val = resolve_ssl_mode(db_config.ssl_mode)
     
     settings = dict(server_settings or {})

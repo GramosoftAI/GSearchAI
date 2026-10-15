@@ -58,22 +58,23 @@ class TransactionManager:
         return val
 
     @classmethod
-    def translate_parameters(cls, parameterized_sql: str, parameters: Dict[str, Any]) -> Tuple[str, List[Any]]:
+    def translate_parameters(
+        cls, parameterized_sql: str, parameters: Dict[str, Any], dialect: str = "postgres"
+    ) -> Tuple[str, List[Any]]:
         """
-        Translates :p1, :p2 named placeholders to $1, $2 positional placeholders for asyncpg.
+        Translates :p1, :p2 named placeholders to positional placeholders:
+        $1, $2 for asyncpg (PostgreSQL), and %s for asyncmy (MariaDB/MySQL).
         Guarantees that positional argument order strictly corresponds to the SQL placeholders.
-        Also safeguards time comparisons against timestamp columns by ensuring CAST(... AS time)
-        if an uncast column is compared against a time parameter.
         """
         sql_working = parameterized_sql
 
-        # If any parameter is a time object/string, ensure comparisons against columns are cast to time
-        for key, raw_val in parameters.items():
-            coerced_check = cls._coerce_param_value(raw_val)
-            if isinstance(coerced_check, datetime.time):
-                # Ensure comparisons like `col > :key` become `CAST(col AS time) > :key`
-                pattern = rf"(?i)(?<!CAST\()(?<!::)\b([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)?)\s*([><!=]+)\s*:{key}\b"
-                sql_working = re.sub(pattern, rf"CAST(\1 AS time) \2 :{key}", sql_working)
+        # If any parameter is a time object/string, ensure comparisons against columns are cast to time (PostgreSQL only)
+        if dialect not in ("mysql", "mariadb"):
+            for key, raw_val in parameters.items():
+                coerced_check = cls._coerce_param_value(raw_val)
+                if isinstance(coerced_check, datetime.time):
+                    pattern = rf"(?i)(?<!CAST\()(?<!::)\b([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)?)\s*([><!=]+)\s*:{key}\b"
+                    sql_working = re.sub(pattern, rf"CAST(\1 AS time) \2 :{key}", sql_working)
 
         pos_args: List[Any] = []
         param_keys_ordered: List[str] = []
@@ -89,6 +90,8 @@ class TransactionManager:
             coerced_val = cls._coerce_param_value(raw_val)
             pos_args.append(coerced_val)
             param_keys_ordered.append(key)
+            if dialect in ("mysql", "mariadb"):
+                return "%s"
             return f"${len(pos_args)}"
 
         converted_sql = re.sub(r":([a-zA-Z0-9_]+)\b", replacer, sql_working)
@@ -97,19 +100,27 @@ class TransactionManager:
     @classmethod
     async def execute_in_readonly_transaction(
         cls,
-        conn: asyncpg.Connection,
+        conn: Any,
         sql: str,
         args: List[Any],
         timeout_seconds: float,
-    ) -> List[asyncpg.Record]:
+        dialect: str = "postgres",
+    ) -> List[Any]:
         """
-        Execute query inside an explicit PostgreSQL read-only transaction block.
-        Ensures automatic rollback on failure and raises strongly-typed sanitized exceptions.
+        Execute query inside a read-only transaction/execution context.
+        Supports both asyncpg (PostgreSQL) and asyncmy (MariaDB/MySQL).
         """
         try:
-            async with conn.transaction(readonly=True):
-                records = await conn.fetch(sql, *args, timeout=timeout_seconds)
-                return records
+            if isinstance(conn, asyncpg.Connection):
+                async with conn.transaction(readonly=True):
+                    records = await conn.fetch(sql, *args, timeout=timeout_seconds)
+                    return records
+            else:
+                # asyncmy / MySQL connection
+                async with conn.cursor() as cursor:
+                    await asyncio.wait_for(cursor.execute(sql, tuple(args)), timeout=timeout_seconds)
+                    records = await cursor.fetchall()
+                    return records or []
         except (asyncpg.QueryCanceledError, asyncio.TimeoutError) as e:
             logger.warning("Query canceled or statement timeout exceeded on target database")
             raise QueryExecutionTimeout(

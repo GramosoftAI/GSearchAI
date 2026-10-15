@@ -197,7 +197,7 @@ class KB2JobRun(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('queued', 'running', 'succeeded', 'failed', 'superseded')",
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'superseded', 'succeeded_with_warnings')",
             name="ck_kb2_job_runs_status",
         ),
         Index("ix_kb2_job_runs_tenant_id", "tenant_id"),

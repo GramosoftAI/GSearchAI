@@ -46,9 +46,6 @@ class SchemaKeywordMatcher:
 
     @classmethod
     def tokenize_query(cls, query: str) -> Set[str]:
-        """Tokenize and stem query terms into clean identifier tokens."""
-    @classmethod
-    def tokenize_query(cls, query: str) -> Set[str]:
         """Tokenize and stem query terms into clean identifier tokens, normalizing compound phrases."""
         compound_patterns = [
             (r"\bleave\s+requests?\b", "leave_request"),
@@ -91,11 +88,11 @@ class SchemaKeywordMatcher:
             (r"\b(?:left|leave|depart(?:ed)?)\s+early\b", "early_out attendance"),
             (r"\b(?:check(?:ed)?|clock(?:ed)?|punch(?:ed)?)\s+out\s+early\b", "early_out attendance"),
             # Leave & Absences
-            (r"\b(?:currently\s+)?on\s+leave\b", "leave_leaverequest employee_employee leave"),
-            (r"\btak(?:e|ing)\s+leave\b", "leave_leaverequest employee_employee leave"),
-            (r"\babsent\b", "leave_leaverequest attendance employee_employee"),
-            (r"\babsence\b", "leave_leaverequest attendance employee_employee"),
-            (r"\boff\s+duty\b", "leave_leaverequest"),
+            (r"\b(?:currently\s+)?on\s+leave\b", "leave leave_request employee"),
+            (r"\btak(?:e|ing)\s+leave\b", "leave leave_request employee"),
+            (r"\babsent\b", "leave absence attendance employee"),
+            (r"\babsence\b", "leave absence attendance employee"),
+            (r"\boff\s+duty\b", "leave time_off"),
             # Overtime
             (r"\b(?:worked\s+)?overtime\b", "overtime attendance"),
             (r"\bextra\s+hours?\b", "overtime attendance"),
@@ -105,10 +102,10 @@ class SchemaKeywordMatcher:
             (r"\bnight\s+shift\b", "shift shift_schedule"),
             (r"\bshift\s+schedule\b", "shift_schedule"),
             # Activity Sessions
-            (r"\b(?:activity\s+sessions?|sessions?|clock\s+activity|punch\s+activity)\b", "attendance_attendanceactivity clock_in clock_out"),
+            (r"\b(?:activity\s+sessions?|sessions?|clock\s+activity|punch\s+activity)\b", "attendance activity clock_in clock_out"),
             # Assets & Hardware Assignments
-            (r"\b(?:laptop|computer|desktop|macbook|notebook|hardware|device|equipment)s?\b", "asset asset_asset asset_name asset_category"),
-            (r"\b(?:assign|assigned|assignment|allotted)s?\b", "asset_assetassignment assigned_to_employee assigned_by_employee"),
+            (r"\b(?:laptop|computer|desktop|macbook|notebook|hardware|device|equipment)s?\b", "asset device category"),
+            (r"\b(?:assign|assigned|assignment|allotted)s?\b", "assignment assigned assigned_to"),
         ]
         norm_q = query.lower()
         for pat, canonical_ent in compound_patterns:
@@ -135,6 +132,7 @@ class SchemaKeywordMatcher:
         schema: DatabaseSchema,
         allowed_tables: Optional[Set[str]] = None,
         glossary_entries: Optional[Dict[Tuple[str, str], Any]] = None,
+        table_aliases: Optional[Dict[str, List[str]]] = None,
     ) -> Dict[str, KeywordMatchResult]:
         """
         Evaluate keyword matching across all tables in canonical DatabaseSchema.
@@ -155,6 +153,13 @@ class SchemaKeywordMatcher:
                 if getattr(entry, "is_published", False) is True:
                     glossary_by_table.setdefault(t_name, []).append(entry)
 
+        # Normalize table aliases lookup by table name
+        norm_aliases: Dict[str, List[str]] = {}
+        if table_aliases:
+            for tbl, al_list in table_aliases.items():
+                if al_list:
+                    norm_aliases[tbl.lower()] = al_list
+
         for s_name, s_info in schema.schemas.items():
             for t_name, table in s_info.tables.items():
                 if allowed_tables is not None:
@@ -163,7 +168,14 @@ class SchemaKeywordMatcher:
                         continue
 
                 t_glossary = glossary_by_table.get(table.table_name)
-                match = cls._match_table(tokens, table, table_glossary=t_glossary, query_str=query)
+                t_aliases = norm_aliases.get(table.table_name.lower())
+                match = cls._match_table(
+                    tokens,
+                    table,
+                    table_glossary=t_glossary,
+                    table_aliases=t_aliases,
+                    query_str=query,
+                )
                 if match.score > 0.0:
                     table_key = f"{table.schema_name}.{table.table_name}"
                     results[table_key] = match
@@ -176,6 +188,7 @@ class SchemaKeywordMatcher:
         query_tokens: Set[str],
         table: TableSchema,
         table_glossary: Optional[List[Any]] = None,
+        table_aliases: Optional[List[str]] = None,
         query_str: str = "",
     ) -> KeywordMatchResult:
         t_name = table.table_name.lower()
@@ -183,8 +196,11 @@ class SchemaKeywordMatcher:
         query_lower = query_str.lower() if query_str else " ".join(query_tokens)
 
         matched_table = False
+        alias_matched = False
+        matched_alias_str = None
         matched_cols: List[str] = []
         matched_tokens: List[str] = []
+        reasons: List[str] = []
 
         # 1. Exact or compound table name matching
         if t_name in query_tokens or t_name_singular in query_tokens:
@@ -204,6 +220,20 @@ class SchemaKeywordMatcher:
                         matched_table = True
                         matched_tokens.append(tok)
                         break
+
+        # 1.5 User-configured Table Aliases (Alternative Words) matching
+        if table_aliases:
+            for alias in table_aliases:
+                alias_clean = alias.lower().strip()
+                if not alias_clean:
+                    continue
+                if alias_clean in query_tokens or re.search(r"\b" + re.escape(alias_clean) + r"\b", query_lower):
+                    alias_matched = True
+                    matched_alias_str = alias_clean
+                    matched_table = True
+                    matched_tokens.append(alias_clean)
+                    reasons.append(f"Table alias match: '{alias_clean}' -> '{table.table_name}'")
+                    break
 
         # 2. Column identifier matching
         for c_name, col in table.columns.items():
@@ -234,9 +264,10 @@ class SchemaKeywordMatcher:
         TIER_WEIGHTS = {
             "HUMAN_VERIFIED": 0.35,
             "SYSTEM_VERIFIED": 0.25,
+            "HUMAN_VERIFIED": 0.35,
+            "SYSTEM_VERIFIED": 0.25,
             "LLM_GENERATED": 0.15,
         }
-        reasons: List[str] = []
         glossary_matches = 0
         matched_tier_boosts: List[float] = []
         if table_glossary:
@@ -270,7 +301,9 @@ class SchemaKeywordMatcher:
         # 5. Score Calculation
         score = 0.0
 
-        if matched_table:
+        if alias_matched:
+            score += 0.90
+        elif matched_table:
             score += 0.60
             reasons.append(f"Table name '{table.table_name}' matches query")
 

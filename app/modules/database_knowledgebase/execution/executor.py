@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 import uuid
 import asyncpg
 
-from ..schemas.connection import DatabaseConnectionConfig, SSLMode
+from ..schemas.connection import DatabaseConnectionConfig, DatabaseType, SSLMode
 from ..security.sanitizer import sanitize_error_message
 from ..sql_generator.repair import ValidatedCandidateSQL
 from .connection_helper import connect_to_database, resolve_ssl_mode
@@ -64,18 +64,19 @@ class ReadOnlyDatabaseExecutor:
 
     async def _execute_on_connection(
         self,
-        conn: asyncpg.Connection,
+        conn: Any,
         candidate_sql: ValidatedCandidateSQL,
         authorization: ExecutionAuthorization,
         query_id: str,
         t0: float,
         is_pooled: bool = False,
+        dialect: str = "postgres",
     ) -> CanonicalQueryResult:
         """Execute validated query on active read-only connection and normalize results."""
-        # 1. Translate Named Parameters (:p1 -> $1)
+        # 1. Translate Named Parameters (:p1 -> $1 for postgres, %s for mysql)
         param_sql = candidate_sql.parameterized.parameterized_sql
         params = candidate_sql.parameterized.parameters or {}
-        converted_sql, pos_args = TransactionManager.translate_parameters(param_sql, params)
+        converted_sql, pos_args = TransactionManager.translate_parameters(param_sql, params, dialect=dialect)
 
         logger.info(f"EXECUTING SQL: {converted_sql} WITH ARGS: {pos_args}")
         timeout_sec = self.config.statement_timeout_ms / 1000.0
@@ -84,6 +85,7 @@ class ReadOnlyDatabaseExecutor:
             sql=converted_sql,
             args=pos_args,
             timeout_seconds=timeout_sec,
+            dialect=dialect,
         )
 
         # 3. Result Validation and Type Normalization
@@ -147,8 +149,9 @@ class ReadOnlyDatabaseExecutor:
 
         query_id = str(uuid.uuid4())
         t0 = time.perf_counter()
+        dialect = "mysql" if db_config.db_type in (DatabaseType.MARIADB, DatabaseType.MYSQL) else "postgres"
 
-        if self.use_pooling:
+        if self.use_pooling and db_config.db_type == DatabaseType.POSTGRESQL:
             pool_manager = ReadOnlyPoolManager.get_instance_sync()
             async with pool_manager.acquire(
                 tenant_id=authorization.tenant_id,
@@ -163,9 +166,10 @@ class ReadOnlyDatabaseExecutor:
                     query_id=query_id,
                     t0=t0,
                     is_pooled=True,
+                    dialect="postgres",
                 )
         else:
-            conn: Optional[asyncpg.Connection] = None
+            conn: Optional[Any] = None
             try:
                 conn = await self._acquire_connection(db_config)
                 return await self._execute_on_connection(
@@ -175,10 +179,14 @@ class ReadOnlyDatabaseExecutor:
                     query_id=query_id,
                     t0=t0,
                     is_pooled=False,
+                    dialect=dialect,
                 )
             finally:
                 if conn:
                     try:
-                        await conn.close()
+                        if hasattr(conn, "ensure_closed"):
+                            await conn.ensure_closed()
+                        elif hasattr(conn, "close"):
+                            await conn.close()
                     except Exception:
                         pass

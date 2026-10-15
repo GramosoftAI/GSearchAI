@@ -118,7 +118,9 @@ class SQLSecurityPolicyEngine:
         # Math & Formatting
         "ROUND", "CEIL", "CEILING", "FLOOR", "ABS", "COALESCE", "NULLIF", "LEAST", "GREATEST",
         # Temporal
-        "EXTRACT", "DATE_TRUNC", "TIMESTAMP_TRUNC", "DATETIME_TRUNC", "NOW", "CURRENT_DATE", "CURRENT_TIMESTAMP", "AGE", "INTERVAL",
+        "EXTRACT", "DATE_TRUNC", "TIMESTAMP_TRUNC", "DATETIME_TRUNC", "NOW", "CURRENT_DATE", "CURRENT_TIMESTAMP",
+        "AGE", "INTERVAL", "DATE_SUB", "DATE_ADD", "DATEDIFF", "CURDATE", "DATE_FORMAT", "YEAR", "MONTH", "DAY",
+        "HOUR", "MINUTE", "SECOND", "STR_TO_DATE",
         # String
         "LOWER", "UPPER", "CONCAT", "LENGTH", "TRIM", "LTRIM", "RTRIM", "SUBSTRING", "POSITION",
         # Conditional & Casting
@@ -128,11 +130,13 @@ class SQLSecurityPolicyEngine:
     # Forbidden System Catalogs and Metadata schemas/tables
     FORBIDDEN_CATALOGS: Set[str] = {
         "pg_catalog", "information_schema", "pg_toast", "pg_temp",
+        "mysql", "performance_schema", "sys",
     }
     FORBIDDEN_TABLES: Set[str] = {
         "pg_shadow", "pg_authid", "pg_user", "pg_database", "pg_tables",
         "pg_stat_activity", "pg_settings", "pg_class", "pg_proc",
         "pg_attribute", "pg_type", "pg_namespace",
+        "tables_priv", "columns_priv", "procs_priv", "global_priv",
     }
 
     # Complexity Limits
@@ -151,12 +155,15 @@ class SQLSecurityPolicyEngine:
         retrieval_result: SchemaRetrievalResult,
         security_overrides: Optional[Dict[str, Any]] = None,
         audit_context: Optional[Dict[str, Any]] = None,
+        dialect: Optional[str] = None,
     ) -> ValidationResult:
         """
         Evaluate all security policies against the parsed SQL AST.
         """
         if os.getenv("DISABLE_SQL_SECURITY_VALIDATION", "false").lower() in ("true", "1", "yes"):
             return ValidationResult(is_valid=True, errors=[], warnings=["Security validation bypassed via DISABLE_SQL_SECURITY_VALIDATION."])
+
+        effective_dialect = dialect or getattr(retrieval_result, "database_type", "postgres") or "postgres"
 
         errors: List[DiagnosticError] = []
         warnings: List[str] = []
@@ -437,7 +444,7 @@ class SQLSecurityPolicyEngine:
                 warnings.append(f"No LIMIT specified in candidate query; auto-injected LIMIT {cls.DEFAULT_LIMIT}")
                 sanitized_ast = sanitized_ast.limit(cls.DEFAULT_LIMIT)
 
-        sanitized_sql = SQLASTParser.to_sql(sanitized_ast)
+        sanitized_sql = SQLASTParser.to_sql(sanitized_ast, dialect=effective_dialect)
 
         is_valid = len(errors) == 0
         return ValidationResult(
@@ -455,12 +462,14 @@ class SQLSecurityPolicyEngine:
         retrieval_result: SchemaRetrievalResult,
         security_overrides: Optional[Dict[str, Any]] = None,
         audit_context: Optional[Dict[str, Any]] = None,
+        dialect: Optional[str] = None,
     ) -> ValidationResult:
         """
         Parse and validate raw SQL string.
         """
+        effective_dialect = dialect or getattr(retrieval_result, "database_type", "postgres") or "postgres"
         try:
-            ast = SQLASTParser.parse_sql(sql_text)
+            ast = SQLASTParser.parse_sql(sql_text, dialect=effective_dialect)
         except Exception as e:
             return ValidationResult(
                 is_valid=False,
@@ -470,7 +479,7 @@ class SQLSecurityPolicyEngine:
                         severity=DiagnosticSeverity.ERROR,
                         message=str(e),
                         offending_node="SQL String",
-                        suggested_action="Ensure valid PostgreSQL SQL syntax",
+                        suggested_action=f"Ensure valid {effective_dialect} SQL syntax",
                     )
                 ],
                 warnings=[],
@@ -482,4 +491,5 @@ class SQLSecurityPolicyEngine:
             retrieval_result=retrieval_result,
             security_overrides=security_overrides,
             audit_context=audit_context,
+            dialect=effective_dialect,
         )

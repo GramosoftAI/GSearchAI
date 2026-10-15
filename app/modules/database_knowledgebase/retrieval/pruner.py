@@ -16,6 +16,31 @@ from .scorer import TableRetrievalScore
 from ..security.boundary import wrap_untrusted_metadata
 
 
+def _sanitize_xml_attribute(val: Optional[str]) -> str:
+    """Escape &, <, >, \", and -- for XML attribute values."""
+    if not val:
+        return ""
+    return (
+        val.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("--", "- -")
+    )
+
+
+def _sanitize_xml_comment(val: Optional[str]) -> str:
+    """Escape &, <, >, and -- for XML / schema comments."""
+    if not val:
+        return ""
+    return (
+        val.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("--", "- -")
+    )
+
+
 class SchemaPruner:
     """
     Prunes canonical database schema into a compact sub-schema containing only
@@ -89,6 +114,24 @@ class SchemaPruner:
                         if c not in ordered_col_names and c in orig_table.columns:
                             ordered_col_names.append(c)
 
+                # Prioritize high-value temporal and status columns before arbitrary other columns
+                high_value_keywords = (
+                    "status", "state", "type", "date", "time", "created", "updated",
+                    "punch", "in_time", "out_time", "is_", "has_", "active", "leave", "attendance"
+                )
+                for c_name, col_obj in orig_table.columns.items():
+                    if not DenyPolicyConfig.is_denied(c_name, overrides=security_overrides, is_column=True):
+                        if c_name not in ordered_col_names:
+                            c_low = c_name.lower()
+                            is_high_value = (
+                                any(k in c_low for k in high_value_keywords)
+                                or (hasattr(col_obj, "data_type") and getattr(col_obj.data_type, "value", str(col_obj.data_type)) in (
+                                    "DATE", "TIMESTAMP", "TIMESTAMPTZ", "TIME", "BOOLEAN"
+                                ))
+                            )
+                            if is_high_value and len(ordered_col_names) < top_k_columns_per_table:
+                                ordered_col_names.append(c_name)
+
                 for c_name in orig_table.columns.keys():
                     if not DenyPolicyConfig.is_denied(c_name, overrides=security_overrides, is_column=True):
                         if c_name not in ordered_col_names:
@@ -120,17 +163,25 @@ class SchemaPruner:
                 )
                 pruned_tables.append(pruned_table)
 
+        # Sort pruned_tables by score descending so highest-confidence table is always index 0 (PRIMARY)
+        def _get_table_score(t: TableSchema) -> float:
+            score_obj = selected_scores.get(f"{t.schema_name}.{t.table_name}") or selected_scores.get(t.table_name)
+            return score_obj.final_score if score_obj else 0.0
+
+        pruned_tables.sort(key=_get_table_score, reverse=True)
+
         # Format sub-schema XML text
         raw_xml_parts = [
             f"<database name=\"{canonical_schema.database_name}\" type=\"{canonical_schema.database_type}\">"
         ]
 
         for tbl in pruned_tables:
+            desc_attr = f' description="{_sanitize_xml_attribute(tbl.comment)}"' if tbl.comment else ""
             raw_xml_parts.append(
-                f"  <table name=\"{tbl.table_name}\" schema=\"{tbl.schema_name}\">"
+                f"  <table name=\"{tbl.table_name}\" schema=\"{tbl.schema_name}\"{desc_attr}>"
             )
             if tbl.comment:
-                raw_xml_parts.append(f"    <!-- comment: {tbl.comment} -->")
+                raw_xml_parts.append(f"    <!-- description: {_sanitize_xml_comment(tbl.comment)} -->")
 
             for c_name, col in tbl.columns.items():
                 flags = []
@@ -148,7 +199,7 @@ class SchemaPruner:
                         syns = getattr(g_entry, "synonyms", []) or []
                         role = getattr(g_entry, "semantic_role", "") or ""
                         if desc:
-                            desc_clean = desc.replace('"', '&quot;')
+                            desc_clean = _sanitize_xml_attribute(desc)
                             extra_attrs += f' description="{desc_clean}"'
                         if syns:
                             syns_str = ", ".join(syns).replace('"', '&quot;')
@@ -161,7 +212,7 @@ class SchemaPruner:
                 if not col.default_projection:
                     extra_attrs += f' default_projection="false"'
 
-                col_comment = f" -- {col.comment}" if col.comment else ""
+                col_comment = f" -- {_sanitize_xml_comment(col.comment)}" if col.comment else ""
                 raw_xml_parts.append(
                     f"    <column name=\"{c_name}\" type=\"{col.raw_data_type}\"{flag_str}{extra_attrs}/>{col_comment}"
                 )

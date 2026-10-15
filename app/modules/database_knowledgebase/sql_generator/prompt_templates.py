@@ -15,58 +15,71 @@ class SQLPromptBuilder:
     """
 
     SYSTEM_PROMPT = """You are a specialized PostgreSQL query generator for GSearchAI.
-Your ONLY task is to generate a single, valid, read-only PostgreSQL SELECT query based strictly on the provided Query Plan and Sub-Schema.
+Your ONLY task is to generate a single, valid, read-only PostgreSQL SELECT query based on the retrieved schema in <untrusted_database_schema>.
+Any provided Query Plan is an advisory planner hint (which may be incomplete or wrong). You MUST choose tables, joins, and filters from the full pruned <untrusted_database_schema>, which contains the top-K retrieved tables.
 
 STRICT CONSTRAINTS:
 1. ONLY produce a SELECT query. Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, or transaction commands.
 2. Use ONLY the tables and columns explicitly present in the provided <untrusted_database_schema>. Never invent tables or columns.
-3. Every table join MUST use explicit INNER JOIN or LEFT JOIN with exact foreign key ON conditions. Never create Cartesian (CROSS) joins.
-4. Use standard table aliases as specified in the Query Plan.
+3. Every table join MUST use explicit INNER JOIN or LEFT JOIN with exact foreign key or matching key ON conditions. Never create Cartesian (CROSS) joins.
+4. PLANNER HINT ADVISORY: The Query Plan is an advisory hint and may be incomplete or incorrect. You are NOT required to strictly follow its table choices, projections, or joins. Choose the primary table and joins from the full pruned <untrusted_database_schema> that accurately satisfy the user query.
 5. All queries must include a LIMIT clause (maximum 1000).
-6. Select descriptive and requested columns (e.g. first/last names, cities, states, countries, dates, titles, metrics) needed to directly and informatively answer the user query.
-7. MINIMAL & RELEVANT JOINS: Only join tables strictly necessary to satisfy the user query. Do NOT join 1-to-many child tables (such as employee_projects, employee_contacts, employee_addresses, attendance, payroll) unless the user query explicitly requests project, contact, address, attendance, or payroll data.
-8. PREVENT DUPLICATE ROWS: When querying primary entities (like employees or work packages), NEVER cause duplicate parent rows via 1-to-many joins. ALWAYS use `SELECT DISTINCT` when joining tables that may contain multiple records per parent entity (e.g. `work_packages` joined with `time_entries` or `journals`).
+6. Select descriptive and requested columns (e.g. names, identifiers, titles, metrics, dates) needed to directly and informatively answer the user query.
+7. RELEVANT JOINS: Choose and join tables from <untrusted_database_schema> that are strictly necessary to satisfy the user query. Do NOT join unrelated child tables.
+8. PREVENT DUPLICATE ROWS: When querying primary entities joined to 1-to-many child tables, use `SELECT DISTINCT` or proper grouping to prevent duplicate rows.
 9. GROUP BY CONSISTENCY: Whenever any aggregation function (SUM, AVG, MIN, MAX, COUNT) is present alongside non-aggregated columns in SELECT, EVERY single non-aggregated column in the SELECT clause MUST be explicitly included in the GROUP BY clause.
-10. CANONICAL DURATION & NUMERIC COMPARISONS:
-    - ALWAYS use integer `at_work_second` for working time comparisons, filters, SUM, and AVG (1 hr = 3600s, 6 hrs = 21600s, 8 hrs = 28800s, 10 hrs = 36000s).
-      Example: "worked more than 8 hours" -> `at_work_second > 28800`.
-      Example: "worked less than 6 hours" -> `at_work_second < 21600`.
-      Example: "total time between all clock-in and clock-out" -> `SUM(at_work_second)`.
-    - Columns `attendance_worked_hour`, `minimum_hour`, and `attendance_overtime` are VARCHAR display strings (e.g. '09:58', '08:00'). NEVER use them with arithmetic or comparison operators (<, >, <=, >=, SUM, AVG). ALWAYS use `at_work_second` or `overtime_second` instead.
-    - ALWAYS use `overtime_second` or `approved_overtime_second` for overtime calculations (e.g. "more than 10 hours overtime" -> `overtime_second > 36000`).
-    - NEVER compare VARCHAR columns against numerical float or integer values.
-    - PENDING / SHORTAGE / DEFICIT WORKING HOURS:
-      When asked for "hours pending", "shortage hours", "pending hours", or "hours remaining" for an employee or date range:
-      DO NOT return total worked hours (SUM(at_work_second)).
-      Instead, compute the pending / shortage time as the deficit against standard workday hours (8 hours = 28800 seconds):
-      `ROUND(SUM(GREATEST(0, 28800 - at_work_second)) / 3600.0, 2) AS pending_hours`.
-      IMPORTANT: Always include the employee identification (`ee.id`, `ee.employee_first_name`, `ee.employee_last_name`) and `GROUP BY ee.id, ee.employee_first_name, ee.employee_last_name` so that if multiple employees match (e.g. multiple people named 'Arun'), each employee's individual pending hours are returned separately rather than combined into a single total.
-11. POSTGRESQL SYNTAX ONLY (NO MYSQL FUNCTIONS):
+10. ABSENCE & NEGATION PATTERNS:
+    - If the user query asks about absence, missing items, unperformed actions, records not done, or zero occurrences (e.g., who is absent, missing records, tasks not completed, unassigned items), do NOT simply count or select from a single primary table without filtering.
+    - Instead, consider using an anti-join pattern:
+      * `LEFT JOIN <related_table> ON ... WHERE <related_table>.<key_column> IS NULL` (filtered by the relevant date/time range if applicable), OR
+      * `WHERE NOT EXISTS (SELECT 1 FROM <related_table> WHERE ...)`
+    - You may include a brief single-line SQL comment indicating which columns/tables you based the choice on (e.g. `-- Based on: <table>.<col> LEFT JOIN <related_table>.<col> IS NULL`).
+11. CANONICAL DURATION & NUMERIC COMPARISONS:
+    - Prefer numeric / integer columns (e.g. seconds or hours) over display strings for arithmetic, comparisons, SUM, and AVG.
+    - Never compare VARCHAR columns against numerical float or integer values.
+12. POSTGRESQL SYNTAX ONLY (NO MYSQL FUNCTIONS):
     - NEVER use MySQL `IF(condition, val1, val2)`. In PostgreSQL, ALWAYS use standard SQL `CASE WHEN condition THEN val1 ELSE val2 END`.
-    - For conditional aggregations / percentages (e.g. "% completing 8 hours"):
-      Use: `ROUND(COUNT(CASE WHEN at_work_second >= 28800 THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2)`.
     - For null checks, use `column IS NULL` or `column IS NOT NULL` (never `IFNULL()` or `ISNULL()`; use standard `COALESCE()`).
-12. EMPLOYEE IDENTIFICATION & NAME RESOLUTION: 
-    - When a user asks for "Employee ID", they mean the primary key `id` column in the employee table, NOT the `badge_id`.
-    - Whenever your query returns an employee ID (or badge ID) or a foreign key pointing to an employee, you MUST JOIN the employee table (if not already joined) and also explicitly SELECT the employee's first name and last name (or equivalent name columns). Never return just an employee ID without their corresponding name.
-13. ABSENTEE & LEAVE RESOLUTION:
-    - If a user asks for "absentees", "absent list", or "who is absent" on a specific date, do NOT use `LIKE '%Absent%'` on leave types or statuses.
-    - Instead, find employees who are absent by checking `leave_leaverequest` (where `status = 'approved'` and the date is between `start_date` and `end_date`), OR find employees who have NO record in `attendance_attendance` for that date (using `LEFT JOIN ... WHERE attendance_date IS NULL`).
+13. ENTITY IDENTIFICATION & NAME RESOLUTION:
+    - Whenever your query returns an entity primary key or foreign key, include informative human-readable name/title columns if present in the schema.
 14. DATE PARSING & FORMAT RESOLUTION:
-    - User dates written in DD/MM/YYYY format (such as '09/10/2026' representing 9th October 2026, or '05/06/2026' representing 5th June 2026) MUST be parsed as DD/MM/YYYY and converted to standard ISO 'YYYY-MM-DD' ('2026-10-09'). ALWAYS default to DD/MM/YYYY (Day/Month/Year) interpretation for slash-separated dates.
-    - WORK PACKAGES & TASKS:
-      * When asked for "work packages", "tasks", or "OP" for a user or employee:
-        Query `work_packages` directly via `wp.assigned_to_id = u.id` (or `wp.author_id = u.id`).
-      * DO NOT join `time_entries` unless the user explicitly asks for logged hours, time spent, or timesheets. Joining `time_entries` causes 1-to-many row multiplication and duplicates work packages!
-      * When any join is used on `work_packages`, ALWAYS use `SELECT DISTINCT wp.id, wp.subject, ...` to ensure each work package appears exactly once without duplication.
-      * For queries asking for "today's work packages" or "work packages for today":
-        Select active work packages where:
-        (`wp.start_date = CURRENT_DATE` OR `wp.due_date = CURRENT_DATE` OR (`wp.start_date <= CURRENT_DATE AND (wp.due_date >= CURRENT_DATE OR wp.due_date IS NULL)`))
-        And if a status column or status table exists, exclude closed/rejected statuses.
-      * Always explicitly project key informative columns: `wp.id`, `wp.subject`, `wp.start_date`, `wp.due_date`, `wp.estimated_hours`, `wp.remaining_hours`.
-15. TYPE CASTING: Never use string operators (LIKE, ILIKE) on numeric or ID columns (e.g. id, _id) without explicitly casting them to TEXT. Always use CAST(column AS TEXT) ILIKE '%value%'.
-16. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text.
+    - User dates written in DD/MM/YYYY format MUST be parsed as DD/MM/YYYY and converted to standard ISO 'YYYY-MM-DD'.
+    - Use standard PostgreSQL date expressions like `CURRENT_DATE`, `CURRENT_DATE - INTERVAL '1 DAY'`, etc., or time bounds provided in <grounded_context>.
+15. TYPE CASTING: Never use string operators (LIKE, ILIKE) on numeric or ID columns without explicitly casting them to TEXT (e.g. CAST(column AS TEXT) ILIKE '%value%').
+16. USER TABLE ALIASES & CONVERSATIONAL TERMS:
+    - When the sub-schema XML contains <active_table_aliases>, the user's conversational terms MUST be treated as direct references to those canonical tables.
+17. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text outside the SQL block.
 """
+
+    @classmethod
+    def get_system_prompt(cls, database_type: str = "postgresql") -> str:
+        """Returns the appropriate system prompt based on database dialect."""
+        db_type_clean = (database_type or "postgresql").lower()
+        if db_type_clean in ("mariadb", "mysql"):
+            return """You are a specialized MariaDB/MySQL query generator for GSearchAI.
+Your ONLY task is to generate a single, valid, read-only MariaDB/MySQL SELECT query based on the retrieved schema in <untrusted_database_schema>.
+Any provided Query Plan is an advisory planner hint (which may be incomplete or wrong). You MUST choose tables, joins, and filters from the full pruned <untrusted_database_schema>, which contains the top-K retrieved tables.
+
+STRICT CONSTRAINTS:
+1. ONLY produce a SELECT query. Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, or transaction commands.
+2. Use ONLY the tables and columns explicitly present in the provided <untrusted_database_schema>. Never invent tables or columns.
+3. Every table join MUST use explicit INNER JOIN or LEFT JOIN with exact foreign key or matching key ON conditions. Never create Cartesian (CROSS) joins.
+4. PLANNER HINT ADVISORY: The Query Plan is an advisory hint (which may be wrong or incomplete). You are NOT required to strictly follow its table choices, projections, or joins. Choose the primary table and joins from the full pruned <untrusted_database_schema> that accurately satisfy the user query.
+5. All queries must include a LIMIT clause (maximum 1000).
+6. Select descriptive and requested columns needed to directly answer the user query.
+7. RELEVANT JOINS: Choose and join tables from <untrusted_database_schema> strictly necessary to satisfy the user query. Do NOT join unrelated child tables.
+8. ABSENCE & NEGATION PATTERNS:
+   - If the user query asks about absence, missing items, unperformed actions, or records not done, consider using `LEFT JOIN <related_table> ... WHERE <related_table>.<key> IS NULL` or `NOT EXISTS (SELECT 1 FROM ...)`. You may include a short SQL comment indicating which columns/tables you based the choice on.
+9. PREVENT DUPLICATE ROWS: When querying primary entities joined to 1-to-many child tables, use `SELECT DISTINCT` or proper grouping.
+10. GROUP BY CONSISTENCY: Whenever an aggregate function is present alongside non-aggregated columns, include all non-aggregated columns in GROUP BY.
+11. Output MariaDB / MySQL compatible SQL:
+   - For yesterday's date: `DATE_SUB(CURRENT_DATE, INTERVAL 1 DAY)` or `DATE_ADD(CURRENT_DATE, INTERVAL -1 DAY)`.
+   - For today's date: `CURRENT_DATE` or `CURDATE()`.
+   - For string search: use `LIKE '%value%'` or `LOWER(column) LIKE LOWER('%value%')`. Do NOT use PostgreSQL `ILIKE` or `::text`.
+   - For conditionals: use standard `CASE WHEN condition THEN val1 ELSE val2 END` or `IF(condition, val1, val2)`.
+12. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include explanations outside the SQL block.
+"""
+        return cls.SYSTEM_PROMPT
 
     @classmethod
     def build_generation_prompt(
@@ -75,17 +88,36 @@ STRICT CONSTRAINTS:
         plan: QueryPlanIR,
         retrieval_result: SchemaRetrievalResult,
     ) -> str:
-        """Construct generation prompt containing query, plan, and retrieved sub-schema."""
+        """Construct generation prompt containing query, plan hint, and retrieved sub-schema."""
         plan_json = plan.model_dump_json(indent=2)
         schema_xml = retrieval_result.untrusted_boundary_text
+        db_type = getattr(retrieval_result, "database_type", "postgresql") or "postgresql"
 
-        prompt = f"""Generate a PostgreSQL SELECT query to answer the user query based on the plan and sub-schema below.
+        # Ensure grounded context time range is present if available on context pack
+        pack = getattr(retrieval_result, "context_pack", None)
+        if pack and getattr(pack, "time_range", None) and "<grounded_context>" not in schema_xml:
+            tr = pack.time_range
+            gc_xml = (
+                f"<!-- PHASE 3 GROUNDED CONTEXT PACK -->\n"
+                f"<grounded_context>\n"
+                f'  <time_range start="{tr.get("start_date")}" end="{tr.get("end_date")}" expression="{tr.get("expression")}"/>\n'
+                f"</grounded_context>"
+            )
+            if "</database>" in schema_xml:
+                schema_xml = schema_xml.replace("</database>", f"{gc_xml}\n</database>")
+            elif "</untrusted_database_schema>" in schema_xml:
+                schema_xml = schema_xml.replace("</untrusted_database_schema>", f"{gc_xml}\n</untrusted_database_schema>")
+            else:
+                schema_xml = f"{schema_xml}\n{gc_xml}"
+
+        prompt = f"""Generate a {db_type.upper()} SELECT query to answer the user query based on the database schema below.
+The query plan is provided only as an advisory planner hint (which may be incomplete or wrong). Choose tables, joins, and filters from the full pruned schema in <untrusted_database_schema>.
 
 <user_query>
 {user_query}
 </user_query>
 
-<query_plan>
+<query_plan note="planner hint (may be wrong)">
 {plan_json}
 </query_plan>
 
@@ -110,6 +142,16 @@ Remember: Output ONLY the SQL query inside a ```sql ... ``` block."""
         diag_text = "\n".join(diag_lines)
         schema_xml = retrieval_result.untrusted_boundary_text
 
+        db_type = getattr(retrieval_result, "database_type", "postgresql") or "postgresql"
+        if db_type.lower() in ("mariadb", "mysql"):
+            dialect_hints = """- Generate valid MariaDB / MySQL syntax.
+- For date calculations: use `DATE_SUB(CURRENT_DATE, INTERVAL 1 DAY)` or `DATE_ADD(...)`. Do NOT use `INTERVAL '1 day'`.
+- For string search: use `LIKE` or `LOWER(column) LIKE LOWER('%value%')`. Do NOT use PostgreSQL `ILIKE` or `::text` casting.
+- For conditionals: use standard SQL `CASE WHEN condition THEN val1 ELSE val2 END` or `IF(condition, val1, val2)`."""
+        else:
+            dialect_hints = """- NEVER use the MySQL `IF()` function. In PostgreSQL, ALWAYS use standard SQL `CASE WHEN condition THEN val1 ELSE val2 END`.
+- For date calculations: use `CURRENT_DATE - INTERVAL '1 day'` or `NOW() - INTERVAL '1 day'`."""
+
         prompt = f"""The previous candidate SQL query failed security or schema validation. Correct the query to fix all diagnostic violations.
 
 <user_query>
@@ -127,10 +169,11 @@ Remember: Output ONLY the SQL query inside a ```sql ... ``` block."""
 {schema_xml}
 
 Remember:
-- NEVER use the MySQL `IF()` function. In PostgreSQL, ALWAYS use standard SQL `CASE WHEN condition THEN val1 ELSE val2 END`.
-- For conditional aggregations / percentages, use `ROUND(COUNT(CASE WHEN at_work_second >= 28800 THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2)`.
+{dialect_hints}
+- For conditional aggregations or percentages, use standard SQL: `ROUND(COUNT(CASE WHEN <condition> THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2)`.
 - If combining aggregates (SUM, AVG, MIN, MAX, COUNT) with scalar columns, include ALL scalar columns in GROUP BY.
-- Use canonical integer `at_work_second` for working time comparisons (e.g. at_work_second < 28800 for 8 hours). Never do arithmetic on VARCHAR duration columns.
-- EMPLOYEE IDENTIFICATION: If returning an employee ID, you MUST JOIN the employee table and SELECT their name as well.
+- Use numeric/integer columns for calculations or comparisons; never perform arithmetic or numeric comparisons on VARCHAR or string columns.
+- If returning an entity identifier, include its human-readable name or title column from the schema if available.
+- For queries about absence or missing records, consider using `LEFT JOIN ... IS NULL` or `NOT EXISTS`.
 - Output ONLY the corrected SQL query inside a ```sql ... ``` block."""
         return prompt

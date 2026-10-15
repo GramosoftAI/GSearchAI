@@ -108,8 +108,14 @@ class LiveEntityResolver:
         self,
         db_knowledgebase_id: uuid.UUID,
         frame: QuestionFrame,
+        session: Optional[AsyncSession] = None,
     ) -> EntityResolutionResult:
         """Resolve entity values and literal filters from QuestionFrame."""
+        target_db = session or self.db
+        entity_repo = EntityValueRepository(db=target_db, tenant_id=self.tenant_id) if session else self.entity_repo
+        item_repo = KnowledgeItemRepository(db=target_db, tenant_id=self.tenant_id) if session else self.item_repo
+        adapter = Phase1Adapter(session=target_db) if session else self.adapter
+
         # 1. Check if the question targets sensitive or PII column values (e.g., salary, password)
         raw_lower = frame.original_question.lower()
         question_tokens = set(frame.tokens)
@@ -127,7 +133,7 @@ class LiveEntityResolver:
         literal_filters: List[LiteralFilter] = []
         schema_view: Optional[SchemaView] = None
         try:
-            schema_view = await self.adapter.get_current_schema(self.tenant_id, db_knowledgebase_id)
+            schema_view = await adapter.get_current_schema(self.tenant_id, db_knowledgebase_id)
         except Exception as e:
             logger.warning(f"Could not load schema view: {e}")
 
@@ -197,21 +203,25 @@ class LiveEntityResolver:
         processed_keys: Set[Tuple[str, str, str]] = set()
 
         # 4. Search and Resolve against Entity Value Index & Split Names
+        # Collect all valid candidate spans first and batch-fetch exact matches in one query
+        valid_spans: List[Tuple[str, str]] = []
+        norm_spans_set: Set[str] = set()
         for span in filtered_spans:
             norm_span = span.lower().strip()
-            if len(norm_span) < 2:
-                continue
+            if len(norm_span) >= 2:
+                valid_spans.append((span, norm_span))
+                norm_spans_set.add(norm_span)
 
-            # (A) Check exact match in kb2_entity_values
-            exact_hits: List[Dict[str, Any]] = []
-            stmt_exact = select(KB2EntityValue).where(
+        exact_hits_by_norm: Dict[str, List[Dict[str, Any]]] = {}
+        if norm_spans_set:
+            stmt_all = select(KB2EntityValue).where(
                 KB2EntityValue.tenant_id == self.tenant_id,
                 KB2EntityValue.db_knowledgebase_id == db_knowledgebase_id,
-                KB2EntityValue.normalized_value == norm_span,
+                KB2EntityValue.normalized_value.in_(list(norm_spans_set)),
             )
-            res_ex = await self.db.execute(stmt_exact)
-            for ev in res_ex.scalars().all():
-                exact_hits.append({
+            res_all = await target_db.execute(stmt_all)
+            for ev in res_all.scalars().all():
+                exact_hits_by_norm.setdefault(ev.normalized_value, []).append({
                     "table_name": ev.table_name,
                     "column_name": ev.column_name,
                     "raw_value": ev.raw_value,
@@ -220,12 +230,16 @@ class LiveEntityResolver:
                     "match_type": "exact",
                 })
 
-            # (B) Check fuzzy trigram similarity if no exact hits
+        for span, norm_span in valid_spans:
+            # (A) Match pre-fetched exact hits in Python
+            exact_hits: List[Dict[str, Any]] = exact_hits_by_norm.get(norm_span, [])
+
+            # (B) Check fuzzy trigram similarity only if no exact hits
             fuzzy_hits: List[Dict[str, Any]] = []
             if not exact_hits:
                 try:
-                    async with self.db.begin_nested():
-                        f_res = await self.entity_repo.search_fuzzy(
+                    async with target_db.begin_nested():
+                        f_res = await entity_repo.search_fuzzy(
                             db_knowledgebase_id=db_knowledgebase_id,
                             query_text=norm_span,
                             limit=5,
@@ -260,7 +274,7 @@ class LiveEntityResolver:
                         ln_col = col_names["last_name"]
                         
                         try:
-                            async with self.adapter.open_readonly_connection(self.tenant_id, db_knowledgebase_id) as conn:
+                            async with adapter.open_readonly_connection(self.tenant_id, db_knowledgebase_id) as conn:
                                 q_composite = f"""
                                     SELECT "{pk_col}", "{fn_col}", "{ln_col}"
                                     FROM {table_ref}
@@ -298,6 +312,8 @@ class LiveEntityResolver:
                                             )
                                         )
                                         continue
+                        except NotImplementedError:
+                            pass
                         except Exception as e:
                             logger.warning(f"Composite name query failed: {e}")
 
@@ -352,7 +368,7 @@ class LiveEntityResolver:
                 """
 
                 try:
-                    async with self.adapter.open_readonly_connection(self.tenant_id, db_knowledgebase_id) as conn:
+                    async with adapter.open_readonly_connection(self.tenant_id, db_knowledgebase_id) as conn:
                         rows = await conn.fetch(live_query, val.lower())
                         if len(rows) == 1:
                             # Exactly one row -> resolved
@@ -399,6 +415,8 @@ class LiveEntityResolver:
                                     similarity=hit["similarity"],
                                 )
                             )
+                except NotImplementedError:
+                    pass
                 except Exception as exc:
                     logger.warning(f"Live disambiguation query failed for {clean_t}.{col}: {exc}")
 

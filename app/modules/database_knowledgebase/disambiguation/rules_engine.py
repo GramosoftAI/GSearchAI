@@ -32,17 +32,18 @@ class RulesEngine:
                             f"Always SELECT the person's name and ID, and GROUP BY them to return separate rows for each person."
                         )
                 else:
+                    val_repr = f"'{user_id}'" if (isinstance(user_id, str) and not user_id.startswith("'") and not user_id.isdigit()) else user_id
                     if table_hint:
                         system_rules.append(
-                            f"RULE: The user '{name_hint}' has {table_hint}.{pk_col} = {user_id}. "
+                            f"RULE: The user '{name_hint}' has {table_hint}.{pk_col} = {val_repr}. "
                             f"If querying '{table_hint}' or tables joining to '{table_hint}' (e.g. employee_user_id_id = {table_hint}.{pk_col}), "
                             f"filter by that exact ID column. If querying another table that has its own primary key, join appropriately or filter by name string. "
                             f"Never filter an unrelated table's primary key (like employee_employee.id) directly with {table_hint}.{pk_col} values."
                         )
                     else:
                         system_rules.append(
-                            f"RULE: The user mentioned in the query has exactly ID = {user_id}. "
-                            f"Filter by ID = {user_id} on the matching user table."
+                            f"RULE: The user mentioned in the query has exactly ID = {val_repr}. "
+                            f"Filter by ID = {val_repr} on the matching user table."
                         )
         
         # 2. Assignee vs Author Clarification

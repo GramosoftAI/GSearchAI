@@ -359,7 +359,20 @@ class DatabaseKnowledgebaseService:
                             )
                             logger.info(f"Phase 2 sync job successfully triggered for KB {kb_id}, version {canonical_schema.fingerprint}")
                         else:
-                            logger.warning(f"Phase 2 Knowledge Layer skipped for KB {kb_id}: Redis pool unavailable (pipeline not executed inline)")
+                            if getattr(settings, "phase2_manual_inline_fallback", True):
+                                logger.info(f"Phase 2 Knowledge Layer: Redis pool unavailable; triggering background task fallback for KB {kb_id}")
+                                from ..knowledge.jobs import run_phase2_pipeline
+                                tenant_uuid = uuid.UUID(str(self.tenant_id)) if isinstance(self.tenant_id, str) else self.tenant_id
+                                asyncio.create_task(
+                                    run_phase2_pipeline(
+                                        ctx=None,
+                                        tenant_id=tenant_uuid,
+                                        kb_id=kb_id,
+                                        schema_version=canonical_schema.fingerprint,
+                                    )
+                                )
+                            else:
+                                logger.warning(f"Phase 2 Knowledge Layer skipped for KB {kb_id}: Redis pool unavailable (pipeline not executed inline)")
             except Exception as p2_err:
                 logger.error(f"Non-fatal error: Phase 2 knowledge layer trigger failed for KB {kb_id}: {p2_err}", exc_info=True)
 
@@ -1141,7 +1154,21 @@ class DatabaseKnowledgebaseService:
             resolved_entities_list = resolved_entities or []
             if not resolved_entities_list:
                 try:
-                    names = await EntityExtractor.extract_person_names(user_query)
+                    aliases_dict = None
+                    try:
+                        aliases_dict = await self.get_table_aliases(kb_id=entity.id)
+                    except Exception as alias_filter_err:
+                        logger.debug(f"Could not fetch aliases: {alias_filter_err}")
+
+                    names = await EntityExtractor.extract_person_names(
+                        query=user_query,
+                        canonical_schema=canonical_schema,
+                        aliases=aliases_dict,
+                        session=self.db,
+                        tenant_id=entity.tenant_id,
+                        kb_id=entity.id,
+                    )
+
                     logger.info(f"[DISAMBIGUATION] Extracted candidate names: {names}")
                     # audit_ctx is defined above
                     for name in names:
@@ -1152,6 +1179,7 @@ class DatabaseKnowledgebaseService:
                             canonical_schema=canonical_schema,
                             audit_context=audit_ctx,
                             notices_out=disambiguation_notices,
+                            session=self.db,
                         )
                         if collision_result:
                             if isinstance(collision_result, dict):
@@ -1185,11 +1213,10 @@ class DatabaseKnowledgebaseService:
                 query_with_rules += "\n\n" + "\n".join(strict_rules)
                 logger.info(f"[DISAMBIGUATION] Injected {len(strict_rules)} rules into query")
                 
-            # If we resolved a user, silently inject candidate table name token if needed
-            for e in resolved_entities_list:
-                e_tbl = e.get("table")
-                if e_tbl and e_tbl.lower() not in query_with_rules.lower():
-                    query_with_rules += f" {e_tbl}"
+            # NOTE: We intentionally do NOT append resolved entity table names to query_with_rules.
+            # Appending table names (e.g. 'users' or 'employee_employee') pollutes the user query
+            # string and biases retrieval away from actual question context (like attendance or timesheet).
+            # Downstream stages already receive entity constraints via strict_rules.
 
             # 1. Retrieval
             current_stage = "RETRIEVAL"
@@ -1205,7 +1232,7 @@ class DatabaseKnowledgebaseService:
             t_ret_start = time.perf_counter()
             retrieval_res = await self.retrieve_schema_phase3(
                 kb_id=kb_id,
-                user_query=user_query,
+                user_query=query_with_rules,
                 top_k_tables=top_k_tables,
                 top_k_columns_per_table=top_k_columns_per_table,
                 include_relationships=True,
@@ -1346,6 +1373,181 @@ class DatabaseKnowledgebaseService:
                     },
                     elapsed_stage_ms=t_plan_ms,
                 )
+
+            # Phase 2.5: Insufficient Schema Guard
+            # Evaluates whether relevant schema/data was found to prevent hallucinations on unrelated schemas
+            from app.core.config import settings
+            guard_enabled = getattr(settings, "db_kb_insufficient_schema_guard_enabled", True)
+            min_plan_conf = getattr(settings, "db_kb_min_planner_confidence", 0.20)
+            min_table_score = getattr(settings, "db_kb_min_table_retrieval_score", 0.30)
+
+            top_3_candidates = [t.table_name for t in retrieval_res.retrieved_tables[:3]]
+            if not top_3_candidates and retrieval_res.retrieval_scores:
+                top_3_candidates = list(retrieval_res.retrieval_scores.keys())[:3]
+
+            scores_for_guard: Dict[str, Any] = {}
+            top_table_final_score = 0.0
+            top_table_vector_score = 0.0
+            top_table_keyword_score = 0.0
+            for t_name, s_obj in retrieval_res.retrieval_scores.items():
+                f_s = getattr(s_obj, "final_score", 0.0) if hasattr(s_obj, "final_score") else (float(s_obj) if isinstance(s_obj, (int, float)) else 0.0)
+                v_s = getattr(s_obj, "vector_score", 0.0) if hasattr(s_obj, "vector_score") else 0.0
+                k_s = getattr(s_obj, "keyword_score", 0.0) if hasattr(s_obj, "keyword_score") else 0.0
+                if f_s > top_table_final_score:
+                    top_table_final_score = f_s
+                    top_table_vector_score = v_s
+                    top_table_keyword_score = k_s
+                scores_for_guard[t_name] = {
+                    "final_score": round(f_s, 4),
+                    "vector_score": round(v_s, 4),
+                    "keyword_score": round(k_s, 4),
+                }
+
+            STOP_WORDS = {
+                "what", "is", "the", "are", "how", "many", "who", "which", "when", "where",
+                "show", "tell", "me", "list", "give", "a", "an", "for", "of", "in", "on",
+                "at", "to", "from", "by", "with", "about", "all", "any", "this", "that",
+                "these", "those", "does", "do", "did", "can", "could", "would", "should",
+                "and", "or", "not", "find", "get", "there", "were", "been"
+            }
+            query_raw_tokens = re.findall(r"[a-z0-9]+", user_query.lower())
+            query_tokens = [t for t in query_raw_tokens if len(t) >= 3 and t not in STOP_WORDS]
+
+            matched_schema_tokens = []
+            for t_schema in retrieval_res.retrieved_tables:
+                t_name_low = t_schema.table_name.lower()
+                t_parts = set(re.split(r"[_\s]+", t_name_low))
+                col_names_low = [c.lower() for c in t_schema.columns.keys()]
+                col_parts = set()
+                for c in col_names_low:
+                    col_parts.update(re.split(r"[_\s]+", c))
+
+                for tok in query_tokens:
+                    if tok in t_parts or tok == t_name_low or (len(tok) > 3 and tok in t_name_low):
+                        matched_schema_tokens.append(f"table:{t_schema.table_name}:{tok}")
+                    elif tok in col_parts or tok in col_names_low:
+                        matched_schema_tokens.append(f"col:{t_schema.table_name}:{tok}")
+                    elif tok.endswith("s") and tok[:-1] in t_parts:
+                        matched_schema_tokens.append(f"table_singular:{t_schema.table_name}:{tok[:-1]}")
+                    elif tok.endswith("es") and tok[:-2] in t_parts:
+                        matched_schema_tokens.append(f"table_singular:{t_schema.table_name}:{tok[:-2]}")
+
+            pack = getattr(retrieval_res, "context_pack", None)
+            glossary_matches = len(getattr(pack, "glossary_matches", []) or [])
+            resolved_entity_count = len(resolved_entities_list)
+
+            has_token_match = len(matched_schema_tokens) > 0
+            has_glossary_or_entity = (glossary_matches > 0 or resolved_entity_count > 0)
+            has_high_semantic_score = (top_table_final_score >= min_table_score and top_table_vector_score >= 0.75)
+
+            plan_conf = getattr(plan, "confidence", 1.0)
+            is_relevant = True
+            decision_reason = "Sufficient schema relevance detected"
+
+            if guard_enabled:
+                if plan_conf < min_plan_conf:
+                    is_relevant = False
+                    decision_reason = f"Planner confidence {plan_conf:.2f} is below threshold {min_plan_conf:.2f} (unrelated or unjoinable schema)"
+                elif not (has_token_match or has_glossary_or_entity or has_high_semantic_score):
+                    is_relevant = False
+                    decision_reason = f"No question tokens or glossary matched schema, and top table score {top_table_final_score:.2f} (vector {top_table_vector_score:.2f}) did not meet high semantic threshold {min_table_score:.2f}"
+
+            relevance_telemetry = {
+                "guard_enabled": guard_enabled,
+                "relevant": is_relevant,
+                "decision_reason": decision_reason,
+                "planner_confidence": plan_conf,
+                "min_planner_confidence": min_plan_conf,
+                "top_table_final_score": round(top_table_final_score, 4),
+                "top_table_vector_score": round(top_table_vector_score, 4),
+                "top_table_keyword_score": round(top_table_keyword_score, 4),
+                "min_table_retrieval_score": min_table_score,
+                "matched_schema_tokens": matched_schema_tokens,
+                "glossary_matches_count": glossary_matches,
+                "resolved_entities_count": resolved_entity_count,
+                "candidate_tables": top_3_candidates,
+            }
+
+            tracer.record_schema_relevance(
+                relevant=is_relevant,
+                reason=decision_reason,
+                scores=relevance_telemetry,
+                candidate_tables=top_3_candidates,
+            )
+
+            if not is_relevant:
+                logger.info(
+                    f"[INSUFFICIENT_SCHEMA_GUARD] Triggered for query '{user_query[:50]}...': "
+                    f"{decision_reason}. Skipping SQL generation and execution."
+                )
+                from ..answering.models import (
+                    AnswerType,
+                    EvidenceModel,
+                    GroundedDatabaseAnswer,
+                    GroundingStatus,
+                    VerificationStatus,
+                )
+
+                empty_evidence = EvidenceModel(
+                    query_id=query_id,
+                    database_knowledgebase_id=kb_id,
+                    schema_version=retrieval_res.schema_version,
+                    columns=[],
+                    rows=[],
+                    row_count=0,
+                    execution_time_ms=0.0,
+                )
+                no_rel_message = (
+                    "No relevant data or matching schema could be found in the connected database "
+                    "to answer this question."
+                )
+                guard_answer = GroundedDatabaseAnswer(
+                    status="no_relevant_data",
+                    candidate_tables=top_3_candidates,
+                    query_id=query_id,
+                    database_knowledgebase_id=kb_id,
+                    schema_version=retrieval_res.schema_version,
+                    answer_text=no_rel_message,
+                    answer_type=AnswerType.EMPTY,
+                    evidence=empty_evidence,
+                    grounding_status=GroundingStatus.FALLBACK_DETERMINISTIC,
+                    verification_status=VerificationStatus.PASSED,
+                    row_count=0,
+                    truncated=False,
+                    warnings=disambiguation_notices + [decision_reason],
+                    generation_metadata={
+                        "deterministic": True,
+                        "bypassed_sql_generation": True,
+                        "guard_decision": "no_relevant_data",
+                        "latency_ms": round((time.perf_counter() - tracer.start_time) * 1000.0, 2),
+                    },
+                    pipeline_trace=tracer.finalize(),
+                )
+
+                if event_sink:
+                    await event_sink.emit(
+                        DatabaseStreamEventType.ANSWER_COMPLETED,
+                        stage="ANSWER",
+                        status="completed",
+                        data={
+                            "status": "no_relevant_data",
+                            "answer_text": guard_answer.answer_text,
+                            "candidate_tables": top_3_candidates,
+                            "reason": decision_reason,
+                        },
+                    )
+                    await event_sink.emit(
+                        DatabaseStreamEventType.STREAM_COMPLETED,
+                        stage="STREAM",
+                        status="completed",
+                        data={
+                            "total_duration_ms": event_sink.get_total_elapsed_ms(),
+                            "final_status": "NO_RELEVANT_DATA",
+                            "events_emitted": event_sink._seq,
+                        },
+                    )
+
+                return guard_answer
 
             # 3. SQL Generation
             current_stage = "SQL_GENERATION"
@@ -1611,6 +1813,8 @@ class DatabaseKnowledgebaseService:
             # Attach finalized trace
             if disambiguation_notices:
                 answer.warnings.extend(disambiguation_notices)
+            if not getattr(answer, "candidate_tables", None) and top_3_candidates:
+                answer.candidate_tables = top_3_candidates
             answer.pipeline_trace = tracer.finalize()
 
             # 8. Answer Completed & Stream Completed
@@ -1766,7 +1970,10 @@ class DatabaseKnowledgebaseService:
         try:
             conn_config = self.secrets.decrypt_credentials(kb.encrypted_credentials)
             connector = ConnectorFactory.create_connector(conn_config)
-            test_res = await connector.test_connection()
+            try:
+                test_res = await connector.test_connection()
+            finally:
+                await connector.close()
             ping_ms = round((time.perf_counter() - t_ping_start) * 1000.0, 2)
 
             is_connected = bool(test_res.success)
@@ -1888,6 +2095,73 @@ class DatabaseKnowledgebaseService:
             "sync_error": error_msg,
             "synced": synced,
         }
+
+    async def get_table_aliases(self, kb_id: uuid.UUID) -> Dict[str, List[str]]:
+        """Fetch all user-defined table aliases as a dictionary {table_name: [aliases]}."""
+        records = await self.repo.get_table_aliases(kb_id=kb_id)
+        aliases_map: Dict[str, List[str]] = {}
+        for r in records:
+            aliases_map[r.table_name] = r.aliases if isinstance(r.aliases, list) else []
+        return aliases_map
+
+    async def save_table_aliases(
+        self,
+        kb_id: uuid.UUID,
+        table_aliases_data: Any,
+    ) -> Dict[str, Any]:
+        """Save single or batch table aliases."""
+        aliases_map: Dict[str, List[str]] = {}
+
+        # Handle various input structures (dict, TableAliasSaveRequest, or list)
+        if isinstance(table_aliases_data, dict):
+            if "table_aliases" in table_aliases_data and isinstance(table_aliases_data["table_aliases"], dict):
+                aliases_map.update(table_aliases_data["table_aliases"])
+            elif "tableAliases" in table_aliases_data and isinstance(table_aliases_data["tableAliases"], dict):
+                aliases_map.update(table_aliases_data["tableAliases"])
+            
+            table_name = table_aliases_data.get("table_name") or table_aliases_data.get("tableName")
+            aliases = table_aliases_data.get("aliases")
+            if table_name and isinstance(aliases, list):
+                aliases_map[table_name] = aliases
+
+            items = table_aliases_data.get("items")
+            if items and isinstance(items, list):
+                for item in items:
+                    t_name = item.get("table_name") or item.get("tableName")
+                    t_aliases = item.get("aliases") or []
+                    if t_name:
+                        aliases_map[t_name] = t_aliases
+        elif hasattr(table_aliases_data, "table_aliases") and table_aliases_data.table_aliases:
+            aliases_map.update(table_aliases_data.table_aliases)
+        elif hasattr(table_aliases_data, "table_name") and table_aliases_data.table_name:
+            aliases_map[table_aliases_data.table_name] = table_aliases_data.aliases or []
+
+        if not aliases_map:
+            if isinstance(table_aliases_data, dict) and not any(k in table_aliases_data for k in ("table_name", "tableName", "table_aliases", "tableAliases", "items")):
+                aliases_map = {k: v for k, v in table_aliases_data.items() if isinstance(v, list)}
+
+        saved = await self.repo.save_table_aliases(kb_id=kb_id, aliases_map=aliases_map)
+        
+        result_map: Dict[str, List[str]] = {}
+        for r in saved:
+            result_map[r.table_name] = r.aliases if isinstance(r.aliases, list) else []
+
+        return {
+            "success": True,
+            "table_aliases": result_map,
+            "saved_count": len(saved),
+        }
+
+    async def delete_table_alias(self, kb_id: uuid.UUID, table_name: str) -> Dict[str, Any]:
+        """Delete aliases for a specific table."""
+        await self.repo.delete_table_alias(kb_id=kb_id, table_name=table_name)
+        remaining = await self.get_table_aliases(kb_id=kb_id)
+        return {
+            "success": True,
+            "table_aliases": remaining,
+            "deleted_table": table_name,
+        }
+
 
 
 

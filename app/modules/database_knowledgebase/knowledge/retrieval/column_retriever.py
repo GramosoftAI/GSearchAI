@@ -74,6 +74,7 @@ class ColumnRetriever:
         frame: QuestionFrame,
         candidate_tables: List[TableCandidate],
         top_k_columns_per_table: int = 5,
+        query_embedding: Optional[List[float]] = None,
     ) -> List[TableColumnBundle]:
         """Rank columns and metrics within candidate tables."""
         if not candidate_tables:
@@ -98,8 +99,10 @@ class ColumnRetriever:
         # 2. Vector search on column and metric docs
         vector_hits: List[Dict[str, Any]] = []
         try:
-            embed_gen = EmbeddingGenerator()
-            q_emb = await embed_gen.generate_embedding(frame.normalized_text or frame.original_question)
+            q_emb = query_embedding
+            if q_emb is None:
+                embed_gen = EmbeddingGenerator()
+                q_emb = await embed_gen.generate_embedding(frame.normalized_text or frame.original_question, is_query=True)
             if q_emb:
                 vector_hits = await self.schema_doc_repo.search_vector(
                     db_knowledgebase_id=db_knowledgebase_id,

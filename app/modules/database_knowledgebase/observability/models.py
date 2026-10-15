@@ -103,3 +103,7 @@ class PipelineTrace(BaseModel):
     sql_generation: SQLGenerationTrace = Field(default_factory=SQLGenerationTrace)
     execution: ExecutionTrace = Field(default_factory=ExecutionTrace)
     synthesis: SynthesisTrace = Field(default_factory=SynthesisTrace)
+    schema_relevance: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Telemetry capturing schema relevance guard decision and scores",
+    )

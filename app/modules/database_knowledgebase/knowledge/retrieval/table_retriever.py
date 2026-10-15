@@ -17,20 +17,38 @@ Outputs top K tables with score and explanation reasons.
 """
 
 import uuid
+import re
 import logging
 from typing import Optional, List, Dict, Any, Set
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, desc
 
 from app.core.embeddings import EmbeddingGenerator
 from ..repositories.schema_doc_repository import SchemaDocRepository
 from ..repositories.entity_value_repository import EntityValueRepository
 from ..repositories.knowledge_item_repository import KnowledgeItemRepository
+from ..models.knowledge_items import KB2SchemaDoc
+from app.modules.database_knowledgebase.models.table_alias import KBTableAlias
+from app.modules.database_knowledgebase.models.database_knowledgebase import DatabaseSchemaSnapshot
 from .analyzer import QuestionFrame
 
 logger = logging.getLogger(__name__)
 
 RRF_K = 60
+
+
+def split_identifier(name: str) -> List[str]:
+    """Tokenize table/column identifiers on underscores, hyphens, dots, and camelCase transitions."""
+    if not name:
+        return []
+    # Replace non-alphanumeric separators (underscores, hyphens, dots) with spaces
+    s = re.sub(r"[_\-\.]+", " ", name)
+    # camelCase: insert space between lowercase/digit and uppercase (tabEmployee -> tab Employee)
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", s)
+    # Acronyms: insert space between consecutive uppercase and uppercase followed by lowercase (XMLReader -> XML Reader)
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", s)
+    return [tok.lower().strip() for tok in s.split() if tok.strip()]
 
 
 class TableCandidate(BaseModel):
@@ -54,6 +72,7 @@ class TableRetriever:
         self.schema_doc_repo = SchemaDocRepository(db=db, tenant_id=self.tenant_id)
         self.entity_repo = EntityValueRepository(db=db, tenant_id=self.tenant_id)
         self.item_repo = KnowledgeItemRepository(db=db, tenant_id=self.tenant_id)
+        self._table_terms_cache: Dict[str, Dict[str, Set[str]]] = {}
 
         # Configurable signal weights
         self.weights = weights or {
@@ -64,12 +83,127 @@ class TableRetriever:
             "value_index": 1.3,
         }
 
+    async def _get_kb_table_terms(self, db_knowledgebase_id: uuid.UUID) -> Dict[str, Set[str]]:
+        """Fetch canonical table names and matching terms (sub-tokens, aliases, singulars) for this KB.
+
+        Dynamically derived from:
+        1. kb2_schema_docs (doc_type='table')
+        2. k2b_table_aliases (user-defined UI aliases)
+        3. DatabaseSchemaSnapshot (latest snapshot for fallback / full coverage)
+        """
+        cache_key = str(db_knowledgebase_id)
+        if cache_key in self._table_terms_cache:
+            return self._table_terms_cache[cache_key]
+
+        table_terms: Dict[str, Set[str]] = {}
+
+        def _add_terms_for_table(canonical_table: str, raw_aliases: Optional[List[str]] = None):
+            t_clean = canonical_table.lower().strip()
+            if "." in t_clean:
+                t_clean = t_clean.split(".")[-1]
+            if not t_clean:
+                return
+
+            terms = table_terms.setdefault(t_clean, set())
+            # 1. Whole table name and singular / plural variants
+            terms.add(t_clean)
+            if t_clean.endswith("s") and len(t_clean) > 2:
+                terms.add(t_clean.rstrip("s"))
+            if t_clean.endswith("ies") and len(t_clean) > 4:
+                terms.add(t_clean[:-3] + "y")
+
+            # 2. Tokenized sub-tokens on underscores and camelCase (e.g. emp_attendance -> emp, attendance)
+            for sub_tok in split_identifier(canonical_table):
+                if len(sub_tok) >= 2:
+                    terms.add(sub_tok)
+                    if sub_tok.endswith("s") and len(sub_tok) > 2:
+                        terms.add(sub_tok.rstrip("s"))
+                    if sub_tok.endswith("ies") and len(sub_tok) > 4:
+                        terms.add(sub_tok[:-3] + "y")
+
+            # 3. Aliases and their sub-tokens
+            if raw_aliases:
+                for alias in raw_aliases:
+                    if not alias or not isinstance(alias, str):
+                        continue
+                    a_clean = alias.lower().strip()
+                    if "." in a_clean:
+                        a_clean = a_clean.split(".")[-1]
+                    terms.add(a_clean)
+                    if a_clean.endswith("s") and len(a_clean) > 2:
+                        terms.add(a_clean.rstrip("s"))
+                    for sub_a in split_identifier(alias):
+                        if len(sub_a) >= 2:
+                            terms.add(sub_a)
+                            if sub_a.endswith("s") and len(sub_a) > 2:
+                                terms.add(sub_a.rstrip("s"))
+
+        # 1. Fetch from kb2_schema_docs
+        try:
+            stmt_docs = select(KB2SchemaDoc.item_key, KB2SchemaDoc.title, KB2SchemaDoc.aliases).where(
+                KB2SchemaDoc.tenant_id == self.tenant_id,
+                KB2SchemaDoc.db_knowledgebase_id == db_knowledgebase_id,
+                KB2SchemaDoc.doc_type == "table",
+                KB2SchemaDoc.status.in_(["confirmed", "draft"]),
+            )
+            res_docs = await self.db.execute(stmt_docs)
+            for item_key, title, aliases in res_docs.all():
+                c_tbl = item_key.split(".")[-1]
+                alias_list = list(aliases) if aliases else []
+                if title and title.lower() != c_tbl.lower():
+                    alias_list.append(title)
+                _add_terms_for_table(c_tbl, alias_list)
+        except Exception as e:
+            logger.debug(f"[TableRetriever] Failed to load schema docs for table terms: {e}")
+
+        # 2. Fetch from k2b_table_aliases
+        try:
+            stmt_alias = select(KBTableAlias.table_name, KBTableAlias.aliases).where(
+                KBTableAlias.db_knowledgebase_id == db_knowledgebase_id,
+            )
+            if self.tenant_id:
+                stmt_alias = stmt_alias.where(KBTableAlias.tenant_id == self.tenant_id)
+            res_alias = await self.db.execute(stmt_alias)
+            for tbl_name, aliases in res_alias.all():
+                alias_list = aliases if isinstance(aliases, list) else []
+                _add_terms_for_table(tbl_name, alias_list)
+        except Exception as e:
+            logger.debug(f"[TableRetriever] Failed to load k2b_table_aliases: {e}")
+
+        # 3. Fallback / supplement from latest DatabaseSchemaSnapshot
+        try:
+            stmt_snap = select(DatabaseSchemaSnapshot.schema_data).where(
+                DatabaseSchemaSnapshot.tenant_id == self.tenant_id,
+                DatabaseSchemaSnapshot.db_knowledgebase_id == db_knowledgebase_id,
+            ).order_by(desc(DatabaseSchemaSnapshot.created_at)).limit(1)
+            res_snap = await self.db.execute(stmt_snap)
+            snap_data = res_snap.scalar_one_or_none()
+            if snap_data and isinstance(snap_data, dict):
+                # 1. Canonical schema format: { "schemas": { "schema_name": { "tables": { ... } } } }
+                if "schemas" in snap_data and isinstance(snap_data["schemas"], dict):
+                    for s_k, s_v in snap_data["schemas"].items():
+                        if isinstance(s_v, dict) and "tables" in s_v and isinstance(s_v["tables"], dict):
+                            for t_k, t_val in s_v["tables"].items():
+                                t_name = t_val.get("table_name", t_k) if isinstance(t_val, dict) else t_k
+                                _add_terms_for_table(t_name)
+                # 2. Flat tables format: { "tables": { ... } }
+                if "tables" in snap_data and isinstance(snap_data["tables"], dict):
+                    for t_k, t_val in snap_data["tables"].items():
+                        t_name = t_val.get("table_name", t_k) if isinstance(t_val, dict) else t_k
+                        _add_terms_for_table(t_name)
+        except Exception as e:
+            logger.debug(f"[TableRetriever] Failed to load snapshot for table terms: {e}")
+
+        self._table_terms_cache[cache_key] = table_terms
+        return table_terms
+
     async def retrieve_tables(
         self,
         db_knowledgebase_id: uuid.UUID,
         frame: QuestionFrame,
         top_k: int = 12,
         domain_filter: Optional[str] = None,
+        query_embedding: Optional[List[float]] = None,
     ) -> List[TableCandidate]:
         """Rank tables for the parsed QuestionFrame."""
         clean_text = frame.normalized_text or frame.original_question
@@ -126,7 +260,9 @@ class TableRetriever:
         # -------------------------------------------------------------
         vec_weight = self.weights.get("vector", 1.0)
         try:
-            q_emb = await EmbeddingGenerator.generate_embedding(frame.original_question, is_query=True)
+            q_emb = query_embedding
+            if q_emb is None:
+                q_emb = await EmbeddingGenerator.generate_embedding(frame.original_question, is_query=True)
             if q_emb:
                 vec_hits = await self.schema_doc_repo.search_vector(
                     db_knowledgebase_id=db_knowledgebase_id,
@@ -175,10 +311,16 @@ class TableRetriever:
         # -------------------------------------------------------------
         # 4. Keyword / Token Exact Table Name Match Boost
         # -------------------------------------------------------------
+        table_terms_map = await self._get_kb_table_terms(db_knowledgebase_id=db_knowledgebase_id)
         for tok in frame.tokens:
-            for t_known in ["users", "orders", "tx_log", "branches", "payments", "customers", "employees", "ref_codes", "attendance", "departments"]:
-                if tok == t_known or tok == t_known.rstrip("s") or t_known.startswith(tok):
-                    _add_score(t_known, 0.05, f"Direct token match '{tok}'", "token_exact")
+            matched_tables_for_tok: Set[str] = set()
+            for t_known, terms in table_terms_map.items():
+                for term in terms:
+                    if tok == term or tok == term.rstrip("s") or term == tok.rstrip("s") or (len(tok) >= 3 and term.startswith(tok)):
+                        matched_tables_for_tok.add(t_known)
+                        break
+            for t_known in matched_tables_for_tok:
+                _add_score(t_known, 0.05, f"Direct token match '{tok}'", "token_exact")
 
         # Compile candidates
         candidates: List[TableCandidate] = []

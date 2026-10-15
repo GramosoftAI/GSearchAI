@@ -50,6 +50,7 @@ class PipelineTracer:
         self.sql_trace = SQLGenerationTrace()
         self.execution_trace = ExecutionTrace()
         self.synthesis_trace = SynthesisTrace()
+        self.schema_relevance: Optional[Dict[str, Any]] = None
         self.error: Optional[str] = None
         self.error_type: Optional[str] = None
 
@@ -144,6 +145,23 @@ class PipelineTracer:
                 "limit": limit,
             },
         )
+
+    def record_schema_relevance(
+        self,
+        relevant: bool,
+        reason: str,
+        scores: Dict[str, Any],
+        candidate_tables: List[str],
+    ) -> None:
+        """Record Phase 2 schema relevance guard evaluation and scores."""
+        self.schema_relevance = {
+            "relevant": relevant,
+            "reason": reason,
+            "scores": scores,
+            "candidate_tables": candidate_tables,
+        }
+        if not relevant:
+            self.final_status = "NO_RELEVANT_DATA"
 
     def record_sql_generation(
         self,
@@ -457,6 +475,7 @@ class PipelineTracer:
                 "intent": self.planning_trace.intent,
                 "candidate_sql": self.sql_trace.candidate_sql,
                 "parameters": self.sql_trace.parameters,
+                "schema_relevance": self.schema_relevance,
             },
         )
 
@@ -500,4 +519,5 @@ class PipelineTracer:
             sql_generation=self.sql_trace,
             execution=self.execution_trace,
             synthesis=self.synthesis_trace,
+            schema_relevance=self.schema_relevance,
         )

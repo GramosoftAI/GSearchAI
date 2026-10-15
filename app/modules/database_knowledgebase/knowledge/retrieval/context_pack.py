@@ -35,12 +35,15 @@ import uuid
 import time
 import json
 import logging
+import asyncio
+from contextlib import asynccontextmanager
 from datetime import date
 from typing import Optional, List, Dict, Any, Tuple
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
 
+from app.core.database import AsyncSessionLocal
 from app.core.embeddings import EmbeddingGenerator
 from ..adapters.phase1_adapter import Phase1Adapter
 from ..models.knowledge_items import KB2QueryMemory, KB2KnowledgeItem
@@ -87,8 +90,10 @@ class ContextPackBuilder:
         tenant_id: str | uuid.UUID,
         adapter: Optional[Phase1Adapter] = None,
         token_budget: int = DEFAULT_TOKEN_BUDGET,
+        session_factory: Optional[Any] = AsyncSessionLocal,
     ):
         self.db = db
+        self.session_factory = session_factory
         self.tenant_id = uuid.UUID(str(tenant_id))
         self.adapter = adapter or Phase1Adapter(session=db)
         self.token_budget = token_budget
@@ -98,6 +103,15 @@ class ContextPackBuilder:
         self.column_retriever = ColumnRetriever(db=db, tenant_id=self.tenant_id)
         self.entity_resolver = LiveEntityResolver(db=db, tenant_id=self.tenant_id, adapter=self.adapter)
         self.join_finder = JoinPathFinder(db=db, tenant_id=self.tenant_id)
+
+    @asynccontextmanager
+    async def _get_branch_session(self):
+        """Yield a dedicated session if session_factory is configured, else fallback to self.db."""
+        if self.session_factory:
+            async with self.session_factory() as sess:
+                yield sess
+        else:
+            yield self.db
 
     async def build(
         self,
@@ -109,77 +123,222 @@ class ContextPackBuilder:
         """Run complete retrieval pipeline and produce token-bounded ContextPack."""
         timings: Dict[str, float] = {}
 
-        # 1. Question Analyzer
+        # 1. Question Analyzer (Instant in-memory parsing)
         t0 = time.perf_counter()
         frame = self.analyzer.analyze(question, reference_date=reference_date)
         timings["analyzer_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
-        # 2. Entity Resolution (Fast unanswerable & sensitive check)
-        t1 = time.perf_counter()
-        entity_res: EntityResolutionResult = await self.entity_resolver.resolve(
-            db_knowledgebase_id=db_knowledgebase_id,
-            frame=frame,
-        )
-        timings["entity_resolution_ms"] = round((time.perf_counter() - t1) * 1000, 2)
+        if not self.session_factory:
+            # Sequential execution fallback for environments without a session pool (e.g. SQLite / single-session mocks)
+            t1 = time.perf_counter()
+            entity_res: EntityResolutionResult = await self.entity_resolver.resolve(
+                db_knowledgebase_id=db_knowledgebase_id,
+                frame=frame,
+            )
+            timings["entity_resolution_ms"] = round((time.perf_counter() - t1) * 1000, 2)
 
-        if entity_res.unanswerable:
-            return ContextPack(
+            if entity_res.unanswerable:
+                return ContextPack(
+                    question=question,
+                    confidence=0.0,
+                    unanswerable={"flag": True, "reason": entity_res.unanswerable_reason},
+                    timings_ms=timings,
+                )
+
+            query_embedding: Optional[List[float]] = None
+            try:
+                query_embedding = await EmbeddingGenerator.generate_embedding(
+                    question,
+                    is_query=True,
+                )
+            except Exception as e:
+                logger.warning(f"[ContextPackBuilder] Failed to generate query embedding: {e}")
+
+            t2 = time.perf_counter()
+            candidate_tables: List[TableCandidate] = await self.table_retriever.retrieve_tables(
+                db_knowledgebase_id=db_knowledgebase_id,
+                frame=frame,
+                top_k=8,
+                query_embedding=query_embedding,
+            )
+            timings["table_retrieval_ms"] = round((time.perf_counter() - t2) * 1000, 2)
+
+            t3 = time.perf_counter()
+            column_bundles: List[TableColumnBundle] = await self.column_retriever.retrieve_for_tables(
+                db_knowledgebase_id=db_knowledgebase_id,
+                frame=frame,
+                candidate_tables=candidate_tables,
+                top_k_columns_per_table=5,
+                query_embedding=query_embedding,
+            )
+            timings["column_retrieval_ms"] = round((time.perf_counter() - t3) * 1000, 2)
+
+            t4 = time.perf_counter()
+            await self.join_finder.build_graph(db_knowledgebase_id=db_knowledgebase_id)
+            join_target_tables = [c.table_name for c in candidate_tables[:4]]
+            join_res: JoinPathResult = self.join_finder.find_join_tree(
+                tables=join_target_tables,
+                frame=frame,
+            )
+            timings["join_path_ms"] = round((time.perf_counter() - t4) * 1000, 2)
+
+            t5 = time.perf_counter()
+            similar_queries = await self._fetch_similar_queries(
+                db_knowledgebase_id=db_knowledgebase_id,
                 question=question,
-                confidence=0.0,
-                unanswerable={"flag": True, "reason": entity_res.unanswerable_reason},
-                timings_ms=timings,
+                target_tables=join_target_tables,
+                query_embedding=query_embedding,
+            )
+            timings["query_memory_ms"] = round((time.perf_counter() - t5) * 1000, 2)
+
+            rules = await self._fetch_rules(db_knowledgebase_id=db_knowledgebase_id)
+            schema_view = None
+            try:
+                schema_view = await self.adapter.get_current_schema(self.tenant_id, db_knowledgebase_id)
+            except Exception:
+                pass
+
+        else:
+            # Concurrent execution:
+            # Independent stages run in parallel with dedicated sessions from pool:
+            # - _run_retrieval_and_similar: embedding -> (tables+columns on self.db || similar_queries on branch sess)
+            # - _run_entity_resolution: batch n-gram IN query on branch session
+            # - _run_join_graph: kb2_knowledge_items relationship graph on branch session
+            # - _run_rules: active rules on branch session
+            # - _run_schema: schema snapshot on branch session
+
+            async def _run_retrieval_and_similar():
+                query_embedding: Optional[List[float]] = None
+                try:
+                    query_embedding = await EmbeddingGenerator.generate_embedding(
+                        question,
+                        is_query=True,
+                    )
+                except Exception as e:
+                    logger.warning(f"[ContextPackBuilder] Failed to generate query embedding: {e}")
+
+                async def _run_tables_and_columns():
+                    t2 = time.perf_counter()
+                    c_tables = await self.table_retriever.retrieve_tables(
+                        db_knowledgebase_id=db_knowledgebase_id,
+                        frame=frame,
+                        top_k=8,
+                        query_embedding=query_embedding,
+                    )
+                    timings["table_retrieval_ms"] = round((time.perf_counter() - t2) * 1000, 2)
+
+                    t3 = time.perf_counter()
+                    c_bundles = await self.column_retriever.retrieve_for_tables(
+                        db_knowledgebase_id=db_knowledgebase_id,
+                        frame=frame,
+                        candidate_tables=c_tables,
+                        top_k_columns_per_table=5,
+                        query_embedding=query_embedding,
+                    )
+                    timings["column_retrieval_ms"] = round((time.perf_counter() - t3) * 1000, 2)
+                    return c_tables, c_bundles
+
+                async def _run_similar():
+                    t5 = time.perf_counter()
+                    sim_res = []
+                    try:
+                        async with self._get_branch_session() as sess:
+                            sim_res = await self._fetch_similar_queries(
+                                db_knowledgebase_id=db_knowledgebase_id,
+                                question=question,
+                                target_tables=[],
+                                query_embedding=query_embedding,
+                                session=sess,
+                            )
+                    except Exception as e:
+                        logger.warning(f"[ContextPackBuilder] Similar queries fetch error: {e}")
+                    timings["query_memory_ms"] = round((time.perf_counter() - t5) * 1000, 2)
+                    return sim_res
+
+                (c_tables, c_bundles), sim_queries = await asyncio.gather(
+                    _run_tables_and_columns(),
+                    _run_similar(),
+                )
+                return c_tables, c_bundles, sim_queries
+
+            async def _run_entity_resolution():
+                t1 = time.perf_counter()
+                try:
+                    async with self._get_branch_session() as sess:
+                        res = await self.entity_resolver.resolve(
+                            db_knowledgebase_id=db_knowledgebase_id,
+                            frame=frame,
+                            session=sess,
+                        )
+                        timings["entity_resolution_ms"] = round((time.perf_counter() - t1) * 1000, 2)
+                        return res
+                except Exception as e:
+                    logger.error(f"[ContextPackBuilder] Entity resolution error: {e}")
+                    timings["entity_resolution_ms"] = round((time.perf_counter() - t1) * 1000, 2)
+                    return EntityResolutionResult()
+
+            async def _run_join_graph():
+                try:
+                    async with self._get_branch_session() as sess:
+                        await self.join_finder.build_graph(
+                            db_knowledgebase_id=db_knowledgebase_id,
+                            session=sess,
+                        )
+                except Exception as e:
+                    logger.warning(f"[ContextPackBuilder] Join graph build error: {e}")
+
+            async def _run_rules():
+                try:
+                    async with self._get_branch_session() as sess:
+                        return await self._fetch_rules(
+                            db_knowledgebase_id=db_knowledgebase_id,
+                            session=sess,
+                        )
+                except Exception as e:
+                    logger.warning(f"[ContextPackBuilder] Rules fetch error: {e}")
+                    return []
+
+            async def _run_schema():
+                try:
+                    async with self._get_branch_session() as sess:
+                        adapter = Phase1Adapter(session=sess)
+                        return await adapter.get_current_schema(self.tenant_id, db_knowledgebase_id)
+                except Exception:
+                    return None
+
+            (
+                (candidate_tables, column_bundles, similar_queries),
+                entity_res,
+                _,
+                rules,
+                schema_view,
+            ) = await asyncio.gather(
+                _run_retrieval_and_similar(),
+                _run_entity_resolution(),
+                _run_join_graph(),
+                _run_rules(),
+                _run_schema(),
             )
 
-        # 3. Table Retrieval
-        t2 = time.perf_counter()
-        candidate_tables: List[TableCandidate] = await self.table_retriever.retrieve_tables(
-            db_knowledgebase_id=db_knowledgebase_id,
-            frame=frame,
-            top_k=8,
-        )
-        timings["table_retrieval_ms"] = round((time.perf_counter() - t2) * 1000, 2)
+            if entity_res.unanswerable:
+                return ContextPack(
+                    question=question,
+                    confidence=0.0,
+                    unanswerable={"flag": True, "reason": entity_res.unanswerable_reason},
+                    timings_ms=timings,
+                )
 
-        # 4. Column & Metric Retrieval
-        t3 = time.perf_counter()
-        column_bundles: List[TableColumnBundle] = await self.column_retriever.retrieve_for_tables(
-            db_knowledgebase_id=db_knowledgebase_id,
-            frame=frame,
-            candidate_tables=candidate_tables,
-            top_k_columns_per_table=5,
-        )
-        timings["column_retrieval_ms"] = round((time.perf_counter() - t3) * 1000, 2)
-
-        # 5. Join Path Finder
-        t4 = time.perf_counter()
-        # Ensure join graph is loaded
-        await self.join_finder.build_graph(db_knowledgebase_id=db_knowledgebase_id)
-        # Target tables for joins: top candidate tables (at most 4)
-        join_target_tables = [c.table_name for c in candidate_tables[:4]]
-        join_res: JoinPathResult = self.join_finder.find_join_tree(
-            tables=join_target_tables,
-            frame=frame,
-        )
-        timings["join_path_ms"] = round((time.perf_counter() - t4) * 1000, 2)
-
-        # 6. Similar Queries from kb2_query_memory
-        t5 = time.perf_counter()
-        similar_queries = await self._fetch_similar_queries(
-            db_knowledgebase_id=db_knowledgebase_id,
-            question=question,
-            target_tables=join_target_tables,
-        )
-        timings["query_memory_ms"] = round((time.perf_counter() - t5) * 1000, 2)
-
-        # 7. Rules and Business Logic from kb2_knowledge_items
-        rules = await self._fetch_rules(db_knowledgebase_id=db_knowledgebase_id)
+            # In-memory join tree computation (candidate tables and graph ready)
+            t4 = time.perf_counter()
+            join_target_tables = [c.table_name for c in candidate_tables[:4]]
+            join_res = self.join_finder.find_join_tree(
+                tables=join_target_tables,
+                frame=frame,
+            )
+            timings["join_path_ms"] = round((time.perf_counter() - t4) * 1000, 2)
 
         # 8. Assemble Initial Context
         tables_meta = []
-        schema_view = None
-        try:
-            schema_view = await self.adapter.get_current_schema(self.tenant_id, db_knowledgebase_id)
-        except Exception:
-            pass
 
         for t_cand in candidate_tables:
             desc = f"Table {t_cand.table_name}"
@@ -369,13 +528,18 @@ class ContextPackBuilder:
         self,
         db_knowledgebase_id: uuid.UUID,
         question: str,
-        target_tables: List[str],
+        target_tables: Optional[List[str]] = None,
+        query_embedding: Optional[List[float]] = None,
+        session: Optional[AsyncSession] = None,
     ) -> List[Dict[str, Any]]:
         """Fetch up to 3 verified natural queries by vector similarity and table overlap."""
         results = []
+        target_db = session or self.db
         try:
-            embed_gen = EmbeddingGenerator()
-            q_emb = await embed_gen.generate_embedding(question)
+            q_emb = query_embedding
+            if q_emb is None:
+                embed_gen = EmbeddingGenerator()
+                q_emb = await embed_gen.generate_embedding(question, is_query=True)
             if not q_emb:
                 return []
 
@@ -391,7 +555,7 @@ class ContextPackBuilder:
                 .order_by(dist_expr)
                 .limit(3)
             )
-            res = await self.db.execute(stmt)
+            res = await target_db.execute(stmt)
             for qm, dist in res.all():
                 results.append({
                     "question": qm.natural_query,
@@ -403,9 +567,14 @@ class ContextPackBuilder:
 
         return results
 
-    async def _fetch_rules(self, db_knowledgebase_id: uuid.UUID) -> List[Dict[str, Any]]:
+    async def _fetch_rules(
+        self,
+        db_knowledgebase_id: uuid.UUID,
+        session: Optional[AsyncSession] = None,
+    ) -> List[Dict[str, Any]]:
         """Fetch active business rules from kb2_knowledge_items."""
         rules = []
+        target_db = session or self.db
         try:
             stmt = select(KB2KnowledgeItem).where(
                 KB2KnowledgeItem.tenant_id == self.tenant_id,
@@ -413,7 +582,7 @@ class ContextPackBuilder:
                 KB2KnowledgeItem.item_type == "rule",
                 KB2KnowledgeItem.status.in_(["confirmed", "draft"]),
             ).limit(5)
-            res = await self.db.execute(stmt)
+            res = await target_db.execute(stmt)
             for it in res.scalars().all():
                 p = it.payload or {}
                 rules.append({
@@ -424,3 +593,4 @@ class ContextPackBuilder:
         except Exception as e:
             logger.warning(f"Failed to fetch rules: {e}")
         return rules
+

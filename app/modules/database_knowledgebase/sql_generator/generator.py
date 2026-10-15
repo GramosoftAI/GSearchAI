@@ -319,14 +319,15 @@ class CandidateSQLGenerator:
         return query
 
     @classmethod
-    def compile_plan_to_sql(cls, plan: QueryPlanIR) -> Optional[str]:
-        """Deterministically compile QueryPlanIR to PostgreSQL SQL string."""
+    def compile_plan_to_sql(cls, plan: QueryPlanIR, dialect: str = "postgres") -> Optional[str]:
+        """Deterministically compile QueryPlanIR to SQL string."""
         if not plan or not plan.tables:
             return None
         if not plan.projections and plan.confidence == 0.0:
             return None
         ast = cls.compile_plan_to_ast(plan)
-        return ast.sql(dialect="postgres")
+        target_dialect = "mysql" if dialect in ("mysql", "mariadb") else "postgres"
+        return ast.sql(dialect=target_dialect)
 
     @classmethod
     def _extract_sql_from_response(cls, text: str) -> str:
@@ -355,12 +356,11 @@ class CandidateSQLGenerator:
         Generate candidate SQL for the given plan.
         Tries LLM if enabled; falls back to deterministic AST compilation.
         """
-        # Fast-path deterministic compilation for authoritative domain calculations (percentage, having, aggregations)
-        if plan and plan.confidence >= 0.90 and any(
-            any(p.column_name.strip().upper().startswith(fn) for fn in ("ROUND(", "COUNT(", "SUM(", "AVG(", "COALESCE("))
-            for p in plan.projections
-        ):
-            deterministic_sql = cls.compile_plan_to_sql(plan)
+        db_type = getattr(retrieval_result, "database_type", "postgresql") or "postgresql"
+        # Fast-path deterministic compilation: ONLY if eligible under strict deterministic gate
+        from .repair import SQLRepairEngine
+        if SQLRepairEngine.can_compile_plan_deterministically(plan, user_query=user_query):
+            deterministic_sql = cls.compile_plan_to_sql(plan, dialect=db_type)
             if deterministic_sql:
                 return deterministic_sql
 
@@ -371,12 +371,13 @@ class CandidateSQLGenerator:
 
                 settings = get_settings()
                 prompt = SQLPromptBuilder.build_generation_prompt(user_query, plan, retrieval_result)
+                sys_prompt = SQLPromptBuilder.get_system_prompt(db_type)
 
                 # Invoke LLM
                 client = DeepInfraLLMClient()
                 response_text = await client.generate_cloud(
                     prompt=prompt,
-                    system_prompt=SQLPromptBuilder.SYSTEM_PROMPT,
+                    system_prompt=sys_prompt,
                     temperature=0.0,
                     max_tokens=1024,
                     enable_thinking=False,
@@ -401,4 +402,4 @@ class CandidateSQLGenerator:
                 logger.warning(f"LLM candidate SQL generation failed, falling back to deterministic compiler: {e}")
 
         # Deterministic fallback compilation
-        return cls.compile_plan_to_sql(plan)
+        return cls.compile_plan_to_sql(plan, dialect=db_type)

@@ -260,8 +260,12 @@ Output ONLY valid JSON matching this schema:
         # Compute question embedding
         try:
             q_embedding = await EmbeddingGenerator.generate_embedding(pair.question, is_query=True)
-        except Exception:
-            q_embedding = None
+            if not q_embedding or len(q_embedding) == 0:
+                raise ValueError("Generated query embedding was empty")
+        except Exception as emb_exc:
+            logger.error(f"[Seed Query Memory] Embedding generation failed for query '{pair.question}': {emb_exc}", exc_info=True)
+            rejections["embedding_error"] = rejections.get("embedding_error", 0) + 1
+            continue
 
         exec_stats = {
             "provenance": "seed",

@@ -119,3 +119,11 @@ class GroundedDatabaseAnswer(BaseModel):
         default=None,
         description="Phase 3A End-to-end pipeline trace and observability telemetry",
     )
+    status: Optional[str] = Field(
+        default="success",
+        description="Execution status code (e.g. 'success', 'no_relevant_data')",
+    )
+    candidate_tables: List[str] = Field(
+        default_factory=list,
+        description="Candidate tables considered during schema retrieval and relevance evaluation",
+    )

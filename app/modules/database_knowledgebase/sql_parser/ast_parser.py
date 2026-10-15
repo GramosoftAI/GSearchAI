@@ -14,13 +14,14 @@ from ..exceptions import SQLSyntaxError
 
 class SQLASTParser:
     """
-    PostgreSQL dialect SQL parser using sqlglot.
+    SQL dialect parser and transpile utility using sqlglot.
     """
 
     @classmethod
-    def parse_sql(cls, sql_text: str) -> exp.Expression:
+    def parse_sql(cls, sql_text: str, dialect: str = "postgres") -> exp.Expression:
         """
-        Parse a single PostgreSQL SQL statement into a sqlglot Expression AST.
+        Parse a single SQL statement into a sqlglot Expression AST.
+        Supports PostgreSQL, MariaDB, and MySQL dialects.
         
         Raises:
             SQLSyntaxError if parsing fails or multiple statements are supplied.
@@ -33,10 +34,14 @@ class SQLASTParser:
         if clean_sql.endswith(";"):
             clean_sql = clean_sql[:-1].strip()
 
+        read_dialect = "mysql" if dialect in ("mysql", "mariadb") else "postgres"
         try:
-            expressions = sqlglot.parse(clean_sql, read="postgres")
-        except (ParseError, TokenError, Exception) as e:
-            raise SQLSyntaxError(f"SQL Syntax Error: {str(e)}")
+            expressions = sqlglot.parse(clean_sql, read=read_dialect)
+        except (ParseError, TokenError, Exception):
+            try:
+                expressions = sqlglot.parse(clean_sql)  # Generic fallback
+            except (ParseError, TokenError, Exception) as e:
+                raise SQLSyntaxError(f"SQL Syntax Error: {str(e)}")
 
         if not expressions:
             raise SQLSyntaxError("No valid SQL expression could be parsed from input")
@@ -49,6 +54,7 @@ class SQLASTParser:
         return expressions[0]
 
     @classmethod
-    def to_sql(cls, expression: exp.Expression, pretty: bool = False) -> str:
-        """Transpile or format an AST back to PostgreSQL SQL string."""
-        return expression.sql(dialect="postgres", pretty=pretty)
+    def to_sql(cls, expression: exp.Expression, pretty: bool = False, dialect: str = "postgres") -> str:
+        """Transpile or format an AST back to target dialect SQL string."""
+        target_dialect = "mysql" if dialect in ("mysql", "mariadb") else "postgres"
+        return expression.sql(dialect=target_dialect, pretty=pretty)

@@ -12,6 +12,7 @@ Provides:
 
 import uuid
 import logging
+import time
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, Dict, Any, List, Callable
@@ -26,6 +27,7 @@ from app.core.database import AsyncSessionLocal
 from ..adapters.phase1_adapter import Phase1Adapter, SchemaView
 from ..repositories.job_run_repository import JobRunRepository
 from ..repositories.knowledge_item_repository import KnowledgeItemRepository
+from ..models.knowledge_items import KB2JobRun
 from .profiler import run_stage_profiler
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,8 @@ class JobStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     SUPERSEDED = "superseded"
+    SUCCEEDED_WITH_WARNINGS = "succeeded_with_warnings"
+    COMPLETED_WITH_ERRORS = "completed_with_errors"
 
 
 class StageStatus(str, Enum):
@@ -195,13 +199,17 @@ async def run_phase2_pipeline(
     schema_version: str,
     run_id: Optional[uuid.UUID] = None,
     session_override: Optional[Any] = None,
+    force_recompute: bool = False,
+    target_stages: Optional[List[str]] = None,
+    dry_run: bool = False,
 ) -> JobRunRecord:
     """Main Phase 2 pipeline orchestrator.
     
     Guarantees:
     - RLS Enforced: Sets app.current_tenant on worker session prior to any reads/writes.
     - Persisted: State saved to kb2_job_runs database table.
-    - Idempotent: Re-running for same schema_version is safe.
+    - Resumable: Re-running skips stages already completed for same schema_version.
+    - Stage Independence: Subsequent stages (like schema_index) run even if enrich partially/fully failed.
     - Stale-run recovery: Heartbeat updated intra-stage; old runs marked failed on recovery.
     - Supersession: Checks latest schema_version via Phase1Adapter; if newer exists,
       marks run as SUPERSEDED and terminates immediately.
@@ -238,6 +246,27 @@ async def run_phase2_pipeline(
             existing_run.heartbeat_at = now_utc
 
         await session.commit()
+
+        # 3b. Check previous runs for this schema_version to support stage resumability
+        stmt_prev = (
+            select(KB2JobRun)
+            .where(
+                KB2JobRun.tenant_id == t_id,
+                KB2JobRun.db_knowledgebase_id == k_id,
+                KB2JobRun.schema_version == schema_version,
+                KB2JobRun.id != r_id,
+            )
+            .order_by(desc(KB2JobRun.created_at))
+        )
+        res_prev = await session.execute(stmt_prev)
+        prev_runs = res_prev.scalars().all()
+        prev_successful_stages: Dict[str, Dict[str, Any]] = {}
+        for pr in prev_runs:
+            if pr.stages and isinstance(pr.stages, dict):
+                for st_k, st_v in pr.stages.items():
+                    if isinstance(st_v, dict) and st_v.get("status") in ("succeeded", "completed_with_errors"):
+                        if st_k not in prev_successful_stages:
+                            prev_successful_stages[st_k] = st_v
 
         run_record = JobRunRecord(
             run_id=r_id,
@@ -360,6 +389,7 @@ async def run_phase2_pipeline(
                 adapter=adapter,
                 item_repo=item_repo,
                 heartbeat_cb=heartbeat_cb,
+                force_refresh_stats=force_recompute,
             )
 
         async def _run_relationships_wrapper(tid, kid, ver, heartbeat_cb=None):
@@ -389,6 +419,8 @@ async def run_phase2_pipeline(
                 schema_version=ver,
                 db_session=session,
                 heartbeat_cb=heartbeat_cb,
+                dry_run=dry_run,
+                force_refresh=force_recompute,
             )
             enrich_cache["res"] = enrich_res
             return enrich_res
@@ -449,6 +481,10 @@ async def run_phase2_pipeline(
             (StageStatus.EXAMPLES, _run_examples_wrapper),
         ]
 
+        if target_stages:
+            target_set = {s.lower() for s in target_stages}
+            stages = [s for s in stages if s[0].value.lower() in target_set]
+
         async def stage_heartbeat_cb():
             run_record.heartbeat_at = datetime.now(timezone.utc)
             await repo.update_heartbeat(
@@ -457,7 +493,10 @@ async def run_phase2_pipeline(
             )
             await session.commit()
 
-        for stage_name, stage_fn in stages:
+        for i, (stage_name, stage_fn) in enumerate(stages):
+            stage_idx = i + 1
+            total_stages = len(stages)
+
             # Check for mid-run supersession (only if strictly newer snapshot exists)
             try:
                 curr_latest = await adapter.get_latest_snapshot_record(t_id, k_id)
@@ -484,7 +523,34 @@ async def run_phase2_pipeline(
             except Exception:
                 pass
 
-            # Initial stage heartbeat
+            # Resumability check:
+            # If profile, relationships, or value_index already succeeded in a previous run for this exact schema_version, skip re-execution
+            prev_stage = prev_successful_stages.get(stage_name.value)
+            if (
+                prev_stage
+                and prev_stage.get("status") == "succeeded"
+                and stage_name in (StageStatus.PROFILE, StageStatus.RELATIONSHIPS, StageStatus.VALUE_INDEX)
+                and not force_recompute
+            ):
+                logger.info(
+                    f"[Phase 2 Pipeline] [{stage_idx}/{total_stages}] Resuming: stage '{stage_name.value}' "
+                    f"already completed in previous run for version {schema_version[:8]}. Skipping."
+                )
+                stage_rec = StageExecutionRecord(
+                    stage=stage_name,
+                    status=JobStatus.SUCCEEDED,
+                    started_at=datetime.now(timezone.utc),
+                    finished_at=datetime.now(timezone.utc),
+                    metrics={**prev_stage.get("metrics", {}), "resumed_from_previous": True},
+                )
+                run_record.stages[stage_name.value] = stage_rec
+                await stage_heartbeat_cb()
+                continue
+
+            # Initial stage heartbeat and timing
+            logger.info(f"[Phase 2 Pipeline] [{stage_idx}/{total_stages}] Stage '{stage_name.value}' START (KB={k_id})")
+            t_stage_start = time.perf_counter()
+
             stage_rec = StageExecutionRecord(
                 stage=stage_name,
                 status=JobStatus.RUNNING,
@@ -495,42 +561,86 @@ async def run_phase2_pipeline(
 
             try:
                 metrics = await stage_fn(t_id, k_id, schema_version, heartbeat_cb=stage_heartbeat_cb)
-                stage_rec.status = JobStatus.SUCCEEDED
+                stage_duration = time.perf_counter() - t_stage_start
+                metrics["duration_seconds"] = round(stage_duration, 2)
                 stage_rec.finished_at = datetime.now(timezone.utc)
                 stage_rec.metrics = metrics
+
+                if stage_name == StageStatus.ENRICH and metrics.get("tables_failed", 0) > 0:
+                    stage_rec.status = JobStatus.COMPLETED_WITH_ERRORS
+                    logger.warning(
+                        f"[Phase 2 Pipeline] [{stage_idx}/{total_stages}] Stage '{stage_name.value}' "
+                        f"COMPLETED WITH ERRORS in {stage_duration:.1f}s - {metrics.get('tables_failed')} tables failed. "
+                        f"Metrics: {metrics}"
+                    )
+                else:
+                    stage_rec.status = JobStatus.SUCCEEDED
+                    logger.info(
+                        f"[Phase 2 Pipeline] [{stage_idx}/{total_stages}] Stage '{stage_name.value}' "
+                        f"SUCCEEDED in {stage_duration:.1f}s - Metrics: {metrics}"
+                    )
                 await stage_heartbeat_cb()
+
             except Exception as e:
-                logger.error(f"[Phase 2 Pipeline] Stage {stage_name} failed: {e}", exc_info=True)
+                stage_duration = time.perf_counter() - t_stage_start
+                logger.error(f"[Phase 2 Pipeline] [{stage_idx}/{total_stages}] Stage '{stage_name.value}' failed in {stage_duration:.1f}s: {e}", exc_info=True)
                 stage_rec.status = JobStatus.FAILED
                 stage_rec.finished_at = datetime.now(timezone.utc)
                 stage_rec.error = str(e)
+                stage_rec.metrics["duration_seconds"] = round(stage_duration, 2)
+                await stage_heartbeat_cb()
 
-                run_record.status = JobStatus.FAILED
-                run_record.finished_at = datetime.now(timezone.utc)
-                run_record.error = f"Stage {stage_name} failed: {e}"
+                # Stage independence:
+                # If ENRICH, GLOSSARY_SEED, or EXAMPLES fail, continue so SCHEMA_INDEX is never blocked
+                if stage_name in (StageStatus.ENRICH, StageStatus.GLOSSARY_SEED, StageStatus.EXAMPLES):
+                    logger.warning(f"[Phase 2 Pipeline] Continuing to subsequent stages despite failure in non-critical stage '{stage_name.value}'")
+                    continue
+                else:
+                    # Foundational structural stage failed
+                    run_record.status = JobStatus.FAILED
+                    run_record.finished_at = datetime.now(timezone.utc)
+                    run_record.error = f"Stage {stage_name.value} failed: {e}"
 
-                await repo.finish_run(
-                    run_id=r_id,
-                    status="failed",
-                    stages={k: v.model_dump(mode="json") for k, v in run_record.stages.items()},
-                    error=run_record.error,
+                    await repo.finish_run(
+                        run_id=r_id,
+                        status="failed",
+                        stages={k: v.model_dump(mode="json") for k, v in run_record.stages.items()},
+                        error=run_record.error,
+                    )
+                    await session.commit()
+                    return run_record
+
+        # All stages executed
+        has_failed = any(s.status == JobStatus.FAILED for s in run_record.stages.values())
+        has_warnings = any(s.status == JobStatus.COMPLETED_WITH_ERRORS for s in run_record.stages.values())
+
+        if has_failed:
+            run_record.status = JobStatus.FAILED
+        elif has_warnings:
+            run_record.status = JobStatus.SUCCEEDED_WITH_WARNINGS
+            enrich_stage_rec = run_record.stages.get(StageStatus.ENRICH.value)
+            if enrich_stage_rec and enrich_stage_rec.metrics.get("coverage"):
+                cov = enrich_stage_rec.metrics["coverage"]
+                run_record.error = (
+                    f"Completed with warnings. Enrichment coverage: "
+                    f"tables {cov.get('tables_described')}/{cov.get('total_tables')}, "
+                    f"columns {cov.get('columns_described')}/{cov.get('total_columns')}."
                 )
-                await session.commit()
-                return run_record
+        else:
+            run_record.status = JobStatus.SUCCEEDED
 
-        # All stages completed successfully
-        run_record.status = JobStatus.SUCCEEDED
         run_record.finished_at = datetime.now(timezone.utc)
         run_record.heartbeat_at = run_record.finished_at
 
         await repo.finish_run(
             run_id=r_id,
-            status="succeeded",
+            status=run_record.status.value,
             stages={k: v.model_dump(mode="json") for k, v in run_record.stages.items()},
+            error=run_record.error,
         )
         await session.commit()
 
-        logger.info(f"[Phase 2 Pipeline] Succeeded for run={r_id}")
+        logger.info(f"[Phase 2 Pipeline] Run {r_id} finished with status={run_record.status.value}")
         return run_record
 
     if session_override:
@@ -651,3 +761,42 @@ async def trigger_phase2_sync_job(
         await redis_pool.enqueue_job("run_phase2_pipeline", **enqueue_kwargs)
 
     return run_id
+
+
+async def run_pipeline_for_kb_local(
+    kb_id: uuid.UUID | str,
+    tenant_id: Optional[uuid.UUID | str] = None,
+    force_recompute: bool = False,
+    target_stages: Optional[List[str]] = None,
+    dry_run: bool = False,
+) -> JobRunRecord:
+    """Manually run Phase 2/3 knowledge pipeline for a single KB without Redis.
+    
+    Resolves tenant_id and schema_version from database snapshots, then executes the pipeline.
+    """
+    k_id = uuid.UUID(str(kb_id))
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(DatabaseSchemaSnapshot)
+            .where(DatabaseSchemaSnapshot.db_knowledgebase_id == k_id)
+            .order_by(desc(DatabaseSchemaSnapshot.created_at))
+            .limit(1)
+        )
+        res = await session.execute(stmt)
+        snap = res.scalar_one_or_none()
+        if not snap:
+            raise ValueError(f"No schema snapshot found for KB {kb_id}")
+        t_id = uuid.UUID(str(tenant_id)) if tenant_id else snap.tenant_id
+        ver = snap.schema_version
+
+    logger.info(f"[Local Pipeline Runner] Starting pipeline for KB {k_id}, tenant {t_id}, version {ver[:8]}")
+    return await run_phase2_pipeline(
+        ctx=None,
+        tenant_id=t_id,
+        kb_id=k_id,
+        schema_version=ver,
+        force_recompute=force_recompute,
+        target_stages=target_stages,
+        dry_run=dry_run,
+    )
+

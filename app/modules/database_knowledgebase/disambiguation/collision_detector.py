@@ -1,8 +1,13 @@
+import asyncio
 import logging
 import re
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..execution.connection_helper import connect_to_database
+from sqlalchemy import select, or_
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..knowledge.models.knowledge_items import KB2EntityValue
 from ..observability.logger import DatabaseAuditLogger
 from .exceptions import DisambiguationRequiredError
 from ..sql_security.policy import DenyPolicyConfig
@@ -12,14 +17,14 @@ logger = logging.getLogger(__name__)
 
 class CollisionDetector:
     """
-    Detects name collisions in the user's EXTERNAL connected database.
+    Detects name collisions against the local kb2_entity_values table (app DB).
     
     CRITICAL ARCHITECTURAL CONSTRAINTS:
-    - Never uses a string DSN with credentials. Uses connect_to_database with discrete args.
-    - Zero hardcoded database-specific table or column names in code.
+    - Zero connections to external customer databases on the query path.
+    - Resolves candidate names strictly from indexed kb2_entity_values in the local app DB.
+    - If no local match is found, returns None (no collision, drops candidate).
     - Discovers person-table and name-columns dynamically from introspected schema or per-KB config.
     - Emits structured audit events: DISAMBIGUATION_UNAVAILABLE and DISAMBIGUATION_SKIPPED.
-    - If a candidate name matches no row, it is dropped.
     """
 
     @classmethod
@@ -75,7 +80,7 @@ class CollisionDetector:
             t_lower = t_name.lower()
             name_cols = [
                 c.name for c in t_schema.columns.values()
-                if re.search(r"(first_?name|last_?name|full_?name|user_?name|display_?name|login)", c.name, re.IGNORECASE)
+                if re.search(r"(^name$|_name$|first_?name|last_?name|full_?name|user_?name|display_?name|login)", c.name, re.IGNORECASE)
                 and not c.name.lower().endswith(('_id', '_id_id', '_pk'))
             ]
             if not name_cols:
@@ -113,24 +118,25 @@ class CollisionDetector:
         cls,
         extracted_name: str,
         kb_entity: Any,
-        secret_manager: Any,
+        secret_manager: Optional[Any] = None,
         canonical_schema: Optional[Any] = None,
         audit_context: Optional[Dict[str, Any]] = None,
         entity_table_override: Optional[str] = None,
         entity_columns_override: Optional[List[str]] = None,
         notices_out: Optional[List[str]] = None,
-    ) -> Optional[Any]:
+        session: Optional[AsyncSession] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
-        Checks the EXTERNAL connected database for users matching the extracted name.
-        Uses shared discrete connection helper, discovers person table from schema/config,
-        and logs audit events on failure or skip.
+        Resolves candidate names against the LOCAL kb2_entity_values table (app DB).
+        Does NOT open any connection to the external customer database.
+        If no local match is found, returns None (no collision).
         """
         ctx = audit_context or {}
         query_id = ctx.get("query_id", "unknown")
         tenant_id = ctx.get("tenant_id", getattr(kb_entity, "tenant_id", "unknown"))
         kb_id = ctx.get("knowledgebase_id", getattr(kb_entity, "id", "unknown"))
 
-        # Step 1: Discover person table & columns
+        # Step 1: Discover person table & columns from canonical schema
         discovery = cls.discover_person_table_and_columns(
             canonical_schema=canonical_schema,
             table_override=entity_table_override,
@@ -142,8 +148,8 @@ class CollisionDetector:
             DatabaseAuditLogger.emit_event(
                 event_name="DISAMBIGUATION_SKIPPED",
                 query_id=query_id,
-                tenant_id=tenant_id,
-                knowledgebase_id=kb_id,
+                tenant_id=str(tenant_id),
+                knowledgebase_id=str(kb_id),
                 data={"reason": reason, "candidate_name": extracted_name},
                 level=logging.INFO,
             )
@@ -152,60 +158,103 @@ class CollisionDetector:
 
         table_name, pk_col, name_cols, distinguishing_cols = discovery
 
-        # Step 2: Connect using shared discrete connection helper
-        try:
-            config = secret_manager.decrypt_credentials(kb_entity.encrypted_credentials)
-        except Exception as e:
-            reason = f"Credential decryption failure: {e}"
-            DatabaseAuditLogger.emit_event(
-                event_name="DISAMBIGUATION_UNAVAILABLE",
-                query_id=query_id,
-                tenant_id=tenant_id,
-                knowledgebase_id=kb_id,
-                data={"reason": reason, "candidate_name": extracted_name},
-                level=logging.WARNING,
-            )
-            if notices_out is not None:
-                notices_out.append(f"Entity disambiguation unavailable: {reason}")
-            logger.warning(f"[DISAMBIGUATION_UNAVAILABLE] {reason}")
+        # Step 2: Resolve names strictly from the local kb2_entity_values table (app DB)
+        if not session:
+            logger.info("[DISAMBIGUATION] No app database session provided for local collision check.")
             return None
 
-        conn = None
         try:
-            conn = await connect_to_database(
-                db_config=config,
-                timeout_seconds=5.0,
-                read_only=True,
-            )
-        except Exception as e:
-            reason = f"Connection failed: {e}"
-            DatabaseAuditLogger.emit_event(
-                event_name="DISAMBIGUATION_UNAVAILABLE",
-                query_id=query_id,
-                tenant_id=tenant_id,
-                knowledgebase_id=kb_id,
-                data={"reason": reason, "candidate_name": extracted_name},
-                level=logging.WARNING,
-            )
-            if notices_out is not None:
-                notices_out.append(f"Entity disambiguation unavailable: {reason}")
-            logger.warning(f"[DISAMBIGUATION_UNAVAILABLE] {reason}")
-            return None
+            tenant_uuid = uuid.UUID(str(tenant_id)) if tenant_id else None
+            kb_uuid = uuid.UUID(str(kb_id)) if kb_id else None
+        except Exception:
+            tenant_uuid = tenant_id
+            kb_uuid = kb_id
 
-        # Step 3: Query external database using discovered table & columns
+        tbl_names = [table_name]
+        if "." in table_name:
+            tbl_names.append(table_name.split(".")[-1])
+
+        clean_name = extracted_name.strip().lower()
+
         try:
-            select_cols = ", ".join(dict.fromkeys([pk_col] + name_cols + distinguishing_cols))
-            where_clause = " OR ".join([f"CAST({col} AS TEXT) ILIKE $1" for col in name_cols])
-            query = f"SELECT {select_cols} FROM {table_name} WHERE {where_clause}"
-            pattern = f"%{extracted_name}%"
-            rows = await conn.fetch(query, pattern)
+            conds = [
+                KB2EntityValue.db_knowledgebase_id == kb_uuid,
+                KB2EntityValue.table_name.in_(tbl_names),
+                or_(
+                    KB2EntityValue.normalized_value == clean_name,
+                    KB2EntityValue.normalized_value.ilike(f"%{clean_name}%"),
+                ),
+            ]
+            if tenant_uuid:
+                conds.append(KB2EntityValue.tenant_id == tenant_uuid)
+            if name_cols:
+                conds.append(KB2EntityValue.column_name.in_(name_cols))
+
+            stmt = select(KB2EntityValue).where(*conds)
+            res = await session.execute(stmt)
+            matched_records = res.scalars().all()
+
+            # Fallback if no match with column restriction
+            if not matched_records and name_cols:
+                fallback_conds = [
+                    KB2EntityValue.db_knowledgebase_id == kb_uuid,
+                    KB2EntityValue.table_name.in_(tbl_names),
+                    or_(
+                        KB2EntityValue.normalized_value == clean_name,
+                        KB2EntityValue.normalized_value.ilike(f"%{clean_name}%"),
+                    ),
+                ]
+                if tenant_uuid:
+                    fallback_conds.append(KB2EntityValue.tenant_id == tenant_uuid)
+                res_fb = await session.execute(select(KB2EntityValue).where(*fallback_conds))
+                matched_records = res_fb.scalars().all()
+
+            if not matched_records:
+                # 0 rows matched: candidate name is NOT in local entity values, return no collision
+                logger.info(f"[DISAMBIGUATION] Candidate '{extracted_name}' matched 0 rows in local kb2_entity_values for '{table_name}'. Dropping candidate.")
+                return None
+
+            # Deduplicate matches by normalized value / raw value
+            unique_matches: Dict[str, KB2EntityValue] = {}
+            for r in matched_records:
+                k = r.normalized_value.strip().lower()
+                if k not in unique_matches:
+                    unique_matches[k] = r
+
+            matched_col = matched_records[0].column_name or pk_col
+
+            if len(unique_matches) > 1:
+                all_vals = [r.raw_value for r in unique_matches.values()]
+                logger.info(
+                    f"[DISAMBIGUATION] Found {len(unique_matches)} matching entity values for '{extracted_name}' "
+                    f"in local kb2_entity_values ({table_name}): {all_vals}. Collision detected."
+                )
+                return {
+                    "ids": all_vals,
+                    "table": table_name,
+                    "pk_column": matched_col,
+                    "is_multiple": True,
+                }
+            elif len(unique_matches) == 1:
+                resolved_rec = list(unique_matches.values())[0]
+                resolved_val = resolved_rec.raw_value
+                resolved_col = resolved_rec.column_name or pk_col
+                logger.info(f"[DISAMBIGUATION] Resolved '{extracted_name}' -> '{resolved_val}' in {table_name}.{resolved_col}")
+                return {
+                    "ids": resolved_val,
+                    "table": table_name,
+                    "pk_column": resolved_col,
+                    "is_multiple": False,
+                }
+
+            return None
         except Exception as e:
-            reason = f"Lookup failed against table '{table_name}': {e}"
+            reason = f"Local kb2_entity_values lookup failed against table '{table_name}': {e}"
             DatabaseAuditLogger.emit_event(
                 event_name="DISAMBIGUATION_UNAVAILABLE",
                 query_id=query_id,
-                tenant_id=tenant_id,
-                knowledgebase_id=kb_id,
+                tenant_id=str(tenant_id),
+                knowledgebase_id=str(kb_id),
                 data={"reason": reason, "candidate_name": extracted_name, "table": table_name},
                 level=logging.WARNING,
             )
@@ -213,37 +262,3 @@ class CollisionDetector:
                 notices_out.append(f"Entity disambiguation unavailable: {reason}")
             logger.warning(f"[DISAMBIGUATION_UNAVAILABLE] {reason}")
             return None
-        finally:
-            if conn:
-                await conn.close()
-
-        # Step 4: Disambiguation evaluation
-        if len(rows) > 1:
-            all_ids = [row[pk_col] for row in rows]
-            names_found = []
-            for row in rows[:5]:
-                label_parts = [str(row[c]) for c in name_cols if row.get(c)]
-                names_found.append(" ".join(label_parts) if label_parts else f"ID {row[pk_col]}")
-            logger.info(
-                f"[DISAMBIGUATION] Found {len(rows)} matching people for '{extracted_name}' "
-                f"({', '.join(names_found)}...). Returning ALL matching IDs: {all_ids}"
-            )
-            return {
-                "ids": all_ids,
-                "table": table_name,
-                "pk_column": pk_col,
-                "is_multiple": True,
-            }
-        elif len(rows) == 1:
-            resolved_id = rows[0][pk_col]
-            logger.info(f"[DISAMBIGUATION] Resolved '{extracted_name}' -> ID {resolved_id} in {table_name}")
-            return {
-                "ids": resolved_id,
-                "table": table_name,
-                "pk_column": pk_col,
-                "is_multiple": False,
-            }
-
-        # 0 rows matched: candidate name is NOT a person, drop it
-        logger.info(f"[DISAMBIGUATION] Candidate '{extracted_name}' matched 0 rows in '{table_name}'. Dropping candidate.")
-        return None

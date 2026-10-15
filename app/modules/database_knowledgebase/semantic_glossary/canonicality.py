@@ -61,10 +61,10 @@ def is_canonical_table(
     if not table.has_primary_key:
         return False
 
-    # Rule 4: Tables with ID-like FK naming convention but zero declared FK constraints
+    # Rule 4: Tables with corrupted or malformed duplicate FK naming convention
     # (e.g. employee_id_id present but no FK constraint declared —
     # flag, do not silently trust naming convention alone at this gate)
-    if table.has_id_like_fk_columns and not table.has_declared_fk:
+    if any(c.lower().endswith("_id_id") for c in table.columns.keys()) and not table.has_declared_fk:
         return False
 
     return True

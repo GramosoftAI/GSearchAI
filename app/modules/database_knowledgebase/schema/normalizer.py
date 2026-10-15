@@ -318,7 +318,7 @@ class SchemaNormalizer:
             # 7. Construct canonical schema object
             canonical_db = DatabaseSchema(
                 database_name=db_name,
-                database_type="postgresql",
+                database_type=raw_data.get("database_type", "postgresql"),
                 schemas=schemas_dict,
                 fingerprint="",
                 introspected_at=datetime.utcnow(),
