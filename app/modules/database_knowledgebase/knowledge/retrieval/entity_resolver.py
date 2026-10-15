@@ -351,12 +351,20 @@ class LiveEntityResolver:
                 pk_col = table_meta.primary_key_columns[0] if table_meta.primary_key_columns else list(table_meta.columns.keys())[0]
                 table_ref = f'"{table_meta.schema_name}"."{table_meta.table_name}"' if table_meta.schema_name else f'"{table_meta.table_name}"'
 
-                # Choose up to 3 display columns
+                # Choose up to 4 display columns, prioritizing label-like columns
+                LABEL_COLS_PRIORITY = (
+                    "firstname", "first_name", "lastname", "last_name", "login",
+                    "name", "full_name", "title", "subject", "identifier", "city"
+                )
                 display_cols = [pk_col]
+                for prio in LABEL_COLS_PRIORITY:
+                    for c in table_meta.columns.keys():
+                        if c.lower() == prio and c not in display_cols and not is_sensitive_column(c) and not is_sensitive_for_values(c):
+                            display_cols.append(c)
                 for c in table_meta.columns.keys():
                     if c != pk_col and c not in display_cols and not is_sensitive_column(c) and not is_sensitive_for_values(c):
                         display_cols.append(c)
-                    if len(display_cols) >= 4:
+                    if len(display_cols) >= 5:
                         break
 
                 disp_cols_sql = ", ".join(f'"{c}"' for c in display_cols)
@@ -366,6 +374,19 @@ class LiveEntityResolver:
                     WHERE LOWER("{col}"::text) = $1
                     LIMIT 10;
                 """
+
+                def _build_display_label(row_dict: Dict[str, Any], fallback_pk: Any) -> str:
+                    fn = row_dict.get("firstname") or row_dict.get("first_name")
+                    ln = row_dict.get("lastname") or row_dict.get("last_name")
+                    login = row_dict.get("login")
+                    if fn and ln:
+                        return f"{fn} {ln} ({login})" if login else f"{fn} {ln}"
+                    if fn:
+                        return f"{fn} ({login})" if login else str(fn)
+                    for k in ("name", "full_name", "title", "subject", "login", "city"):
+                        if row_dict.get(k):
+                            return str(row_dict[k])
+                    return str(fallback_pk)
 
                 try:
                     async with adapter.open_readonly_connection(self.tenant_id, db_knowledgebase_id) as conn:
@@ -384,7 +405,7 @@ class LiveEntityResolver:
                                     choices=[
                                         DisambiguationChoice(
                                             pk_value=pk_v,
-                                            display_label=str(rows[0].get("first_name") or rows[0].get("city") or pk_v),
+                                            display_label=_build_display_label(dict(rows[0]), pk_v),
                                             row_data=dict(rows[0]),
                                         )
                                     ],
@@ -397,7 +418,7 @@ class LiveEntityResolver:
                             choices = [
                                 DisambiguationChoice(
                                     pk_value=r[pk_col],
-                                    display_label=str(r.get("last_name") or r.get("city") or r[pk_col]),
+                                    display_label=_build_display_label(dict(r), r[pk_col]),
                                     row_data=dict(r),
                                 )
                                 for r in rows

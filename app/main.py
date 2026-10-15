@@ -253,49 +253,53 @@ async def lifespan(app: FastAPI):
         # Fire and forget warmup
         asyncio.create_task(warmup_ds_libs())
 
-        # Safe Background Embedding Model Keep-Warm (Task 7)
-        async def keep_warm_embedding_model():
-            if not getattr(settings, "embedding_warmup_enabled", True) or not getattr(settings, "use_real_embeddings", True):
-                return
-            delay = getattr(settings, "embedding_warmup_delay_seconds", 1.0)
-            if delay > 0:
-                await asyncio.sleep(delay)
-            
-            model_name = getattr(settings, "model_embedding", "BAAI/bge-large-en-v1.5")
-            api_url = getattr(settings, "deepinfra_api_url", "https://api.deepinfra.com/v1/openai")
-            if not api_url.endswith("/embeddings"):
-                api_url = f"{api_url.rstrip('/')}/embeddings"
-            
-            # Dedicated client — NOT shared with real request pool
-            warmup_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0),
-                limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
-            )
-            headers = {
-                "Authorization": f"Bearer {settings.deepinfra_api_key}",
-                "Content-Type": "application/json",
-            }
-            
-            logger.info(f"[EMBEDDING_WARMUP] Background keep-warm started (isolated client, interval=45s)")
-            
-            import time as time_lib
-            
-            while True:
-                try:
-                    t0 = time_lib.perf_counter()
-                    payload = {"model": model_name, "input": f"keep-warm ping {time_lib.time()}"}
-                    resp = await warmup_client.post(api_url, headers=headers, json=payload)
-                    resp.raise_for_status()
-                    dur_ms = (time_lib.perf_counter() - t0) * 1000
-                    warm_state = "warm" if dur_ms < 2000 else "cold"
-                    logger.info(f"[EMBEDDING_WARMUP] ping OK {dur_ms:.0f}ms warm_state={warm_state}")
-                except Exception as w_err:
-                    logger.warning(f"[EMBEDDING_WARMUP] Keep-warm ping failed: {w_err}")
-                
-                # Sleep for 45 seconds before next ping
-                await asyncio.sleep(45.0)
+        # Embedding Model Startup Warmup & Keep-Warm (Task 4)
+        warmup_interval = getattr(settings, "embedding_warmup_interval_seconds", 45.0)
+        if getattr(settings, "embedding_warmup_enabled", True) and getattr(settings, "use_real_embeddings", True):
+            logger.info(f"[EMBEDDING_WARMUP] Running embedding warmup at startup (interval={warmup_interval}s)...")
+            try:
+                from app.core.embeddings import EmbeddingGenerator
+                t_warm_start = time.perf_counter()
+                await EmbeddingGenerator.generate_embedding("embedding warmup probe at startup", is_query=True)
+                dur_ms = (time.perf_counter() - t_warm_start) * 1000.0
+                logger.info(f"[EMBEDDING_WARMUP] Startup probe completed in {dur_ms:.1f}ms. Model is warm.")
+            except Exception as e:
+                logger.warning(f"[EMBEDDING_WARMUP] Startup embedding warmup probe failed: {e}")
 
-        asyncio.create_task(keep_warm_embedding_model())
+            async def keep_warm_embedding_model():
+                model_name = getattr(settings, "model_embedding", "BAAI/bge-large-en-v1.5")
+                api_url = getattr(settings, "deepinfra_api_url", "https://api.deepinfra.com/v1/openai")
+                if not api_url.endswith("/embeddings"):
+                    api_url = f"{api_url.rstrip('/')}/embeddings"
+                
+                # Dedicated client — NOT shared with real request pool
+                warmup_client = httpx.AsyncClient(
+                    timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0),
+                    limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
+                )
+                headers = {
+                    "Authorization": f"Bearer {settings.deepinfra_api_key}",
+                    "Content-Type": "application/json",
+                }
+                
+                logger.info(f"[EMBEDDING_WARMUP] Background keep-warm loop active (interval={warmup_interval}s)")
+                
+                import time as time_lib
+                
+                while True:
+                    await asyncio.sleep(warmup_interval)
+                    try:
+                        t0 = time_lib.perf_counter()
+                        payload = {"model": model_name, "input": f"keep-warm ping {time_lib.time()}"}
+                        resp = await warmup_client.post(api_url, headers=headers, json=payload)
+                        resp.raise_for_status()
+                        dur_ms = (time_lib.perf_counter() - t0) * 1000
+                        warm_state = "warm" if dur_ms < 2000 else "cold"
+                        logger.info(f"[EMBEDDING_WARMUP] ping OK {dur_ms:.0f}ms warm_state={warm_state} (interval={warmup_interval}s)")
+                    except Exception as w_err:
+                        logger.warning(f"[EMBEDDING_WARMUP] Keep-warm ping failed: {w_err}")
+
+            asyncio.create_task(keep_warm_embedding_model())
 
 
 

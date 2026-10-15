@@ -24,7 +24,7 @@ STRICT CONSTRAINTS:
 3. Every table join MUST use explicit INNER JOIN or LEFT JOIN with exact foreign key or matching key ON conditions. Never create Cartesian (CROSS) joins.
 4. PLANNER HINT ADVISORY: The Query Plan is an advisory hint and may be incomplete or incorrect. You are NOT required to strictly follow its table choices, projections, or joins. Choose the primary table and joins from the full pruned <untrusted_database_schema> that accurately satisfy the user query.
 5. All queries must include a LIMIT clause (maximum 1000).
-6. Select descriptive and requested columns (e.g. names, identifiers, titles, metrics, dates) needed to directly and informatively answer the user query.
+6. Select descriptive and requested columns (e.g. names, identifiers, titles, metrics, dates) needed to directly and informatively answer the user query. NEVER use `SELECT *` or `table.*`. Always explicitly project specific column names. Using `SELECT *` is strictly forbidden and rejected by security policy.
 7. RELEVANT JOINS: Choose and join tables from <untrusted_database_schema> that are strictly necessary to satisfy the user query. Do NOT join unrelated child tables.
 8. PREVENT DUPLICATE ROWS: When querying primary entities joined to 1-to-many child tables, use `SELECT DISTINCT` or proper grouping to prevent duplicate rows.
 9. GROUP BY CONSISTENCY: Whenever any aggregation function (SUM, AVG, MIN, MAX, COUNT) is present alongside non-aggregated columns in SELECT, EVERY single non-aggregated column in the SELECT clause MUST be explicitly included in the GROUP BY clause.
@@ -66,7 +66,7 @@ STRICT CONSTRAINTS:
 3. Every table join MUST use explicit INNER JOIN or LEFT JOIN with exact foreign key or matching key ON conditions. Never create Cartesian (CROSS) joins.
 4. PLANNER HINT ADVISORY: The Query Plan is an advisory hint (which may be wrong or incomplete). You are NOT required to strictly follow its table choices, projections, or joins. Choose the primary table and joins from the full pruned <untrusted_database_schema> that accurately satisfy the user query.
 5. All queries must include a LIMIT clause (maximum 1000).
-6. Select descriptive and requested columns needed to directly answer the user query.
+6. Select descriptive and requested columns needed to directly answer the user query. NEVER use `SELECT *` or `table.*`. Always explicitly project specific column names. Using `SELECT *` is strictly forbidden and rejected by security policy.
 7. RELEVANT JOINS: Choose and join tables from <untrusted_database_schema> strictly necessary to satisfy the user query. Do NOT join unrelated child tables.
 8. ABSENCE & NEGATION PATTERNS:
    - If the user query asks about absence, missing items, unperformed actions, or records not done, consider using `LEFT JOIN <related_table> ... WHERE <related_table>.<key> IS NULL` or `NOT EXISTS (SELECT 1 FROM ...)`. You may include a short SQL comment indicating which columns/tables you based the choice on.
@@ -93,22 +93,47 @@ STRICT CONSTRAINTS:
         schema_xml = retrieval_result.untrusted_boundary_text
         db_type = getattr(retrieval_result, "database_type", "postgresql") or "postgresql"
 
-        # Ensure grounded context time range is present if available on context pack
+        # Ensure grounded context is present if available on context pack
         pack = getattr(retrieval_result, "context_pack", None)
-        if pack and getattr(pack, "time_range", None) and "<grounded_context>" not in schema_xml:
-            tr = pack.time_range
-            gc_xml = (
-                f"<!-- PHASE 3 GROUNDED CONTEXT PACK -->\n"
-                f"<grounded_context>\n"
-                f'  <time_range start="{tr.get("start_date")}" end="{tr.get("end_date")}" expression="{tr.get("expression")}"/>\n'
-                f"</grounded_context>"
-            )
-            if "</database>" in schema_xml:
-                schema_xml = schema_xml.replace("</database>", f"{gc_xml}\n</database>")
-            elif "</untrusted_database_schema>" in schema_xml:
-                schema_xml = schema_xml.replace("</untrusted_database_schema>", f"{gc_xml}\n</untrusted_database_schema>")
-            else:
-                schema_xml = f"{schema_xml}\n{gc_xml}"
+        if pack and "<grounded_context>" not in schema_xml:
+            gc_elements = []
+            if getattr(pack, "entities", None):
+                gc_elements.append("  <entities>")
+                for e in pack.entities:
+                    span = e.get("span", "")
+                    tbl = e.get("table", "")
+                    col = e.get("column", "")
+                    val = e.get("matched_value") or e.get("value", "")
+                    pk = e.get("pk")
+                    gc_elements.append(
+                        f'    <entity span="{span}" table="{tbl}" column="{col}" matched_value="{val}" resolved_pk="{pk}"/>'
+                    )
+                gc_elements.append("  </entities>")
+            if getattr(pack, "time_range", None):
+                tr = pack.time_range
+                gc_elements.append(
+                    f'  <time_range start="{tr.get("start_date")}" end="{tr.get("end_date")}" expression="{tr.get("expression")}"/>'
+                )
+            if gc_elements:
+                gc_xml = "<!-- PHASE 3 GROUNDED CONTEXT PACK -->\n<grounded_context>\n" + "\n".join(gc_elements) + "\n</grounded_context>"
+                if "</database>" in schema_xml:
+                    schema_xml = schema_xml.replace("</database>", f"{gc_xml}\n</database>")
+                elif "</untrusted_database_schema>" in schema_xml:
+                    schema_xml = schema_xml.replace("</untrusted_database_schema>", f"{gc_xml}\n</untrusted_database_schema>")
+                else:
+                    schema_xml = f"{schema_xml}\n{gc_xml}"
+
+        plan_note = "planner hint (may be wrong)"
+        plan_conf = getattr(plan, "confidence", 1.0)
+        plan_reason = getattr(plan, "reasoning", "").lower()
+        if (
+            plan_conf == 0.0
+            or "planner failed" in plan_reason
+            or "cartesian" in plan_reason
+            or "failed" in plan_reason
+            or not getattr(plan, "projections", [])
+        ):
+            plan_note = "planner failed, hint unreliable"
 
         prompt = f"""Generate a {db_type.upper()} SELECT query to answer the user query based on the database schema below.
 The query plan is provided only as an advisory planner hint (which may be incomplete or wrong). Choose tables, joins, and filters from the full pruned schema in <untrusted_database_schema>.
@@ -117,7 +142,7 @@ The query plan is provided only as an advisory planner hint (which may be incomp
 {user_query}
 </user_query>
 
-<query_plan note="planner hint (may be wrong)">
+<query_plan note="{plan_note}">
 {plan_json}
 </query_plan>
 

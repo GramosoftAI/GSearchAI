@@ -126,11 +126,14 @@ class SQLRepairEngine:
             if any(k in words for k in ("pending", "shortage", "deficit", "remaining")) and any(k in words for k in ("hour", "hours", "work", "time", "attendance")):
                 return False
 
-            # Multi-table list/who/name queries involving joins need LLM reasoning
-            if len(plan.tables) > 1 and any(w in words for w in ("who", "list", "name", "names", "which")):
+            # List/who/which queries or multi-table name queries need LLM reasoning
+            if any(w in words for w in ("who", "list", "which")) or (len(plan.tables) > 1 and any(w in words for w in ("name", "names"))):
                 return False
 
-        # Projections check: every projection must have supported aggregation
+        # Projections check: must have projections and every projection must have supported aggregation
+        if not plan.projections:
+            return False
+
         for proj in plan.projections:
             agg_val = proj.aggregation.value if hasattr(proj.aggregation, "value") else str(proj.aggregation)
             if agg_val not in {"NONE", "COUNT", "COUNT_DISTINCT", "SUM", "AVG", "MIN", "MAX"}:

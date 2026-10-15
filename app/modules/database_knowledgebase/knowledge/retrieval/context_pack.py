@@ -79,6 +79,9 @@ class ContextPack(BaseModel):
     trimmed_items: List[str] = Field(default_factory=list)
     tokens_used: int = 0
     timings_ms: Dict[str, float] = Field(default_factory=dict)
+    top1_score: float = 0.0
+    margin: float = 0.0
+    top3_signals: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class ContextPackBuilder:
@@ -103,6 +106,95 @@ class ContextPackBuilder:
         self.column_retriever = ColumnRetriever(db=db, tenant_id=self.tenant_id)
         self.entity_resolver = LiveEntityResolver(db=db, tenant_id=self.tenant_id, adapter=self.adapter)
         self.join_finder = JoinPathFinder(db=db, tenant_id=self.tenant_id)
+
+    def _inject_and_prune_candidates(
+        self,
+        candidate_tables: List[TableCandidate],
+        entity_res: EntityResolutionResult,
+    ) -> List[TableCandidate]:
+        """Inject entity-matched tables and prune unconnected candidate noise."""
+        from app.core.config import settings
+
+        existing_names = {c.table_name.lower() for c in candidate_tables}
+        top_score = candidate_tables[0].score if candidate_tables else 0.065
+
+        # 1. Person/Value Resolution injection (Requirement 3)
+        for re_ent in entity_res.resolved_entities:
+            tbl = re_ent.table_name.lower().split(".")[-1]
+            if tbl and tbl not in existing_names:
+                injected_score = round(max(0.060, top_score * 0.95), 4)
+                candidate_tables.append(
+                    TableCandidate(
+                        table_name=tbl,
+                        score=injected_score,
+                        reasons=[f"Entity value match '{re_ent.matched_value}' in {re_ent.table_name}.{re_ent.column_name}"],
+                        signals={"value_index": 1.3},
+                    )
+                )
+                existing_names.add(tbl)
+            elif tbl in existing_names:
+                for c in candidate_tables:
+                    if c.table_name.lower() == tbl:
+                        c.signals["value_index"] = 1.3
+                        if not any(f"'{re_ent.matched_value}'" in r for r in c.reasons):
+                            c.reasons.append(f"Entity match '{re_ent.matched_value}' in {re_ent.table_name}.{re_ent.column_name}")
+
+        candidate_tables.sort(key=lambda x: x.score, reverse=True)
+        before_list = [c.table_name for c in candidate_tables]
+
+        if not candidate_tables:
+            return []
+
+        # 2. Candidate Pruning (Requirement 2)
+        ratio = getattr(settings, "candidate_pruning_score_ratio", 0.5)
+        max_hops = getattr(settings, "candidate_pruning_max_hops", 2)
+
+        top1_score = candidate_tables[0].score
+        min_score = ratio * top1_score
+
+        ratio_kept = [c for c in candidate_tables if c.score >= min_score]
+        if not ratio_kept:
+            ratio_kept = [candidate_tables[0]]
+
+        top_table = ratio_kept[0].table_name.lower()
+        kept_tables_set = {top_table}
+        bridge_tables_to_add: Set[str] = set()
+
+        for cand in ratio_kept[1:]:
+            t = cand.table_name.lower()
+            shortest = self.join_finder._dijkstra_shortest_path(top_table, t)
+            if shortest is not None:
+                cost, edges = shortest
+                hops = len(edges)
+                if hops <= max_hops:
+                    kept_tables_set.add(t)
+                    for curr, edge in edges:
+                        if curr != top_table and curr != t:
+                            bridge_tables_to_add.add(curr)
+                        if edge.target_table != top_table and edge.target_table != t:
+                            bridge_tables_to_add.add(edge.target_table)
+
+        pruned_candidates = [c for c in candidate_tables if c.table_name.lower() in kept_tables_set]
+
+        for bt in bridge_tables_to_add:
+            if bt not in {c.table_name.lower() for c in pruned_candidates}:
+                pruned_candidates.append(
+                    TableCandidate(
+                        table_name=bt,
+                        score=round(min_score, 4),
+                        reasons=[f"Bridge table connecting kept tables to {top_table}"],
+                        signals={"bridge": 1.0},
+                    )
+                )
+
+        pruned_candidates.sort(key=lambda x: x.score, reverse=True)
+        after_list = [c.table_name for c in pruned_candidates]
+
+        logger.info(
+            f"[CandidatePruning] Before pruning ({len(before_list)}): {before_list} -> "
+            f"After pruning ({len(after_list)}): {after_list}"
+        )
+        return pruned_candidates
 
     @asynccontextmanager
     async def _get_branch_session(self):
@@ -145,6 +237,7 @@ class ContextPackBuilder:
                     timings_ms=timings,
                 )
 
+            t_emb_start = time.perf_counter()
             query_embedding: Optional[List[float]] = None
             try:
                 query_embedding = await EmbeddingGenerator.generate_embedding(
@@ -153,15 +246,30 @@ class ContextPackBuilder:
                 )
             except Exception as e:
                 logger.warning(f"[ContextPackBuilder] Failed to generate query embedding: {e}")
+            timings["embedding_ms"] = round((time.perf_counter() - t_emb_start) * 1000, 2)
 
             t2 = time.perf_counter()
-            candidate_tables: List[TableCandidate] = await self.table_retriever.retrieve_tables(
+            raw_c_tables: List[TableCandidate] = await self.table_retriever.retrieve_tables(
                 db_knowledgebase_id=db_knowledgebase_id,
                 frame=frame,
                 top_k=8,
                 query_embedding=query_embedding,
             )
             timings["table_retrieval_ms"] = round((time.perf_counter() - t2) * 1000, 2)
+            if hasattr(raw_c_tables, "stage_timings"):
+                timings["table_fts_ms"] = raw_c_tables.stage_timings.get("table_fts_ms", 0.0)
+                timings["table_vector_ms"] = raw_c_tables.stage_timings.get("table_vector_ms", 0.0)
+
+            orig_top1_score = raw_c_tables.top1_score if hasattr(raw_c_tables, "top1_score") else (raw_c_tables[0].score if raw_c_tables else 0.0)
+            orig_margin = raw_c_tables.margin if hasattr(raw_c_tables, "margin") else 0.0
+            orig_top3_signals = raw_c_tables.top3_signals if hasattr(raw_c_tables, "top3_signals") else []
+
+            await self.join_finder.build_graph(db_knowledgebase_id=db_knowledgebase_id)
+
+            candidate_tables = self._inject_and_prune_candidates(
+                candidate_tables=list(raw_c_tables),
+                entity_res=entity_res,
+            )
 
             t3 = time.perf_counter()
             column_bundles: List[TableColumnBundle] = await self.column_retriever.retrieve_for_tables(
@@ -174,8 +282,7 @@ class ContextPackBuilder:
             timings["column_retrieval_ms"] = round((time.perf_counter() - t3) * 1000, 2)
 
             t4 = time.perf_counter()
-            await self.join_finder.build_graph(db_knowledgebase_id=db_knowledgebase_id)
-            join_target_tables = [c.table_name for c in candidate_tables[:4]]
+            join_target_tables = [c.table_name for c in candidate_tables]
             join_res: JoinPathResult = self.join_finder.find_join_tree(
                 tables=join_target_tables,
                 frame=frame,
@@ -191,7 +298,9 @@ class ContextPackBuilder:
             )
             timings["query_memory_ms"] = round((time.perf_counter() - t5) * 1000, 2)
 
+            t_rules_start = time.perf_counter()
             rules = await self._fetch_rules(db_knowledgebase_id=db_knowledgebase_id)
+            timings["rules_ms"] = round((time.perf_counter() - t_rules_start) * 1000, 2)
             schema_view = None
             try:
                 schema_view = await self.adapter.get_current_schema(self.tenant_id, db_knowledgebase_id)
@@ -200,14 +309,8 @@ class ContextPackBuilder:
 
         else:
             # Concurrent execution:
-            # Independent stages run in parallel with dedicated sessions from pool:
-            # - _run_retrieval_and_similar: embedding -> (tables+columns on self.db || similar_queries on branch sess)
-            # - _run_entity_resolution: batch n-gram IN query on branch session
-            # - _run_join_graph: kb2_knowledge_items relationship graph on branch session
-            # - _run_rules: active rules on branch session
-            # - _run_schema: schema snapshot on branch session
-
-            async def _run_retrieval_and_similar():
+            async def _run_table_retrieval():
+                t_emb_start = time.perf_counter()
                 query_embedding: Optional[List[float]] = None
                 try:
                     query_embedding = await EmbeddingGenerator.generate_embedding(
@@ -216,50 +319,20 @@ class ContextPackBuilder:
                     )
                 except Exception as e:
                     logger.warning(f"[ContextPackBuilder] Failed to generate query embedding: {e}")
+                timings["embedding_ms"] = round((time.perf_counter() - t_emb_start) * 1000, 2)
 
-                async def _run_tables_and_columns():
-                    t2 = time.perf_counter()
-                    c_tables = await self.table_retriever.retrieve_tables(
-                        db_knowledgebase_id=db_knowledgebase_id,
-                        frame=frame,
-                        top_k=8,
-                        query_embedding=query_embedding,
-                    )
-                    timings["table_retrieval_ms"] = round((time.perf_counter() - t2) * 1000, 2)
-
-                    t3 = time.perf_counter()
-                    c_bundles = await self.column_retriever.retrieve_for_tables(
-                        db_knowledgebase_id=db_knowledgebase_id,
-                        frame=frame,
-                        candidate_tables=c_tables,
-                        top_k_columns_per_table=5,
-                        query_embedding=query_embedding,
-                    )
-                    timings["column_retrieval_ms"] = round((time.perf_counter() - t3) * 1000, 2)
-                    return c_tables, c_bundles
-
-                async def _run_similar():
-                    t5 = time.perf_counter()
-                    sim_res = []
-                    try:
-                        async with self._get_branch_session() as sess:
-                            sim_res = await self._fetch_similar_queries(
-                                db_knowledgebase_id=db_knowledgebase_id,
-                                question=question,
-                                target_tables=[],
-                                query_embedding=query_embedding,
-                                session=sess,
-                            )
-                    except Exception as e:
-                        logger.warning(f"[ContextPackBuilder] Similar queries fetch error: {e}")
-                    timings["query_memory_ms"] = round((time.perf_counter() - t5) * 1000, 2)
-                    return sim_res
-
-                (c_tables, c_bundles), sim_queries = await asyncio.gather(
-                    _run_tables_and_columns(),
-                    _run_similar(),
+                t2 = time.perf_counter()
+                c_tables = await self.table_retriever.retrieve_tables(
+                    db_knowledgebase_id=db_knowledgebase_id,
+                    frame=frame,
+                    top_k=8,
+                    query_embedding=query_embedding,
                 )
-                return c_tables, c_bundles, sim_queries
+                timings["table_retrieval_ms"] = round((time.perf_counter() - t2) * 1000, 2)
+                if hasattr(c_tables, "stage_timings"):
+                    timings["table_fts_ms"] = c_tables.stage_timings.get("table_fts_ms", 0.0)
+                    timings["table_vector_ms"] = c_tables.stage_timings.get("table_vector_ms", 0.0)
+                return c_tables, query_embedding
 
             async def _run_entity_resolution():
                 t1 = time.perf_counter()
@@ -288,14 +361,18 @@ class ContextPackBuilder:
                     logger.warning(f"[ContextPackBuilder] Join graph build error: {e}")
 
             async def _run_rules():
+                t_r = time.perf_counter()
                 try:
                     async with self._get_branch_session() as sess:
-                        return await self._fetch_rules(
+                        r = await self._fetch_rules(
                             db_knowledgebase_id=db_knowledgebase_id,
                             session=sess,
                         )
+                        timings["rules_ms"] = round((time.perf_counter() - t_r) * 1000, 2)
+                        return r
                 except Exception as e:
                     logger.warning(f"[ContextPackBuilder] Rules fetch error: {e}")
+                    timings["rules_ms"] = round((time.perf_counter() - t_r) * 1000, 2)
                     return []
 
             async def _run_schema():
@@ -307,13 +384,13 @@ class ContextPackBuilder:
                     return None
 
             (
-                (candidate_tables, column_bundles, similar_queries),
+                (raw_candidate_tables, query_embedding),
                 entity_res,
                 _,
                 rules,
                 schema_view,
             ) = await asyncio.gather(
-                _run_retrieval_and_similar(),
+                _run_table_retrieval(),
                 _run_entity_resolution(),
                 _run_join_graph(),
                 _run_rules(),
@@ -328,9 +405,54 @@ class ContextPackBuilder:
                     timings_ms=timings,
                 )
 
-            # In-memory join tree computation (candidate tables and graph ready)
+            orig_top1_score = raw_candidate_tables.top1_score if hasattr(raw_candidate_tables, "top1_score") else (raw_candidate_tables[0].score if raw_candidate_tables else 0.0)
+            orig_margin = raw_candidate_tables.margin if hasattr(raw_candidate_tables, "margin") else 0.0
+            orig_top3_signals = raw_candidate_tables.top3_signals if hasattr(raw_candidate_tables, "top3_signals") else []
+
+            # 2. Inject entity-matched tables + Candidate Pruning
+            candidate_tables = self._inject_and_prune_candidates(
+                candidate_tables=list(raw_candidate_tables),
+                entity_res=entity_res,
+            )
+
+            # 3. Retrieve columns for pruned candidates & Similar queries
+            async def _run_columns():
+                t3 = time.perf_counter()
+                c_bundles = await self.column_retriever.retrieve_for_tables(
+                    db_knowledgebase_id=db_knowledgebase_id,
+                    frame=frame,
+                    candidate_tables=candidate_tables,
+                    top_k_columns_per_table=5,
+                    query_embedding=query_embedding,
+                )
+                timings["column_retrieval_ms"] = round((time.perf_counter() - t3) * 1000, 2)
+                return c_bundles
+
+            async def _run_similar():
+                t5 = time.perf_counter()
+                sim_res = []
+                try:
+                    async with self._get_branch_session() as sess:
+                        sim_res = await self._fetch_similar_queries(
+                            db_knowledgebase_id=db_knowledgebase_id,
+                            question=question,
+                            target_tables=[c.table_name for c in candidate_tables],
+                            query_embedding=query_embedding,
+                            session=sess,
+                        )
+                except Exception as e:
+                    logger.warning(f"[ContextPackBuilder] Similar queries fetch error: {e}")
+                timings["query_memory_ms"] = round((time.perf_counter() - t5) * 1000, 2)
+                return sim_res
+
+            column_bundles, similar_queries = await asyncio.gather(
+                _run_columns(),
+                _run_similar(),
+            )
+
+            # 4. In-memory join tree computation for pruned tables
             t4 = time.perf_counter()
-            join_target_tables = [c.table_name for c in candidate_tables[:4]]
+            join_target_tables = [c.table_name for c in candidate_tables]
             join_res = self.join_finder.find_join_tree(
                 tables=join_target_tables,
                 frame=frame,
@@ -416,6 +538,7 @@ class ContextPackBuilder:
                 "table": re_ent.table_name,
                 "column": re_ent.column_name,
                 "value": re_ent.matched_value,
+                "matched_value": re_ent.matched_value,
                 "pk": pk_val,
                 "choices": choices_data,
             })
@@ -522,6 +645,9 @@ class ContextPackBuilder:
             trimmed_items=trimmed_items,
             tokens_used=current_tokens,
             timings_ms=timings,
+            top1_score=orig_top1_score,
+            margin=orig_margin,
+            top3_signals=orig_top3_signals,
         )
 
     async def _fetch_similar_queries(

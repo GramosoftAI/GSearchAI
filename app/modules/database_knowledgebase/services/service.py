@@ -768,9 +768,10 @@ class DatabaseKnowledgebaseService:
         if pack.entities:
             grounded_lines.append("  <resolved_entities>")
             for ent in pack.entities:
+                m_val = ent.get("matched_value") or ent.get("value") or ""
                 grounded_lines.append(
                     f'    <entity span="{ent.get("span")}" table="{ent.get("table")}" '
-                    f'column="{ent.get("column")}" resolved_pk="{ent.get("pk")}" '
+                    f'column="{ent.get("column")}" matched_value="{m_val}" resolved_pk="{ent.get("pk")}" '
                     f'status="{ent.get("status")}"/>'
                 )
             grounded_lines.append("  </resolved_entities>")
@@ -1145,11 +1146,27 @@ class DatabaseKnowledgebaseService:
             except Exception:
                 pass  # Natural language query, proceed to retrieval & planning
 
+            # Stage timings initialization
+            t_disambig_ms = 0.0
+            t_emb_ms = 0.0
+            t_table_fts_ms = 0.0
+            t_table_vec_ms = 0.0
+            t_entity_res_ms = 0.0
+            t_col_ret_ms = 0.0
+            t_join_ms = 0.0
+            t_qm_ms = 0.0
+            t_rules_ms = 0.0
+            t_plan_ms = 0.0
+            t_sql_ms = 0.0
+            t_exec_ms = 0.0
+            t_syn_ms = 0.0
+
             # 0.5 Pre-Retrieval Ambiguity Resolution (Entity Extraction)
             from ..disambiguation.extractor import EntityExtractor
             from ..disambiguation.collision_detector import CollisionDetector
             from ..disambiguation.rules_engine import RulesEngine
             
+            t_disambig_start = time.perf_counter()
             disambiguation_notices: List[str] = []
             resolved_entities_list = resolved_entities or []
             if not resolved_entities_list:
@@ -1206,6 +1223,7 @@ class DatabaseKnowledgebaseService:
                     logger.warning(f"[DISAMBIGUATION] Entity resolution failed, proceeding without: {e}")
                         
             strict_rules = RulesEngine.apply_glossary_rules(resolved_entities_list, user_query)
+            t_disambig_ms = (time.perf_counter() - t_disambig_start) * 1000.0
             
             # Incorporate strict_rules into user_query so retrieval & LLM enforce them
             query_with_rules = user_query
@@ -1240,9 +1258,19 @@ class DatabaseKnowledgebaseService:
             )
             t_ret_ms = (time.perf_counter() - t_ret_start) * 1000.0
 
-            if hasattr(retrieval_res, "context_pack") and retrieval_res.context_pack:
-                if getattr(retrieval_res.context_pack, "clarifications", None):
-                    disambiguation_notices.extend(retrieval_res.context_pack.clarifications)
+            pack = getattr(retrieval_res, "context_pack", None)
+            pack_timings = getattr(pack, "timings_ms", {}) if pack else {}
+            t_emb_ms = pack_timings.get("embedding_ms", 0.0)
+            t_table_fts_ms = pack_timings.get("table_fts_ms", 0.0)
+            t_table_vec_ms = pack_timings.get("table_vector_ms", 0.0)
+            t_entity_res_ms = pack_timings.get("entity_resolution_ms", 0.0)
+            t_col_ret_ms = pack_timings.get("column_retrieval_ms", 0.0)
+            t_join_ms = pack_timings.get("join_path_ms", 0.0)
+            t_qm_ms = pack_timings.get("query_memory_ms", 0.0)
+            t_rules_ms = pack_timings.get("rules_ms", 0.0)
+
+            if pack and getattr(pack, "clarifications", None):
+                disambiguation_notices.extend(pack.clarifications)
 
             tracer.schema_version = retrieval_res.schema_version
             table_scores = {}
@@ -1375,96 +1403,93 @@ class DatabaseKnowledgebaseService:
                 )
 
             # Phase 2.5: Insufficient Schema Guard
-            # Evaluates whether relevant schema/data was found to prevent hallucinations on unrelated schemas
+            # Evaluates retrieval evidence only (top1_score, margin, table-level signals).
+            # Planner confidence is NOT a trigger. Thresholds calibrated from retrieval eval C2.
             from app.core.config import settings
             guard_enabled = getattr(settings, "db_kb_insufficient_schema_guard_enabled", True)
-            min_plan_conf = getattr(settings, "db_kb_min_planner_confidence", 0.20)
-            min_table_score = getattr(settings, "db_kb_min_table_retrieval_score", 0.30)
+            min_top1_score = getattr(settings, "db_kb_guard_min_top1_score", 0.030)
+            min_margin = getattr(settings, "db_kb_guard_min_margin", 0.0010)
+            require_table_signal = getattr(settings, "db_kb_guard_require_table_signal", True)
 
             top_3_candidates = [t.table_name for t in retrieval_res.retrieved_tables[:3]]
             if not top_3_candidates and retrieval_res.retrieval_scores:
                 top_3_candidates = list(retrieval_res.retrieval_scores.keys())[:3]
 
-            scores_for_guard: Dict[str, Any] = {}
-            top_table_final_score = 0.0
-            top_table_vector_score = 0.0
-            top_table_keyword_score = 0.0
-            for t_name, s_obj in retrieval_res.retrieval_scores.items():
-                f_s = getattr(s_obj, "final_score", 0.0) if hasattr(s_obj, "final_score") else (float(s_obj) if isinstance(s_obj, (int, float)) else 0.0)
-                v_s = getattr(s_obj, "vector_score", 0.0) if hasattr(s_obj, "vector_score") else 0.0
-                k_s = getattr(s_obj, "keyword_score", 0.0) if hasattr(s_obj, "keyword_score") else 0.0
-                if f_s > top_table_final_score:
-                    top_table_final_score = f_s
-                    top_table_vector_score = v_s
-                    top_table_keyword_score = k_s
-                scores_for_guard[t_name] = {
-                    "final_score": round(f_s, 4),
-                    "vector_score": round(v_s, 4),
-                    "keyword_score": round(k_s, 4),
-                }
-
-            STOP_WORDS = {
-                "what", "is", "the", "are", "how", "many", "who", "which", "when", "where",
-                "show", "tell", "me", "list", "give", "a", "an", "for", "of", "in", "on",
-                "at", "to", "from", "by", "with", "about", "all", "any", "this", "that",
-                "these", "those", "does", "do", "did", "can", "could", "would", "should",
-                "and", "or", "not", "find", "get", "there", "were", "been"
-            }
-            query_raw_tokens = re.findall(r"[a-z0-9]+", user_query.lower())
-            query_tokens = [t for t in query_raw_tokens if len(t) >= 3 and t not in STOP_WORDS]
-
-            matched_schema_tokens = []
-            for t_schema in retrieval_res.retrieved_tables:
-                t_name_low = t_schema.table_name.lower()
-                t_parts = set(re.split(r"[_\s]+", t_name_low))
-                col_names_low = [c.lower() for c in t_schema.columns.keys()]
-                col_parts = set()
-                for c in col_names_low:
-                    col_parts.update(re.split(r"[_\s]+", c))
-
-                for tok in query_tokens:
-                    if tok in t_parts or tok == t_name_low or (len(tok) > 3 and tok in t_name_low):
-                        matched_schema_tokens.append(f"table:{t_schema.table_name}:{tok}")
-                    elif tok in col_parts or tok in col_names_low:
-                        matched_schema_tokens.append(f"col:{t_schema.table_name}:{tok}")
-                    elif tok.endswith("s") and tok[:-1] in t_parts:
-                        matched_schema_tokens.append(f"table_singular:{t_schema.table_name}:{tok[:-1]}")
-                    elif tok.endswith("es") and tok[:-2] in t_parts:
-                        matched_schema_tokens.append(f"table_singular:{t_schema.table_name}:{tok[:-2]}")
-
             pack = getattr(retrieval_res, "context_pack", None)
-            glossary_matches = len(getattr(pack, "glossary_matches", []) or [])
-            resolved_entity_count = len(resolved_entities_list)
+            top1_score = getattr(pack, "top1_score", 0.0) if pack else 0.0
+            margin = getattr(pack, "margin", 0.0) if pack else 0.0
+            top3_signals = getattr(pack, "top3_signals", []) if pack else []
 
-            has_token_match = len(matched_schema_tokens) > 0
-            has_glossary_or_entity = (glossary_matches > 0 or resolved_entity_count > 0)
-            has_high_semantic_score = (top_table_final_score >= min_table_score and top_table_vector_score >= 0.75)
+            # Fallback to retrieval_scores if pack did not set them
+            if top1_score == 0.0 and retrieval_res.retrieval_scores:
+                sorted_scores = sorted(
+                    [
+                        getattr(s_obj, "final_score", 0.0) if hasattr(s_obj, "final_score")
+                        else (float(s_obj) if isinstance(s_obj, (int, float)) else 0.0)
+                        for s_obj in retrieval_res.retrieval_scores.values()
+                    ],
+                    reverse=True,
+                )
+                top1_score = sorted_scores[0] if sorted_scores else 0.0
+                margin = (sorted_scores[0] - sorted_scores[1]) if len(sorted_scores) > 1 else top1_score
 
-            plan_conf = getattr(plan, "confidence", 1.0)
+            top1_signals = set(top3_signals[0].get("signals", [])) if top3_signals else set()
+            TABLE_LEVEL_SIGNALS = {
+                "fts", "vector", "token_exact", "token_synonym",
+                "glossary", "glossary_vector", "metric", "value_index",
+            }
+            has_table_level_signal = bool(top1_signals & TABLE_LEVEL_SIGNALS)
+            if not top1_signals:
+                has_table_level_signal = (top1_score >= min_top1_score)
+
             is_relevant = True
             decision_reason = "Sufficient schema relevance detected"
 
             if guard_enabled:
-                if plan_conf < min_plan_conf:
+                if top1_score < min_top1_score:
                     is_relevant = False
-                    decision_reason = f"Planner confidence {plan_conf:.2f} is below threshold {min_plan_conf:.2f} (unrelated or unjoinable schema)"
-                elif not (has_token_match or has_glossary_or_entity or has_high_semantic_score):
+                    decision_reason = f"Top-1 table score {top1_score:.4f} is below threshold {min_top1_score:.4f}"
+                elif margin < min_margin:
                     is_relevant = False
-                    decision_reason = f"No question tokens or glossary matched schema, and top table score {top_table_final_score:.2f} (vector {top_table_vector_score:.2f}) did not meet high semantic threshold {min_table_score:.2f}"
+                    decision_reason = f"Top-1 margin {margin:.4f} is below threshold {min_margin:.4f}"
+                elif require_table_signal and not has_table_level_signal:
+                    is_relevant = False
+                    decision_reason = f"Top-1 table has no table-level signal (signals: {list(top1_signals)})"
+
+            # Check planner failure: A planner failure (Cartesian, confidence 0) must NEVER block;
+            # pass the plan to the LLM flagged 'planner failed, hint unreliable'.
+            plan_conf = getattr(plan, "confidence", 1.0)
+            plan_reason = getattr(plan, "reasoning", "")
+            if (
+                plan_conf == 0.0
+                or "planner failed" in plan_reason.lower()
+                or "cartesian" in plan_reason.lower()
+                or "failed" in plan_reason.lower()
+                or not getattr(plan, "projections", [])
+            ):
+                plan.reasoning = "planner failed, hint unreliable"
+                logger.info(
+                    f"[PLANNER] Planner failure (confidence={plan_conf}, reasoning='{plan_reason}'). "
+                    f"Passing plan to LLM flagged 'planner failed, hint unreliable'."
+                )
+
+            logger.info(
+                f"[SCHEMA_GUARD] Decision: relevant={is_relevant}, reason='{decision_reason}', "
+                f"top1_score={top1_score:.4f} (min {min_top1_score:.4f}), "
+                f"margin={margin:.4f} (min {min_margin:.4f}), "
+                f"has_table_level_signal={has_table_level_signal} (signals: {list(top1_signals)})"
+            )
 
             relevance_telemetry = {
                 "guard_enabled": guard_enabled,
                 "relevant": is_relevant,
                 "decision_reason": decision_reason,
-                "planner_confidence": plan_conf,
-                "min_planner_confidence": min_plan_conf,
-                "top_table_final_score": round(top_table_final_score, 4),
-                "top_table_vector_score": round(top_table_vector_score, 4),
-                "top_table_keyword_score": round(top_table_keyword_score, 4),
-                "min_table_retrieval_score": min_table_score,
-                "matched_schema_tokens": matched_schema_tokens,
-                "glossary_matches_count": glossary_matches,
-                "resolved_entities_count": resolved_entity_count,
+                "top1_score": round(top1_score, 4),
+                "margin": round(margin, 4),
+                "min_top1_score": min_top1_score,
+                "min_margin": min_margin,
+                "has_table_level_signal": has_table_level_signal,
+                "top1_signals": list(top1_signals),
                 "candidate_tables": top_3_candidates,
             }
 
@@ -1501,6 +1526,7 @@ class DatabaseKnowledgebaseService:
                     "No relevant data or matching schema could be found in the connected database "
                     "to answer this question."
                 )
+                t_total_ms = (time.perf_counter() - tracer.start_time) * 1000.0
                 guard_answer = GroundedDatabaseAnswer(
                     status="no_relevant_data",
                     candidate_tables=top_3_candidates,
@@ -1519,9 +1545,34 @@ class DatabaseKnowledgebaseService:
                         "deterministic": True,
                         "bypassed_sql_generation": True,
                         "guard_decision": "no_relevant_data",
-                        "latency_ms": round((time.perf_counter() - tracer.start_time) * 1000.0, 2),
+                        "latency_ms": round(t_total_ms, 2),
+                        "stage_timings_ms": {
+                            "disambiguation": round(t_disambig_ms, 2),
+                            "embedding": round(t_emb_ms, 2),
+                            "table_fts": round(t_table_fts_ms, 2),
+                            "table_vector": round(t_table_vec_ms, 2),
+                            "entity_resolution": round(t_entity_res_ms, 2),
+                            "column_retrieval": round(t_col_ret_ms, 2),
+                            "join_path": round(t_join_ms, 2),
+                            "query_memory": round(t_qm_ms, 2),
+                            "rules": round(t_rules_ms, 2),
+                            "planner": round(t_plan_ms, 2),
+                            "sql_generation": 0.0,
+                            "execution": 0.0,
+                            "answer": 0.0,
+                            "total": round(t_total_ms, 2),
+                        },
                     },
                     pipeline_trace=tracer.finalize(),
+                )
+
+                logger.info(
+                    f"[STAGE_TIMINGS] disambiguation={t_disambig_ms:.1f}ms, embedding={t_emb_ms:.1f}ms, "
+                    f"table_fts={t_table_fts_ms:.1f}ms, table_vector={t_table_vec_ms:.1f}ms, "
+                    f"entity_resolution={t_entity_res_ms:.1f}ms, column_retrieval={t_col_ret_ms:.1f}ms, "
+                    f"join_path={t_join_ms:.1f}ms, query_memory={t_qm_ms:.1f}ms, rules={t_rules_ms:.1f}ms, "
+                    f"planner={t_plan_ms:.1f}ms, sql_generation=0.0ms, execution=0.0ms, "
+                    f"answer=0.0ms (total={t_total_ms:.1f}ms)"
                 )
 
                 if event_sink:
@@ -1653,7 +1704,8 @@ class DatabaseKnowledgebaseService:
                 candidate_sql=candidate_sql,
                 execution_config=execution_config,
             )
-            t_norm_ms = max(0.0, (time.perf_counter() - t_exec_start) * 1000.0 - canonical_result.execution_time_ms)
+            t_exec_ms = (time.perf_counter() - t_exec_start) * 1000.0
+            t_norm_ms = max(0.0, t_exec_ms - canonical_result.execution_time_ms)
             tracer.record_execution(
                 executed=True,
                 row_count=canonical_result.row_count,
@@ -1693,6 +1745,7 @@ class DatabaseKnowledgebaseService:
                         candidate_sql=retry_candidate,
                         execution_config=execution_config,
                     )
+                    t_exec_ms = (time.perf_counter() - t_exec_start) * 1000.0
                     if retry_result.row_count > 0:
                         logger.info(
                             f"[ZERO_ROW_RECOVERY] LLM retry succeeded with {retry_result.row_count} rows! "
@@ -1848,6 +1901,37 @@ class DatabaseKnowledgebaseService:
                         "events_emitted": event_sink._seq,
                     },
                 )
+
+            t_total_ms = (time.perf_counter() - tracer.start_time) * 1000.0
+            logger.info(
+                f"[STAGE_TIMINGS] disambiguation={t_disambig_ms:.1f}ms, embedding={t_emb_ms:.1f}ms, "
+                f"table_fts={t_table_fts_ms:.1f}ms, table_vector={t_table_vec_ms:.1f}ms, "
+                f"entity_resolution={t_entity_res_ms:.1f}ms, column_retrieval={t_col_ret_ms:.1f}ms, "
+                f"join_path={t_join_ms:.1f}ms, query_memory={t_qm_ms:.1f}ms, rules={t_rules_ms:.1f}ms, "
+                f"planner={t_plan_ms:.1f}ms, sql_generation={t_sql_ms:.1f}ms, execution={t_exec_ms:.1f}ms, "
+                f"answer={t_syn_ms:.1f}ms (total={t_total_ms:.1f}ms)"
+            )
+            answer.generation_metadata["stage_timings_ms"] = {
+                "disambiguation": round(t_disambig_ms, 2),
+                "embedding": round(t_emb_ms, 2),
+                "table_fts": round(t_table_fts_ms, 2),
+                "table_vector": round(t_table_vec_ms, 2),
+                "entity_resolution": round(t_entity_res_ms, 2),
+                "column_retrieval": round(t_col_ret_ms, 2),
+                "join_path": round(t_join_ms, 2),
+                "query_memory": round(t_qm_ms, 2),
+                "rules": round(t_rules_ms, 2),
+                "planner": round(t_plan_ms, 2),
+                "sql_generation": round(t_sql_ms, 2),
+                "execution": round(t_exec_ms, 2),
+                "answer": round(t_syn_ms, 2),
+                "total": round(t_total_ms, 2),
+            }
+            if candidate_sql:
+                if hasattr(candidate_sql, "parameterized") and hasattr(candidate_sql.parameterized, "parameterized_sql"):
+                    answer.generation_metadata["generated_sql"] = candidate_sql.parameterized.parameterized_sql
+                elif hasattr(candidate_sql, "sql"):
+                    answer.generation_metadata["generated_sql"] = candidate_sql.sql
 
             return answer
 

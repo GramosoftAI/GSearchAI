@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     db_kb_insufficient_schema_guard_enabled: bool = True
     db_kb_min_table_retrieval_score: float = 0.30
     db_kb_min_planner_confidence: float = 0.20
+    db_kb_guard_min_top1_score: float = 0.030  # Calibrated: positives min 0.0330, negatives absent 0.0284
+    db_kb_guard_min_margin: float = 0.0010     # Calibrated: positives min 0.0013
+    db_kb_guard_require_table_signal: bool = True
+    candidate_pruning_score_ratio: float = 0.5
+    candidate_pruning_max_hops: int = 2
+    value_index_distinct_cap: int = 20000
+    embedding_warmup_interval_seconds: float = 45.0
     # ============= SERVER SETTINGS =============
 
 
@@ -458,6 +465,16 @@ class Settings(BaseSettings):
     slack_signing_secret: Optional[str] = None
     slack_redirect_uri: Optional[str] = None
     slack_token_encryption_key: Optional[str] = None
+
+    # ============= DATABASE KNOWLEDGEBASE & RETRIEVAL GUARD =============
+    db_kb_insufficient_schema_guard_enabled: bool = True
+    db_kb_guard_min_top1_score: float = 0.030
+    db_kb_guard_min_margin: float = 0.0010
+    db_kb_guard_require_table_signal: bool = True
+    candidate_pruning_score_ratio: float = 0.5
+    candidate_pruning_max_hops: int = 2
+    value_index_distinct_cap: int = 20000
+    embedding_warmup_interval_seconds: float = 45.0
 
     # ============= CORS =============
 
