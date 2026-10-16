@@ -118,21 +118,28 @@ class ContextPackBuilder:
         existing_names = {c.table_name.lower() for c in candidate_tables}
         top_score = candidate_tables[0].score if candidate_tables else 0.065
 
-        # 1. Person/Value Resolution injection (Requirement 3)
+        # 1. Entity-Matched Tables handling (PART C.1)
+        # Remove the 0.95 x top score boost for entity-matched tables.
+        # Entity-matched tables are exempt from pruning but keep their natural score.
+        entity_matched_tables: Set[str] = set()
         for re_ent in entity_res.resolved_entities:
             tbl = re_ent.table_name.lower().split(".")[-1]
-            if tbl and tbl not in existing_names:
-                injected_score = round(max(0.060, top_score * 0.95), 4)
+            if not tbl:
+                continue
+            entity_matched_tables.add(tbl)
+            if tbl not in existing_names:
+                # Add with natural baseline score
+                natural_val_score = round(1.0 / (RRF_K + 10) * 1.3, 4)
                 candidate_tables.append(
                     TableCandidate(
                         table_name=tbl,
-                        score=injected_score,
+                        score=natural_val_score,
                         reasons=[f"Entity value match '{re_ent.matched_value}' in {re_ent.table_name}.{re_ent.column_name}"],
                         signals={"value_index": 1.3},
                     )
                 )
                 existing_names.add(tbl)
-            elif tbl in existing_names:
+            else:
                 for c in candidate_tables:
                     if c.table_name.lower() == tbl:
                         c.signals["value_index"] = 1.3
@@ -145,43 +152,62 @@ class ContextPackBuilder:
         if not candidate_tables:
             return []
 
-        # 2. Candidate Pruning (Requirement 2)
-        ratio = getattr(settings, "candidate_pruning_score_ratio", 0.5)
+        # 2. Candidate Pruning (PART C.2)
+        # Keep the top N tables by score (config, default 4), plus all entity-matched tables,
+        # plus bridge tables needed to connect them (max 2 hops via relationship graph).
+        # Never go below 3 tables when an entity table is present.
+        top_n = getattr(settings, "candidate_pruning_top_n", 4)
         max_hops = getattr(settings, "candidate_pruning_max_hops", 2)
 
-        top1_score = candidate_tables[0].score
-        min_score = ratio * top1_score
+        # Step 2a: Keep top N tables by score
+        kept_candidates = list(candidate_tables[:top_n])
+        kept_tables_set = {c.table_name.lower() for c in kept_candidates}
 
-        ratio_kept = [c for c in candidate_tables if c.score >= min_score]
-        if not ratio_kept:
-            ratio_kept = [candidate_tables[0]]
+        # Step 2b: Plus all entity-matched tables (exempt from pruning)
+        for c in candidate_tables:
+            if c.table_name.lower() in entity_matched_tables and c.table_name.lower() not in kept_tables_set:
+                kept_tables_set.add(c.table_name.lower())
+                kept_candidates.append(c)
 
-        top_table = ratio_kept[0].table_name.lower()
-        kept_tables_set = {top_table}
+        # Step 2c: Never go below 3 tables when an entity table is present
+        has_entity_table = bool(entity_matched_tables & kept_tables_set)
+        if has_entity_table and len(kept_tables_set) < 3:
+            for c in candidate_tables:
+                if c.table_name.lower() not in kept_tables_set:
+                    kept_tables_set.add(c.table_name.lower())
+                    kept_candidates.append(c)
+                    if len(kept_tables_set) >= 3:
+                        break
+
+        # Step 2d: Plus bridge tables needed to connect them (max 2 hops via relationship graph)
+        top_table = candidate_tables[0].table_name.lower()
         bridge_tables_to_add: Set[str] = set()
 
-        for cand in ratio_kept[1:]:
-            t = cand.table_name.lower()
-            shortest = self.join_finder._dijkstra_shortest_path(top_table, t)
-            if shortest is not None:
-                cost, edges = shortest
-                hops = len(edges)
-                if hops <= max_hops:
-                    kept_tables_set.add(t)
-                    for curr, edge in edges:
-                        if curr != top_table and curr != t:
-                            bridge_tables_to_add.add(curr)
-                        if edge.target_table != top_table and edge.target_table != t:
-                            bridge_tables_to_add.add(edge.target_table)
+        for t in list(kept_tables_set):
+            if t != top_table:
+                shortest = self.join_finder._dijkstra_shortest_path(top_table, t)
+                if shortest is not None:
+                    cost, edges = shortest
+                    hops = len(edges)
+                    if hops <= max_hops:
+                        for curr, edge in edges:
+                            if curr != top_table and curr != t:
+                                bridge_tables_to_add.add(curr)
+                            if edge.target_table != top_table and edge.target_table != t:
+                                bridge_tables_to_add.add(edge.target_table)
 
-        pruned_candidates = [c for c in candidate_tables if c.table_name.lower() in kept_tables_set]
+        all_kept_names = kept_tables_set | bridge_tables_to_add
+        pruned_candidates = [c for c in candidate_tables if c.table_name.lower() in all_kept_names]
 
+        # If any bridge table was not already in candidate_tables, instantiate it
+        existing_pruned_names = {c.table_name.lower() for c in pruned_candidates}
+        min_existing_score = min([c.score for c in pruned_candidates]) if pruned_candidates else 0.010
         for bt in bridge_tables_to_add:
-            if bt not in {c.table_name.lower() for c in pruned_candidates}:
+            if bt not in existing_pruned_names:
                 pruned_candidates.append(
                     TableCandidate(
                         table_name=bt,
-                        score=round(min_score, 4),
+                        score=round(min_existing_score * 0.9, 4),
                         reasons=[f"Bridge table connecting kept tables to {top_table}"],
                         signals={"bridge": 1.0},
                     )
@@ -515,8 +541,18 @@ class ContextPackBuilder:
         # Entities formatting
         entities_meta = []
         clarifications = []
+
+        # Deduplicate / group entity matches by (table, column, matched_value) and limit to 3 candidates
+        unique_entities = []
+        seen_entity_keys = set()
         for re_ent in entity_res.resolved_entities:
-            # Check if user provided clarification answer selecting one PK
+            clean_tbl = re_ent.table_name.split(".")[-1].lower()
+            k = (clean_tbl, re_ent.column_name.lower(), re_ent.matched_value.lower())
+            if k not in seen_entity_keys:
+                seen_entity_keys.add(k)
+                unique_entities.append(re_ent)
+
+        for re_ent in unique_entities[:3]:
             pk_val = re_ent.pk_value
             is_ambig = re_ent.ambiguous
             choices_data = [{"pk": c.pk_value, "label": c.display_label} for c in re_ent.choices]
@@ -535,7 +571,7 @@ class ContextPackBuilder:
             entities_meta.append({
                 "span": re_ent.matched_value,
                 "status": "ambiguous" if is_ambig else "resolved",
-                "table": re_ent.table_name,
+                "table": re_ent.table_name.split(".")[-1],
                 "column": re_ent.column_name,
                 "value": re_ent.matched_value,
                 "matched_value": re_ent.matched_value,

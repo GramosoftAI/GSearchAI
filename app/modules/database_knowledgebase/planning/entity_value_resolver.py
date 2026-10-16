@@ -154,59 +154,14 @@ class EntityValueResolver:
     @classmethod
     def extract_literal_candidates(cls, query: str, canonical_schema: Optional[Any] = None) -> List[str]:
         """
-        Extracts candidate entity values from the query.
-        Returns a deduplicated list of cleaned strings.
-        If canonical_schema is provided, drops candidates that are exact schema column or table names.
+        Extracts explicit quoted string literals from the query (e.g. "Arun" or 'active').
+        Unquoted words are NOT treated as literal candidates (they must come via resolve_entities).
         """
-        schema_col_names: Set[str] = set()
-        schema_tbl_names: Set[str] = set()
-        if canonical_schema:
-            try:
-                for s_info in getattr(canonical_schema, "schemas", {}).values():
-                    for tbl_name, t_obj in getattr(s_info, "tables", {}).items():
-                        tbl_low = tbl_name.lower()
-                        schema_tbl_names.add(tbl_low)
-                        if tbl_low.endswith("s"):
-                            schema_tbl_names.add(tbl_low[:-1])
-                        else:
-                            schema_tbl_names.add(tbl_low + "s")
-                        for part in tbl_low.split("_"):
-                            if len(part) > 2:
-                                schema_tbl_names.add(part)
-                                if part.endswith("s"):
-                                    schema_tbl_names.add(part[:-1])
-                                else:
-                                    schema_tbl_names.add(part + "s")
-                        for c_name in getattr(t_obj, "columns", {}).keys():
-                            c_low = c_name.lower()
-                            schema_col_names.add(c_low)
-                            if c_low.endswith("s"):
-                                schema_col_names.add(c_low[:-1])
-                            else:
-                                schema_col_names.add(c_low + "s")
-                            for part in c_low.split("_"):
-                                if len(part) > 2:
-                                    schema_col_names.add(part)
-            except Exception:
-                pass
-
         candidates: List[str] = []
-        q_clean = query.strip(" ?.,")
-        for pat in cls._EXTRACTION_PATTERNS:
-            for match in pat.finditer(q_clean):
-                val = match.group(1).strip(" ?.,'\"")
-                # Exclude dates (e.g. 2026-03-01, 03/10/2026) and pure numbers
-                if re.match(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}$", val) or re.match(r"^\d{1,2}[-/]\d{1,2}[-/]\d{4}$", val) or val.isdigit():
-                    continue
-                val_low = val.lower()
-                if (
-                    val_low not in cls._STOPWORDS
-                    and val_low not in schema_col_names
-                    and val_low not in schema_tbl_names
-                    and len(val) >= 2
-                ):
-                    candidates.append(val)
-
+        for m in re.finditer(r'["\']([^"\']{2,})["\']', query):
+            val = m.group(1).strip()
+            if val and len(val) >= 2:
+                candidates.append(val)
         return list(dict.fromkeys(candidates))
 
     @classmethod

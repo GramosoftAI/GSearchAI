@@ -160,9 +160,21 @@ class CandidateSQLGenerator:
                     expression=exp.Literal.number(p.value),
                 )
             elif op in {"=", "=="}:
-                cond = exp.EQ(this=col_expr, expression=_literal(p.value))
+                if isinstance(p.value, str):
+                    cond = exp.EQ(
+                        this=exp.Anonymous(this="LOWER", expressions=[col_expr]),
+                        expression=exp.Literal.string(p.value.lower()),
+                    )
+                else:
+                    cond = exp.EQ(this=col_expr, expression=_literal(p.value))
             elif op == "!=":
-                cond = exp.NEQ(this=col_expr, expression=_literal(p.value))
+                if isinstance(p.value, str):
+                    cond = exp.NEQ(
+                        this=exp.Anonymous(this="LOWER", expressions=[col_expr]),
+                        expression=exp.Literal.string(p.value.lower()),
+                    )
+                else:
+                    cond = exp.NEQ(this=col_expr, expression=_literal(p.value))
             elif op == ">":
                 cond = exp.GT(this=col_expr, expression=_literal(p.value))
             elif op == "<":
@@ -182,7 +194,13 @@ class CandidateSQLGenerator:
             elif op == "IS NOT NULL":
                 cond = exp.Not(this=exp.Is(this=col_expr, expression=exp.Null()))
             elif op == "IN":
-                if isinstance(p.value, (list, tuple, set)):
+                if isinstance(p.value, (list, tuple, set)) and any(isinstance(v, str) for v in p.value):
+                    expressions = [exp.Literal.string(str(v).lower()) for v in p.value]
+                    cond = exp.In(
+                        this=exp.Anonymous(this="LOWER", expressions=[col_expr]),
+                        expressions=expressions,
+                    )
+                elif isinstance(p.value, (list, tuple, set)):
                     expressions = [_literal(v) for v in p.value]
                     cond = exp.In(this=col_expr, expressions=expressions)
                 else:

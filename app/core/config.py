@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     phase2_enrich_max_retries: int = 2  # Max retries per table in enrich stage
     phase2_enrich_max_concurrency: int = 4  # Max concurrency for table enrichment
     phase2_manual_inline_fallback: bool = True  # If True and Redis unavailable, allow running inline/local
-    db_kb_insufficient_schema_guard_enabled: bool = True
+    db_kb_insufficient_schema_guard_enabled: bool = False
     db_kb_min_table_retrieval_score: float = 0.30
     db_kb_min_planner_confidence: float = 0.20
     db_kb_guard_min_top1_score: float = 0.030  # Calibrated: positives min 0.0330, negatives absent 0.0284
@@ -467,7 +467,7 @@ class Settings(BaseSettings):
     slack_token_encryption_key: Optional[str] = None
 
     # ============= DATABASE KNOWLEDGEBASE & RETRIEVAL GUARD =============
-    db_kb_insufficient_schema_guard_enabled: bool = True
+    db_kb_insufficient_schema_guard_enabled: bool = False
     db_kb_guard_min_top1_score: float = 0.030
     db_kb_guard_min_margin: float = 0.0010
     db_kb_guard_require_table_signal: bool = True

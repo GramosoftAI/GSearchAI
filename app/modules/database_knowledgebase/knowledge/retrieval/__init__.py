@@ -33,6 +33,9 @@ from .entity_resolver import (
     ResolvedEntity,
     LiteralFilter,
     DisambiguationChoice,
+    resolve_entities,
+    normalize_table_name,
+    get_table_name_variants,
 )
 from .join_path import (
     JoinPathFinder,
@@ -73,6 +76,9 @@ __all__ = [
     "ResolvedEntity",
     "LiteralFilter",
     "DisambiguationChoice",
+    "resolve_entities",
+    "normalize_table_name",
+    "get_table_name_variants",
     "JoinPathFinder",
     "JoinPathResult",
     "JoinHop",

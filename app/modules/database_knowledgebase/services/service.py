@@ -725,13 +725,29 @@ class DatabaseKnowledgebaseService:
 
         if include_relationships:
             retrieved_names = {t.table_name.lower() for t in retrieved_table_schemas}
-            for rel in getattr(canonical_schema, "relationships", []):
-                if (
-                    rel.source_table.lower() in retrieved_names
-                    and rel.target_table.lower() in retrieved_names
-                    and rel not in active_relationships
-                ):
-                    active_relationships.append(rel)
+            for s_info in canonical_schema.schemas.values():
+                for tbl in s_info.tables.values():
+                    if tbl.table_name.lower() in retrieved_names:
+                        for rel in getattr(tbl, "relationships", []):
+                            if (
+                                rel.source_table.lower() in retrieved_names
+                                and rel.target_table.lower() in retrieved_names
+                                and rel not in active_relationships
+                            ):
+                                active_relationships.append(rel)
+                        for fk in getattr(tbl, "foreign_keys", []):
+                            if fk.referred_table.lower() in retrieved_names:
+                                rel_obj = RelationshipSchema(
+                                    source_schema=tbl.schema_name,
+                                    source_table=tbl.table_name,
+                                    source_columns=fk.constrained_columns,
+                                    target_schema=fk.referred_schema,
+                                    target_table=fk.referred_table,
+                                    target_columns=fk.referred_columns,
+                                    relationship_type=RelationshipType.MANY_TO_ONE,
+                                )
+                                if rel_obj not in active_relationships:
+                                    active_relationships.append(rel_obj)
 
             # Ingest active user mappings dynamically into active relationships
             try:
@@ -1171,55 +1187,45 @@ class DatabaseKnowledgebaseService:
             resolved_entities_list = resolved_entities or []
             if not resolved_entities_list:
                 try:
-                    aliases_dict = None
-                    try:
-                        aliases_dict = await self.get_table_aliases(kb_id=entity.id)
-                    except Exception as alias_filter_err:
-                        logger.debug(f"Could not fetch aliases: {alias_filter_err}")
-
-                    names = await EntityExtractor.extract_person_names(
-                        query=user_query,
-                        canonical_schema=canonical_schema,
-                        aliases=aliases_dict,
-                        session=self.db,
-                        tenant_id=entity.tenant_id,
+                    from ..knowledge.retrieval.entity_resolver import resolve_entities
+                    ent_res = await resolve_entities(
+                        question=user_query,
                         kb_id=entity.id,
+                        session=self.db,
+                        canonical_schema=canonical_schema,
+                        tenant_id=entity.tenant_id,
                     )
+                    table_entities: Dict[str, List[Any]] = {}
+                    for re_ent in ent_res.resolved_entities:
+                        t_norm = re_ent.table_name.lower().split(".")[-1]
+                        table_entities.setdefault(t_norm, []).append(re_ent)
 
-                    logger.info(f"[DISAMBIGUATION] Extracted candidate names: {names}")
-                    # audit_ctx is defined above
-                    for name in names:
-                        collision_result = await CollisionDetector.check_for_user_collisions(
-                            extracted_name=name,
-                            kb_entity=entity,
-                            secret_manager=self.secrets,
-                            canonical_schema=canonical_schema,
-                            audit_context=audit_ctx,
-                            notices_out=disambiguation_notices,
-                            session=self.db,
-                        )
-                        if collision_result:
-                            if isinstance(collision_result, dict):
-                                extracted_user_id = collision_result.get("ids")
-                                ent_table = collision_result.get("table")
-                                ent_col = collision_result.get("pk_column")
-                            else:
-                                extracted_user_id = collision_result
-                                ent_table = None
-                                ent_col = None
-                            resolved_entities_list.append({
-                                "type": "user",
-                                "id": extracted_user_id,
-                                "name": name,
-                                "table": ent_table,
-                                "pk_column": ent_col,
-                            })
-                            logger.info(f"[DISAMBIGUATION] Resolved '{name}' -> user ID {extracted_user_id} in {ent_table}")
+                    for t_norm, ents in table_entities.items():
+                        distinct_vals = list(dict.fromkeys([e.matched_value for e in ents]))
+                        primary_col = ents[0].column_name
+                        pk_col = ents[0].pk_column
+
+                        if len(distinct_vals) > 1:
+                            span_cand = ent_res.spans_tried[0] if ent_res.spans_tried else distinct_vals[0]
+                            for sp in ent_res.spans_tried:
+                                if sp.lower() in distinct_vals[0].lower():
+                                    span_cand = sp
+                                    break
+                            ambig_notice = f"'{span_cand}' matched {len(distinct_vals)} {t_norm}: {', '.join(distinct_vals)}"
+                            disambiguation_notices.append(ambig_notice)
+                            logger.info(f"[DISAMBIGUATION] Ambiguity notice added: {ambig_notice}")
+
+                        resolved_entities_list.append({
+                            "type": "user",
+                            "id": None,
+                            "name": distinct_vals[0],
+                            "table": t_norm,
+                            "column": primary_col,
+                            "pk_column": pk_col,
+                            "values": distinct_vals,
+                        })
+                        logger.info(f"[DISAMBIGUATION] Resolved '{t_norm}' -> {distinct_vals} on {primary_col}")
                 except Exception as e:
-                    # DisambiguationRequiredError must propagate up
-                    from ..disambiguation.exceptions import DisambiguationRequiredError
-                    if isinstance(e, DisambiguationRequiredError):
-                        raise
                     logger.warning(f"[DISAMBIGUATION] Entity resolution failed, proceeding without: {e}")
                         
             strict_rules = RulesEngine.apply_glossary_rules(resolved_entities_list, user_query)
@@ -1866,6 +1872,9 @@ class DatabaseKnowledgebaseService:
             # Attach finalized trace
             if disambiguation_notices:
                 answer.warnings.extend(disambiguation_notices)
+                notice_prefix = "Notice: " + "; ".join(disambiguation_notices) + "\n\n"
+                if not answer.answer_text.startswith("Notice:"):
+                    answer.answer_text = notice_prefix + answer.answer_text
             if not getattr(answer, "candidate_tables", None) and top_3_candidates:
                 answer.candidate_tables = top_3_candidates
             answer.pipeline_trace = tracer.finalize()

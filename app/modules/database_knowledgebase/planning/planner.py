@@ -2483,27 +2483,55 @@ class QueryPlanner:
                                 p for p in predicates
                                 if not (p.table_alias == target_alias and any(de_name in str(p.value).lower() for de_name in (de_name, f"%{de_name}%")))
                             ]
-                            if len(de_ids) == 1:
-                                predicates.append(
-                                    PredicatePlan(
-                                        table_alias=target_alias,
-                                        column_name=target_col,
-                                        operator="=",
-                                        value=de_ids[0],
-                                        logical_operator="AND",
+                            if de_ids and de_ids[0] is not None:
+                                if len(de_ids) == 1:
+                                    predicates.append(
+                                        PredicatePlan(
+                                            table_alias=target_alias,
+                                            column_name=target_col,
+                                            operator="=",
+                                            value=de_ids[0],
+                                            logical_operator="AND",
+                                        )
                                     )
-                                )
+                                else:
+                                    predicates.append(
+                                        PredicatePlan(
+                                            table_alias=target_alias,
+                                            column_name=target_col,
+                                            operator="IN",
+                                            value=de_ids,
+                                            logical_operator="AND",
+                                        )
+                                    )
+                                logger.info(f"[PLANNER] Bound disambiguation entity '{de_name}' to {target_alias}.{target_col} IN {de_ids}")
                             else:
-                                predicates.append(
-                                    PredicatePlan(
-                                        table_alias=target_alias,
-                                        column_name=target_col,
-                                        operator="IN",
-                                        value=de_ids,
-                                        logical_operator="AND",
+                                target_col = de.get("column") or de_col
+                                vals = de.get("values") or [de.get("name") or de_name]
+                                unique_vals = list(dict.fromkeys(vals))
+                                if len(unique_vals) > 1:
+                                    predicates.append(
+                                        PredicatePlan(
+                                            table_alias=target_alias,
+                                            column_name=target_col,
+                                            operator="IN",
+                                            value=[v.lower() for v in unique_vals],
+                                            logical_operator="AND",
+                                        )
                                     )
-                                )
-                            logger.info(f"[PLANNER] Bound disambiguation entity '{de_name}' to {target_alias}.{target_col} IN {de_ids}")
+                                    logger.info(f"[PLANNER] Bound entity '{de_name}' to {target_alias}.{target_col} IN {[v.lower() for v in unique_vals]}")
+                                else:
+                                    target_val = unique_vals[0].lower()
+                                    predicates.append(
+                                        PredicatePlan(
+                                            table_alias=target_alias,
+                                            column_name=target_col,
+                                            operator="=",
+                                            value=target_val,
+                                            logical_operator="AND",
+                                        )
+                                    )
+                                    logger.info(f"[PLANNER] Bound entity '{de_name}' to {target_alias}.{target_col} = '{target_val}'")
 
             from .entity_value_resolver import EntityValueResolver
             literals = EntityValueResolver.extract_literal_candidates(user_query, canonical_schema=canonical_schema)

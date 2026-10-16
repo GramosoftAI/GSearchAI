@@ -126,9 +126,11 @@ class ReadOnlyPoolManager:
             # HARD INVARIANT: Read-only transaction enforcement at session level
             session_settings["default_transaction_read_only"] = "on"
 
+            connect_timeout = max(float(config.connection_timeout_seconds), self.pool_timeout_seconds, 15.0)
             logger.info(
                 f"Creating bounded read-only connection pool for KB {kb_id} "
-                f"(min={self.min_size}, max={self.max_size}, tenant={tenant_id})"
+                f"(host='{db_config.host}', port={db_config.port}, db='{db_config.database_name}', "
+                f"min={self.min_size}, max={self.max_size}, timeout={connect_timeout}s, tenant={tenant_id})"
             )
 
             try:
@@ -144,7 +146,7 @@ class ReadOnlyPoolManager:
                     max_inactive_connection_lifetime=300.0,
                     command_timeout=config.statement_timeout_ms / 1000.0,
                     server_settings=session_settings,
-                    timeout=self.pool_timeout_seconds,
+                    timeout=connect_timeout,
                 )
                 self._pools[pool_key] = new_pool
                 self._pool_metadata[pool_key] = {
@@ -156,6 +158,8 @@ class ReadOnlyPoolManager:
 
             except Exception as e:
                 safe_msg = sanitize_error_message(e)
+                if not safe_msg or "timed out" in str(e).lower() or isinstance(e, (TimeoutError, asyncio.TimeoutError)):
+                    safe_msg = f"Connection to {db_config.host}:{db_config.port} timed out after {connect_timeout}s"
                 logger.error(f"Failed to create read-only connection pool: {safe_msg}")
                 raise QueryConnectionError(
                     detail=f"Failed to establish read-only connection pool: {safe_msg}"

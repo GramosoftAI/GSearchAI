@@ -51,9 +51,14 @@ def sanitize_error_message(err: Union[Exception, str]) -> str:
     internal IP addresses, and absolute paths before returning to API callers.
     """
     if isinstance(err, Exception):
-        msg = str(err)
+        msg = str(err).strip()
+        if not msg:
+            if isinstance(err, (TimeoutError, asyncio.TimeoutError)):
+                msg = "Connection timed out"
+            else:
+                msg = type(err).__name__
     else:
-        msg = str(err or "")
+        msg = str(err or "").strip()
 
     # 1. Mask DSN passwords
     msg = mask_connection_string(msg)

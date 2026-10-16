@@ -153,40 +153,46 @@ class ReadOnlyDatabaseExecutor:
 
         if self.use_pooling and db_config.db_type == DatabaseType.POSTGRESQL:
             pool_manager = ReadOnlyPoolManager.get_instance_sync()
-            async with pool_manager.acquire(
-                tenant_id=authorization.tenant_id,
-                kb_id=authorization.knowledgebase_id,
-                db_config=db_config,
-                config=self.config,
-            ) as conn:
-                return await self._execute_on_connection(
-                    conn=conn,
-                    candidate_sql=candidate_sql,
-                    authorization=authorization,
-                    query_id=query_id,
-                    t0=t0,
-                    is_pooled=True,
-                    dialect="postgres",
-                )
-        else:
-            conn: Optional[Any] = None
             try:
-                conn = await self._acquire_connection(db_config)
-                return await self._execute_on_connection(
-                    conn=conn,
-                    candidate_sql=candidate_sql,
-                    authorization=authorization,
-                    query_id=query_id,
-                    t0=t0,
-                    is_pooled=False,
-                    dialect=dialect,
+                async with pool_manager.acquire(
+                    tenant_id=authorization.tenant_id,
+                    kb_id=authorization.knowledgebase_id,
+                    db_config=db_config,
+                    config=self.config,
+                ) as conn:
+                    return await self._execute_on_connection(
+                        conn=conn,
+                        candidate_sql=candidate_sql,
+                        authorization=authorization,
+                        query_id=query_id,
+                        t0=t0,
+                        is_pooled=True,
+                        dialect="postgres",
+                    )
+            except QueryConnectionError as pool_err:
+                logger.warning(
+                    f"[EXECUTOR] Pooled connection failed ({pool_err}). "
+                    f"Falling back to dedicated direct connection..."
                 )
-            finally:
-                if conn:
-                    try:
-                        if hasattr(conn, "ensure_closed"):
-                            await conn.ensure_closed()
-                        elif hasattr(conn, "close"):
-                            await conn.close()
-                    except Exception:
-                        pass
+
+        conn: Optional[Any] = None
+        try:
+            conn = await self._acquire_connection(db_config)
+            return await self._execute_on_connection(
+                conn=conn,
+                candidate_sql=candidate_sql,
+                authorization=authorization,
+                query_id=query_id,
+                t0=t0,
+                is_pooled=False,
+                dialect=dialect,
+            )
+        finally:
+            if conn:
+                try:
+                    if hasattr(conn, "ensure_closed"):
+                        await conn.ensure_closed()
+                    elif hasattr(conn, "close"):
+                        await conn.close()
+                except Exception:
+                    pass

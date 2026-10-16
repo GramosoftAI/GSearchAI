@@ -198,7 +198,13 @@ class TableRetrieverConfig(BaseModel):
     # Emptiness multiplier (STEP 2: is_empty tables: x0.3, unless question tokens match table name exactly)
     empty_table_multiplier: float = 0.3
 
-    # Column-only damping multiplier (applied when table evidence is ONLY column-level signals)
+    # Column evidence combination: 2nd best column bonus (applied to max column score)
+    second_column_bonus_multiplier: float = 0.2
+
+    # Maximum vector rank for table-doc to be counted as table-level evidence
+    table_vector_top_rank: int = 3
+
+    # Column-only damping multiplier (applied when table evidence has no table-level signals)
     column_only_multiplier: float = 0.5
 
     # Non-stripping "s" words (do not strip trailing 's' to avoid non-word stems)
@@ -469,6 +475,11 @@ class TableRetriever:
         table_reasons: Dict[str, List[str]] = {}
         table_signals: Dict[str, Dict[str, float]] = {}
 
+        # Column evidence tracking (PART B.1) & Vector rank tracking (PART B.2)
+        table_column_scores: Dict[str, Dict[str, float]] = {}
+        table_column_types: Dict[str, Set[str]] = {}
+        table_vector_ranks: Dict[str, int] = {}
+
         # Load metadata and ambiguity index
         table_meta, ambiguous_synonyms = await self._get_kb_table_metadata(db_knowledgebase_id=db_knowledgebase_id)
 
@@ -508,7 +519,12 @@ class TableRetriever:
                 _add_score(t_name, rrf_score, f"FTS match on table doc (rank {rank})", "fts")
             elif dt == "column":
                 t_name = key.split(".")[1] if key.count(".") >= 2 else key.split(".")[0]
-                _add_score(t_name, rrf_score * 0.9, f"FTS match on column {key} (rank {rank})", "fts_column")
+                t_clean = t_name.lower().strip()
+                if t_clean in table_meta:
+                    col_score = rrf_score * 0.9
+                    prev = table_column_scores.setdefault(t_clean, {}).get(key, 0.0)
+                    table_column_scores[t_clean][key] = max(prev, col_score)
+                    table_column_types.setdefault(t_clean, set()).add("fts_column")
             elif dt == "glossary":
                 # STEP 3: Glossary items of category domain must never contribute to table scoring
                 item_key = hit.get("item_key", "")
@@ -579,10 +595,18 @@ class TableRetriever:
 
                     if dt == "table":
                         t_name = key.split(".")[-1]
-                        _add_score(t_name, rrf_score, f"Vector match on table {t_name} (sim {hit['score']:.2f})", "vector")
+                        t_clean = t_name.lower().strip()
+                        if t_clean not in table_vector_ranks:
+                            table_vector_ranks[t_clean] = rank
+                        _add_score(t_clean, rrf_score, f"Vector match on table {t_name} (sim {hit['score']:.2f}, rank {rank})", "vector")
                     elif dt == "column":
                         t_name = key.split(".")[1] if key.count(".") >= 2 else key.split(".")[0]
-                        _add_score(t_name, rrf_score * 0.85, f"Vector match on column {key} (sim {hit['score']:.2f})", "vector_column")
+                        t_clean = t_name.lower().strip()
+                        if t_clean in table_meta:
+                            col_score = rrf_score * 0.85
+                            prev = table_column_scores.setdefault(t_clean, {}).get(key, 0.0)
+                            table_column_scores[t_clean][key] = max(prev, col_score)
+                            table_column_types.setdefault(t_clean, set()).add("vector_column")
                     elif dt == "glossary":
                         # STEP 3: Vector glossary hits with domain check and kind damping
                         item_key = hit.get("item_key", "")
@@ -630,6 +654,28 @@ class TableRetriever:
         except Exception as e:
             logger.debug(f"[TableRetriever] Vector search fallback: {e}")
         t_vec_ms = (time.perf_counter() - t_vec_start) * 1000.0
+
+        # -------------------------------------------------------------
+        # 2b. Aggregate Column Evidence per Table (PART B.1)
+        # Column evidence must not be summed across columns.
+        # Per table, use max over its column signals plus small bonus for 2nd best.
+        # -------------------------------------------------------------
+        for t_clean, col_map in table_column_scores.items():
+            sorted_col_scores = sorted(col_map.values(), reverse=True)
+            best_col = sorted_col_scores[0]
+            second_col = sorted_col_scores[1] if len(sorted_col_scores) > 1 else 0.0
+            bonus = self.config.second_column_bonus_multiplier * second_col
+            total_col_ev = best_col + bonus
+
+            for c_type in table_column_types.get(t_clean, set()):
+                table_signals.setdefault(t_clean, {})[c_type] = best_col
+
+            _add_score(
+                t_clean,
+                total_col_ev,
+                f"Column evidence (max={best_col:.4f}" + (f", 2nd_bonus={bonus:.4f}" if bonus > 0 else "") + ")",
+                "column_aggregate",
+            )
 
         # -------------------------------------------------------------
         # 3. Value-Index Search (for entity candidates, excluding literals)
@@ -837,15 +883,30 @@ class TableRetriever:
                     empty_mult = self.config.empty_table_multiplier
                     table_reasons.setdefault(t_name, []).append(f"Emptiness multiplier applied (x{self.config.empty_table_multiplier})")
 
-            # Column-only damping (Requirement 2):
-            # A table whose evidence is ONLY column-level signals (vector_column / fts_column)
-            # with no table-level signal (fts, vector, token, synonym, glossary, value_index) gets a configurable multiplier (start 0.5)
-            col_mult = 1.0
+            # Column-only damping (PART B.2):
+            # A table has table-level evidence only if:
+            # - table-doc FTS hit ("fts"), OR
+            # - table-vector RANK in top 3 (rank <= config.table_vector_top_rank), OR
+            # - exact/synonym match ("token_exact", "token_synonym"), OR
+            # - glossary hit ("glossary", "glossary_vector"), OR
+            # - value_index hit ("value_index").
+            # Tables without it get the column-only multiplier (default 0.5).
             signals_present = set(table_signals.get(t_name, {}).keys())
-            if signals_present and not (signals_present & TABLE_LEVEL_SIGNALS):
+            has_table_level = (
+                "fts" in signals_present
+                or ("vector" in signals_present and table_vector_ranks.get(t_name, 999) <= self.config.table_vector_top_rank)
+                or "token_exact" in signals_present
+                or "token_synonym" in signals_present
+                or "glossary" in signals_present
+                or "glossary_vector" in signals_present
+                or "value_index" in signals_present
+            )
+
+            col_mult = 1.0
+            if signals_present and not has_table_level:
                 col_mult = self.config.column_only_multiplier
                 table_reasons.setdefault(t_name, []).append(
-                    f"Column-only damping applied (x{self.config.column_only_multiplier})"
+                    f"Column-only damping applied (x{self.config.column_only_multiplier}) - no table-level evidence"
                 )
                 table_signals.setdefault(t_name, {})["column_damping"] = col_mult
 

@@ -215,16 +215,24 @@ class JoinPathFinder:
         if len(clean_tables) == 1:
             return JoinPathResult(success=True)
 
-        # Check if all tables exist in graph
-        for t in clean_tables:
-            if t not in self._graph:
-                return JoinPathResult(
-                    success=False,
-                    unreachable_tables=[t],
-                )
+        # Separate tables present in graph vs disconnected/unindexed tables
+        graph_tables = [t for t in clean_tables if t in self._graph]
+        unreachable_nodes: List[str] = [t for t in clean_tables if t not in self._graph]
+
+        if not graph_tables:
+            return JoinPathResult(
+                success=len(clean_tables) <= 1,
+                unreachable_tables=unreachable_nodes,
+            )
+
+        if len(graph_tables) == 1:
+            return JoinPathResult(
+                success=True,
+                unreachable_tables=unreachable_nodes,
+            )
 
         # 1. Pick anchor table: table with highest degree/connectivity or first target table
-        anchor = max(clean_tables, key=lambda t: len(self._graph.get(t, [])))
+        anchor = max(graph_tables, key=lambda t: len(self._graph.get(t, [])))
 
         # 2. Shortest paths from anchor to all other tables
         visited_nodes: Set[str] = {anchor}
@@ -233,7 +241,7 @@ class JoinPathFinder:
         fanout_warnings: List[str] = []
         total_cost = 0.0
 
-        targets_to_connect = [t for t in clean_tables if t != anchor]
+        targets_to_connect = [t for t in graph_tables if t != anchor]
         has_aggregation = bool(frame and frame.aggregation_cues)
 
         for target in targets_to_connect:
@@ -250,11 +258,8 @@ class JoinPathFinder:
                     best_res = res
 
             if not best_res:
-                # Disconnected!
-                return JoinPathResult(
-                    success=False,
-                    unreachable_tables=[target],
-                )
+                unreachable_nodes.append(target)
+                continue
 
             path_cost, edges = best_res
             total_cost += path_cost
@@ -299,9 +304,10 @@ class JoinPathFinder:
                 visited_nodes.add(nxt)
 
         return JoinPathResult(
-            success=True,
+            success=bool(all_hops or len(clean_tables) <= 1),
             joins=all_hops,
             bridge_tables=list(bridge_tables),
             fanout_warnings=fanout_warnings,
+            unreachable_tables=unreachable_nodes,
             total_cost=round(total_cost, 3),
         )
