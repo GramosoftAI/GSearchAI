@@ -27,7 +27,11 @@ EXCLUDED_WORDS = {
     "Information", "Employee", "Employees", "Department", "Departments", "Title", "Titles",
     "Start", "End", "Hire", "Project", "Projects", "Review", "Reviews", "Leave", "Leaves",
     "Request", "Requests", "Salary", "Salaries", "Unique", "Active", "Which", "What", "Who", "Where",
-    "My", "Your", "Our", "Their", "His", "Her", "Its", "This", "That", "These", "Those", "Some", "Any"
+    "My", "Your", "Our", "Their", "His", "Her", "Its", "This", "That", "These", "Those", "Some", "Any",
+    "Description", "Subject", "Created", "Updated", "Update", "Updates", "Package", "Packages", "Work",
+    "Progress", "Team", "Hi", "Thanks", "Thank", "Summary", "Summarizes", "Details", "Detail",
+    "Model", "Analysis", "Performance", "Yesterday", "Today", "Tomorrow", "EOD", "UTC", "GMT", "AM", "PM",
+    "At", "By", "On", "From", "To"
 }
 
 
@@ -94,14 +98,18 @@ class EntityGroundingValidator:
         """
         unsupported: List[str] = []
         supported_entities = set(evidence.supported_entities)
-        if hasattr(evidence, "column_names") and evidence.column_names:
-            for c in evidence.column_names:
-                supported_entities.add(c)
-                for part in c.replace("_", " ").split():
-                    supported_entities.add(part)
+        cols = getattr(evidence, "columns", None) or getattr(evidence, "column_names", None) or []
+        for c in cols:
+            supported_entities.add(c)
+            supported_entities.add(c.lower())
+            supported_entities.add(c.title())
+            clean_c = c.replace("_", " ").title()
+            supported_entities.add(clean_c)
+            for part in clean_c.split():
+                supported_entities.add(part)
 
-        # Extract capitalized phrases and their positions
-        for match in re.finditer(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b", answer_text):
+        # Extract capitalized phrases and their positions (match horizontal whitespace only to not cross newlines)
+        for match in re.finditer(r"\b[A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)*\b", answer_text):
             phrase = match.group(0)
             start_pos = match.start()
 

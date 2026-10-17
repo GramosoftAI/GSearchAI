@@ -34,6 +34,7 @@ from .entity_resolver import (
     LiteralFilter,
     DisambiguationChoice,
     resolve_entities,
+    resolve_entities_live,
     normalize_table_name,
     get_table_name_variants,
 )
@@ -77,6 +78,7 @@ __all__ = [
     "LiteralFilter",
     "DisambiguationChoice",
     "resolve_entities",
+    "resolve_entities_live",
     "normalize_table_name",
     "get_table_name_variants",
     "JoinPathFinder",

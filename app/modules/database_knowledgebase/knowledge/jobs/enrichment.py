@@ -138,7 +138,7 @@ def preclassify_table(
             tbl_lower.endswith(sfx) for sfx in ("_journals", "_journal", "_audits", "_audit", "_logs", "_log", "_versions", "_version", "_history")
         ):
             reason = "rule:journal:has journal/version column and matching name pattern"
-            will_llm = not (is_empty and len(outgoing_relationships) == 0)
+            will_llm = False
             return "journal", reason, will_llm
     else:
         col_names = [c["column_name"].lower() for c in columns if "column_name" in c]
@@ -195,7 +195,7 @@ def preclassify_table(
 
     if len(rel_parent_tables) >= 2 and len(other_non_audit_cols) <= 3 and not has_text_or_measure:
         reason = f"rule:link:{len(rel_parent_tables)} distinct relationship parents, {len(other_non_audit_cols)} other non-audit columns (no text/measure)"
-        will_llm = not (is_empty and len(outgoing_relationships) == 0)
+        will_llm = False
         return "link", reason, will_llm
 
     # 4. Lookup tables:
@@ -220,7 +220,7 @@ def preclassify_table(
     return "entity", reason, will_llm
 
 
-def select_top_columns(cols: List[KB2KnowledgeItem], max_cols: int = 60) -> List[KB2KnowledgeItem]:
+def select_top_columns(cols: List[KB2KnowledgeItem], max_cols: int = 35) -> List[KB2KnowledgeItem]:
     """For tables over 60 columns, select the 60 most relevant:
     PK, FKs, name/status/date columns, columns with non-null stats first.
     """
@@ -463,8 +463,16 @@ async def run_stage_enrich(
             desc = f"Internal system/infrastructure table {tbl_clean} ({', '.join(col_names[:5])})."
             grain = "one row per system record"
             domain = "system"
+        elif sk["kind"] == "journal":
+            desc = f"Historical audit journal tracking changes to {tbl_clean.replace('_journals', '').replace('_journal', '')}."
+            grain = "one row per change record"
+            domain = "audit"
+        elif sk["kind"] == "link":
+            desc = f"Association/junction table linking related records ({', '.join(col_names[:5])})."
+            grain = "one row per association"
+            domain = "relationships"
         else:
-            desc = f"Empty database table {tbl_clean} with columns: {', '.join(col_names[:6])}."
+            desc = f"Database table {tbl_clean} with columns: {', '.join(col_names[:6])}."
             grain = f"one row per {tbl_clean}"
             domain = "general"
 
@@ -575,7 +583,10 @@ async def run_stage_enrich(
                 col_repr["distinct_estimate"] = int(d_count)
 
             if not is_sens and not is_sensitive_for_values(c_name):
-                if role not in ("name", "id", "code", "text"):
+                acc_vals = cp.get("accepted_values") or stats.get("top_values", [])
+                if acc_vals:
+                    col_repr["accepted_values"] = acc_vals[:15]
+                elif role not in ("name", "id", "code", "text"):
                     top_vals = stats.get("top_values", [])[:5]
                     if top_vals:
                         col_repr["top_values"] = top_vals

@@ -534,6 +534,22 @@ async def get_schema_doc_job_status(
 
 
 @router.get(
+    "/{id}/pipeline-status",
+    summary="Get Database Knowledgebase Pipeline Status & Progress",
+    description="Returns the real-time execution status, stage, and completion percentage (0-100%) of Phase 2 pipeline.",
+)
+async def get_pipeline_status(
+    id: uuid.UUID,
+    request: Request,
+    service: DatabaseKnowledgebaseService = Depends(get_service),
+    db: AsyncSession = Depends(get_db),
+):
+    from .knowledge.api.admin_router import compute_pipeline_status
+    t_uuid = uuid.UUID(str(service.tenant_id))
+    return await compute_pipeline_status(tenant_id=t_uuid, kb_id=id, db=db)
+
+
+@router.get(
     "/{id}/schema-doc/export",
     summary="Export Schema Cheat Sheet",
     description="Exports the generated schema documentation as Markdown and JSON for human review and approval.",

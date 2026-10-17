@@ -33,6 +33,7 @@ from ..models.knowledge_items import (
     KB2KnowledgeItem,
     KB2EntityValue,
     KB2AuditLog,
+    KB2JobRun,
 )
 from ..repositories.knowledge_item_repository import KnowledgeItemRepository
 
@@ -669,6 +670,222 @@ async def run_pipeline_manual_endpoint(
             )
         )
         return {"status": "enqueued_locally", "kb_id": str(kb_id), "force_recompute": force_recompute}
+
+
+async def compute_pipeline_status(
+    tenant_id: uuid.UUID,
+    kb_id: uuid.UUID,
+    db: AsyncSession,
+) -> Dict[str, Any]:
+    """Computes real-time Phase 2 pipeline status, progress percentage, and active stage."""
+    # 1. Query for active run first (running or queued)
+    stmt_active = (
+        select(KB2JobRun)
+        .where(
+            KB2JobRun.tenant_id == tenant_id,
+            KB2JobRun.db_knowledgebase_id == kb_id,
+            KB2JobRun.status.in_(["running", "queued"]),
+        )
+        .order_by(desc(KB2JobRun.created_at))
+        .limit(1)
+    )
+    res = await db.execute(stmt_active)
+    run = res.scalar_one_or_none()
+
+    # 2. If no active run, get most recent completed or failed run
+    if not run:
+        stmt_latest = (
+            select(KB2JobRun)
+            .where(
+                KB2JobRun.tenant_id == tenant_id,
+                KB2JobRun.db_knowledgebase_id == kb_id,
+            )
+            .order_by(desc(KB2JobRun.created_at))
+            .limit(1)
+        )
+        res_latest = await db.execute(stmt_latest)
+        run = res_latest.scalar_one_or_none()
+
+    if not run:
+        return {
+            "success": True,
+            "status": "idle",
+            "is_active": False,
+            "progress_percent": 0,
+            "current_stage": None,
+            "current_stage_label": "Ready",
+            "stages": {},
+            "elapsed_seconds": 0,
+            "error": None,
+        }
+
+    # Pipeline stages with weight allocations (total = 100)
+    stage_weights = [
+        ("profile", "Profiling Schema & Statistics", 14),
+        ("relationships", "Inferring Relationships & Joins", 14),
+        ("value_index", "Indexing Distinct Values", 14),
+        ("enrich", "LLM Semantic Enrichment", 20),
+        ("glossary_seed", "Seeding Business Glossary & Metrics", 12),
+        ("schema_index", "Indexing Schema Vector Embeddings", 14),
+        ("examples", "Generating & Verifying Query Exemplars", 12),
+    ]
+
+    stages_dict = run.stages or {}
+    progress_calc = 0
+    current_active_stage = None
+    current_active_label = "Ready"
+    now_utc = datetime.now(timezone.utc)
+
+    # Real-time intra-stage counts for accurate live progress
+    intra_counts = {}
+    if run.status in ("running", "queued"):
+        try:
+            r_tables = await db.execute(
+                select(func.count(KB2KnowledgeItem.id)).where(
+                    KB2KnowledgeItem.db_knowledgebase_id == kb_id,
+                    KB2KnowledgeItem.valid_from_version == run.schema_version,
+                    KB2KnowledgeItem.item_type == "table",
+                )
+            )
+            intra_counts["tables"] = r_tables.scalar() or 0
+
+            r_rels = await db.execute(
+                select(func.count(KB2KnowledgeItem.id)).where(
+                    KB2KnowledgeItem.db_knowledgebase_id == kb_id,
+                    KB2KnowledgeItem.valid_from_version == run.schema_version,
+                    KB2KnowledgeItem.item_type == "relationship",
+                )
+            )
+            intra_counts["rels"] = r_rels.scalar() or 0
+
+            r_vals = await db.execute(
+                select(func.count(KB2EntityValue.id)).where(
+                    KB2EntityValue.db_knowledgebase_id == kb_id,
+                )
+            )
+            intra_counts["vals"] = r_vals.scalar() or 0
+
+            r_enriched = await db.execute(
+                select(func.count(KB2KnowledgeItem.id)).where(
+                    KB2KnowledgeItem.db_knowledgebase_id == kb_id,
+                    KB2KnowledgeItem.valid_from_version == run.schema_version,
+                    KB2KnowledgeItem.item_type == "table",
+                    func.jsonb_extract_path_text(KB2KnowledgeItem.payload, "semantic", "description") != None,
+                )
+            )
+            intra_counts["enriched"] = r_enriched.scalar() or 0
+        except Exception as q_err:
+            logger.debug(f"Non-critical: intra_counts fetch failed: {q_err}")
+
+    est_total_tables = max(intra_counts.get("tables", 0), 166)
+
+    for stage_key, stage_label, weight in stage_weights:
+        st_data = stages_dict.get(stage_key, {})
+        st_status = st_data.get("status") if isinstance(st_data, dict) else None
+
+        if st_status in ("succeeded", "completed_with_errors"):
+            progress_calc += weight
+        elif st_status == "running":
+            current_active_stage = stage_key
+            current_active_label = stage_label
+
+            st_start_str = st_data.get("started_at") if isinstance(st_data, dict) else None
+            st_elapsed = 0.0
+            if st_start_str:
+                try:
+                    st_dt = datetime.fromisoformat(st_start_str.replace("Z", "+00:00"))
+                    st_elapsed = max(0.0, (now_utc - st_dt).total_seconds())
+                except Exception:
+                    pass
+
+            intra_ratio = 0.2
+            if stage_key == "profile":
+                tables_done = intra_counts.get("tables", 0)
+                if tables_done > 0 and est_total_tables > 0:
+                    intra_ratio = min(0.95, max(0.1, tables_done / est_total_tables))
+                    current_active_label = f"Profiling Schema & Statistics ({tables_done}/{est_total_tables} tables)"
+                else:
+                    intra_ratio = min(0.92, max(0.1, st_elapsed / 400.0))
+            elif stage_key == "relationships":
+                rels_done = intra_counts.get("rels", 0)
+                intra_ratio = min(0.90, max(0.15, 1.0 - (0.85 ** (st_elapsed / 45.0))))
+                current_active_label = f"Inferring Relationships & Joins ({rels_done} discovered)"
+            elif stage_key == "value_index":
+                vals_done = intra_counts.get("vals", 0)
+                intra_ratio = min(0.90, max(0.15, 1.0 - (0.85 ** (st_elapsed / 30.0))))
+                current_active_label = f"Indexing Distinct Values ({vals_done} indexed)"
+            elif stage_key == "enrich":
+                enriched_done = intra_counts.get("enriched", 0)
+                metrics = st_data.get("metrics", {}) if isinstance(st_data, dict) else {}
+                tot = metrics.get("tables_total") or metrics.get("tables_will_call_llm") or est_total_tables
+                done = metrics.get("tables_enriched") or enriched_done
+                if tot > 0 and done > 0:
+                    intra_ratio = min(0.95, max(0.1, done / tot))
+                    current_active_label = f"LLM Semantic Enrichment ({done}/{tot} tables)"
+                else:
+                    intra_ratio = min(0.90, max(0.05, st_elapsed / 1200.0 * 0.9))
+                    current_active_label = f"LLM Semantic Enrichment ({int(st_elapsed // 60)}m elapsed)"
+            elif stage_key == "glossary_seed":
+                intra_ratio = min(0.90, max(0.15, st_elapsed / 60.0))
+                current_active_label = "Seeding Business Glossary & Metrics"
+            elif stage_key == "schema_index":
+                intra_ratio = min(0.90, max(0.15, st_elapsed / 90.0))
+                current_active_label = "Indexing Schema Vector Embeddings"
+            elif stage_key == "examples":
+                intra_ratio = min(0.90, max(0.15, st_elapsed / 150.0))
+                current_active_label = "Generating & Verifying Query Exemplars"
+
+            progress_calc += int(weight * intra_ratio)
+        elif st_status in ("failed",):
+            if not current_active_stage:
+                current_active_stage = stage_key
+                current_active_label = f"Failed at {stage_label}"
+
+    is_active = run.status in ("queued", "running")
+    elapsed_sec = int((now_utc - run.started_at).total_seconds()) if run.started_at else 0
+
+    if run.status in ("succeeded", "succeeded_with_warnings"):
+        progress_calc = 100
+        current_active_label = "Knowledge Synchronization Complete"
+    elif run.status == "failed":
+        progress_calc = min(progress_calc, 99)
+        current_active_label = f"Failed: {run.error or 'Pipeline error'}"
+    elif run.status == "queued":
+        progress_calc = max(progress_calc, 5)
+        current_active_label = "Queued in background"
+    elif run.status == "running":
+        progress_calc = max(5, min(98, progress_calc))
+        if not current_active_label or current_active_label == "Ready":
+            current_active_label = f"Processing Stage ({current_active_stage or 'Pipeline'})"
+
+    return {
+        "success": True,
+        "job_id": str(run.id),
+        "status": run.status,
+        "schema_version": run.schema_version,
+        "is_active": is_active,
+        "progress_percent": progress_calc,
+        "current_stage": current_active_stage,
+        "current_stage_label": current_active_label,
+        "stages": stages_dict,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "heartbeat_at": run.heartbeat_at.isoformat() if run.heartbeat_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "elapsed_seconds": elapsed_sec,
+        "error": run.error,
+    }
+
+
+@router.get("/pipeline/status", summary="Get Phase 2/3 Knowledge Pipeline Status & Progress")
+async def get_pipeline_status_endpoint(
+    kb_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns the real-time execution status and completion percentage of Phase 2 pipeline."""
+    tenant_id, _ = _get_tenant_and_actor(request)
+    return await compute_pipeline_status(tenant_id=tenant_id, kb_id=kb_id, db=db)
+
 
 
 

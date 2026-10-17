@@ -19,15 +19,15 @@ from .errors import QueryConnectionError
 logger = logging.getLogger(__name__)
 
 
-def resolve_ssl_mode(ssl_mode: SSLMode) -> Optional[str]:
-    """Convert SSLMode enum to asyncpg ssl argument string or None."""
+def resolve_ssl_mode(ssl_mode: SSLMode) -> Any:
+    """Convert SSLMode enum to asyncpg ssl argument string or False."""
     if ssl_mode == SSLMode.DISABLE:
-        return None
+        return False
     elif ssl_mode in (SSLMode.REQUIRE, SSLMode.VERIFY_CA, SSLMode.VERIFY_FULL):
         return "require"
     elif ssl_mode == SSLMode.PREFER:
         return "prefer"
-    return None
+    return False
 
 
 async def connect_to_database(

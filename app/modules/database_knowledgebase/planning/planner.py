@@ -917,7 +917,7 @@ class QueryPlanner:
         has_onboarding_intent = any(w in q_lower for w in ("onboarding", "candidate task"))
         has_project_intent = (
             (
-                any(w in q_lower for w in ("project", "projects", "task", "tasks", "timesheet", "timesheets"))
+                any(w in q_lower for w in ("project", "projects", "task", "tasks", "timesheet", "timesheets", "progress", "work package", "workpackage", "work_package", "ticket", "tickets", "issue", "issues", "work done"))
                 or ("hours" in q_lower and any(w in q_lower for w in ("spend", "spent", "work on", "worked on")) and not any(w in q_lower for w in ("at work", "work hour", "attendance", "work on 20")))
                 or ("time" in q_lower and any(w in q_lower for w in ("spend", "spent")) and not any(w in q_lower for w in ("at work", "work time", "attendance")))
             )
@@ -968,6 +968,10 @@ class QueryPlanner:
             "_installment_ids",
             "overtime",
             "allowedip",
+            "_storages",
+            "_queries",
+            "_modules",
+            "_settings",
         )
         needed_aliases = {
             a for a in needed_aliases
@@ -1040,7 +1044,7 @@ class QueryPlanner:
                 active_target_aliases.add(a)
             elif has_project_intent:
                 is_ts = any(w in q_lower for w in ("timesheet", "hour", "hours", "spend", "spent", "time"))
-                is_task = any(w in q_lower for w in ("task", "tasks"))
+                is_task = any(w in q_lower for w in ("task", "tasks", "assign", "assigned", "work_package", "workpackage"))
                 if is_ts and any(tok in t_name for tok in ("timesheet", "time_entry", "timeentry", "project", "employee", "user")):
                     active_target_aliases.add(a)
                 elif is_task and any(tok in t_name for tok in ("task", "work_package", "workpackage", "member", "project", "employee", "user")):
@@ -1097,7 +1101,7 @@ class QueryPlanner:
                     active_target_aliases.add(dept_a)
         elif has_project_intent:
             is_ts = any(w in q_lower for w in ("timesheet", "hour", "hours", "spend", "spent", "time"))
-            is_task = any(w in q_lower for w in ("task", "tasks"))
+            is_task = any(w in q_lower for w in ("task", "tasks", "progress", "work package", "workpackage", "ticket", "tickets", "issue", "issues", "work done", "todo", "assign", "assigned"))
 
             if is_ts:
                 ts_a = _find_best_canonical_table(["timesheet", "time_entry", "timesheets", "time_entries"])
@@ -1111,9 +1115,17 @@ class QueryPlanner:
                 task_a = _find_best_canonical_table(["task", "work_package", "tasks", "work_packages"])
                 if task_a:
                     active_target_aliases.add(task_a)
-                tm_a = _find_best_canonical_table(["member", "task_member", "members"])
-                if tm_a:
-                    active_target_aliases.add(tm_a)
+                if anchor_alias or disambiguation_entities or literals or any(w in q_lower for w in ("for", "who", "user", "employee", "member", "assign")):
+                    u_a = _find_best_canonical_table(["user", "employee", "staff", "person", "users"])
+                    if u_a:
+                        active_target_aliases.add(u_a)
+                st_a = _find_best_canonical_table(["status", "statuses"])
+                if st_a:
+                    active_target_aliases.add(st_a)
+                if any(w in q_lower for w in ("member", "members")):
+                    tm_a = _find_best_canonical_table(["member", "task_member", "members"])
+                    if tm_a:
+                        active_target_aliases.add(tm_a)
                 if "project" in q_lower:
                     proj_a = _find_best_canonical_table(["project", "projects"], negative_tokens=["type", "template", "update", "psoa", "user", "member", "role"])
                     if proj_a:
@@ -1122,9 +1134,10 @@ class QueryPlanner:
                 proj_a = _find_best_canonical_table(["project", "projects"], negative_tokens=["type", "template", "update", "psoa", "user", "member", "role"])
                 if proj_a:
                     active_target_aliases.add(proj_a)
-                pm_a = _find_best_canonical_table(["member", "project_member", "members"])
-                if pm_a:
-                    active_target_aliases.add(pm_a)
+                if any(w in q_lower for w in ("member", "members")):
+                    pm_a = _find_best_canonical_table(["member", "project_member", "members"])
+                    if pm_a:
+                        active_target_aliases.add(pm_a)
                 if "manager" in q_lower:
                     mgr_a = _find_best_canonical_table(["manager", "project_manager", "managers"])
                     if mgr_a:
@@ -1232,7 +1245,7 @@ class QueryPlanner:
         # Enforce strict domain boundaries on active_target_aliases
         ALLOWED_ASSET_TABLES = _find_tables_for_domain(["asset", "device", "hardware", "equipment", "department", "dept", "employee", "user", "staff", "person", "workinformation", "work_info"])
         ALLOWED_ATTENDANCE_TABLES = _find_tables_for_domain(["attendance", "punch", "late", "early", "activity", "employee", "user", "staff", "person", "workinformation", "department", "dept", "leave"])
-        ALLOWED_PROJECT_TABLES = _find_tables_for_domain(["project", "task", "timesheet", "time_entry", "member", "work_package", "workpackage", "role", "user", "employee", "staff", "person"])
+        ALLOWED_PROJECT_TABLES = _find_tables_for_domain(["project", "task", "timesheet", "time_entry", "member", "work_package", "workpackage", "role", "user", "employee", "staff", "person", "status", "statuses", "type", "types"])
         ALLOWED_LEAVE_TABLES = _find_tables_for_domain(["leave", "absence", "vacation", "employee", "user", "staff", "person", "workinformation", "department", "dept"])
         ALLOWED_LOAN_TABLES = _find_tables_for_domain(["loan", "installment", "advance", "employee", "user", "staff", "person"])
         ALLOWED_DED_TABLES = _find_tables_for_domain(["deduction", "deduct", "contract", "salary", "employee", "user", "staff", "person"])
@@ -1288,6 +1301,19 @@ class QueryPlanner:
                     if "assigned_by" in src_col.lower() or "assigned_by" in tgt_col.lower():
                         continue
                     if ("owner" in src_col.lower() or "owner" in tgt_col.lower()) and not any(w in q_lower for w in ("owner", "owns", "owned", "ownership")):
+                        continue
+
+                # Disambiguate parallel entity joins based on query verbs (e.g. assigned vs author):
+                col_pair = f"{src_col} {tgt_col}".lower()
+                if "assign" in q_lower and ("author" in col_pair or "created_by" in col_pair or "creator" in col_pair):
+                    continue
+                elif any(w in q_lower for w in ("create", "created", "author", "opened", "reported")) and "assigned" in col_pair:
+                    has_author_path = any(
+                        (f"{r.source_schema}.{r.source_table}" in (src_key, tgt_key) and f"{r.target_schema}.{r.target_table}" in (src_key, tgt_key))
+                        and any("author" in c.lower() or "created" in c.lower() for c in (r.source_columns + r.target_columns))
+                        for r in retrieval_result.join_paths
+                    )
+                    if has_author_path:
                         continue
 
                 all_join_plans.append(
@@ -1348,9 +1374,17 @@ class QueryPlanner:
                         t1_name,
                         t2_name,
                         max_hops=3,
-                        allowed_tables=allowed_retrieved_tables.union(ALLOWED_PROJECT_TABLES) if has_project_intent else allowed_retrieved_tables,
+                        allowed_tables=allowed_retrieved_tables,
                         forbidden_hops=forbidden_hops,
                     )
+                    if not path and has_project_intent:
+                        path = graph.find_shortest_path(
+                            t1_name,
+                            t2_name,
+                            max_hops=3,
+                            allowed_tables=allowed_retrieved_tables.union(ALLOWED_PROJECT_TABLES),
+                            forbidden_hops=forbidden_hops,
+                        )
                     if path and len(path) > 1:
                         for step_idx in range(len(path) - 1):
                             u_name = path[step_idx]
@@ -1386,13 +1420,17 @@ class QueryPlanner:
                                         fk_low = fk_col.lower()
                                         if any(w in q_lower for w in ("owner", "owns", "owned", "ownership")) and fk_low == "owner_id":
                                             score += 150
+                                        elif "assigned_to" in fk_low or "assignee" in fk_low:
+                                            score += 150
                                         elif any(w in q_lower for w in ("assign", "assigned")) and any(a_tok in fk_low for a_tok in ("assign", "user_id", "project_id", "member")):
                                             score += 120
+                                        elif "author" in fk_low and not any(w in q_lower for w in ("author", "creator", "created by")):
+                                            score -= 50
                                         elif fk_low in ("employee_id_id", "candidate_id", "department_id", "leave_type_id_id", "stage_id_id", "project_id", "user_id"):
                                             score += 100
-                                        elif ("employee" in fk_low or "user" in fk_low or "project" in fk_low) and not any(ign in fk_low for ign in ("created", "modified", "reported")):
+                                        elif ("employee" in fk_low or "user" in fk_low or "project" in fk_low) and not any(ign in fk_low for ign in ("created", "modified", "reported", "author")):
                                             score += 80
-                                        elif any(ign in fk_low for ign in ("created", "modified", "reported", "canceled", "rejected", "approved", "history")):
+                                        elif any(ign in fk_low for ign in ("created", "modified", "reported", "canceled", "rejected", "approved", "history", "author")):
                                             score -= 50
                                         candidate_matches.append((score, u_col, v_col, rel))
 
@@ -1828,7 +1866,19 @@ class QueryPlanner:
                         elif any(tok in t_low for tok in ("task", "work_package", "workpackage")):
                             if c_low in ("task_name", "title", "name", "subject"):
                                 should_project = True
+                            elif c_low in ("description", "desc", "details", "notes", "body"):
+                                should_project = True
                             elif c_low in ("status", "status_id", "state") and any(k in q_lower for k in ("status", "state", "progress")):
+                                # If statuses table is joined to project human-readable status name, skip status_id
+                                if not any("status" in alias_to_table[a].table_name.lower() for a in needed_aliases if a != alias):
+                                    should_project = True
+                            elif c_low in ("done_ratio", "derived_done_ratio", "estimated_hours") and any(k in q_lower for k in ("progress", "done", "status", "ratio", "hour", "hours")):
+                                should_project = True
+                            elif c_low in ("created_at", "updated_at", "start_date") and any(k in q_lower for k in ("yesterday", "today", "date", "when", "progress", "recent", "created", "updated")):
+                                should_project = True
+
+                        elif any(tok in t_low for tok in ("status", "statuses")):
+                            if c_low in ("name", "status_name"):
                                 should_project = True
 
                         elif any(tok in t_low for tok in ("timesheet", "time_entry", "timeentry")):
@@ -2091,16 +2141,24 @@ class QueryPlanner:
                                 score = 10.0
                                 if a in needed_aliases:
                                     score += 60.0
-                                if "attendance_date" in c_lower:
-                                    score += 55.0
-                                elif c_lower == "date":
-                                    score += 45.0
-                                elif "clock_in_date" in c_lower or "clock_out_date" in c_lower:
-                                    score += 45.0
-                                elif "start_date" in c_lower or "end_date" in c_lower:
-                                    score += 40.0
-                                elif "created" in c_lower or "updated" in c_lower:
-                                    score -= 5.0
+                                if any(w in q_lower for w in ("progress", "update", "updates", "activity", "work done", "worked", "recent", "log")):
+                                    if "updated" in c_lower:
+                                        score += 70.0
+                                    elif "created" in c_lower:
+                                        score += 35.0
+                                    elif "start_date" in c_lower or "end_date" in c_lower:
+                                        score += 30.0
+                                else:
+                                    if "attendance_date" in c_lower:
+                                        score += 55.0
+                                    elif c_lower == "date":
+                                        score += 45.0
+                                    elif "clock_in_date" in c_lower or "clock_out_date" in c_lower:
+                                        score += 45.0
+                                    elif "start_date" in c_lower or "end_date" in c_lower:
+                                        score += 40.0
+                                    elif "created" in c_lower or "updated" in c_lower:
+                                        score -= 5.0
                                 if any(ev in tbl.table_name.lower() for ev in ("attendance", "leave", "shift", "event", "punch", "work")):
                                     score += 30.0
                                 if score > best_date_score:
@@ -2455,11 +2513,12 @@ class QueryPlanner:
             # 1. First, check if disambiguation already resolved this person to exact database IDs!
             if disambiguation_entities:
                 for de in disambiguation_entities:
-                    if de.get("type") == "user" and de.get("id"):
+                    if de.get("type") in ("user", "entity") or de.get("table"):
                         de_name = de.get("name", "").lower()
                         de_tbl = (de.get("table") or "").lower()
                         de_col = de.get("pk_column") or "id"
-                        de_ids = de["id"] if isinstance(de["id"], list) else [de["id"]]
+                        raw_id = de.get("id")
+                        de_ids = raw_id if isinstance(raw_id, list) else ([raw_id] if raw_id is not None else [])
                         
                         # Find matching table alias in our planned tables
                         target_alias = None
@@ -2478,10 +2537,11 @@ class QueryPlanner:
 
                         if target_alias:
                             needed_aliases.add(target_alias)
-                            # Remove any prior string-based predicate matching this person's name
+                            # Remove any prior predicate matching this exact target column
+                            target_filter_col = (target_col if (de_ids and de_ids[0] is not None) else (de.get("column") or target_col)).lower()
                             predicates = [
                                 p for p in predicates
-                                if not (p.table_alias == target_alias and any(de_name in str(p.value).lower() for de_name in (de_name, f"%{de_name}%")))
+                                if not (p.table_alias == target_alias and p.column_name.lower() == target_filter_col)
                             ]
                             if de_ids and de_ids[0] is not None:
                                 if len(de_ids) == 1:
@@ -2730,8 +2790,10 @@ class QueryPlanner:
                                     score = 10.0
                                     fk_low = fk_col.lower()
                                     ref_low = ref_tbl.lower()
-                                    if "assigned_to" in fk_low and any(tok in ref_low for tok in ("employee", "user", "staff", "person")):
+                                    if "assigned_to" in fk_low or "assignee" in fk_low:
                                         score += 150.0
+                                    elif "author" in fk_low and not any(w in q_lower for w in ("author", "creator", "created by")):
+                                        score -= 50.0
                                     elif any(tok in fk_low for tok in ("employee", "user", "staff", "person")) and any(tok in ref_low for tok in ("employee", "user", "staff", "person")):
                                         score += 100.0
                                     elif "assigned_by" in fk_low:
@@ -3033,6 +3095,77 @@ class QueryPlanner:
         if not table_plans:
             table_plans = all_table_plans
 
+        # Validate that every plan table is in the context pack (reject tables like 'members' if absent)
+        if retrieval_result and hasattr(retrieval_result, "retrieved_tables") and retrieval_result.retrieved_tables:
+            retrieved_table_names = {t.table_name.lower() for t in retrieval_result.retrieved_tables}
+            valid_tables = [tp for tp in table_plans if tp.table_name.lower() in retrieved_table_names]
+            if len(valid_tables) != len(table_plans) and valid_tables:
+                rejected = [tp.table_name for tp in table_plans if tp.table_name.lower() not in retrieved_table_names]
+                logger.warning(f"[PLANNER] Rejected tables not in context pack: {rejected}")
+                table_plans = valid_tables
+                valid_aliases = {tp.alias for tp in table_plans}
+                join_plans = [
+                    j for j in join_plans
+                    if j.source_table_alias in valid_aliases and j.target_table_alias in valid_aliases
+                ]
+                projections = [p for p in projections if p.table_alias in valid_aliases]
+                predicates = [p for p in predicates if p.table_alias in valid_aliases]
+
+        # Enforce that an entity filter exists if disambiguation_entities is provided
+        if disambiguation_entities:
+            has_entity_filter = any(
+                any(
+                    de.get("name", "").lower() in str(p.value).lower()
+                    or (de.get("id") is not None and (p.value == de["id"] or p.value == [de["id"]] or (isinstance(de["id"], list) and p.value == de["id"])))
+                    for de in disambiguation_entities
+                )
+                for p in predicates
+            )
+            if not has_entity_filter:
+                # Repair: bind entity filter to planned table or foreign key
+                for de in disambiguation_entities:
+                    de_ids = de.get("id")
+                    ids_list = de_ids if isinstance(de_ids, list) else ([de_ids] if de_ids is not None else [])
+                    bound = False
+                    for tp in table_plans:
+                        tbl_schema = canonical_schema.get_table(tp.schema_name, tp.table_name)
+                        if not tbl_schema:
+                            continue
+                        if tp.table_name.lower() == (de.get("table") or "").lower():
+                            pk_c = de.get("pk_column") or "id"
+                            predicates.append(
+                                PredicatePlan(
+                                    table_alias=tp.alias,
+                                    column_name=pk_c,
+                                    operator="IN" if len(ids_list) > 1 else "=",
+                                    value=ids_list if len(ids_list) > 1 else (ids_list[0] if ids_list else de.get("name")),
+                                    logical_operator="AND",
+                                )
+                            )
+                            bound = True
+                            break
+                    if not bound and ids_list:
+                        # Check for FK column on work_packages / tasks table (e.g. assigned_to_id)
+                        for tp in table_plans:
+                            tbl_schema = canonical_schema.get_table(tp.schema_name, tp.table_name)
+                            if not tbl_schema:
+                                continue
+                            for col_name in tbl_schema.columns.keys():
+                                if col_name.lower() in ("assigned_to_id", "assigned_to", "user_id"):
+                                    predicates.append(
+                                        PredicatePlan(
+                                            table_alias=tp.alias,
+                                            column_name=col_name,
+                                            operator="IN" if len(ids_list) > 1 else "=",
+                                            value=ids_list if len(ids_list) > 1 else ids_list[0],
+                                            logical_operator="AND",
+                                        )
+                                    )
+                                    bound = True
+                                    break
+                            if bound:
+                                break
+
         plan = QueryPlanIR(
             database_knowledgebase_id=database_knowledgebase_id,
             schema_version=canonical_schema.fingerprint or "unknown",
@@ -3060,12 +3193,16 @@ class QueryPlanner:
             )
         except QueryPlanValidationError as e:
             print(f"DEBUG: Deterministic plan failed validation: {e}. Falling back to LLM.")
+            valid_fallback_tables = all_table_plans
+            if retrieval_result and hasattr(retrieval_result, "retrieved_tables") and retrieval_result.retrieved_tables:
+                r_names = {t.table_name.lower() for t in retrieval_result.retrieved_tables}
+                valid_fallback_tables = [tp for tp in all_table_plans if tp.table_name.lower() in r_names]
             return QueryPlanIR(
                 database_knowledgebase_id=database_knowledgebase_id,
                 schema_version=canonical_schema.fingerprint or "unknown",
                 user_query=user_query,
                 intent=analysis.intent,
-                tables=all_table_plans,
+                tables=valid_fallback_tables,
                 projections=[],
                 joins=[],
                 predicates=[],

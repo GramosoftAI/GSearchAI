@@ -111,16 +111,16 @@ class ContextPackBuilder:
         self,
         candidate_tables: List[TableCandidate],
         entity_res: EntityResolutionResult,
+        question: str = "",
+        frame: Optional[QuestionFrame] = None,
     ) -> List[TableCandidate]:
-        """Inject entity-matched tables and prune unconnected candidate noise."""
+        """Inject entity-matched tables, traverse foreign key neighborhood, and prune candidate noise."""
         from app.core.config import settings
 
         existing_names = {c.table_name.lower() for c in candidate_tables}
         top_score = candidate_tables[0].score if candidate_tables else 0.065
 
         # 1. Entity-Matched Tables handling (PART C.1)
-        # Remove the 0.95 x top score boost for entity-matched tables.
-        # Entity-matched tables are exempt from pruning but keep their natural score.
         entity_matched_tables: Set[str] = set()
         for re_ent in entity_res.resolved_entities:
             tbl = re_ent.table_name.lower().split(".")[-1]
@@ -128,23 +128,65 @@ class ContextPackBuilder:
                 continue
             entity_matched_tables.add(tbl)
             if tbl not in existing_names:
-                # Add with natural baseline score
-                natural_val_score = round(1.0 / (RRF_K + 10) * 1.3, 4)
+                natural_val_score = round(max(top_score * 0.98, 0.080), 4)
                 candidate_tables.append(
                     TableCandidate(
                         table_name=tbl,
                         score=natural_val_score,
                         reasons=[f"Entity value match '{re_ent.matched_value}' in {re_ent.table_name}.{re_ent.column_name}"],
-                        signals={"value_index": 1.3},
+                        signals={"value_index": 2.0},
                     )
                 )
                 existing_names.add(tbl)
             else:
                 for c in candidate_tables:
                     if c.table_name.lower() == tbl:
-                        c.signals["value_index"] = 1.3
+                        c.score = max(c.score, round(top_score * 0.98, 4))
+                        c.signals["value_index"] = 2.0
                         if not any(f"'{re_ent.matched_value}'" in r for r in c.reasons):
                             c.reasons.append(f"Entity match '{re_ent.matched_value}' in {re_ent.table_name}.{re_ent.column_name}")
+
+        # 1.5 ID Traversal Search: Traverse from Entity Anchor Tables along Foreign Keys
+        q_text = question or (frame.original_question if frame else "")
+        traversed_tables_set: Set[str] = set()
+        if entity_matched_tables and q_text:
+            traversed_neighbors = self.join_finder.traverse_entity_neighborhood(
+                anchor_tables=list(entity_matched_tables),
+                query_text=q_text,
+                max_hops=2,
+            )
+            for tn in traversed_neighbors:
+                if tn.relevance_score >= 1.5:
+                    traversed_tables_set.add(tn.table_name)
+                    if tn.table_name not in existing_names:
+                        # Vector search missed it entirely! Inject it with high priority
+                        traversal_score = round(max(top_score * 0.95, 0.080), 4)
+                        candidate_tables.append(
+                            TableCandidate(
+                                table_name=tn.table_name,
+                                score=traversal_score,
+                                reasons=[
+                                    f"ID Traversal from '{tn.anchor_table}' via FK {tn.left_col}->{tn.right_col} matching '{tn.matched_concept}'"
+                                ],
+                                signals={"id_traversal": tn.relevance_score, "value_index": 1.5},
+                            )
+                        )
+                        existing_names.add(tn.table_name)
+                        logger.info(
+                            f"[ID_TRAVERSAL] Injected traversed table '{tn.table_name}' from anchor '{tn.anchor_table}' "
+                            f"(score={traversal_score}, concept='{tn.matched_concept}')"
+                        )
+                    else:
+                        for c in candidate_tables:
+                            if c.table_name.lower() == tn.table_name:
+                                c.score = max(c.score, round(top_score * 0.95, 4))
+                                c.signals["id_traversal"] = tn.relevance_score
+                                reason_msg = f"ID Traversal from '{tn.anchor_table}' via FK {tn.left_col}->{tn.right_col} matching '{tn.matched_concept}'"
+                                if not any(tn.anchor_table in r for r in c.reasons):
+                                    c.reasons.append(reason_msg)
+                                logger.info(
+                                    f"[ID_TRAVERSAL] Boosted candidate '{tn.table_name}' from anchor '{tn.anchor_table}'"
+                                )
 
         candidate_tables.sort(key=lambda x: x.score, reverse=True)
         before_list = [c.table_name for c in candidate_tables]
@@ -153,19 +195,17 @@ class ContextPackBuilder:
             return []
 
         # 2. Candidate Pruning (PART C.2)
-        # Keep the top N tables by score (config, default 4), plus all entity-matched tables,
-        # plus bridge tables needed to connect them (max 2 hops via relationship graph).
-        # Never go below 3 tables when an entity table is present.
-        top_n = getattr(settings, "candidate_pruning_top_n", 4)
+        top_n = getattr(settings, "candidate_pruning_top_n", 6)
         max_hops = getattr(settings, "candidate_pruning_max_hops", 2)
 
         # Step 2a: Keep top N tables by score
         kept_candidates = list(candidate_tables[:top_n])
         kept_tables_set = {c.table_name.lower() for c in kept_candidates}
 
-        # Step 2b: Plus all entity-matched tables (exempt from pruning)
+        # Step 2b: Plus all entity-matched tables and traversed tables (exempt from pruning)
+        protected_tables = entity_matched_tables | traversed_tables_set
         for c in candidate_tables:
-            if c.table_name.lower() in entity_matched_tables and c.table_name.lower() not in kept_tables_set:
+            if c.table_name.lower() in protected_tables and c.table_name.lower() not in kept_tables_set:
                 kept_tables_set.add(c.table_name.lower())
                 kept_candidates.append(c)
 
@@ -185,7 +225,7 @@ class ContextPackBuilder:
 
         for t in list(kept_tables_set):
             if t != top_table:
-                shortest = self.join_finder._dijkstra_shortest_path(top_table, t)
+                shortest = self.join_finder._dijkstra_shortest_path(top_table, t, query_text=q_text)
                 if shortest is not None:
                     cost, edges = shortest
                     hops = len(edges)
@@ -295,6 +335,8 @@ class ContextPackBuilder:
             candidate_tables = self._inject_and_prune_candidates(
                 candidate_tables=list(raw_c_tables),
                 entity_res=entity_res,
+                question=question,
+                frame=frame,
             )
 
             t3 = time.perf_counter()
@@ -312,6 +354,7 @@ class ContextPackBuilder:
             join_res: JoinPathResult = self.join_finder.find_join_tree(
                 tables=join_target_tables,
                 frame=frame,
+                query_text=question,
             )
             timings["join_path_ms"] = round((time.perf_counter() - t4) * 1000, 2)
 
@@ -439,6 +482,8 @@ class ContextPackBuilder:
             candidate_tables = self._inject_and_prune_candidates(
                 candidate_tables=list(raw_candidate_tables),
                 entity_res=entity_res,
+                question=question,
+                frame=frame,
             )
 
             # 3. Retrieve columns for pruned candidates & Similar queries
@@ -482,6 +527,7 @@ class ContextPackBuilder:
             join_res = self.join_finder.find_join_tree(
                 tables=join_target_tables,
                 frame=frame,
+                query_text=question,
             )
             timings["join_path_ms"] = round((time.perf_counter() - t4) * 1000, 2)
 
@@ -509,7 +555,7 @@ class ContextPackBuilder:
             for col in bundle.columns:
                 if is_sensitive_column(col.column_name) or is_sensitive_for_values(col.column_name):
                     continue
-                all_cols_meta.append({
+                col_dict = {
                     "table": col.table_name,
                     "name": col.column_name,
                     "meaning": f"{col.table_name}.{col.column_name}",
@@ -517,7 +563,10 @@ class ContextPackBuilder:
                     "role": col.role or "dimension",
                     "aliases": [],
                     "score": col.score,
-                })
+                }
+                if col.accepted_values:
+                    col_dict["accepted_values"] = col.accepted_values
+                all_cols_meta.append(col_dict)
             for m in bundle.metrics:
                 metrics_meta.append({
                     "name": m.column_name,

@@ -32,7 +32,7 @@ from ..sensitivity import is_sensitive_column
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_BATCH_SIZE = 50
+EMBEDDING_BATCH_SIZE = 200
 
 
 def compute_doc_input_hash(title: str, body: str, aliases: List[str], unit: Optional[str], role: Optional[str]) -> str:
@@ -186,11 +186,11 @@ def build_schema_doc_data(
         if usage_note:
             body_parts.append(f"Usage: {usage_note}")
 
-        # Profiled categorical sample values if non-sensitive
+        # Profiled categorical sample values / accepted enum values if non-sensitive
         stats = payload.get("stats") or {}
-        top_vals = stats.get("top_values") or []
+        top_vals = payload.get("accepted_values") or stats.get("top_values") or []
         if top_vals and not is_sensitive_column(col_name) and role not in ("name", "id", "code", "text"):
-            body_parts.append(f"Sample values: {', '.join(str(v) for v in top_vals[:5])}")
+            body_parts.append(f"Accepted enum values: {', '.join(str(v) for v in top_vals[:10])}")
 
         body = ". ".join(body_parts)
 

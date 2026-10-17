@@ -101,6 +101,8 @@ class Phase1Adapter:
     Always enforces strict tenant isolation on every call.
     """
 
+    _GLOBAL_CONFIG_CACHE: Dict[str, Any] = {}
+
     def __init__(self, session: AsyncSession, secret_manager: Optional[SecretManager] = None):
         self.session = session
         self.secrets = secret_manager or SecretManager()
@@ -210,41 +212,52 @@ class Phase1Adapter:
         - Always cleanly closed on exit
         """
         cache_key = f"{tenant_id}:{kb_id}"
-        config = self._cached_configs.get(cache_key)
+        config = self._cached_configs.get(cache_key) or Phase1Adapter._GLOBAL_CONFIG_CACHE.get(cache_key)
         if not config:
             stmt = select(DatabaseKnowledgebase).where(
                 DatabaseKnowledgebase.id == kb_id,
                 DatabaseKnowledgebase.tenant_id == tenant_id,
                 DatabaseKnowledgebase.is_active == True,
             )
-            res = await self.session.execute(stmt)
-            kb_entity = res.scalar_one_or_none()
+            kb_entity = None
+            try:
+                res = await self.session.execute(stmt)
+                kb_entity = res.scalar_one_or_none()
+            except Exception as sess_err:
+                logger.warning(f"Error querying KB on self.session ({sess_err!r}), falling back to fresh session")
+                from app.core.database import AsyncSessionLocal
+                async with AsyncSessionLocal() as fresh_sess:
+                    res = await fresh_sess.execute(stmt)
+                    kb_entity = res.scalar_one_or_none()
             if not kb_entity:
                 raise PermissionError(f"Access denied or knowledge base '{kb_id}' not found for tenant '{tenant_id}'.")
 
             # Decrypt connection parameters strictly in private local scope
             config = self.secrets.decrypt_credentials(kb_entity.encrypted_credentials)
             self._cached_configs[cache_key] = config
+            Phase1Adapter._GLOBAL_CONFIG_CACHE[cache_key] = config
 
         db_type_str = str(getattr(config, "db_type", "")).lower()
         if "mariadb" in db_type_str or "mysql" in db_type_str or getattr(config, "port", None) in (3306, 3307):
             raise NotImplementedError("Phase1 live query adapter does not support MySQL/MariaDB connections via asyncpg.")
 
         # Resolve SSL mode
-        ssl_val = None
+        ssl_val = False
         if hasattr(config, "ssl_mode"):
             mode = getattr(config.ssl_mode, "value", str(config.ssl_mode)).lower()
             if mode in ("require", "verify_ca", "verify_full"):
                 ssl_val = "require"
             elif mode == "prefer":
                 ssl_val = "prefer"
+            elif mode in ("disable", "none", "false"):
+                ssl_val = False
 
-        timeout_sec = min(float(config.connection_timeout or 5.0), 5.0)
+        timeout_sec = max(float(config.connection_timeout or 10.0), 10.0)
 
         server_settings = {
             "application_name": "Phase2_Knowledge_ReadOnly",
             "default_transaction_read_only": "on",
-            "statement_timeout": "5000",  # 5s statement timeout
+            "statement_timeout": "10000",  # 10s statement timeout
         }
         if getattr(config, "schema_filter", None):
             server_settings["search_path"] = ", ".join(f'"{s}"' for s in config.schema_filter) + ", public"
@@ -259,7 +272,7 @@ class Phase1Adapter:
                 database=config.database_name,
                 ssl=ssl_val,
                 timeout=timeout_sec,
-                command_timeout=5.0,
+                command_timeout=10.0,
                 server_settings=server_settings,
             )
             yield conn

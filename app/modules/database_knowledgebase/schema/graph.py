@@ -76,9 +76,12 @@ class SchemaGraph:
                 if c_low.endswith("_id") or c_low.endswith("_id_id"):
                     stem = re.sub(r"_id(_id)?$", "", c_low)
                     candidates = [stem, stem + "s", stem + "es", f"base_{stem}", f"tab{stem.capitalize()}", f"tab{stem}"]
-                    if stem in ("assigned_to", "author", "responsible", "created_by", "updated_by", "owner", "member", "user"):
+                    if stem in ("assigned_to", "author", "responsible", "created_by", "updated_by", "owner", "member", "user", "assignee"):
+                        for exact_u in ("users", "user", "employees", "employee", "members", "member", "people", "person"):
+                            if exact_u in all_canonical_tables:
+                                candidates.append(exact_u)
                         for cand_t in all_canonical_tables.keys():
-                            if any(tok in cand_t for tok in ("user", "employee", "member", "person", "staff")) and not any(aux in cand_t for aux in ("setting", "preference", "role", "work", "bank", "bonus")):
+                            if any(tok in cand_t for tok in ("user", "employee", "member", "person", "staff")) and not any(aux in cand_t for aux in ("setting", "preference", "role", "work", "bank", "bonus", "password")):
                                 candidates.append(cand_t)
                     for cand in candidates:
                         if cand in all_canonical_tables:

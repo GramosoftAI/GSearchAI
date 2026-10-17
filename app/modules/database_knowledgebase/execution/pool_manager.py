@@ -73,15 +73,15 @@ class ReadOnlyPoolManager:
                 cls._instance = None
 
     @staticmethod
-    def _resolve_ssl(db_config: DatabaseConnectionConfig) -> Optional[str]:
+    def _resolve_ssl(db_config: DatabaseConnectionConfig) -> Any:
         """Convert SSLMode to asyncpg ssl argument."""
         if db_config.ssl_mode == SSLMode.DISABLE:
-            return None
+            return False
         elif db_config.ssl_mode in (SSLMode.REQUIRE, SSLMode.VERIFY_CA, SSLMode.VERIFY_FULL):
             return "require"
         elif db_config.ssl_mode == SSLMode.PREFER:
             return "prefer"
-        return None
+        return False
 
     @classmethod
     def generate_pool_key(

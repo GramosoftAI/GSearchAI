@@ -158,7 +158,10 @@ class SchemaKeywordMatcher:
         if table_aliases:
             for tbl, al_list in table_aliases.items():
                 if al_list:
-                    norm_aliases[tbl.lower()] = al_list
+                    tbl_clean = tbl.lower().strip()
+                    norm_aliases[tbl_clean] = al_list
+                    if "." in tbl_clean:
+                        norm_aliases[tbl_clean.split(".")[-1]] = al_list
 
         for s_name, s_info in schema.schemas.items():
             for t_name, table in s_info.tables.items():

@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     phase2_profiler_stats_max_age_days: int = 7  # Re-profile stats after 7 days
     phase2_enrich_llm_timeout_seconds: float = 120.0  # Per-table LLM call timeout
     phase2_enrich_max_retries: int = 2  # Max retries per table in enrich stage
-    phase2_enrich_max_concurrency: int = 4  # Max concurrency for table enrichment
+    phase2_enrich_max_concurrency: int = 8  # Max concurrency for table enrichment
     phase2_manual_inline_fallback: bool = True  # If True and Redis unavailable, allow running inline/local
     db_kb_insufficient_schema_guard_enabled: bool = False
     db_kb_min_table_retrieval_score: float = 0.30

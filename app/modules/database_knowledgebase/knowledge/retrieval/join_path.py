@@ -53,6 +53,17 @@ class JoinPathResult(BaseModel):
     total_cost: float = 0.0
 
 
+class TraversedNeighbor(BaseModel):
+    """Result of entity ID traversal along foreign key graph."""
+    table_name: str
+    anchor_table: str
+    left_col: str
+    right_col: str
+    relevance_score: float
+    matched_concept: str
+    hops: int = 1
+
+
 class EdgeInfo:
     def __init__(
         self,
@@ -168,9 +179,12 @@ class JoinPathFinder:
             )
 
     def _dijkstra_shortest_path(
-        self, start_table: str, end_table: str
+        self,
+        start_table: str,
+        end_table: str,
+        query_text: Optional[str] = None,
     ) -> Optional[Tuple[float, List[Tuple[str, EdgeInfo]]]]:
-        """Find lowest-weight path between two tables within max_hops."""
+        """Find lowest-weight path between two tables within max_hops, preferring query-aligned FK columns."""
         start = start_table.lower()
         end = end_table.lower()
 
@@ -180,6 +194,8 @@ class JoinPathFinder:
         # Priority queue: (cost, hops, current_table, path_taken)
         pq: List[Tuple[float, int, str, List[Tuple[str, EdgeInfo]]]] = [(0.0, 0, start, [])]
         best_costs: Dict[str, float] = {start: 0.0}
+
+        q_low = query_text.lower() if query_text else ""
 
         while pq:
             cost, hops, current, path = heapq.heappop(pq)
@@ -192,7 +208,24 @@ class JoinPathFinder:
 
             for edge in self._graph.get(current, []):
                 nxt = edge.target_table
-                new_cost = cost + edge.weight
+                edge_weight = edge.weight
+
+                # Semantic FK intent discount when query_text is present:
+                # E.g. "assigned" query prioritizes assigned_to_id over author_id
+                if q_low:
+                    col_str = f"{edge.left_col} {edge.right_col}".lower()
+                    if "assign" in q_low and "assigned" in col_str:
+                        edge_weight *= 0.5
+                    elif "assign" in q_low and (nxt == "members" or current == "members"):
+                        edge_weight *= 0.5
+                    elif "assign" in q_low and any(w in col_str for w in ("creator", "author", "created_by")):
+                        edge_weight *= 10.0
+                    elif any(w in q_low for w in ("create", "created", "author", "opened", "reported")) and "author" in col_str:
+                        edge_weight *= 0.5
+                    elif any(w in q_low for w in ("manager", "managed", "lead")) and "manager" in col_str:
+                        edge_weight *= 0.5
+
+                new_cost = cost + edge_weight
                 if nxt not in best_costs or new_cost < best_costs[nxt]:
                     best_costs[nxt] = new_cost
                     new_path = path + [(current, edge)]
@@ -204,6 +237,7 @@ class JoinPathFinder:
         self,
         tables: List[str],
         frame: Optional[QuestionFrame] = None,
+        query_text: Optional[str] = None,
     ) -> JoinPathResult:
         """Find minimum connecting tree for target tables (Steiner approximation)."""
         clean_tables = [t.lower().split(".")[-1] for t in tables]
@@ -243,6 +277,7 @@ class JoinPathFinder:
 
         targets_to_connect = [t for t in graph_tables if t != anchor]
         has_aggregation = bool(frame and frame.aggregation_cues)
+        q_text = query_text or (frame.original_question if frame else None)
 
         for target in targets_to_connect:
             if target in visited_nodes:
@@ -252,7 +287,7 @@ class JoinPathFinder:
             best_res = None
             best_weight = float("inf")
             for v_node in visited_nodes:
-                res = self._dijkstra_shortest_path(v_node, target)
+                res = self._dijkstra_shortest_path(v_node, target, query_text=q_text)
                 if res and res[0] < best_weight:
                     best_weight = res[0]
                     best_res = res
@@ -311,3 +346,131 @@ class JoinPathFinder:
             unreachable_tables=unreachable_nodes,
             total_cost=round(total_cost, 3),
         )
+
+    def traverse_entity_neighborhood(
+        self,
+        anchor_tables: List[str],
+        query_text: str,
+        max_hops: int = 2,
+    ) -> List[TraversedNeighbor]:
+        """
+        Traverse graph from entity anchor tables (e.g. 'users') and score connected
+        neighbor tables based on query keywords, table synonyms, and FK column semantics.
+        Enables Graph/ID Traversal Search to directly locate the target table and join path.
+        """
+        if not anchor_tables or not query_text:
+            return []
+
+        import re
+        q_lower = query_text.lower()
+        q_tokens = set(re.findall(r"\b[a-zA-Z0-9_]+\b", q_lower))
+
+        DOMAIN_SYNONYMS: Dict[str, Set[str]] = {
+            "work_packages": {"task", "tasks", "ticket", "tickets", "issue", "issues", "bug", "bugs", "work_package", "work_packages", "item", "items", "work", "package", "packages", "todo", "assign", "assigned", "assignee", "assignment"},
+            "time_entries": {"time", "timesheet", "timesheets", "hour", "hours", "spent", "logged", "log", "duration", "work", "entry", "entries"},
+            "projects": {"project", "projects", "program", "programs"},
+            "versions": {"version", "versions", "sprint", "sprints", "milestone", "milestones", "release", "releases"},
+            "meetings": {"meeting", "meetings", "call", "calls", "agenda", "discussion"},
+            "meeting_participants": {"meeting", "meetings", "participant", "participants", "attendee", "attendees"},
+            "messages": {"message", "messages", "post", "posts", "comment", "comments", "forum", "chat"},
+            "documents": {"document", "documents", "doc", "docs", "file", "files"},
+            "attachments": {"attachment", "attachments", "file", "files"},
+            "budgets": {"budget", "budgets", "cost", "costs", "expense", "expenses"},
+            "cost_entries": {"cost", "costs", "expense", "expenses", "rate", "rates", "billing"},
+            "members": {"member", "members", "membership", "memberships", "assign", "assigned", "assignment", "assignments", "project_member"},
+            "roles": {"role", "roles", "permission", "permissions"},
+            "statuses": {"status", "state", "phases", "phase"},
+            "users": {"user", "users", "employee", "employees", "person", "staff", "member"},
+        }
+
+        results: Dict[str, TraversedNeighbor] = {}
+
+        for anchor in anchor_tables:
+            anchor_clean = anchor.lower().split(".")[-1]
+            if anchor_clean not in self._graph:
+                continue
+
+            # 1-hop traversal
+            for edge in self._graph.get(anchor_clean, []):
+                target = edge.target_table
+                if target in anchor_tables or target == anchor_clean:
+                    continue
+                if target.endswith(("_storages", "_queries", "_modules", "_hierarchies", "_settings", "_attachments")):
+                    continue
+
+                # Check relevance of target table to user query
+                target_parts = set(re.split(r"[_\W]+", target))
+                synonyms = DOMAIN_SYNONYMS.get(target, set()) | target_parts
+                
+                # Check column relevance (e.g. "assigned" matching assigned_to_id)
+                col_tokens = (
+                    (set(re.split(r"[_\W]+", edge.left_col.lower())) | set(re.split(r"[_\W]+", edge.right_col.lower())))
+                    - {"id", "pk", "fk", "to", "by", "on"}
+                )
+                
+                col_match = bool(col_tokens & q_tokens)
+                table_match = bool(synonyms & q_tokens)
+
+                matched_tokens = list((synonyms | col_tokens) & q_tokens)
+                concept_str = ", ".join(matched_tokens) if matched_tokens else target
+
+                if table_match or col_match:
+                    score = 1.0
+                    if table_match:
+                        score += 1.5
+                    if col_match:
+                        score += 1.0
+
+                    # Specific verb/FK alignment bonuses
+                    col_str = f"{edge.left_col} {edge.right_col}".lower()
+                    if "assign" in q_lower and "assigned" in col_str:
+                        score += 1.0
+                    elif any(w in q_lower for w in ("create", "created", "author", "opened", "reported")) and "author" in col_str:
+                        score += 1.0
+
+                    if target not in results or score > results[target].relevance_score:
+                        results[target] = TraversedNeighbor(
+                            table_name=target,
+                            anchor_table=anchor_clean,
+                            left_col=edge.left_col,
+                            right_col=edge.right_col,
+                            relevance_score=score,
+                            matched_concept=concept_str,
+                            hops=1,
+                        )
+
+            # 2-hop traversal if max_hops >= 2
+            if max_hops >= 2:
+                for edge1 in self._graph.get(anchor_clean, []):
+                    hop1_table = edge1.target_table
+                    if hop1_table in anchor_tables or hop1_table == anchor_clean:
+                        continue
+                    for edge2 in self._graph.get(hop1_table, []):
+                        target2 = edge2.target_table
+                        if target2 in anchor_tables or target2 == anchor_clean or target2 == hop1_table:
+                            continue
+                        if target2.endswith(("_storages", "_queries", "_modules", "_hierarchies", "_settings", "_attachments")):
+                            continue
+                        if target2 in results and results[target2].hops == 1:
+                            continue
+
+                        target_parts = set(re.split(r"[_\W]+", target2))
+                        synonyms = DOMAIN_SYNONYMS.get(target2, set()) | target_parts
+                        table_match = bool(synonyms & q_tokens)
+                        if table_match:
+                            matched_tokens = list(synonyms & q_tokens)
+                            concept_str = ", ".join(matched_tokens)
+                            score = 1.2
+                            if target2 not in results or score > results[target2].relevance_score:
+                                results[target2] = TraversedNeighbor(
+                                    table_name=target2,
+                                    anchor_table=anchor_clean,
+                                    left_col=edge2.left_col,
+                                    right_col=edge2.right_col,
+                                    relevance_score=score,
+                                    matched_concept=concept_str,
+                                    hops=2,
+                                )
+
+        sorted_results = sorted(results.values(), key=lambda x: x.relevance_score, reverse=True)
+        return sorted_results

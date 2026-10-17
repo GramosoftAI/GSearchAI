@@ -584,11 +584,21 @@ async def run_phase2_pipeline(
             except Exception as e:
                 stage_duration = time.perf_counter() - t_stage_start
                 logger.error(f"[Phase 2 Pipeline] [{stage_idx}/{total_stages}] Stage '{stage_name.value}' failed in {stage_duration:.1f}s: {e}", exc_info=True)
+
+                # CRITICAL: Roll back the aborted transaction so subsequent SQL commands can execute!
+                try:
+                    await session.rollback()
+                except Exception as rb_err:
+                    logger.debug(f"Rollback on aborted session failed: {rb_err}")
+
                 stage_rec.status = JobStatus.FAILED
                 stage_rec.finished_at = datetime.now(timezone.utc)
                 stage_rec.error = str(e)
                 stage_rec.metrics["duration_seconds"] = round(stage_duration, 2)
-                await stage_heartbeat_cb()
+                try:
+                    await stage_heartbeat_cb()
+                except Exception as hb_err:
+                    logger.warning(f"stage_heartbeat_cb on failed stage failed: {hb_err}")
 
                 # Stage independence:
                 # If ENRICH, GLOSSARY_SEED, or EXAMPLES fail, continue so SCHEMA_INDEX is never blocked
@@ -601,13 +611,16 @@ async def run_phase2_pipeline(
                     run_record.finished_at = datetime.now(timezone.utc)
                     run_record.error = f"Stage {stage_name.value} failed: {e}"
 
-                    await repo.finish_run(
-                        run_id=r_id,
-                        status="failed",
-                        stages={k: v.model_dump(mode="json") for k, v in run_record.stages.items()},
-                        error=run_record.error,
-                    )
-                    await session.commit()
+                    try:
+                        await repo.finish_run(
+                            run_id=r_id,
+                            status="failed",
+                            stages={k: v.model_dump(mode="json") for k, v in run_record.stages.items()},
+                            error=run_record.error,
+                        )
+                        await session.commit()
+                    except Exception:
+                        pass
                     return run_record
 
         # All stages executed

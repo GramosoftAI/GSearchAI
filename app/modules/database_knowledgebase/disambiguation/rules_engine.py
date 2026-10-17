@@ -11,7 +11,7 @@ class RulesEngine:
         
         # 1. ID Resolution Injection
         for entity in resolved_entities:
-            if entity.get("type") == "user" and "id" in entity:
+            if entity.get("type") == "user" and entity.get("id") is not None:
                 user_id = entity["id"]
                 table_hint = entity.get("table")
                 pk_col = entity.get("pk_column") or "id"
@@ -45,13 +45,24 @@ class RulesEngine:
                             f"RULE: The user mentioned in the query has exactly ID = {val_repr}. "
                             f"Filter by ID = {val_repr} on the matching user table."
                         )
+            elif entity.get("type") == "user" and entity.get("values"):
+                vals = entity.get("values")
+                col = entity.get("column") or "name"
+                table_hint = entity.get("table")
+                name_hint = entity.get("name", "user")
+                val_list = ", ".join(f"'{v}'" for v in vals)
+                if table_hint:
+                    system_rules.append(
+                        f"RULE: The user '{name_hint}' matches records where {table_hint}.{col} IN ({val_list})."
+                    )
         
         # 2. Assignee vs Author Clarification
         query_lower = original_query.lower()
-        if "work package" in query_lower or "work packages" in query_lower:
+        if any(term in query_lower for term in ("work package", "work packages", "progress", "task", "tasks")):
             system_rules.append(
-                "RULE: When asked for 'work packages for [User]', ALWAYS assume they mean "
-                "the user it is assigned to, UNLESS they explicitly say 'authored by' or 'created by'."
+                "RULE: When asked for 'work packages' or 'progress' for a user, ALWAYS assume "
+                "the user it is assigned to (e.g. work_packages.assigned_to_id = users.id), "
+                "UNLESS they explicitly say 'authored by' or 'created by'."
             )
             
         return system_rules

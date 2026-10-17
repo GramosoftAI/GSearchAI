@@ -58,6 +58,7 @@ from ..exceptions.errors import (
     DatabaseTimeoutError,
     DatabaseKnowledgebaseNotFoundError,
 )
+from ..disambiguation.exceptions import DisambiguationRequiredError
 from ..execution.errors import ExecutionPolicyViolation
 from ..streaming.models import DatabaseStreamEventType
 from ..streaming.sink import DatabasePipelineEventSink
@@ -1177,73 +1178,11 @@ class DatabaseKnowledgebaseService:
             t_exec_ms = 0.0
             t_syn_ms = 0.0
 
-            # 0.5 Pre-Retrieval Ambiguity Resolution (Entity Extraction)
-            from ..disambiguation.extractor import EntityExtractor
-            from ..disambiguation.collision_detector import CollisionDetector
-            from ..disambiguation.rules_engine import RulesEngine
-            
-            t_disambig_start = time.perf_counter()
-            disambiguation_notices: List[str] = []
-            resolved_entities_list = resolved_entities or []
-            if not resolved_entities_list:
-                try:
-                    from ..knowledge.retrieval.entity_resolver import resolve_entities
-                    ent_res = await resolve_entities(
-                        question=user_query,
-                        kb_id=entity.id,
-                        session=self.db,
-                        canonical_schema=canonical_schema,
-                        tenant_id=entity.tenant_id,
-                    )
-                    table_entities: Dict[str, List[Any]] = {}
-                    for re_ent in ent_res.resolved_entities:
-                        t_norm = re_ent.table_name.lower().split(".")[-1]
-                        table_entities.setdefault(t_norm, []).append(re_ent)
-
-                    for t_norm, ents in table_entities.items():
-                        distinct_vals = list(dict.fromkeys([e.matched_value for e in ents]))
-                        primary_col = ents[0].column_name
-                        pk_col = ents[0].pk_column
-
-                        if len(distinct_vals) > 1:
-                            span_cand = ent_res.spans_tried[0] if ent_res.spans_tried else distinct_vals[0]
-                            for sp in ent_res.spans_tried:
-                                if sp.lower() in distinct_vals[0].lower():
-                                    span_cand = sp
-                                    break
-                            ambig_notice = f"'{span_cand}' matched {len(distinct_vals)} {t_norm}: {', '.join(distinct_vals)}"
-                            disambiguation_notices.append(ambig_notice)
-                            logger.info(f"[DISAMBIGUATION] Ambiguity notice added: {ambig_notice}")
-
-                        resolved_entities_list.append({
-                            "type": "user",
-                            "id": None,
-                            "name": distinct_vals[0],
-                            "table": t_norm,
-                            "column": primary_col,
-                            "pk_column": pk_col,
-                            "values": distinct_vals,
-                        })
-                        logger.info(f"[DISAMBIGUATION] Resolved '{t_norm}' -> {distinct_vals} on {primary_col}")
-                except Exception as e:
-                    logger.warning(f"[DISAMBIGUATION] Entity resolution failed, proceeding without: {e}")
-                        
-            strict_rules = RulesEngine.apply_glossary_rules(resolved_entities_list, user_query)
-            t_disambig_ms = (time.perf_counter() - t_disambig_start) * 1000.0
-            
-            # Incorporate strict_rules into user_query so retrieval & LLM enforce them
-            query_with_rules = user_query
-            if strict_rules:
-                query_with_rules += "\n\n" + "\n".join(strict_rules)
-                logger.info(f"[DISAMBIGUATION] Injected {len(strict_rules)} rules into query")
-                
-            # NOTE: We intentionally do NOT append resolved entity table names to query_with_rules.
-            # Appending table names (e.g. 'users' or 'employee_employee') pollutes the user query
-            # string and biases retrieval away from actual question context (like attendance or timesheet).
-            # Downstream stages already receive entity constraints via strict_rules.
-
             # 1. Retrieval
             current_stage = "RETRIEVAL"
+            disambiguation_notices: List[str] = []
+            resolved_entities_list = resolved_entities or []
+
             if event_sink:
                 event_sink.start_stage("RETRIEVAL")
                 await event_sink.emit(
@@ -1256,7 +1195,7 @@ class DatabaseKnowledgebaseService:
             t_ret_start = time.perf_counter()
             retrieval_res = await self.retrieve_schema_phase3(
                 kb_id=kb_id,
-                user_query=query_with_rules,
+                user_query=user_query,
                 top_k_tables=top_k_tables,
                 top_k_columns_per_table=top_k_columns_per_table,
                 include_relationships=True,
@@ -1277,6 +1216,73 @@ class DatabaseKnowledgebaseService:
 
             if pack and getattr(pack, "clarifications", None):
                 disambiguation_notices.extend(pack.clarifications)
+
+            # Populate resolved_entities_list from ContextPack (eliminates duplicate entity resolution)
+            if not resolved_entities_list and pack and getattr(pack, "entities", None):
+                for ent_info in pack.entities:
+                    t_norm = ent_info.get("table", "").lower().split(".")[-1]
+                    col_name = ent_info.get("column", "")
+                    pk_val = ent_info.get("pk")
+                    raw_val = ent_info.get("value") or ent_info.get("matched_value", "")
+                    choices = ent_info.get("choices") or []
+                    choice_pks = [c["pk"] for c in choices if isinstance(c, dict) and "pk" in c]
+                    resolved_ids = choice_pks if len(choice_pks) > 1 else (pk_val if pk_val is not None else ([choice_pks[0]] if choice_pks else None))
+
+                    # Interactive Disambiguation Check: prompt user if multiple ambiguous matches exist
+                    if len(choices) > 1 and not resolved_entities:
+                        from ..disambiguation.exceptions import DisambiguationRequiredError
+                        options = [
+                            {
+                                "id": c["pk"],
+                                "label": c.get("label") or f"{raw_val} (id {c['pk']})",
+                                "name": raw_val,
+                                "table": t_norm,
+                                "column": col_name,
+                                "pk_column": "id",
+                            }
+                            for c in choices if isinstance(c, dict) and "pk" in c
+                        ]
+                        is_user_entity = any(u_kw in t_norm for u_kw in ("user", "employee", "member", "staff", "person"))
+                        entity_label_plural = (
+                            "users"
+                            if is_user_entity
+                            else ("records" if t_norm.endswith("s") else f"{t_norm} records")
+                        )
+                        options.append({
+                            "id": choice_pks,
+                            "label": f"All of them ({len(choice_pks)} {entity_label_plural})",
+                            "name": raw_val,
+                            "table": t_norm,
+                            "column": col_name,
+                            "pk_column": "id",
+                            "values": [c.get("label", raw_val) for c in choices if isinstance(c, dict)],
+                        })
+                        raise DisambiguationRequiredError(
+                            message=f"Multiple matches found for '{raw_val}'. Which one did you mean?",
+                            options=options,
+                            entity_type=t_norm,
+                        )
+
+                    resolved_entities_list.append({
+                        "type": "user" if any(u_kw in t_norm for u_kw in ("user", "employee", "member", "staff", "person")) else "entity",
+                        "id": resolved_ids,
+                        "name": raw_val,
+                        "table": t_norm,
+                        "column": col_name,
+                        "pk_column": "id",
+                        "values": [c.get("label", raw_val) for c in choices if isinstance(c, dict)] if choices else [raw_val],
+                    })
+                    logger.info(f"[DISAMBIGUATION] From ContextPack resolved '{t_norm}.{col_name}' -> IDs {resolved_ids}")
+
+            from ..disambiguation.rules_engine import RulesEngine
+            strict_rules = RulesEngine.apply_glossary_rules(resolved_entities_list, user_query)
+            t_disambig_ms = 0.0
+
+            # Incorporate strict_rules into user_query for downstream LLM generation
+            query_with_rules = user_query
+            if strict_rules:
+                query_with_rules += "\n\n" + "\n".join(strict_rules)
+                logger.info(f"[DISAMBIGUATION] Injected {len(strict_rules)} rules into query")
 
             tracer.schema_version = retrieval_res.schema_version
             table_scores = {}
@@ -1990,6 +1996,23 @@ class DatabaseKnowledgebaseService:
                     },
                 )
             raise
+        except DisambiguationRequiredError as disambig_err:
+            tracer.record_failure(error_type="DisambiguationRequiredError", error_msg=disambig_err.message, stage="DISAMBIGUATION")
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.QUERY_ERROR,
+                    stage="DISAMBIGUATION",
+                    status="disambiguation_required",
+                    data={
+                        "error_code": 300,
+                        "stage": "DISAMBIGUATION",
+                        "retryable": False,
+                        "message": disambig_err.message,
+                        "options": disambig_err.options,
+                        "correlation_id": tracer.request_id or query_id,
+                    },
+                )
+            raise
         except Exception as exc:
             tracer.record_failure(error_type=type(exc).__name__, error_msg=str(exc), stage=current_stage)
             if event_sink:
@@ -2235,6 +2258,19 @@ class DatabaseKnowledgebaseService:
 
         saved = await self.repo.save_table_aliases(kb_id=kb_id, aliases_map=aliases_map)
         
+        # Invalidate SchemaRetrievalCache & TableRetriever so subsequent queries immediately pick up updated aliases
+        try:
+            from ..retrieval.cache import SchemaRetrievalCache
+            SchemaRetrievalCache.get_instance().invalidate_kb(str(self.tenant_id), str(kb_id))
+        except Exception as cache_err:
+            logger.debug(f"Failed to invalidate SchemaRetrievalCache for KB {kb_id}: {cache_err}")
+
+        try:
+            from ..knowledge.retrieval.table_retriever import TableRetriever
+            TableRetriever.clear_cache(kb_id)
+        except Exception as cache_err:
+            logger.debug(f"Failed to clear TableRetriever cache for KB {kb_id}: {cache_err}")
+
         result_map: Dict[str, List[str]] = {}
         for r in saved:
             result_map[r.table_name] = r.aliases if isinstance(r.aliases, list) else []
@@ -2248,6 +2284,20 @@ class DatabaseKnowledgebaseService:
     async def delete_table_alias(self, kb_id: uuid.UUID, table_name: str) -> Dict[str, Any]:
         """Delete aliases for a specific table."""
         await self.repo.delete_table_alias(kb_id=kb_id, table_name=table_name)
+        
+        # Invalidate SchemaRetrievalCache & TableRetriever on alias deletion
+        try:
+            from ..retrieval.cache import SchemaRetrievalCache
+            SchemaRetrievalCache.get_instance().invalidate_kb(str(self.tenant_id), str(kb_id))
+        except Exception as cache_err:
+            logger.debug(f"Failed to invalidate SchemaRetrievalCache for KB {kb_id}: {cache_err}")
+
+        try:
+            from ..knowledge.retrieval.table_retriever import TableRetriever
+            TableRetriever.clear_cache(kb_id)
+        except Exception as cache_err:
+            logger.debug(f"Failed to clear TableRetriever cache for KB {kb_id}: {cache_err}")
+
         remaining = await self.get_table_aliases(kb_id=kb_id)
         return {
             "success": True,

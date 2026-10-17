@@ -99,21 +99,36 @@ class EvidenceExtractor:
                         numeric_columns.setdefault(col, []).append(val)
                 else:
                     # Treat text values as supported entities/data
-                    if len(str_val) > 0 and len(str_val) < 200:
-                        supported_entities.add(str_val)
+                    if len(str_val) > 0:
+                        if len(str_val) < 200:
+                            supported_entities.add(str_val)
                         # Add individual word tokens for entity matching (split on any non-alphanumeric, including hyphens, slashes, punctuation)
                         for token in re.findall(r"[A-Za-z0-9]+", str_val):
                             if len(token) >= 2:
                                 supported_entities.add(token)
                                 supported_entities.add(token.title())
-                        # Extract any numbers embedded in text cells (e.g. street numbers "500", postal codes, building numbers)
+                        # Extract any numbers embedded in text cells (e.g. street numbers "500", postal codes, building numbers, or counts in descriptions)
                         for num_token in re.findall(r"\b\d+(?:\.\d+)?\b", str_val):
                             cls._add_number_variants(num_token, supported_numbers)
 
-                    # Extract year / month from ISO timestamps (e.g. "2026-02-01T...")
+                    # Extract year / month / day / time from ISO timestamps (e.g. "2026-10-15T16:35:49...")
                     if re.match(r"^\d{4}-\d{2}-\d{2}", str_val):
                         year = str_val[:4]
+                        month = str_val[5:7]
+                        day = str_val[8:10]
                         cls._add_number_variants(year, supported_numbers)
+                        cls._add_number_variants(month, supported_numbers)
+                        cls._add_number_variants(str(int(month)), supported_numbers)
+                        cls._add_number_variants(day, supported_numbers)
+                        cls._add_number_variants(str(int(day)), supported_numbers)
+                        # Extract hour/minute from time part
+                        if "T" in str_val or " " in str_val:
+                            time_part = str_val.replace("T", " ").split()[1] if len(str_val.replace("T", " ").split()) > 1 else ""
+                            for t_tok in re.findall(r"\b\d+\b", time_part):
+                                cls._add_number_variants(t_tok, supported_numbers)
+                                cls._add_number_variants(str(int(t_tok)), supported_numbers)
+                                if len(t_tok) == 2 and int(t_tok) > 12:
+                                    cls._add_number_variants(str(int(t_tok) - 12), supported_numbers)
 
         # 5. Precalculate deterministic aggregations for numeric columns
         for col, vals in numeric_columns.items():

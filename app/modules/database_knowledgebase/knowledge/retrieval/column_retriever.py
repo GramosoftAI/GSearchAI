@@ -44,6 +44,7 @@ class ColumnCandidate(BaseModel):
     is_group_candidate: bool = False
     is_metric: bool = False
     reasons: List[str] = Field(default_factory=list)
+    accepted_values: List[str] = Field(default_factory=list)
 
 
 class TableColumnBundle(BaseModel):
@@ -147,6 +148,7 @@ class ColumnRetriever:
                             "description": payload.get("description", ""),
                             "meaning": payload.get("meaning", ""),
                             "aliases": payload.get("aliases") or [],
+                            "accepted_values": payload.get("accepted_values") or payload.get("stats", {}).get("top_values") or [],
                         })
             elif item.item_type == "metric":
                 depends_on = payload.get("depends_on_tables") or []
@@ -302,6 +304,7 @@ class ColumnRetriever:
                     is_group_candidate=is_group,
                     is_metric=is_metric,
                     reasons=reasons,
+                    accepted_values=meta.get("accepted_values") or [],
                 )
 
                 if is_metric:

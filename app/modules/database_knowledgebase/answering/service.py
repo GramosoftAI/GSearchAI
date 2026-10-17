@@ -113,7 +113,10 @@ class DatabaseAnswerSynthesisService:
 
         # If LLM is disabled by request, format deterministically as table/summary
         if not use_llm:
-            fallback_text = DeterministicFormatter.format_table(user_query, evidence)
+            if evidence.row_count == 1:
+                fallback_text = DeterministicFormatter.format_single_row(user_query, evidence)
+            else:
+                fallback_text = DeterministicFormatter.format_table(user_query, evidence)
             fallback_text = DeterministicFormatter.apply_truncation_disclaimer(fallback_text, evidence.truncated)
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             return GroundedDatabaseAnswer(
@@ -121,7 +124,7 @@ class DatabaseAnswerSynthesisService:
                 database_knowledgebase_id=evidence.database_knowledgebase_id,
                 schema_version=evidence.schema_version,
                 answer_text=fallback_text,
-                answer_type=AnswerType.MULTI_ROW,
+                answer_type=AnswerType.SINGLE_ROW if evidence.row_count == 1 else AnswerType.MULTI_ROW,
                 evidence=evidence,
                 source_columns=evidence.columns,
                 row_count=evidence.row_count,
@@ -165,7 +168,10 @@ class DatabaseAnswerSynthesisService:
                 else:
                     # Attempt 2 failed: FAIL CLOSED to deterministic evidence presentation
                     logger.warning("Answer repair attempt 2 failed grounding verification. Failing closed to deterministic presentation.")
-                    final_text = DeterministicFormatter.format_table(user_query, evidence)
+                    if evidence.row_count == 1:
+                        final_text = DeterministicFormatter.format_single_row(user_query, evidence)
+                    else:
+                        final_text = DeterministicFormatter.format_table(user_query, evidence)
                     grounding_status = GroundingStatus.FALLBACK_DETERMINISTIC
                     report = GroundingReport(
                         is_grounded=True,
@@ -174,7 +180,10 @@ class DatabaseAnswerSynthesisService:
                     )
             except Exception as e:
                 logger.error(f"Error during answer repair attempt: {e}. Failing closed.")
-                final_text = DeterministicFormatter.format_table(user_query, evidence)
+                if evidence.row_count == 1:
+                    final_text = DeterministicFormatter.format_single_row(user_query, evidence)
+                else:
+                    final_text = DeterministicFormatter.format_table(user_query, evidence)
                 grounding_status = GroundingStatus.FALLBACK_DETERMINISTIC
                 report = GroundingReport(
                     is_grounded=True,

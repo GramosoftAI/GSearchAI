@@ -104,19 +104,62 @@ class DeterministicFormatter:
 
     @staticmethod
     def format_single_row(user_query: str, evidence: EvidenceModel) -> str:
-        """Format single record as key-value list."""
+        """Format single record cleanly with readable cards and dedicated description blocks."""
         if not evidence.rows:
             return "No matching record found."
         row = evidence.rows[0]
-        lines = ["Matching record details:"]
-        for col, val in row.items():
-            clean_col = col.replace("_", " ").title()
-            dec = DecimalCalculator.to_decimal(val)
-            if dec is not None and any(k in col.lower() for k in ["amount", "price", "total", "revenue"]):
-                formatted_val = DecimalCalculator.format_currency(dec)
-            else:
-                formatted_val = str(val) if val is not None else "N/A"
-            lines.append(f"- **{clean_col}**: {formatted_val}")
+
+        has_wp = any(k in row for k in ("subject", "task_name", "title")) or "description" in row
+
+        lines = []
+        if has_wp:
+            lines.append("Here are the details of the matching record:\n")
+            subject_val = row.get("subject") or row.get("task_name") or row.get("title")
+            if subject_val:
+                lines.append(f"**Subject**: {subject_val}")
+
+            status_val = row.get("status_name") or row.get("status")
+            if not status_val and "name" in row and "login" in row:
+                # If both name and login are in row, 'name' comes from statuses
+                status_val = row.get("name")
+            if status_val:
+                lines.append(f"**Status**: {status_val}")
+
+            for date_key in ("start_date", "created_at", "updated_at"):
+                if date_key in row and row[date_key] is not None:
+                    clean_lbl = date_key.replace("_", " ").title()
+                    lines.append(f"**{clean_lbl}**: {row[date_key]}")
+
+            desc_val = row.get("description") or row.get("notes") or row.get("details")
+            if desc_val:
+                lines.append(f"\n**Description**:\n{desc_val}")
+
+            other_attrs = []
+            for col, val in row.items():
+                if col in ("subject", "task_name", "title", "description", "notes", "details", "status_name", "status", "start_date", "created_at", "updated_at"):
+                    continue
+                if col == "name" and status_val == val:
+                    continue
+                if val is not None:
+                    clean_col = col.replace("_", " ").title()
+                    dec = DecimalCalculator.to_decimal(val)
+                    if dec is not None and any(k in col.lower() for k in ["amount", "price", "total", "revenue"]):
+                        formatted_val = DecimalCalculator.format_currency(dec)
+                    else:
+                        formatted_val = str(val)
+                    other_attrs.append(f"- **{clean_col}**: {formatted_val}")
+            if other_attrs:
+                lines.append("\n" + "\n".join(other_attrs))
+        else:
+            lines.append("Matching record details:")
+            for col, val in row.items():
+                clean_col = col.replace("_", " ").title()
+                dec = DecimalCalculator.to_decimal(val)
+                if dec is not None and any(k in col.lower() for k in ["amount", "price", "total", "revenue"]):
+                    formatted_val = DecimalCalculator.format_currency(dec)
+                else:
+                    formatted_val = str(val) if val is not None else "N/A"
+                lines.append(f"- **{clean_col}**: {formatted_val}")
         return "\n".join(lines)
 
     @staticmethod

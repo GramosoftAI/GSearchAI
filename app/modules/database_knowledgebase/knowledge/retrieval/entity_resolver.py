@@ -46,6 +46,7 @@ GENERIC_STOP_WORDS: Set[str] = {
     "search", "display", "count", "sum", "total", "average", "avg", "min", "max",
     "held", "hold", "holds", "holding", "meet", "meeting", "meetings",
     "work", "worked", "working", "log", "logged", "logging", "spend", "spent", "spending",
+    "assign", "assigned", "assigning", "assignment", "assignments",
     # Temporal
     "yesterday", "yesterdays", "today", "todays", "tomorrow", "tomorrows",
     "day", "days", "week", "weeks", "month", "months", "year", "years",
@@ -66,9 +67,34 @@ GENERIC_STOP_WORDS: Set[str] = {
     # Quantifiers / adverbs
     "all", "any", "some", "every", "each", "both", "few", "more", "most", "less", "least", "several",
     "only", "just", "also", "very", "too", "quite", "really", "already",
-    # Common domain status/words
-    "active", "inactive", "status", "type", "state", "open", "closed", "pending", "completed",
-    "long", "duration",
+    # Common domain status/words & concepts
+    "active", "inactive", "status", "statuses", "type", "types", "state", "states",
+    "open", "closed", "pending", "completed", "long", "duration",
+    "progress", "progresses", "progression",
+    "update", "updates", "updated", "updating",
+    "activity", "activities",
+    "task", "tasks",
+    "ticket", "tickets",
+    "issue", "issues",
+    "item", "items",
+    "story", "stories",
+    "bug", "bugs",
+    "workpackage", "workpackages", "work_package", "work_packages",
+    "report", "reports", "reported", "reporting",
+    "detail", "details", "detailed",
+    "history", "histories", "historical",
+    "overview", "summary", "summaries",
+    "review", "reviews",
+    "target", "targets",
+    "action", "actions",
+    "note", "notes",
+    "info", "information",
+    "record", "records",
+    "profile", "profiles",
+    "priority", "priorities",
+    "entry", "entries",
+    "timesheet", "timesheets",
+    "job", "jobs",
 }
 
 LABEL_LIKE_COLUMNS: Set[str] = {
@@ -232,8 +258,19 @@ async def build_kb_exclusion_set(
 
 
 def extract_candidate_spans(question: str, exclusion_set: Set[str]) -> List[str]:
-    """Candidate spans = tokens/phrases (max 3 words, max 4 spans per question) containing at least one non-excluded token."""
+    """Candidate spans = tokens/phrases (max 3 words, max 6 spans per question) containing at least one non-excluded token."""
     spans: List[str] = []
+
+    def _is_non_excluded(tok: str) -> bool:
+        if len(tok) < 2:
+            return False
+        tok_low = tok.lower()
+        if tok_low in GENERIC_STOP_WORDS:
+            return False
+        # Do not drop tokens that are capitalized in the question (proper nouns/names)
+        if tok[0].isupper():
+            return True
+        return tok_low not in exclusion_set
 
     # 1. Quoted strings from user
     quoted = re.findall(r'["\']([^"\']{2,})["\']', question)
@@ -244,20 +281,25 @@ def extract_candidate_spans(question: str, exclusion_set: Set[str]) -> List[str]
 
     # 2. Extract words
     tokens = re.findall(r"\b[a-zA-Z0-9_-]+\b", question)
-    non_excluded = [t for t in tokens if t.lower() not in exclusion_set and len(t) >= 2]
+    non_excluded = [t for t in tokens if _is_non_excluded(t)]
 
     if not non_excluded:
         return spans[:4]
 
+    # Prioritize single non-excluded tokens first (e.g. proper names like 'arun')
+    for t in non_excluded:
+        if t not in spans:
+            spans.append(t)
+
     # Contiguous sequences of non-excluded tokens
     i = 0
     while i < len(tokens):
-        if tokens[i].lower() not in exclusion_set and len(tokens[i]) >= 2:
+        if _is_non_excluded(tokens[i]):
             chunk = [tokens[i]]
             j = i + 1
             while j < len(tokens) and j < i + 3:
                 t_next = tokens[j]
-                if t_next.lower() not in exclusion_set or len(t_next) <= 2:
+                if _is_non_excluded(t_next) or len(t_next) <= 2:
                     chunk.append(t_next)
                     j += 1
                 else:
@@ -265,13 +307,11 @@ def extract_candidate_spans(question: str, exclusion_set: Set[str]) -> List[str]
             phrase = " ".join(chunk).strip()
             if phrase not in spans:
                 spans.append(phrase)
-            if tokens[i] not in spans and len(chunk) > 1:
-                spans.append(tokens[i])
             i = j
         else:
             i += 1
 
-    return spans[:4]
+    return spans[:6]
 
 
 class DisambiguationChoice(BaseModel):
@@ -315,7 +355,7 @@ async def resolve_entities(
     session: Optional[AsyncSession] = None,
     canonical_schema: Optional[Any] = None,
     tenant_id: Optional[uuid.UUID | str] = None,
-    timeout_ms: int = 300,
+    timeout_ms: int = 1500,
 ) -> EntityResolutionResult:
     """
     Unified, single query-path entity resolution function.
@@ -420,26 +460,45 @@ async def resolve_entities(
                         "match_type": "exact",
                         "frequency": freq or 1,
                     })
+        except asyncio.TimeoutError:
+            logger.warning(f"[EntityResolution] Exact query timed out after {timeout_ms}ms")
+            try:
+                await target_session.rollback()
+            except Exception:
+                pass
         except Exception as exc:
-            logger.warning(f"[EntityResolution] Exact query failed: {exc}")
+            logger.warning(f"[EntityResolution] Exact query failed: {exc!r}")
+            try:
+                await target_session.rollback()
+            except Exception:
+                pass
 
         # 2. Trigram fallback ONLY if nothing exact matches
         if not raw_matches and spans:
-            try:
-                for span_text in spans[:2]:
-                    clean_s = span_text.lower().strip()
-                    sql_fuzzy = text("""
-                        SELECT table_name, column_name, raw_value, normalized_value,
-                                similarity(normalized_value, :q) AS sim
-                        FROM kb2_entity_values
-                        WHERE db_knowledgebase_id = :kb_id
-                          AND normalized_value % :q
-                        ORDER BY similarity(normalized_value, :q) DESC
-                        LIMIT 5;
-                    """)
+            # Sort spans single-token first, try up to 4
+            ordered_spans = sorted(spans, key=lambda s: (len(s.strip().split()) > 1, len(s.strip().split())))[:4]
+            for span_text in ordered_spans:
+                clean_s = span_text.lower().strip()
+                fuzzy_params: Dict[str, Any] = {"kb_id": kb_uuid, "q": clean_s}
+                tenant_clause = ""
+                if tenant_uuid:
+                    tenant_clause = "AND tenant_id = :tenant_id"
+                    fuzzy_params["tenant_id"] = tenant_uuid
+
+                sql_fuzzy = text(f"""
+                    SELECT table_name, column_name, raw_value, normalized_value,
+                            similarity(normalized_value, :q) AS sim
+                    FROM kb2_entity_values
+                    WHERE db_knowledgebase_id = :kb_id
+                      {tenant_clause}
+                      AND normalized_value % :q
+                    ORDER BY similarity(normalized_value, :q) DESC
+                    LIMIT 5;
+                """)
+                try:
                     queries_count += 1
                     res_f = await asyncio.wait_for(
-                        target_session.execute(sql_fuzzy, {"kb_id": kb_uuid, "q": clean_s}),
+                        target_session.execute(sql_fuzzy, fuzzy_params),
                         timeout=timeout_ms / 1000.0,
                     )
                     for r in res_f.fetchall():
@@ -456,8 +515,18 @@ async def resolve_entities(
                             })
                     if raw_matches:
                         break
-            except Exception as exc:
-                logger.debug(f"[EntityResolution] Trigram fallback failed: {exc}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"[EntityResolution] Trigram fallback timed out after {timeout_ms}ms on span '{clean_s}'")
+                    try:
+                        await target_session.rollback()
+                    except Exception:
+                        pass
+                except Exception as exc:
+                    logger.warning(f"[EntityResolution] Trigram fallback failed on span '{clean_s}': {exc!r}")
+                    try:
+                        await target_session.rollback()
+                    except Exception:
+                        pass
 
         # 3. Deduplicate and group matches by (table_name, column_name, raw_value)
         unique_matches = []
@@ -510,8 +579,343 @@ async def resolve_entities(
             await target_session.close()
 
 
+# ── Label-like columns eligible for live fallback queries ──────────────
+_LIVE_FALLBACK_LABEL_COLUMNS: Set[str] = {
+    "name", "firstname", "first_name", "lastname", "last_name",
+    "fullname", "full_name", "login", "username", "user_name",
+    "title", "subject", "identifier", "label", "display_name",
+}
+
+# Roles that indicate a column holds human-readable name values (enum excluded)
+_LIVE_FALLBACK_ROLES: Set[str] = {"name", "code"}
+
+LABEL_COLUMN_PRIORITY: List[str] = [
+    "login", "firstname", "first_name", "lastname", "last_name",
+    "name", "username", "user_name", "full_name", "fullname",
+    "display_name", "title", "subject", "identifier", "label",
+]
+
+
+async def _get_label_columns_from_knowledge(
+    session: AsyncSession,
+    kb_id: uuid.UUID,
+    tenant_id: Optional[uuid.UUID] = None,
+) -> List[Dict[str, str]]:
+    """Fetch label-like columns from kb2_knowledge_items (schema knowledge).
+
+    Restricted to entity and lookup tables. Prioritizes login/names before truncating.
+    """
+    stmt = select(
+        KB2KnowledgeItem.item_key,
+        KB2KnowledgeItem.payload,
+        KB2KnowledgeItem.is_sensitive,
+    ).where(
+        KB2KnowledgeItem.db_knowledgebase_id == kb_id,
+        KB2KnowledgeItem.item_type == "column",
+    )
+    if tenant_id:
+        stmt = stmt.where(KB2KnowledgeItem.tenant_id == tenant_id)
+
+    try:
+        res = await session.execute(stmt)
+        raw_col_items = res.all()
+    except Exception as sess_err:
+        logger.warning(f"Error querying column items on session ({sess_err!r}), falling back to fresh session")
+        from app.core.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as fresh_sess:
+            res = await fresh_sess.execute(stmt)
+            raw_col_items = res.all()
+
+    # Load table kinds
+    try:
+        table_kinds = await get_kb_table_kinds(session, kb_id)
+    except Exception:
+        from app.core.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as fresh_sess:
+            table_kinds = await get_kb_table_kinds(fresh_sess, kb_id)
+
+    # First pass: identify tables with login or firstname columns (force entity kind)
+    # and map primary key columns per table
+    table_pk_map: Dict[str, str] = {}
+    for item_key, payload, is_sens in raw_col_items:
+        payload = payload or {}
+        col_name = (payload.get("column_name") or "").lower().strip()
+        tbl_raw = normalize_table_name(payload.get("table_name") or "")
+        if not col_name or not tbl_raw:
+            continue
+        if col_name in ("login", "firstname", "first_name"):
+            table_kinds[tbl_raw] = "entity"
+        if payload.get("is_primary_key") or col_name == "id":
+            table_pk_map[tbl_raw] = payload.get("column_name", "id")
+
+    label_cols: List[Dict[str, str]] = []
+
+    for item_key, payload, is_sens in raw_col_items:
+        if is_sens:
+            continue
+        payload = payload or {}
+        col_name = payload.get("column_name", "")
+        table_name_raw = payload.get("table_name", "")
+        role = (payload.get("role") or "").lower().strip()
+        if not col_name or not table_name_raw:
+            continue
+
+        # Parse schema.table format
+        parts = table_name_raw.split(".")
+        if len(parts) == 2:
+            schema_name, tbl_name = parts
+        else:
+            schema_name = "public"
+            tbl_name = parts[-1]
+
+        norm_tbl = normalize_table_name(tbl_name)
+
+        # Restrict to entity/lookup tables (or default to entity if unknown)
+        t_kind = table_kinds.get(norm_tbl, "entity")
+        if t_kind not in ("entity", "lookup"):
+            continue
+
+        col_lower = col_name.lower().strip()
+        col_parts = set(re.split(r"[_\s]+", col_lower))
+
+        # Ignore enum-role or technical columns
+        if role == "enum" or col_lower in TECHNICAL_COLUMNS:
+            continue
+
+        is_label = (
+            col_lower in _LIVE_FALLBACK_LABEL_COLUMNS
+            or bool(col_parts.intersection(_LIVE_FALLBACK_LABEL_COLUMNS))
+            or role in _LIVE_FALLBACK_ROLES
+        )
+        if not is_label:
+            continue
+
+        # Skip sensitive columns
+        if is_sensitive_column(col_name):
+            continue
+
+        label_cols.append({
+            "schema_table": f"{schema_name}.{tbl_name}",
+            "schema_name": schema_name,
+            "table_name": tbl_name,
+            "column_name": col_name,
+            "pk_col": table_pk_map.get(norm_tbl, "id"),
+        })
+
+    # Sort columns by priority BEFORE truncating
+    def _col_priority(c_info: Dict[str, str]) -> int:
+        c_low = c_info["column_name"].lower().strip()
+        t_low = c_info["table_name"].lower().strip()
+        # Entity tables like users, employees should have much higher priority than lookup tables
+        t_is_user = any(u in t_low for u in ("user", "employee", "member", "person", "staff"))
+        base = 0 if t_is_user else 100
+        if c_low in LABEL_COLUMN_PRIORITY:
+            return base + LABEL_COLUMN_PRIORITY.index(c_low)
+        parts = re.split(r"[_\s]+", c_low)
+        for idx, p in enumerate(LABEL_COLUMN_PRIORITY):
+            if p in parts:
+                return base + idx + 50
+        return base + 150
+
+    label_cols.sort(key=_col_priority)
+    return label_cols
+
+
+async def resolve_entities_live(
+    spans: List[str],
+    kb_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    adapter: Any,
+    session: AsyncSession,
+    timeout_ms: int = 2000,
+    max_columns: int = 30,
+    max_results: int = 10,
+) -> List[ResolvedEntity]:
+    """Live Entity Fallback: query customer database directly for name-like spans.
+
+    This runs ONLY when kb2_entity_values returns 0 matches.
+    Uses schema knowledge to identify label-like columns of entity/lookup tables,
+    then runs targeted queries against the customer database with strict safety guards.
+    """
+    if not spans or not adapter:
+        return []
+
+    # 1. Get label-like columns from schema knowledge
+    label_cols = await _get_label_columns_from_knowledge(session, kb_id, tenant_id)
+    if not label_cols:
+        logger.debug("[EntityResolution:LiveFallback] No label-like columns found in schema knowledge.")
+        logger.info("[EntityResolution:LiveFallback] 0 live matches found.")
+        return []
+
+    # Limit to max_columns (raised 10 -> 30) after priority sorting
+    label_cols = label_cols[:max_columns]
+
+    chosen_cols_str = ", ".join(f"{c['table_name']}.{c['column_name']}" for c in label_cols)
+    logger.info(f"[EntityResolution:LiveFallback] Chosen columns ({len(label_cols)}): {chosen_cols_str}")
+
+    resolved: List[ResolvedEntity] = []
+    # Prioritize single-token spans (e.g. 'arun') first
+    search_spans = sorted(
+        [s.strip() for s in spans if s.strip() and len(s.strip()) >= 2],
+        key=lambda s: (len(s.split()) > 1, len(s.split())),
+    )[:4]
+    if not search_spans:
+        logger.info("[EntityResolution:LiveFallback] 0 live matches found.")
+        return []
+
+    logger.info(
+        f"[EntityResolution:LiveFallback] Querying customer DB for spans {search_spans} "
+        f"across {len(label_cols)} label columns"
+    )
+
+    try:
+        async with adapter.open_readonly_connection(tenant_id, kb_id) as conn:
+            for span_text in search_spans:
+                if len(resolved) >= max_results:
+                    break
+
+                # Build targeted UNION ALL subqueries selecting id + matched column
+                union_parts = []
+                params = []
+                param_idx = 1
+
+                for col_info in label_cols:
+                    schema_name = col_info["schema_name"]
+                    tbl_name = col_info["table_name"]
+                    col_name = col_info["column_name"]
+                    pk_col = col_info.get("pk_col") or "id"
+                    quoted_tbl = f'"{schema_name}"."{tbl_name}"'
+                    quoted_col = f'"{col_name}"'
+                    quoted_pk = f'"{pk_col}"'
+
+                    union_parts.append(
+                        f"(SELECT '{tbl_name}' AS tbl, '{col_name}' AS col, "
+                        f"'{pk_col}' AS pk_col, {quoted_pk}::text AS row_id, "
+                        f"{quoted_col}::text AS matched_val "
+                        f"FROM {quoted_tbl} "
+                        f"WHERE {quoted_col} IS NOT NULL "
+                        f"AND LOWER({quoted_col}::text) LIKE ${param_idx} "
+                        f"LIMIT 5)"
+                    )
+                    params.append(f"%{span_text.lower()}%")
+                    param_idx += 1
+
+                if not union_parts:
+                    continue
+
+                full_query = " UNION ALL ".join(union_parts) + f" LIMIT {max_results * 5};"
+
+                try:
+                    rows = await asyncio.wait_for(
+                        conn.fetch(full_query, *params),
+                        timeout=timeout_ms / 1000.0,
+                    )
+
+                    # Group matches by table -> row_id
+                    # table_matches: tbl -> {row_id: {"row_data": {col: val}, "pk_col": pk_col}}
+                    table_matches: Dict[str, Dict[str, Dict[str, Any]]] = {}
+                    for r in rows:
+                        tbl = r["tbl"]
+                        col = r["col"]
+                        pk_col = r["pk_col"]
+                        row_id = str(r["row_id"]) if r["row_id"] is not None else ""
+                        matched_val = r["matched_val"]
+                        if not row_id or not matched_val:
+                            continue
+
+                        tbl_dict = table_matches.setdefault(tbl, {})
+                        row_dict = tbl_dict.setdefault(row_id, {"row_data": {}, "pk_col": pk_col, "first_col": col})
+                        row_dict["row_data"][col] = matched_val
+
+                    # Construct ResolvedEntity objects per table, prioritizing user/employee tables
+                    sorted_tables = sorted(
+                        table_matches.items(),
+                        key=lambda item: 0 if any(u in item[0].lower() for u in ("user", "employee", "member", "person", "staff")) else 1
+                    )
+                    for tbl, row_map in sorted_tables:
+                        choices: List[DisambiguationChoice] = []
+                        best_col = None
+                        pk_col = "id"
+
+                        for row_id, r_info in row_map.items():
+                            pk_col = r_info["pk_col"]
+                            row_data = r_info["row_data"]
+                            if not best_col:
+                                best_col = r_info["first_col"]
+
+                            # Determine display label in priority: login -> name -> firstname -> first value
+                            display_val = (
+                                row_data.get("login")
+                                or row_data.get("name")
+                                or row_data.get("firstname")
+                                or next(iter(row_data.values()))
+                            )
+                            # Convert integer IDs
+                            pk_val: Any = int(row_id) if row_id.isdigit() else row_id
+                            display_label = f"{display_val} (id {row_id})"
+
+                            choices.append(DisambiguationChoice(
+                                pk_value=pk_val,
+                                display_label=display_label,
+                                row_data=row_data,
+                            ))
+
+                        if not choices:
+                            continue
+
+                        is_ambiguous = len(choices) > 1
+                        matched_display = choices[0].display_label.split(" (id")[0] if choices else span_text
+                        all_pks = [c.pk_value for c in choices]
+                        entity_pk = all_pks if is_ambiguous else choices[0].pk_value
+
+                        resolved.append(ResolvedEntity(
+                            table_name=tbl,
+                            column_name=best_col or "name",
+                            matched_value=matched_display,
+                            pk_column=pk_col,
+                            pk_value=entity_pk,
+                            ambiguous=is_ambiguous,
+                            choices=choices,
+                            match_type="live",
+                            similarity=0.95,
+                            confidence=0.95,
+                        ))
+
+                    if len(resolved) >= max_results:
+                        break
+
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"[EntityResolution:LiveFallback] Timeout querying customer DB for span '{span_text}'"
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        f"[EntityResolution:LiveFallback] Query failed for span '{span_text}': {exc!r}"
+                    )
+
+    except Exception as conn_exc:
+        logger.warning(f"[EntityResolution:LiveFallback] Could not open customer DB connection: {conn_exc!r}")
+        raise conn_exc
+
+    # Sort resolved entities so user/person entities always come before lookup tables
+    resolved.sort(
+        key=lambda e: 0 if any(u in e.table_name.lower() for u in ("user", "employee", "member", "person", "staff")) else 1
+    )
+
+    if not resolved:
+        logger.info("[EntityResolution:LiveFallback] 0 live matches found.")
+
+    return resolved
+
+
 class LiveEntityResolver:
-    """Backwards-compatible wrapper delegating to unified resolve_entities."""
+    """Backwards-compatible wrapper delegating to unified resolve_entities.
+
+    Two-tier resolution:
+    1. Cache-first: query pre-indexed kb2_entity_values (fast, < 10ms)
+    2. Live fallback: if cache returns 0 matches AND adapter is available,
+       query customer database directly for name-like spans (< 2s)
+    """
 
     def __init__(
         self,
@@ -531,10 +935,59 @@ class LiveEntityResolver:
         frame: QuestionFrame,
         session: Optional[AsyncSession] = None,
     ) -> EntityResolutionResult:
-        """Resolve entity values using unified local-only resolver."""
-        return await resolve_entities(
+        """Resolve entity values: cache-first, then live fallback if needed."""
+        effective_session = session or self.db
+
+        # Tier 1: Cache-first resolution from kb2_entity_values
+        result = await resolve_entities(
             question=frame.original_question,
             kb_id=db_knowledgebase_id,
-            session=session or self.db,
+            session=effective_session,
             tenant_id=self.tenant_id,
         )
+
+        # Tier 2: Live fallback if cache returned 0 matches and adapter is available
+        live_conn_error: Optional[str] = None
+        if (
+            not result.resolved_entities
+            and not result.unanswerable
+            and result.spans_tried
+            and self.adapter is not None
+        ):
+            logger.info(
+                f"[EntityResolution] Cache returned 0 matches for spans {result.spans_tried}. "
+                f"Falling back to live customer DB query."
+            )
+            try:
+                live_entities = await resolve_entities_live(
+                    spans=result.spans_tried,
+                    kb_id=db_knowledgebase_id,
+                    tenant_id=self.tenant_id,
+                    adapter=self.adapter,
+                    session=effective_session,
+                )
+                if live_entities:
+                    result.resolved_entities = live_entities
+                    logger.info(
+                        f"[EntityResolution] Live fallback resolved {len(live_entities)} entities: "
+                        f"{[(e.table_name, e.column_name, e.matched_value) for e in live_entities]}"
+                    )
+            except Exception as exc:
+                live_conn_error = str(exc) or exc.__class__.__name__
+                logger.warning(f"[EntityResolution] Live fallback failed: {exc!r}")
+
+        # Fail-closed guard: if both tiers return 0 and a non-excluded proper-noun span exists,
+        # set unanswerable=True with a clear message and stop before SQL generation.
+        if not result.resolved_entities and not result.unanswerable and result.spans_tried:
+            target_span = next((s for s in result.spans_tried if len(s.split()) == 1), result.spans_tried[0])
+            result.unanswerable = True
+            if live_conn_error:
+                result.unanswerable_reason = (
+                    f"Customer database connection timed out or failed while searching for '{target_span}'. "
+                    f"Please verify your database server is running and accessible."
+                )
+            else:
+                result.unanswerable_reason = f"Couldn't find '{target_span}' in the data."
+            logger.info(f"[EntityResolution] Fail closed: {result.unanswerable_reason}")
+
+        return result

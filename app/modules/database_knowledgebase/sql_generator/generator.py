@@ -6,7 +6,7 @@ or deterministic AST compilation.
 
 import logging
 import re
-import datetime
+from datetime import date, datetime, time as dt_time
 from typing import Optional, Any
 import sqlglot
 from sqlglot import exp
@@ -146,11 +146,20 @@ class CandidateSQLGenerator:
         for p in plan.predicates:
             col_expr = exp.column(p.column_name, table=p.table_alias)
             is_time_val = (
-                isinstance(p.value, datetime.time)
+                isinstance(p.value, dt_time)
                 or (isinstance(p.value, str) and bool(re.match(r"^\d{1,2}:\d{2}(:\d{2})?(\.\d+)?$", p.value.strip())))
             )
             if is_time_val:
                 col_expr = exp.Cast(this=col_expr, to=exp.DataType.build("time"))
+
+            is_date_val = (
+                isinstance(p.value, (date, datetime))
+                or (isinstance(p.value, str) and bool(re.match(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}", p.value.strip())))
+                or (isinstance(p.value, str) and any(kw in p.value.lower() for kw in ("current_date", "interval", "now()", "current_timestamp")))
+                or any(d_term in p.column_name.lower() for d_term in ("_date", "date", "_at", "created_at", "updated_at"))
+            )
+            if any(p.column_name.lower().endswith(s) for s in ("_at", "_timestamp")) and is_date_val:
+                col_expr = exp.Cast(this=col_expr, to=exp.DataType.build("date"))
 
             op = p.operator.upper().strip()
 
@@ -160,7 +169,7 @@ class CandidateSQLGenerator:
                     expression=exp.Literal.number(p.value),
                 )
             elif op in {"=", "=="}:
-                if isinstance(p.value, str):
+                if isinstance(p.value, str) and not is_date_val and not is_time_val:
                     cond = exp.EQ(
                         this=exp.Anonymous(this="LOWER", expressions=[col_expr]),
                         expression=exp.Literal.string(p.value.lower()),
@@ -168,7 +177,7 @@ class CandidateSQLGenerator:
                 else:
                     cond = exp.EQ(this=col_expr, expression=_literal(p.value))
             elif op == "!=":
-                if isinstance(p.value, str):
+                if isinstance(p.value, str) and not is_date_val and not is_time_val:
                     cond = exp.NEQ(
                         this=exp.Anonymous(this="LOWER", expressions=[col_expr]),
                         expression=exp.Literal.string(p.value.lower()),
