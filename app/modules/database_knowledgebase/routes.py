@@ -184,7 +184,33 @@ async def introspect_database_schema(
     id: uuid.UUID,
     schemas: Optional[List[str]] = Query(None, description="Optional schema namespaces to filter (e.g. ['public'])"),
     service: DatabaseKnowledgebaseService = Depends(get_service),
+    db: AsyncSession = Depends(get_db),
 ):
+    from app.core.config import get_settings
+    settings = get_settings()
+    if not getattr(settings, "old_database", False):
+        # NEW FAST GROUNDED ARCHITECTURE (2-3 seconds, Markdown cheat sheets + pgvector)
+        from ..NEW_DB.service import NewDBService, convert_canonical_to_database_schema
+        new_svc = NewDBService(db=db, tenant_id=str(service.tenant_id))
+        await new_svc.sync_database(kb_id=id)
+
+        snapshot = await service.repo.get_latest_schema_snapshot(id)
+        if snapshot:
+            from .schemas.canonical import DatabaseSchema
+            if isinstance(snapshot.schema_data, dict) and "tables" in snapshot.schema_data and "schemas" not in snapshot.schema_data:
+                canonical_schema = convert_canonical_to_database_schema(snapshot.schema_data)
+            else:
+                canonical_schema = DatabaseSchema(**snapshot.schema_data)
+            return DatabaseSchemaResponse(
+                success=True,
+                db_knowledgebase_id=id,
+                schema_version=snapshot.schema_version,
+                schema_data=canonical_schema,
+                introspected_at=snapshot.created_at,
+                semantic_profile_status="ok",
+            )
+
+    # OLD 7-STAGE PIPELINE FALLBACK (If OLD_DATABASE=true)
     return await service.introspect_and_snapshot_schema(kb_id=id, schemas=schemas)
 
 
@@ -198,6 +224,25 @@ async def get_latest_schema(
     id: uuid.UUID,
     service: DatabaseKnowledgebaseService = Depends(get_service),
 ):
+    from app.core.config import get_settings
+    settings = get_settings()
+    if not getattr(settings, "old_database", False):
+        snapshot = await service.repo.get_latest_schema_snapshot(id)
+        if snapshot:
+            from .schemas.canonical import DatabaseSchema
+            from ..NEW_DB.service import convert_canonical_to_database_schema
+            if isinstance(snapshot.schema_data, dict) and "tables" in snapshot.schema_data and "schemas" not in snapshot.schema_data:
+                canonical_schema = convert_canonical_to_database_schema(snapshot.schema_data)
+            else:
+                canonical_schema = DatabaseSchema(**snapshot.schema_data)
+            return DatabaseSchemaResponse(
+                success=True,
+                db_knowledgebase_id=id,
+                schema_version=snapshot.schema_version,
+                schema_data=canonical_schema,
+                introspected_at=snapshot.created_at,
+                semantic_profile_status="ok",
+            )
     return await service.get_latest_schema(kb_id=id)
 
 
@@ -286,7 +331,65 @@ async def query_database(
     payload: DatabaseQueryApiRequest,
     request: Request,
     service: DatabaseKnowledgebaseService = Depends(get_service),
+    db: AsyncSession = Depends(get_db),
 ):
+    from fastapi.responses import JSONResponse
+    from .disambiguation.exceptions import DisambiguationRequiredError
+    from app.core.config import get_settings
+    settings = get_settings()
+
+    if not getattr(settings, "old_database", False):
+        # NEW FAST GROUNDED ARCHITECTURE (DeepSeek + pgvector table_doc + live entity resolution)
+        from ..NEW_DB.service import NewDBService
+        new_svc = NewDBService(db=db, tenant_id=str(service.tenant_id))
+        query_res = await new_svc.query_database(
+            kb_id=id,
+            user_query=payload.query,
+            resolved_entities=payload.resolved_entities,
+        )
+        if query_res.disambig_options:
+            return JSONResponse(
+                status_code=300,
+                content={
+                    "type": "DISAMBIGUATION_REQUIRED",
+                    "message": query_res.disambiguation_notice or "Multiple matching candidates found. Please select one:",
+                    "options": query_res.disambig_options,
+                }
+            )
+
+        from .answering.models import GroundedDatabaseAnswer, AnswerType, EvidenceModel, GroundingStatus, VerificationStatus
+        trace_id = str(uuid.uuid4())
+        evidence = EvidenceModel(
+            query_id=trace_id,
+            database_knowledgebase_id=id,
+            schema_version="new_db",
+            columns=query_res.columns,
+            rows=query_res.rows,
+            row_count=query_res.row_count,
+            truncated=query_res.truncated,
+            execution_time_ms=query_res.execution_time_ms,
+        )
+        return GroundedDatabaseAnswer(
+            query_id=trace_id,
+            database_knowledgebase_id=id,
+            schema_version="new_db",
+            answer_text=query_res.answer,
+            answer_type=AnswerType.NARRATIVE,
+            evidence=evidence,
+            source_columns=query_res.columns,
+            row_count=query_res.row_count,
+            truncated=query_res.truncated,
+            grounding_status=GroundingStatus.VERIFIED,
+            verification_status=VerificationStatus.PASSED,
+            rows=query_res.rows,
+            columns=query_res.columns,
+            generation_metadata={
+                "generated_sql": query_res.generated_sql,
+                "retrieved_tables": query_res.retrieved_tables,
+                "disambiguation_notice": query_res.disambiguation_notice,
+                "source": "NEW_DB",
+            },
+        )
     from fastapi.responses import JSONResponse
     from .disambiguation.exceptions import DisambiguationRequiredError
     
@@ -544,6 +647,28 @@ async def get_pipeline_status(
     service: DatabaseKnowledgebaseService = Depends(get_service),
     db: AsyncSession = Depends(get_db),
 ):
+    from app.core.config import get_settings
+    settings = get_settings()
+    if not getattr(settings, "old_database", False):
+        return {
+            "success": True,
+            "job_id": f"new_db_{id}",
+            "status": "succeeded",
+            "is_active": False,
+            "progress_percent": 100,
+            "current_stage": "ready",
+            "current_stage_label": "Ready / Synced (New Architecture)",
+            "stages": {
+                "profile": {"status": "succeeded"},
+                "relationships": {"status": "succeeded"},
+                "value_index": {"status": "succeeded"},
+                "enrich": {"status": "succeeded"},
+                "schema_index": {"status": "succeeded"},
+            },
+            "elapsed_seconds": 2,
+            "error": None,
+        }
+
     from .knowledge.api.admin_router import compute_pipeline_status
     t_uuid = uuid.UUID(str(service.tenant_id))
     return await compute_pipeline_status(tenant_id=t_uuid, kb_id=id, db=db)

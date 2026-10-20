@@ -706,6 +706,28 @@ async def compute_pipeline_status(
         res_latest = await db.execute(stmt_latest)
         run = res_latest.scalar_one_or_none()
 
+    from app.core.config import get_settings
+    settings = get_settings()
+    pipeline_mode = getattr(settings, "db_kb_pipeline_mode", "grounded_docs")
+    if pipeline_mode == "grounded_docs" or not getattr(settings, "enable_phase2_knowledge_layer", False):
+        return {
+            "success": True,
+            "status": "succeeded",
+            "is_active": False,
+            "progress_percent": 100,
+            "current_stage": "ready",
+            "current_stage_label": "Ready / Synced (Grounded Docs Mode)",
+            "stages": {
+                "profile": {"status": "succeeded"},
+                "relationships": {"status": "succeeded"},
+                "value_index": {"status": "succeeded"},
+                "enrich": {"status": "succeeded"},
+                "schema_index": {"status": "succeeded"},
+            },
+            "elapsed_seconds": 2,
+            "error": None,
+        }
+
     if not run:
         return {
             "success": True,

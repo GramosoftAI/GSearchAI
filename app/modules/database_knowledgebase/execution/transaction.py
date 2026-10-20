@@ -113,8 +113,14 @@ class TransactionManager:
         try:
             if isinstance(conn, asyncpg.Connection):
                 async with conn.transaction(readonly=True):
-                    records = await conn.fetch(sql, *args, timeout=timeout_seconds)
-                    return records
+                    try:
+                        records = await conn.fetch(sql, *args, timeout=timeout_seconds)
+                        return records
+                    except (asyncpg.DataError, TypeError) as codec_err:
+                        logger.warning(f"Parameter codec mismatch in asyncpg ({codec_err}). Retrying with stringified arguments...")
+                        str_args = [str(a) if not isinstance(a, (bytes,)) else a for a in args]
+                        records = await conn.fetch(sql, *str_args, timeout=timeout_seconds)
+                        return records
             else:
                 # asyncmy / MySQL connection
                 async with conn.cursor() as cursor:

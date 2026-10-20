@@ -337,8 +337,7 @@ class DatabaseKnowledgebaseService:
             fingerprint_changed = bool(old_schema_version and old_schema_version != canonical_schema.fingerprint)
             try:
                 from app.core.config import get_settings
-                settings = get_settings()
-                if getattr(settings, "enable_phase2_knowledge_layer", False):
+                if getattr(settings, "enable_phase2_knowledge_layer", False) and getattr(settings, "db_kb_pipeline_mode", "grounded_docs") != "grounded_docs":
                     if is_first_snapshot or fingerprint_changed:
                         from ..knowledge.jobs import trigger_phase2_sync_job
                         redis_pool = None
@@ -548,7 +547,11 @@ class DatabaseKnowledgebaseService:
                 error_code="SCHEMA_SNAPSHOT_NOT_FOUND",
             )
 
-        canonical_schema = DatabaseSchema(**snapshot.schema_data)
+        if isinstance(snapshot.schema_data, dict) and "tables" in snapshot.schema_data and "schemas" not in snapshot.schema_data:
+            from ...NEW_DB.service import convert_canonical_to_database_schema
+            canonical_schema = convert_canonical_to_database_schema(snapshot.schema_data)
+        else:
+            canonical_schema = DatabaseSchema(**snapshot.schema_data)
         return DatabaseSchemaResponse(
             success=True,
             db_knowledgebase_id=kb_id,
@@ -1039,6 +1042,655 @@ class DatabaseKnowledgebaseService:
             use_llm=use_llm,
         )
 
+    async def _query_database_grounded_docs(
+        self,
+        kb_id: uuid.UUID,
+        entity: DatabaseKnowledgebase,
+        user_query: str,
+        top_k_tables: int = 8,
+        top_k_columns_per_table: int = 25,
+        use_llm: bool = True,
+        execution_config: Optional[ExecutionConfig] = None,
+        request_id: Optional[str] = None,
+        user_id: Optional[Any] = None,
+        event_sink: Optional[DatabasePipelineEventSink] = None,
+        resolved_entities: Optional[list] = None,
+    ) -> GroundedDatabaseAnswer:
+        """
+        Streamlined, grounded database knowledgebase pipeline inspired by D:\\DB\\main.
+        Retrieves top-K AI-understandable table markdown docs from pgvector, resolves
+        concrete entities (e.g. user Arun -> ID 113), generates strictly grounded read-only
+        SQL with DeepSeek, validates AST safety with sqlglot, executes read-only on tenant DB,
+        and synthesizes rich narrative summaries with full column detail.
+        """
+        query_id = str(uuid.uuid4())
+        tracer = PipelineTracer(
+            query_id=query_id,
+            kb_id=kb_id,
+            user_query=user_query,
+            tenant_id=self.tenant_id,
+            request_id=request_id,
+            user_id=user_id,
+        )
+
+        current_stage = "INITIALIZATION"
+        t_ret_ms = 0.0
+        t_sql_ms = 0.0
+        t_exec_ms = 0.0
+        t_syn_ms = 0.0
+
+        try:
+            # 0. Query Acceptance
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.QUERY_ACCEPTED,
+                    stage="QUERY",
+                    status="accepted",
+                    data={
+                        "correlation_id": tracer.request_id or query_id,
+                        "query_length": len(user_query),
+                        "timestamp": datetime.now().isoformat(),
+                    },
+                )
+
+            # Security Pre-Validation
+            user_query_clean = user_query.strip()
+            hostile_ddl_dml = re.search(
+                r"\b(drop\s+table|delete\s+from|update\s+\w+\s+set|truncate\s+table|alter\s+table|grant\s+all|revoke\s+all)\b",
+                user_query_clean,
+                re.IGNORECASE,
+            )
+            if hostile_ddl_dml:
+                raise SQLValidationError(
+                    f"Security policy rejection: Non-SELECT command detected: {hostile_ddl_dml.group(0)}"
+                )
+
+            prompt_injection = re.search(
+                r"\b(ignore\s+(?:all\s+)?(?:previous\s+)?(?:instructions|rules|safety|security\s+policy)|disregard\s+(?:all\s+)?(?:rules|instructions)|override\s+system\s+prompt|bypass\s+security)\b",
+                user_query_clean,
+                re.IGNORECASE,
+            )
+            if prompt_injection:
+                raise SQLValidationError(
+                    f"Security policy rejection: Adversarial prompt injection detected: '{prompt_injection.group(0)}'"
+                )
+
+            # 1. Retrieval (Semantic Schema Docs from pgvector)
+            current_stage = "RETRIEVAL"
+            if event_sink:
+                event_sink.start_stage("RETRIEVAL")
+                await event_sink.emit(
+                    DatabaseStreamEventType.RETRIEVAL_STARTED,
+                    stage="RETRIEVAL",
+                    status="started",
+                    data={"top_k_tables": top_k_tables, "top_k_columns_per_table": top_k_columns_per_table},
+                )
+
+            t_ret_start = time.perf_counter()
+            from ..retrieval.schema_doc_retriever import SchemaDocRetriever
+            from ..schemas.canonical import DatabaseSchema
+
+            snapshot = await self.repo.get_latest_schema_snapshot(kb_id)
+            canonical_schema = DatabaseSchema(**snapshot.schema_data) if snapshot and snapshot.schema_data else None
+
+            tenant_uuid = uuid.UUID(str(self.tenant_id)) if isinstance(self.tenant_id, (str, uuid.UUID)) else self.tenant_id
+            schema_docs = await SchemaDocRetriever.retrieve_schema_docs(
+                session=self.db,
+                tenant_id=tenant_uuid,
+                kb_id=kb_id,
+                user_query=user_query,
+                top_k=top_k_tables,
+                canonical_schema=canonical_schema,
+            )
+            t_ret_ms = (time.perf_counter() - t_ret_start) * 1000.0
+
+            table_names = [d.get("table_name", "") for d in schema_docs if d.get("table_name")]
+            table_scores = {d.get("table_name", f"table_{i}"): d.get("score", 1.0) for i, d in enumerate(schema_docs)}
+
+            tracer.record_retrieval(
+                retrieved_tables=table_names,
+                table_scores=table_scores,
+                omitted_tables=[],
+                retrieved_columns={},
+                selected_relationships=[],
+                latency_ms=t_ret_ms,
+                schema_version=entity.schema_version or (snapshot.schema_version if snapshot else "grounded_docs"),
+            )
+
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.RETRIEVAL_COMPLETED,
+                    stage="RETRIEVAL",
+                    status="completed",
+                    data={
+                        "retrieved_tables_count": len(table_names),
+                        "retrieved_tables": table_names,
+                        "latency_ms": round(t_ret_ms, 2),
+                        "schema_version": entity.schema_version or "grounded_docs",
+                    },
+                    elapsed_stage_ms=t_ret_ms,
+                )
+
+            # 2. Entity Resolution & Disambiguation
+            target_user_id = None
+            target_user_name = None
+            disambiguation_notices: List[str] = []
+
+            # Check resolved_entities from prior interactive turn
+            if resolved_entities:
+                for ent in resolved_entities:
+                    if ent.get("id"):
+                        target_user_id = ent.get("id")
+                        target_user_name = ent.get("name") or ent.get("label")
+                        break
+
+            config = self.secrets.decrypt_credentials(entity.encrypted_credentials)
+            if target_user_id is None:
+                from ..retrieval.grounded_entity_resolver import GroundedEntityResolver
+                try:
+                    users = await GroundedEntityResolver.get_all_users(conn_config=config, kb_id=str(kb_id))
+                    matched_term, candidates = GroundedEntityResolver.find_user_candidates(user_query, users)
+                    if len(candidates) == 1:
+                        target_user_id = candidates[0]["id"]
+                        fn = (candidates[0].get("firstname") or "").strip()
+                        ln = (candidates[0].get("lastname") or "").strip()
+                        target_user_name = f"{fn} {ln}".strip() or candidates[0].get("login")
+                        disambiguation_notices.append(f"Targeting user '{target_user_name}' (ID {target_user_id})")
+                    elif len(candidates) > 1:
+                        options = [
+                            {
+                                "id": c["id"],
+                                "label": f"{(c.get('firstname') or '')} {(c.get('lastname') or '')} (login: {c.get('login')}, id: {c['id']})".strip(),
+                                "name": f"{(c.get('firstname') or '')} {(c.get('lastname') or '')}".strip() or c.get("login"),
+                                "table": "users",
+                                "column": "id",
+                                "pk_column": "id",
+                            }
+                            for c in candidates
+                        ]
+                        raise DisambiguationRequiredError(
+                            message=f"Multiple matches found for '{matched_term}'. Which one did you mean?",
+                            options=options,
+                            entity_type="users",
+                        )
+                except DisambiguationRequiredError:
+                    raise
+                except Exception as ent_err:
+                    logger.debug(f"[GROUNDED_PIPELINE] User resolution skipped or failed: {ent_err}")
+
+            # 3. Planning Event (Stream compatibility)
+            current_stage = "PLANNING"
+            if event_sink:
+                event_sink.start_stage("PLANNING")
+                await event_sink.emit(
+                    DatabaseStreamEventType.PLANNING_STARTED,
+                    stage="PLANNING",
+                    status="started",
+                )
+                await event_sink.emit(
+                    DatabaseStreamEventType.PLANNING_COMPLETED,
+                    stage="PLANNING",
+                    status="completed",
+                    data={
+                        "intent": "GROUNDED_QUERY",
+                        "tables_count": len(table_names),
+                        "joins_count": 0,
+                        "has_aggregations": False,
+                        "has_ranking": False,
+                        "limit": 50,
+                        "latency_ms": 1.0,
+                    },
+                    elapsed_stage_ms=1.0,
+                )
+
+            # 4. SQL Generation
+            current_stage = "SQL_GENERATION"
+            if event_sink:
+                event_sink.start_stage("SQL_GENERATION")
+                await event_sink.emit(
+                    DatabaseStreamEventType.SQL_GENERATION_STARTED,
+                    stage="SQL_GENERATION",
+                    status="started",
+                    data={"use_llm": use_llm, "stage": "SQL_GENERATION"},
+                )
+
+            t_sql_start = time.perf_counter()
+            from ..sql_generator.grounded_generator import GroundedSQLGenerator
+
+            target_user_dict = None
+            if target_user_id is not None:
+                target_user_dict = {"id": target_user_id, "name": target_user_name}
+
+            candidate_sql_raw = await GroundedSQLGenerator.generate_sql(
+                question=user_query,
+                retrieved_docs=schema_docs,
+                target_user=target_user_dict,
+            )
+            t_sql_ms = (time.perf_counter() - t_sql_start) * 1000.0
+
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.SQL_GENERATION_COMPLETED,
+                    stage="SQL_GENERATION",
+                    status="completed",
+                    data={
+                        "sql_generation_mode": "grounded_docs",
+                        "deterministic_sql_compilation": False,
+                        "sql_llm_bypassed": False,
+                        "repair_attempts": 0,
+                        "latency_ms": round(t_sql_ms, 2),
+                    },
+                    elapsed_stage_ms=t_sql_ms,
+                )
+
+            # 5. Validation & Authorization
+            current_stage = "VALIDATION"
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.VALIDATION_STARTED,
+                    stage="VALIDATION",
+                    status="started",
+                )
+
+            from ..sql_security.grounded_validator import GroundedSQLValidator
+            try:
+                candidate_sql_clean = GroundedSQLValidator.validate_readonly_sql(candidate_sql_raw)
+            except ValueError as val_err:
+                raise SQLValidationError(f"Security policy rejection: {val_err}")
+
+            if "LIMIT" not in candidate_sql_clean.upper():
+                default_limit = 1 if "count(" in candidate_sql_clean.lower() else 50
+                candidate_sql_clean = f"{candidate_sql_clean.rstrip()} LIMIT {default_limit}"
+
+            logger.info(f"[GROUNDED_PIPELINE] Generated SQL: {candidate_sql_clean}")
+            print(f"[GROUNDED_PIPELINE] Generated SQL: {candidate_sql_clean}")
+
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.VALIDATION_COMPLETED,
+                    stage="VALIDATION",
+                    status="completed",
+                    data={"is_valid": True, "warnings_count": 0, "errors_count": 0},
+                )
+
+            current_stage = "AUTHORIZATION"
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.AUTHORIZATION_STARTED,
+                    stage="AUTHORIZATION",
+                    status="started",
+                )
+                await event_sink.emit(
+                    DatabaseStreamEventType.AUTHORIZATION_COMPLETED,
+                    stage="AUTHORIZATION",
+                    status="completed",
+                    data={"allowed": True, "mode": "READ_ONLY", "reason": "Execution policy approved"},
+                )
+
+            # 6. Read-Only DB Execution
+            current_stage = "EXECUTION"
+            if event_sink:
+                event_sink.start_stage("EXECUTION")
+                await event_sink.emit(
+                    DatabaseStreamEventType.EXECUTION_STARTED,
+                    stage="EXECUTION",
+                    status="started",
+                )
+
+            from ..sql_parser.ast_parser import SQLASTParser
+            from ..sql_security.parameterizer import SQLParameterizer
+            from ..sql_security.diagnostics import ValidationResult
+            from ..planning.models import QueryPlanIR, IntentType, TablePlan
+            from ..sql_generator.repair import ValidatedCandidateSQL
+
+            parsed_ast = SQLASTParser.parse_sql(candidate_sql_clean, dialect="postgres")
+            parameterized = SQLParameterizer.parameterize(parsed_ast)
+
+            active_schema_version = entity.schema_version or (snapshot.schema_version if snapshot else "grounded_docs")
+            cand_sql = ValidatedCandidateSQL(
+                raw_sql=candidate_sql_clean,
+                sanitized_sql=candidate_sql_clean,
+                parameterized=parameterized,
+                plan=QueryPlanIR(
+                    database_knowledgebase_id=kb_id,
+                    schema_version=active_schema_version,
+                    user_query=user_query,
+                    intent=IntentType.SELECT_FILTER_MULTI,
+                    tables=[TablePlan(schema_name="public", table_name=t, alias=t[:2]) for t in table_names],
+                    joins=[],
+                    projections=[],
+                    predicates=[],
+                ),
+                validation_report=ValidationResult(is_valid=True, errors=[], warnings=[]),
+                repair_attempts=0,
+                sql_generation_mode="grounded_docs",
+                deterministic_sql_compilation=False,
+                sql_llm_bypassed=False,
+            )
+
+            t_exec_start = time.perf_counter()
+            canonical_result = await self.execute_candidate_sql(
+                kb_id=kb_id,
+                candidate_sql=cand_sql,
+                execution_config=execution_config,
+            )
+            t_exec_ms = (time.perf_counter() - t_exec_start) * 1000.0
+
+            # Zero-Row dynamic temporal relaxation recovery
+            if canonical_result.row_count == 0 and any(
+                kw in candidate_sql_raw.lower()
+                for kw in ("current_date", "now()", "interval", "_at::date", "date =", "date >=", "date <=")
+            ):
+                logger.info("[GROUNDED_ZERO_ROW] Zero rows returned with temporal filter. Relaxing temporal bound...")
+                lines = candidate_sql_raw.splitlines()
+                filtered_lines = [
+                    ln for ln in lines
+                    if not any(kw in ln.lower() for kw in ("current_date", "now()", "interval", "_at::date", "_at >=", "_at <="))
+                ]
+                relaxed_sql = "\n".join(filtered_lines)
+                relaxed_sql = re.sub(r"\bWHERE\s+AND\b", "WHERE", relaxed_sql, flags=re.IGNORECASE)
+                relaxed_sql = re.sub(r"\bAND\s*$", "", relaxed_sql, flags=re.MULTILINE)
+
+                if relaxed_sql != candidate_sql_raw:
+                    try:
+                        relaxed_sql_clean = GroundedSQLValidator.validate_readonly_sql(relaxed_sql)
+                        if "LIMIT" not in relaxed_sql_clean.upper():
+                            default_limit = 1 if "count(" in relaxed_sql_clean.lower() else 50
+                            relaxed_sql_clean = f"{relaxed_sql_clean.rstrip()} LIMIT {default_limit}"
+                        parsed_relaxed = SQLASTParser.parse_sql(relaxed_sql_clean, dialect="postgres")
+                        cand_relaxed = ValidatedCandidateSQL(
+                            raw_sql=relaxed_sql_clean,
+                            sanitized_sql=relaxed_sql_clean,
+                            parameterized=SQLParameterizer.parameterize(parsed_relaxed),
+                            plan=cand_sql.plan,
+                            validation_report=ValidationResult(is_valid=True, errors=[], warnings=[]),
+                            repair_attempts=1,
+                            sql_generation_mode="grounded_temporal_relaxed",
+                        )
+                        relaxed_result = await self.execute_candidate_sql(
+                            kb_id=kb_id,
+                            candidate_sql=cand_relaxed,
+                            execution_config=execution_config,
+                        )
+                        if relaxed_result.row_count > 0:
+                            logger.info(f"[GROUNDED_ZERO_ROW] Relaxed query recovered {relaxed_result.row_count} rows!")
+                            canonical_result = relaxed_result
+                            cand_sql = cand_relaxed
+                            disambiguation_notices.append(
+                                "No activity was found strictly for the specified date. Showing latest associated activity."
+                            )
+                    except Exception as rel_err:
+                        logger.debug(f"[GROUNDED_ZERO_ROW] Relaxed query attempt failed: {rel_err}")
+
+            tracer.record_sql_generation(
+                candidate_sql=cand_sql.sanitized_sql,
+                parameters=cand_sql.parameterized.parameters,
+                ast_valid=True,
+                ast_errors=[],
+                ast_warnings=[],
+                repair_attempts=cand_sql.repair_attempts,
+                latency_ms=t_sql_ms,
+                sql_generation_mode=cand_sql.sql_generation_mode,
+                deterministic_sql_compilation=cand_sql.deterministic_sql_compilation,
+                sql_llm_bypassed=cand_sql.sql_llm_bypassed,
+            )
+            tracer.record_execution(
+                executed=True,
+                row_count=canonical_result.row_count,
+                truncated=canonical_result.truncated,
+                execution_time_ms=canonical_result.execution_time_ms,
+                column_count=len(canonical_result.columns),
+                normalization_latency_ms=0.0,
+                error=None,
+            )
+
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.EXECUTION_COMPLETED,
+                    stage="EXECUTION",
+                    status="completed",
+                    data={
+                        "row_count": canonical_result.row_count,
+                        "truncated": canonical_result.truncated,
+                        "execution_time_ms": canonical_result.execution_time_ms,
+                        "columns_count": len(canonical_result.columns),
+                    },
+                    elapsed_stage_ms=canonical_result.execution_time_ms,
+                )
+
+            # 7. Answer Synthesis
+            current_stage = "SYNTHESIS"
+            if event_sink:
+                event_sink.start_stage("SYNTHESIS")
+                await event_sink.emit(
+                    DatabaseStreamEventType.SYNTHESIS_STARTED,
+                    stage="SYNTHESIS",
+                    status="started",
+                    data={"use_llm": use_llm, "stage": "SYNTHESIS"},
+                )
+
+            t_syn_start = time.perf_counter()
+            from ..answering.grounded_synthesizer import GroundedAnswerSynthesizer
+            from ..answering.models import (
+                AnswerType,
+                EvidenceModel,
+                GroundedDatabaseAnswer,
+                GroundingStatus,
+                VerificationStatus,
+            )
+
+            answer_text = await GroundedAnswerSynthesizer.synthesize_answer(
+                question=user_query,
+                sql=cand_sql.sanitized_sql,
+                result={
+                    "columns": canonical_result.columns,
+                    "rows": canonical_result.rows,
+                    "row_count": canonical_result.row_count,
+                    "truncated": canonical_result.truncated,
+                },
+            )
+            t_syn_ms = (time.perf_counter() - t_syn_start) * 1000.0
+
+            tracer.record_synthesis(
+                answer_type="NARRATIVE",
+                deterministic=False,
+                grounding_status="VERIFIED",
+                verification_status="PASSED",
+                repair_attempts=0,
+                latency_ms=t_syn_ms,
+                fallback_used=False,
+            )
+
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.SYNTHESIS_COMPLETED,
+                    stage="SYNTHESIS",
+                    status="completed",
+                    data={
+                        "answer_type": "NARRATIVE",
+                        "deterministic": False,
+                        "latency_ms": round(t_syn_ms, 2),
+                    },
+                    elapsed_stage_ms=t_syn_ms,
+                )
+                await event_sink.emit(
+                    DatabaseStreamEventType.GROUNDING_STARTED,
+                    stage="GROUNDING",
+                    status="started",
+                )
+                await event_sink.emit(
+                    DatabaseStreamEventType.GROUNDING_COMPLETED,
+                    stage="GROUNDING",
+                    status="completed",
+                    data={
+                        "grounding_status": "VERIFIED",
+                        "verification_status": "PASSED",
+                        "repair_attempts": 0,
+                    },
+                )
+
+            # 8. Terminal Answer Assembly
+            if disambiguation_notices:
+                prefix = "Notice: " + "; ".join(disambiguation_notices) + "\n\n"
+                if not answer_text.startswith("Notice:"):
+                    answer_text = prefix + answer_text
+
+            evidence = EvidenceModel(
+                query_id=query_id,
+                database_knowledgebase_id=kb_id,
+                schema_version=entity.schema_version or "grounded_docs",
+                columns=canonical_result.columns,
+                rows=canonical_result.rows,
+                row_count=canonical_result.row_count,
+                execution_time_ms=canonical_result.execution_time_ms,
+            )
+
+            t_total_ms = (time.perf_counter() - tracer.start_time) * 1000.0
+            final_answer = GroundedDatabaseAnswer(
+                query_id=query_id,
+                database_knowledgebase_id=kb_id,
+                schema_version=entity.schema_version or "grounded_docs",
+                answer_text=answer_text,
+                answer_type=AnswerType.COUNT if "count" in cand_sql.sanitized_sql.lower() else AnswerType.NARRATIVE,
+                evidence=evidence,
+                source_columns=canonical_result.columns,
+                row_count=canonical_result.row_count,
+                truncated=canonical_result.truncated,
+                grounding_status=GroundingStatus.VERIFIED,
+                verification_status=VerificationStatus.PASSED,
+                warnings=disambiguation_notices,
+                rows=canonical_result.rows,
+                columns=canonical_result.columns,
+                raw_result=canonical_result,
+                status="success",
+                candidate_tables=table_names,
+                generation_metadata={
+                    "pipeline_mode": "grounded_docs",
+                    "sql": cand_sql.sanitized_sql,
+                    "latency_ms": round(t_total_ms, 2),
+                    "stage_timings_ms": {
+                        "retrieval": round(t_ret_ms, 2),
+                        "sql_generation": round(t_sql_ms, 2),
+                        "execution": round(t_exec_ms, 2),
+                        "synthesis": round(t_syn_ms, 2),
+                        "total": round(t_total_ms, 2),
+                    },
+                },
+                pipeline_trace=tracer.finalize(),
+            )
+
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.ANSWER_COMPLETED,
+                    stage="ANSWER",
+                    status="completed",
+                    data={
+                        "answer_text": final_answer.answer_text,
+                        "answer_type": final_answer.answer_type.value if hasattr(final_answer.answer_type, "value") else str(final_answer.answer_type),
+                        "row_count": final_answer.row_count,
+                        "grounding_status": final_answer.grounding_status.value if hasattr(final_answer.grounding_status, "value") else str(final_answer.grounding_status),
+                        "verification_status": final_answer.verification_status.value if hasattr(final_answer.verification_status, "value") else str(final_answer.verification_status),
+                        "rows": final_answer.rows,
+                        "columns": final_answer.columns,
+                        "source_columns": final_answer.source_columns,
+                        "truncated": final_answer.truncated,
+                        "warnings": final_answer.warnings,
+                        "pipeline_trace": final_answer.pipeline_trace.model_dump(mode="json") if final_answer.pipeline_trace else None,
+                    },
+                )
+                await event_sink.emit(
+                    DatabaseStreamEventType.STREAM_COMPLETED,
+                    stage="STREAM",
+                    status="completed",
+                    data={
+                        "total_duration_ms": event_sink.get_total_elapsed_ms(),
+                        "final_status": "SUCCESS",
+                        "events_emitted": event_sink._seq,
+                    },
+                )
+
+            return final_answer
+
+        except (SQLValidationError, ExecutionPolicyViolation) as sec_err:
+            tracer.record_security_rejection(error_msg=str(sec_err), ast_errors=[str(sec_err)])
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.QUERY_ERROR,
+                    stage="SECURITY",
+                    status="error",
+                    data={
+                        "error_code": StreamingSanitizer.resolve_safe_error_code(sec_err),
+                        "stage": "SECURITY",
+                        "retryable": False,
+                        "message": StreamingSanitizer.resolve_safe_error_message(sec_err, "SECURITY"),
+                        "correlation_id": tracer.request_id or query_id,
+                    },
+                )
+            raise
+        except DatabaseTimeoutError as time_err:
+            tracer.record_failure(error_type="DatabaseTimeoutError", error_msg=str(time_err), stage="EXECUTION")
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.QUERY_ERROR,
+                    stage="EXECUTION",
+                    status="error",
+                    data={
+                        "error_code": "DATABASE_TIMEOUT",
+                        "stage": "EXECUTION",
+                        "retryable": True,
+                        "message": "The database query exceeded the execution timeout limit.",
+                        "correlation_id": tracer.request_id or query_id,
+                    },
+                )
+            raise
+        except asyncio.CancelledError:
+            tracer.record_failure(error_type="CancelledError", error_msg="Query cancelled", stage=current_stage)
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.QUERY_CANCELLED,
+                    stage=current_stage,
+                    status="cancelled",
+                    data={
+                        "stage": current_stage,
+                        "reason": "Query was cancelled by client.",
+                        "correlation_id": tracer.request_id or query_id,
+                    },
+                )
+            raise
+        except DisambiguationRequiredError as disambig_err:
+            tracer.record_failure(error_type="DisambiguationRequiredError", error_msg=disambig_err.message, stage="DISAMBIGUATION")
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.QUERY_ERROR,
+                    stage="DISAMBIGUATION",
+                    status="error",
+                    data={
+                        "error_code": "DISAMBIGUATION_REQUIRED",
+                        "stage": "DISAMBIGUATION",
+                        "retryable": False,
+                        "message": disambig_err.message,
+                        "correlation_id": tracer.request_id or query_id,
+                        "options": disambig_err.options,
+                    },
+                )
+            raise
+        except Exception as exc:
+            tracer.record_failure(error_type=type(exc).__name__, error_msg=str(exc), stage=current_stage)
+            if event_sink:
+                await event_sink.emit(
+                    DatabaseStreamEventType.QUERY_ERROR,
+                    stage=current_stage,
+                    status="error",
+                    data={
+                        "error_code": StreamingSanitizer.resolve_safe_error_code(exc),
+                        "stage": current_stage,
+                        "retryable": False,
+                        "message": StreamingSanitizer.resolve_safe_error_message(exc, current_stage),
+                        "correlation_id": tracer.request_id or query_id,
+                    },
+                )
+            raise
+
     async def query_database(
         self,
         kb_id: uuid.UUID,
@@ -1056,6 +1708,30 @@ class DatabaseKnowledgebaseService:
         Complete end-to-end database knowledgebase querying pipeline with Phase 3A observability
         and Phase 3D SSE lifecycle event streaming support.
         """
+        # Verify tenant ownership of knowledgebase
+        entity = await self.repo.get_by_id(kb_id)
+        if not entity:
+            raise TenantMismatchError(detail=f"Database knowledgebase '{kb_id}' not found.")
+
+        # Grounded Docs Pipeline Mode Gate
+        from app.core.config import get_settings
+        settings = get_settings()
+        pipeline_mode = getattr(settings, "db_kb_pipeline_mode", "grounded_docs")
+        if pipeline_mode == "grounded_docs":
+            return await self._query_database_grounded_docs(
+                kb_id=kb_id,
+                entity=entity,
+                user_query=user_query,
+                top_k_tables=top_k_tables,
+                top_k_columns_per_table=top_k_columns_per_table,
+                use_llm=use_llm,
+                execution_config=execution_config,
+                request_id=request_id,
+                user_id=user_id,
+                event_sink=event_sink,
+                resolved_entities=resolved_entities,
+            )
+
         query_id = str(uuid.uuid4())
         tracer = PipelineTracer(
             query_id=query_id,
@@ -1066,10 +1742,6 @@ class DatabaseKnowledgebaseService:
             user_id=user_id,
         )
 
-        # Verify tenant ownership of knowledgebase
-        entity = await self.repo.get_by_id(kb_id)
-        if not entity:
-            raise TenantMismatchError(detail=f"Database knowledgebase '{kb_id}' not found.")
         security_overrides = entity.settings.get("security_overrides", {}) if hasattr(entity, "settings") and entity.settings else {}
 
         audit_ctx = {

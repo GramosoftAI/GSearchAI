@@ -44,6 +44,9 @@ class Settings(BaseSettings):
 
     debug: bool = False
     
+    # ============= DATABASE ARCHITECTURE TOGGLE =============
+    old_database: bool = False  # If True, use old 7-stage profiling pipeline. If False, use new fast Grounded Docs architecture.
+
     # ============= EXPERIMENTAL FEATURES =============
     chunking_v2_enabled: bool = False
     chunking_v2_kb_ids: str = ""  # Comma separated list of KB IDs
@@ -477,6 +480,7 @@ class Settings(BaseSettings):
     embedding_warmup_interval_seconds: float = 45.0
     db_kb_deterministic_sql_enabled: bool = True
     db_kb_deterministic_answer_enabled: bool = True
+    db_kb_pipeline_mode: str = "grounded_docs"  # "grounded_docs" (D:\DB\main architecture) or "legacy_planner"
 
     # ============= CORS =============
 

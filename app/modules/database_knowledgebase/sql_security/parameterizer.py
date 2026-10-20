@@ -24,6 +24,22 @@ class SQLParameterizer:
     Transforms AST literals in WHERE/HAVING clauses into named parameters.
     """
 
+    @staticmethod
+    def _is_select_projection(literal: exp.Literal) -> bool:
+        """
+        Determines if a literal is part of a SELECT projection list (e.g. SELECT 1 in EXISTS subqueries).
+        Projection literals must NOT be parameterized as query arguments because PostgreSQL cannot
+        infer their types in prepared statement projection contexts without explicit casts.
+        """
+        curr = literal.parent
+        while curr:
+            if isinstance(curr, exp.Where):
+                return False
+            if isinstance(curr, exp.Select):
+                return any(e is literal or literal in e.find_all(exp.Literal) for e in curr.expressions)
+            curr = curr.parent
+        return False
+
     @classmethod
     def parameterize(cls, root: exp.Expression) -> ParameterizedSQL:
         """
@@ -39,6 +55,10 @@ class SQLParameterizer:
             for literal in list(where_expr.find_all(exp.Literal)):
                 # Do not parameterize LIMIT / OFFSET / INTERVAL literals
                 if literal.find_ancestor(exp.Limit) or literal.find_ancestor(exp.Offset) or literal.find_ancestor(exp.Interval):
+                    continue
+
+                # Do not parameterize literals in SELECT projections (e.g. SELECT 1 in EXISTS subqueries)
+                if cls._is_select_projection(literal):
                     continue
 
                 param_name = f"p{param_counter}"
