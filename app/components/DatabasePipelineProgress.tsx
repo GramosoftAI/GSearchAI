@@ -119,10 +119,19 @@ export const DatabasePipelineProgress: React.FC<DatabasePipelineProgressProps> =
         updated[8].state = "completed";
         updated[8].latencyMs = elapsed_stage_ms;
       } else if (event === "query.error") {
-        // Mark currently in_progress stage as error
-        for (const s of updated) {
-          if (s.state === "in_progress") {
-            s.state = "error";
+        if (status === "disambiguation_required" || stage === "DISAMBIGUATION" || data?.stage === "DISAMBIGUATION" || data?.error_code === 300) {
+          // Disambiguation prompt waiting for user interaction - mark completed
+          for (const s of updated) {
+            if (s.state === "in_progress") {
+              s.state = "completed";
+            }
+          }
+        } else {
+          // Mark currently in_progress stage as error
+          for (const s of updated) {
+            if (s.state === "in_progress") {
+              s.state = "error";
+            }
           }
         }
       } else if (event === "query.cancelled") {

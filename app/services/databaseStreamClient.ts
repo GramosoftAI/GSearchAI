@@ -63,6 +63,8 @@ export interface StreamQueryOptions {
   useLlm?: boolean;
   timeoutSeconds?: number;
   abortSignal?: AbortSignal;
+  resolvedEntities?: any[];
+  onDisambiguationRequired?: (data: { message: string; options: any[] }) => void;
   onEvent?: (event: DatabaseStreamEvent) => void;
   onAnswer?: (answer: any) => void;
   onError?: (error: StreamQueryError) => void;
@@ -83,6 +85,8 @@ export class DatabaseStreamClient {
       useLlm = true,
       timeoutSeconds,
       abortSignal,
+      resolvedEntities,
+      onDisambiguationRequired,
       onEvent,
       onAnswer,
       onError,
@@ -103,6 +107,7 @@ export class DatabaseStreamClient {
     const payload: Record<string, any> = {
       query,
       use_llm: useLlm,
+      resolved_entities: resolvedEntities,
     };
     if (timeoutSeconds) {
       payload["timeout_seconds"] = timeoutSeconds;
@@ -206,7 +211,20 @@ export class DatabaseStreamClient {
               }
             } else if (parsedEvent.event === "query.error") {
               hasCompleted = true;
-              if (onError) {
+              const isDisambig =
+                parsedEvent.status === "disambiguation_required" ||
+                parsedEvent.stage === "DISAMBIGUATION" ||
+                parsedEvent.data?.stage === "DISAMBIGUATION" ||
+                parsedEvent.data?.error_code === 300 ||
+                parsedEvent.data?.error_code === "300" ||
+                Boolean(parsedEvent.data?.options && parsedEvent.data.options.length > 0);
+
+              if (isDisambig && onDisambiguationRequired) {
+                onDisambiguationRequired({
+                  message: parsedEvent.data?.message || "Multiple matches found.",
+                  options: parsedEvent.data?.options || [],
+                });
+              } else if (onError) {
                 onError({
                   code: parsedEvent.data?.error_code || "QUERY_ERROR",
                   message: parsedEvent.data?.message || "An error occurred during query execution.",

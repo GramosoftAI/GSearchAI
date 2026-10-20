@@ -34,6 +34,7 @@ import {
   DatabaseOutlined,
   PlusOutlined,
   SyncOutlined,
+  LoadingOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   ThunderboltOutlined,
@@ -45,6 +46,7 @@ import {
   FieldTimeOutlined,
   SafetyCertificateOutlined,
   InfoCircleOutlined,
+  QuestionCircleOutlined,
   ArrowRightOutlined,
   DeleteOutlined,
   DownloadOutlined,
@@ -267,10 +269,50 @@ interface AuditLogEntry {
   audit_metadata?: any;
 }
 
+interface PipelineProgressState {
+  is_active: boolean;
+  progress_percent: number;
+  current_stage?: string;
+  current_stage_label?: string;
+  status: string;
+  error?: string | null;
+}
+
 export default function DatabaseKnowledgePage() {
   const [kbList, setKbList] = useState<DBKnowledgebase[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedKb, setSelectedKb] = useState<DBKnowledgebase | null>(null);
+  const [pipelineProgressMap, setPipelineProgressMap] = useState<Record<string, PipelineProgressState>>({});
+
+  const pollPipelineStatus = async (kbId: string) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/database-knowledgebases/${kbId}/pipeline-status`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPipelineProgressMap((prev) => ({
+          ...prev,
+          [kbId]: {
+            is_active: data.is_active,
+            progress_percent: data.progress_percent || 0,
+            current_stage: data.current_stage,
+            current_stage_label: data.current_stage_label,
+            status: data.status,
+            error: data.error,
+          },
+        }));
+
+        if (data.is_active) {
+          setTimeout(() => pollPipelineStatus(kbId), 3000);
+        } else if (data.status === "succeeded" || data.status === "succeeded_with_warnings") {
+          await fetchKnowledgebases();
+        }
+      }
+    } catch (e) {
+      console.error("Failed to poll pipeline status:", e);
+    }
+  };
 
   // Connection Modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -383,6 +425,21 @@ export default function DatabaseKnowledgePage() {
       };
       if (selectedKb?.id) {
         localStorage.setItem(`k2b_table_names_${selectedKb.id}`, JSON.stringify(nextState));
+        // Auto-persist to backend so aliases are active immediately without requiring Save button
+        fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/table-aliases`, {
+          method: "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            table_name: tableName,
+            aliases: updatedList,
+          }),
+        })
+          .then((res) => {
+            if (res.ok) {
+              toast.success(`Saved alternative name "${text}" for "${tableName}" in AI Knowledgebase!`);
+            }
+          })
+          .catch((err) => console.warn("Failed to auto-sync alias to server:", err));
       }
       return nextState;
     });
@@ -482,6 +539,7 @@ export default function DatabaseKnowledgePage() {
   const [streamError, setStreamError] = useState<string | null>(null);
   const [isCancelled, setIsCancelled] = useState<boolean>(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [disambiguationData, setDisambiguationData] = useState<{ message: string; options: any[] } | null>(null);
 
   // Phase 3B Tabs & Observability State
   const [activeTab, setActiveTab] = useState<string>("query");
@@ -566,6 +624,14 @@ export default function DatabaseKnowledgePage() {
   useEffect(() => {
     fetchKnowledgebases();
   }, []);
+
+  useEffect(() => {
+    if (kbList.length > 0) {
+      kbList.forEach((kb) => {
+        pollPipelineStatus(kb.id);
+      });
+    }
+  }, [kbList.map((k) => k.id).join(",")]);
 
   useEffect(() => {
     if (selectedKb) {
@@ -655,20 +721,54 @@ export default function DatabaseKnowledgePage() {
 
   const handleSyncSchema = async (kbId: string) => {
     setLoading(true);
+    setPipelineProgressMap((prev) => ({
+      ...prev,
+      [kbId]: {
+        is_active: true,
+        progress_percent: 5,
+        current_stage_label: "Introspecting schema and catalogs...",
+        status: "running",
+      },
+    }));
     try {
       const res = await fetch(`${API_BASE_URL}/database-knowledgebases/${kbId}/introspect`, {
         method: "POST",
         headers: getAuthHeaders(),
       });
       if (res.ok) {
-        toast.success("Database schema synchronized and indexed successfully!");
+        toast.success("Database schema synchronized! Starting Phase 2 knowledge processing...");
         await fetchKnowledgebases();
+        try {
+          fetch(`${API_BASE_URL}/database-knowledgebases/${kbId}/knowledge/pipeline/run?force_recompute=true&run_inline=false`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+          }).catch(() => {});
+        } catch {}
+        pollPipelineStatus(kbId);
       } else {
         const err = await res.json();
         toast.error(err.detail || "Schema introspection failed.");
+        setPipelineProgressMap((prev) => ({
+          ...prev,
+          [kbId]: {
+            is_active: false,
+            progress_percent: 0,
+            current_stage_label: "Introspection failed",
+            status: "failed",
+          },
+        }));
       }
     } catch (err: any) {
       toast.error(err.message || "Schema introspection error.");
+      setPipelineProgressMap((prev) => ({
+        ...prev,
+        [kbId]: {
+          is_active: false,
+          progress_percent: 0,
+          current_stage_label: "Introspection error",
+          status: "failed",
+        },
+      }));
     } finally {
       setLoading(false);
     }
@@ -968,7 +1068,12 @@ export default function DatabaseKnowledgePage() {
     toast("Query cancelled by user.", { icon: "🛑" });
   };
 
-  const handleRunQuery = async (queryText?: string) => {
+  const handleSelectDisambiguation = (option: any) => {
+    setDisambiguationData(null);
+    handleRunQuery(userQuery, [option]);
+  };
+
+  const handleRunQuery = async (queryText?: string, explicitResolvedEntities?: any[]) => {
     const q = queryText || userQuery;
     if (!q.trim()) {
       toast.error("Please enter a question.");
@@ -990,6 +1095,9 @@ export default function DatabaseKnowledgePage() {
     setStreamEvents([]);
     setStreamError(null);
     setIsCancelled(false);
+    if (!explicitResolvedEntities) {
+      setDisambiguationData(null);
+    }
 
     try {
       const token = getCookie("AUTH_TOKEN");
@@ -999,9 +1107,14 @@ export default function DatabaseKnowledgePage() {
         query: q,
         token: token || undefined,
         useLlm: true,
+        resolvedEntities: explicitResolvedEntities,
         abortSignal: controller.signal,
         onEvent: (event: DatabaseStreamEvent) => {
           setStreamEvents((prev) => [...prev, event]);
+        },
+        onDisambiguationRequired: (data) => {
+          setDisambiguationData(data);
+          setQueryLoading(false);
         },
         onAnswer: (answerData: any) => {
           // Normalize answer structure
@@ -1509,32 +1622,71 @@ export default function DatabaseKnowledgePage() {
 
                       {/* Top Right: Status Pill & Delete Button */}
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <span
-                          style={{
-                            fontSize: 10,
-                            fontWeight: 700,
-                            letterSpacing: "0.5px",
-                            padding: "2px 7px",
-                            borderRadius: 9999,
-                            backgroundColor: isReady ? "#ecfdf5" : "#f0f9ff",
-                            color: isReady ? "#047857" : "#0369a1",
-                            border: isReady ? "1px solid #a7f3d0" : "1px solid #bae6fd",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                            textTransform: "uppercase",
-                          }}
-                        >
+                        {pipelineProgressMap[kb.id]?.is_active ? (
+                          <Tooltip
+                            title={`${pipelineProgressMap[kb.id]?.current_stage_label || "Processing"} (${pipelineProgressMap[kb.id]?.progress_percent || 0}%)`}
+                          >
+                            <div
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 5,
+                                padding: "2px 7px 2px 4px",
+                                borderRadius: 9999,
+                                backgroundColor: "#f0fdfa",
+                                border: "1px solid #99f6e4",
+                                boxShadow: "0 1px 3px rgba(13, 148, 136, 0.12)",
+                              }}
+                            >
+                              <Progress
+                                type="circle"
+                                percent={pipelineProgressMap[kb.id]?.progress_percent || 0}
+                                size={20}
+                                strokeColor={{ "0%": "#14b8a6", "100%": "#0d9488" }}
+                                trailColor="#e2e8f0"
+                                strokeWidth={14}
+                                showInfo={false}
+                              />
+                              <span
+                                style={{
+                                  fontSize: 10.5,
+                                  fontWeight: 700,
+                                  color: "#0f766e",
+                                  fontFamily: "ui-monospace, monospace",
+                                }}
+                              >
+                                {pipelineProgressMap[kb.id]?.progress_percent || 0}%
+                              </span>
+                            </div>
+                          </Tooltip>
+                        ) : (
                           <span
                             style={{
-                              width: 5,
-                              height: 5,
-                              borderRadius: "50%",
-                              backgroundColor: isReady ? "#10b981" : "#0ea5e9",
+                              fontSize: 10,
+                              fontWeight: 700,
+                              letterSpacing: "0.5px",
+                              padding: "2px 7px",
+                              borderRadius: 9999,
+                              backgroundColor: isReady ? "#ecfdf5" : "#f0f9ff",
+                              color: isReady ? "#047857" : "#0369a1",
+                              border: isReady ? "1px solid #a7f3d0" : "1px solid #bae6fd",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              textTransform: "uppercase",
                             }}
-                          />
-                          {kb.status}
-                        </span>
+                          >
+                            <span
+                              style={{
+                                width: 5,
+                                height: 5,
+                                borderRadius: "50%",
+                                backgroundColor: isReady ? "#10b981" : "#0ea5e9",
+                              }}
+                            />
+                            {kb.status}
+                          </span>
+                        )}
 
                         <Tooltip title="Delete Database">
                           <Button
@@ -1617,7 +1769,14 @@ export default function DatabaseKnowledgePage() {
                     <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                       <Button
                         size="small"
-                        icon={<SyncOutlined style={{ fontSize: 11 }} />}
+                        icon={
+                          pipelineProgressMap[kb.id]?.is_active ? (
+                            <LoadingOutlined spin style={{ fontSize: 11, color: "#0d9488" }} />
+                          ) : (
+                            <SyncOutlined style={{ fontSize: 11 }} />
+                          )
+                        }
+                        disabled={pipelineProgressMap[kb.id]?.is_active}
                         onClick={(e) => {
                           e.stopPropagation();
                           handleSyncSchema(kb.id);
@@ -1626,13 +1785,16 @@ export default function DatabaseKnowledgePage() {
                           borderRadius: 8,
                           fontSize: 11.5,
                           fontWeight: 600,
-                          borderColor: "#cbd5e1",
-                          color: "#334155",
+                          borderColor: pipelineProgressMap[kb.id]?.is_active ? "#99f6e4" : "#cbd5e1",
+                          backgroundColor: pipelineProgressMap[kb.id]?.is_active ? "#f0fdfa" : "#ffffff",
+                          color: pipelineProgressMap[kb.id]?.is_active ? "#0f766e" : "#334155",
                           height: 30,
                         }}
                         className="hover:border-teal-500 hover:text-teal-600"
                       >
-                        Sync Schema
+                        {pipelineProgressMap[kb.id]?.is_active
+                          ? `Syncing (${pipelineProgressMap[kb.id]?.progress_percent || 0}%)`
+                          : "Sync Schema"}
                       </Button>
                       <Button
                         size="small"
@@ -1790,13 +1952,63 @@ export default function DatabaseKnowledgePage() {
                     >
                       Browse Schema
                     </Button>
+                    {selectedKb && pipelineProgressMap[selectedKb.id]?.is_active && (
+                      <Tooltip title={pipelineProgressMap[selectedKb.id]?.current_stage_label}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            padding: "3px 10px 3px 6px",
+                            borderRadius: 10,
+                            backgroundColor: "#f0fdfa",
+                            border: "1.5px solid #99f6e4",
+                            boxShadow: "0 2px 8px rgba(13, 148, 136, 0.12)",
+                          }}
+                        >
+                          <Progress
+                            type="circle"
+                            percent={pipelineProgressMap[selectedKb.id]?.progress_percent || 0}
+                            size={26}
+                            strokeColor={{ "0%": "#14b8a6", "100%": "#0d9488" }}
+                            trailColor="#cbd5e1"
+                            strokeWidth={14}
+                            format={(pct) => (
+                              <span style={{ fontSize: 9, fontWeight: 800, color: "#0f766e" }}>
+                                {pct}%
+                              </span>
+                            )}
+                          />
+                          <div style={{ display: "flex", flexDirection: "column", textAlign: "left" }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: "#0f766e", lineHeight: 1.2 }}>
+                              Phase 2 Syncing ({pipelineProgressMap[selectedKb.id]?.progress_percent || 0}%)
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 9.5,
+                                color: "#64748b",
+                                maxWidth: 160,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                marginTop: 1,
+                              }}
+                            >
+                              {pipelineProgressMap[selectedKb.id]?.current_stage_label || "Processing stages..."}
+                            </span>
+                          </div>
+                        </div>
+                      </Tooltip>
+                    )}
                     <Button
-                      icon={<SyncOutlined />}
+                      icon={<SyncOutlined spin={Boolean(selectedKb && pipelineProgressMap[selectedKb.id]?.is_active)} />}
+                      disabled={Boolean(selectedKb && pipelineProgressMap[selectedKb.id]?.is_active)}
                       onClick={() => handleSyncSchema(selectedKb.id)}
                       style={{
                         borderRadius: 10,
-                        borderColor: "#cbd5e1",
-                        color: "#334155",
+                        borderColor: Boolean(selectedKb && pipelineProgressMap[selectedKb.id]?.is_active) ? "#99f6e4" : "#cbd5e1",
+                        backgroundColor: Boolean(selectedKb && pipelineProgressMap[selectedKb.id]?.is_active) ? "#f0fdfa" : "#ffffff",
+                        color: Boolean(selectedKb && pipelineProgressMap[selectedKb.id]?.is_active) ? "#0f766e" : "#334155",
                         fontWeight: 600,
                         fontSize: 13,
                         height: 38,
@@ -1806,7 +2018,9 @@ export default function DatabaseKnowledgePage() {
                         gap: 6,
                       }}
                     >
-                      Re-Sync
+                      {selectedKb && pipelineProgressMap[selectedKb.id]?.is_active
+                        ? `Re-Syncing (${pipelineProgressMap[selectedKb.id]?.progress_percent || 0}%)`
+                        : "Re-Sync"}
                     </Button>
                     <Button
                       danger
@@ -1963,6 +2177,60 @@ export default function DatabaseKnowledgePage() {
                             ))}
                           </div>
                         </div>
+
+                        {/* Interactive Disambiguation Prompt */}
+                        {disambiguationData && !queryLoading && (
+                          <div className="mt-4 p-5 rounded-2xl border border-amber-300 bg-amber-50/70 dark:bg-amber-950/30 shadow-sm transition-all animate-fadeIn">
+                            <div className="flex items-start gap-3.5">
+                              <div className="p-2.5 rounded-xl bg-amber-100 dark:bg-amber-900/50 text-amber-600 dark:text-amber-400 mt-0.5 shadow-sm">
+                                <QuestionCircleOutlined style={{ fontSize: 20 }} />
+                              </div>
+                              <div className="flex-1">
+                                <div className="flex items-center justify-between">
+                                  <Text strong style={{ fontSize: 16, color: "var(--app-text)" }}>
+                                    {disambiguationData.message}
+                                  </Text>
+                                  <Tag color="orange" style={{ borderRadius: 8, fontWeight: 600 }}>
+                                    Action Required
+                                  </Tag>
+                                </div>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 mb-4">
+                                  Multiple matching records were found in the database. Please select which one you want to inspect, or query all of them:
+                                </p>
+                                <div className="flex flex-wrap items-center gap-2.5">
+                                  {disambiguationData.options.map((opt: any, idx: number) => {
+                                    const isAll = opt.id === "all" || Array.isArray(opt.id);
+                                    return (
+                                      <Button
+                                        key={idx}
+                                        type={isAll ? "default" : "primary"}
+                                        style={{
+                                          borderRadius: 8,
+                                          fontWeight: 600,
+                                          borderColor: isAll ? "#d97706" : "#0d6e65",
+                                          color: isAll ? "#d97706" : "#ffffff",
+                                          backgroundColor: isAll ? "#ffffff" : "#0d6e65",
+                                          boxShadow: "0 2px 4px rgba(0,0,0,0.08)",
+                                        }}
+                                        onClick={() => handleSelectDisambiguation(opt)}
+                                      >
+                                        {opt.label || opt.name}
+                                      </Button>
+                                    );
+                                  })}
+                                  <Button
+                                    type="text"
+                                    danger
+                                    size="small"
+                                    onClick={() => setDisambiguationData(null)}
+                                  >
+                                    Cancel
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Real-Time Pipeline Progress Stepper (Phase 3E) */}
                         {(queryLoading || streamEvents.length > 0 || streamError || isCancelled) && (
