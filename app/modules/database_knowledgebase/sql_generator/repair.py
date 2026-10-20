@@ -126,8 +126,8 @@ class SQLRepairEngine:
             if any(k in words for k in ("pending", "shortage", "deficit", "remaining")) and any(k in words for k in ("hour", "hours", "work", "time", "attendance")):
                 return False
 
-            # List/who/which queries or multi-table name queries need LLM reasoning
-            if any(w in words for w in ("who", "list", "which")) or (len(plan.tables) > 1 and any(w in words for w in ("name", "names"))):
+            # Subjective explanation queries need LLM reasoning
+            if any(w in words for w in ("why", "explain", "how come", "reason", "reasons")):
                 return False
 
         # Projections check: must have projections and every projection must have supported aggregation
@@ -140,13 +140,13 @@ class SQLRepairEngine:
                 return False
 
         # Predicates check: all operators must be standard supported operators
-        supported_ops = {"=", "==", "!=", ">", "<", ">=", "<=", "LIKE", "ILIKE", "IS NULL", "IS NOT NULL", "EXTRACT_DOW"}
+        supported_ops = {"=", "==", "!=", ">", "<", ">=", "<=", "LIKE", "ILIKE", "IS NULL", "IS NOT NULL", "EXTRACT_DOW", "IN", "NOT IN"}
         for pred in plan.predicates:
             op = pred.operator.upper().strip()
             if op not in supported_ops:
                 return False
 
-        # Joins check: if multiple tables, joins must exist and connect tables
+        # Joins check: if multiple tables, joins must exist and connect all plan tables
         if len(plan.tables) > 1:
             if not plan.joins:
                 return False
@@ -154,6 +154,21 @@ class SQLRepairEngine:
                 join_kind = j.join_type.value if hasattr(j.join_type, "value") else str(j.join_type)
                 if join_kind.upper() not in {"INNER", "LEFT"}:
                     return False
+            # Verify connectivity across all plan tables (ensures no Cartesian products)
+            connected_aliases = {plan.tables[0].alias}
+            changed = True
+            while changed:
+                changed = False
+                for j in plan.joins:
+                    if j.source_table_alias in connected_aliases and j.target_table_alias not in connected_aliases:
+                        connected_aliases.add(j.target_table_alias)
+                        changed = True
+                    elif j.target_table_alias in connected_aliases and j.source_table_alias not in connected_aliases:
+                        connected_aliases.add(j.source_table_alias)
+                        changed = True
+            all_aliases = {t.alias for t in plan.tables}
+            if not all_aliases.issubset(connected_aliases):
+                return False
 
         return True
 
@@ -184,7 +199,12 @@ class SQLRepairEngine:
         # =========================================================================
         # PATH A: Deterministic SQL Compilation Gate
         # =========================================================================
-        if cls.can_compile_plan_deterministically(plan, user_query=user_query):
+        from app.core.config import settings
+        deterministic_sql_enabled = getattr(settings, "db_kb_deterministic_sql_enabled", True)
+        if security_overrides and security_overrides.get("force_sql_llm"):
+            deterministic_sql_enabled = False
+
+        if deterministic_sql_enabled and cls.can_compile_plan_deterministically(plan, user_query=user_query):
             logger.debug(f"Plan is eligible for deterministic compilation: intent={plan.intent}")
             compiled_sql: Optional[str] = None
             compiler_failed = False

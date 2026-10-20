@@ -60,13 +60,16 @@ GENERIC_STOP_WORDS: Set[str] = {
     "about", "into", "through", "over", "under", "between", "above", "below", "out", "off", "up", "down",
     # Conjunctions & logic
     "and", "or", "not", "no", "nor", "but", "if", "then", "else", "so", "than", "neither", "either",
-    # Pronouns
+    # Pronouns & locatives
     "i", "me", "my", "mine", "you", "your", "yours", "he", "him", "his", "she", "her", "hers",
     "it", "its", "we", "us", "our", "ours", "they", "them", "their", "theirs",
     "this", "that", "these", "those",
-    # Quantifiers / adverbs
+    "there", "here", "where", "everywhere", "somewhere", "anywhere", "nowhere",
+    # Quantifiers / adverbs / aggregates
     "all", "any", "some", "every", "each", "both", "few", "more", "most", "less", "least", "several",
     "only", "just", "also", "very", "too", "quite", "really", "already",
+    "total", "totals", "overall", "sum", "sums", "count", "counts", "number", "numbers", "amount", "amounts", "quantity", "quantities", "together",
+    "exist", "exists", "existed", "existing", "available", "present", "please",
     # Common domain status/words & concepts
     "active", "inactive", "status", "statuses", "type", "types", "state", "states",
     "open", "closed", "pending", "completed", "long", "duration",
@@ -159,7 +162,12 @@ def is_label_like_column(
     c_low = column_name.lower().strip()
     if (
         c_low in TECHNICAL_COLUMNS
-        or c_low.endswith(("_type", "_status", "_key", "_id", "_ids", "_email", "_mail"))
+        or c_low.endswith((
+            "_type", "_status", "_key", "_id", "_ids", "_email", "_mail",
+            "_on", "_at", "_date", "_time", "_timestamp", "_count", "_num", "_cnt",
+            "_total", "_amount", "_rate", "_flag", "_url", "_path"
+        ))
+        or c_low.startswith(("is_", "has_"))
         or "email" in c_low
         or "mail" in c_low
     ):
@@ -264,6 +272,9 @@ def extract_candidate_spans(question: str, exclusion_set: Set[str]) -> List[str]
     def _is_non_excluded(tok: str) -> bool:
         if len(tok) < 2:
             return False
+        # Pure numeric strings (like days '19', months '08', years '2026', numbers) are not named entity candidate names
+        if tok.isdigit() or not re.search(r"[a-zA-Z]", tok):
+            return False
         tok_low = tok.lower()
         if tok_low in GENERIC_STOP_WORDS:
             return False
@@ -272,11 +283,11 @@ def extract_candidate_spans(question: str, exclusion_set: Set[str]) -> List[str]
             return True
         return tok_low not in exclusion_set
 
-    # 1. Quoted strings from user
+    # 1. Quoted strings from user (must contain alphabetic characters)
     quoted = re.findall(r'["\']([^"\']{2,})["\']', question)
     for q in quoted:
         q_clean = q.strip()
-        if q_clean and q_clean not in spans:
+        if q_clean and re.search(r"[a-zA-Z]", q_clean) and q_clean not in spans:
             spans.append(q_clean)
 
     # 2. Extract words
@@ -286,7 +297,7 @@ def extract_candidate_spans(question: str, exclusion_set: Set[str]) -> List[str]
     if not non_excluded:
         return spans[:4]
 
-    # Prioritize single non-excluded tokens first (e.g. proper names like 'arun')
+    # Prioritize single non-excluded tokens first (e.g. proper names like 'arun', 'girinath')
     for t in non_excluded:
         if t not in spans:
             spans.append(t)
@@ -299,7 +310,7 @@ def extract_candidate_spans(question: str, exclusion_set: Set[str]) -> List[str]
             j = i + 1
             while j < len(tokens) and j < i + 3:
                 t_next = tokens[j]
-                if _is_non_excluded(t_next) or len(t_next) <= 2:
+                if _is_non_excluded(t_next):
                     chunk.append(t_next)
                     j += 1
                 else:
@@ -650,6 +661,18 @@ async def _get_label_columns_from_knowledge(
 
     label_cols: List[Dict[str, str]] = []
 
+    NON_LABEL_DATA_TYPES = (
+        "timestamp", "timestamptz", "date", "time", "interval",
+        "int", "integer", "bigint", "smallint", "numeric", "decimal", "real",
+        "double", "float", "bool", "boolean", "uuid", "json", "jsonb", "bytea"
+    )
+    NON_LABEL_ROLES = {"temporal", "metric", "quantity", "id", "fk", "pk", "audit", "enum", "boolean", "flag"}
+    NON_LABEL_SUFFIXES = (
+        "_on", "_at", "_date", "_time", "_timestamp",
+        "_count", "_num", "_cnt", "_total", "_amount", "_rate",
+        "_id", "_ids", "_key", "_type", "_status", "_state", "_flag", "_url", "_path"
+    )
+
     for item_key, payload, is_sens in raw_col_items:
         if is_sens:
             continue
@@ -657,7 +680,16 @@ async def _get_label_columns_from_knowledge(
         col_name = payload.get("column_name", "")
         table_name_raw = payload.get("table_name", "")
         role = (payload.get("role") or "").lower().strip()
+        data_type = (payload.get("data_type") or "").lower().strip()
         if not col_name or not table_name_raw:
+            continue
+
+        # Dynamic data type gating: reject temporal, numeric, boolean, or complex types
+        if any(d_t in data_type for d_t in NON_LABEL_DATA_TYPES):
+            continue
+
+        # Reject non-label roles
+        if role in NON_LABEL_ROLES:
             continue
 
         # Parse schema.table format
@@ -676,16 +708,21 @@ async def _get_label_columns_from_knowledge(
             continue
 
         col_lower = col_name.lower().strip()
-        col_parts = set(re.split(r"[_\s]+", col_lower))
 
-        # Ignore enum-role or technical columns
-        if role == "enum" or col_lower in TECHNICAL_COLUMNS:
+        # Reject technical and non-label suffixes or boolean prefixes
+        if (
+            col_lower in TECHNICAL_COLUMNS
+            or col_lower.endswith(NON_LABEL_SUFFIXES)
+            or col_lower.startswith(("is_", "has_"))
+            or "email" in col_lower
+            or "mail" in col_lower
+        ):
             continue
 
         is_label = (
             col_lower in _LIVE_FALLBACK_LABEL_COLUMNS
-            or bool(col_parts.intersection(_LIVE_FALLBACK_LABEL_COLUMNS))
             or role in _LIVE_FALLBACK_ROLES
+            or col_lower.endswith(("_name", "_title", "_login", "_username", "_label", "_display_name"))
         )
         if not is_label:
             continue
@@ -822,6 +859,9 @@ async def resolve_entities_live(
                         matched_val = r["matched_val"]
                         if not row_id or not matched_val:
                             continue
+                        # Never accept raw timestamps or dates as entity matched display values
+                        if re.match(r"^\d{4}[-/]\d{2}[-/]\d{2}", str(matched_val).strip()):
+                            continue
 
                         tbl_dict = table_matches.setdefault(tbl, {})
                         row_dict = tbl_dict.setdefault(row_id, {"row_data": {}, "pk_col": pk_col, "first_col": col})
@@ -843,11 +883,18 @@ async def resolve_entities_live(
                             if not best_col:
                                 best_col = r_info["first_col"]
 
-                            # Determine display label in priority: login -> name -> firstname -> first value
+                            # Determine display label in priority: login -> username -> name -> firstname -> first value
                             display_val = (
                                 row_data.get("login")
+                                or row_data.get("username")
+                                or row_data.get("user_name")
                                 or row_data.get("name")
+                                or row_data.get("full_name")
+                                or row_data.get("fullname")
                                 or row_data.get("firstname")
+                                or row_data.get("first_name")
+                                or row_data.get("title")
+                                or row_data.get("subject")
                                 or next(iter(row_data.values()))
                             )
                             # Convert integer IDs
@@ -976,10 +1023,26 @@ class LiveEntityResolver:
                 live_conn_error = str(exc) or exc.__class__.__name__
                 logger.warning(f"[EntityResolution] Live fallback failed: {exc!r}")
 
-        # Fail-closed guard: if both tiers return 0 and a non-excluded proper-noun span exists,
-        # set unanswerable=True with a clear message and stop before SQL generation.
-        if not result.resolved_entities and not result.unanswerable and result.spans_tried:
-            target_span = next((s for s in result.spans_tried if len(s.split()) == 1), result.spans_tried[0])
+        # Fail-closed guard: ONLY trigger if an EXPLICIT named entity (quoted string or capitalized proper noun) was searched and not found!
+        # General aggregate questions and lowercase common words must NEVER fail closed.
+        def _is_explicit_named_entity(span: str) -> bool:
+            # 1. Quoted string in original question
+            if any(q in frame.original_question for q in (f'"{span}"', f"'{span}'", f'“{span}”', f'’{span}’')):
+                return True
+            tokens = span.split()
+            # 2. Capitalized proper noun (not sentence-initial grammatical word)
+            for tok in tokens:
+                if tok.lower() in GENERIC_STOP_WORDS:
+                    continue
+                m = re.search(rf"\b{re.escape(tok)}\b", frame.original_question)
+                if m and tok[0].isupper() and m.start() > 0:
+                    return True
+            return False
+
+        explicit_missing_entities = [s for s in result.spans_tried if _is_explicit_named_entity(s)]
+
+        if not result.resolved_entities and not result.unanswerable and explicit_missing_entities:
+            target_span = explicit_missing_entities[0]
             result.unanswerable = True
             if live_conn_error:
                 result.unanswerable_reason = (
@@ -988,6 +1051,6 @@ class LiveEntityResolver:
                 )
             else:
                 result.unanswerable_reason = f"Couldn't find '{target_span}' in the data."
-            logger.info(f"[EntityResolution] Fail closed: {result.unanswerable_reason}")
+            logger.info(f"[EntityResolution] Fail closed for named entity '{target_span}': {result.unanswerable_reason}")
 
         return result

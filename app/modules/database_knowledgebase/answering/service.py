@@ -228,6 +228,11 @@ class DatabaseAnswerSynthesisService:
         Eliminates LLM latency and hallucination risks for high-confidence structural patterns.
         Flow: Eligibility Check -> DeterministicFormatter -> AnswerVerifier -> response / fallback.
         """
+        # 0. Check global configuration toggle
+        from app.core.config import settings
+        if not getattr(settings, "db_kb_deterministic_answer_enabled", True):
+            return None
+
         # 1. Hard threshold: row count cap (> max_fast_path_rows must fall back to LLM)
         if evidence.row_count > self.max_fast_path_rows:
             logger.debug(

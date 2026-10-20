@@ -42,6 +42,14 @@ class CandidateSQLGenerator:
         primary = plan.tables[0]
         primary_tbl_expr = exp.table_(primary.table_name, db=primary.schema_name, alias=primary.alias)
         query = exp.select().from_(primary_tbl_expr)
+        has_aggregations = any(
+            proj.aggregation != AggregateFunction.NONE
+            or any(proj.column_name.strip().upper().startswith(fn) for fn in ("SUM(", "AVG(", "COUNT(", "MIN(", "MAX(", "ROUND(", "COALESCE("))
+            or "/" in proj.column_name
+            for proj in plan.projections
+        )
+        if len(plan.tables) > 1 and not has_aggregations and not plan.group_by:
+            query = query.distinct()
 
         # 2. Joins
         # Map table alias to table name
@@ -424,6 +432,25 @@ class CandidateSQLGenerator:
                         if re.search(r"\bFROM\s+work_packages\b", sql_candidate, re.IGNORECASE) and re.search(r"\bJOIN\s+time_entries\b", sql_candidate, re.IGNORECASE):
                             if not re.search(r"\bSELECT\s+DISTINCT\b", sql_candidate, re.IGNORECASE):
                                 sql_candidate = re.sub(r"\bSELECT\b", "SELECT DISTINCT", sql_candidate, count=1, flags=re.IGNORECASE)
+
+                        # Dynamically substitute unverified string name filters with verified entity IDs
+                        if plan and plan.predicates:
+                            for pred in plan.predicates:
+                                if pred.operator in ("=", "==") and isinstance(pred.value, (int, str)) and str(pred.value).isdigit():
+                                    alias = pred.table_alias
+                                    col = pred.column_name
+                                    val = pred.value
+                                    patt = rf"\b(?:{alias}|[a-zA-Z0-9_]+)\.(?:login|firstname|lastname|name|username|full_name)\s*=\s*['\"][^'\"]+['\"]"
+                                    if re.search(patt, sql_candidate, re.IGNORECASE):
+                                        logger.info(
+                                            f"[DYNAMIC_ENTITY_BINDING] Replacing hallucinated string filter with verified {alias}.{col} = {val}"
+                                        )
+                                        sql_candidate = re.sub(
+                                            patt,
+                                            f"{alias}.{col} = {val}",
+                                            sql_candidate,
+                                            flags=re.IGNORECASE,
+                                        )
                         return sql_candidate
             except Exception as e:
                 logger.warning(f"LLM candidate SQL generation failed, falling back to deterministic compiler: {e}")

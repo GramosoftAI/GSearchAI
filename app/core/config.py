@@ -475,6 +475,8 @@ class Settings(BaseSettings):
     candidate_pruning_max_hops: int = 2
     value_index_distinct_cap: int = 20000
     embedding_warmup_interval_seconds: float = 45.0
+    db_kb_deterministic_sql_enabled: bool = True
+    db_kb_deterministic_answer_enabled: bool = True
 
     # ============= CORS =============
 

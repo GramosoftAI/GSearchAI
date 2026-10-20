@@ -48,7 +48,11 @@ STRICT CONSTRAINTS:
 15. TYPE CASTING: Never use string operators (LIKE, ILIKE) on numeric or ID columns without explicitly casting them to TEXT (e.g. CAST(column AS TEXT) ILIKE '%value%').
 16. USER TABLE ALIASES & CONVERSATIONAL TERMS:
     - When the sub-schema XML contains <active_table_aliases>, the user's conversational terms MUST be treated as direct references to those canonical tables.
-17. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text outside the SQL block.
+17. CRITICAL RESOLVED ENTITY BINDINGS:
+    - When <grounded_context> or <query_plan> contains a resolved entity with an ID/primary key (e.g. resolved_pk="113" or table.id = 113):
+      You MUST filter using that exact numeric ID (e.g. WHERE users.id = 113 or WHERE work_packages.assigned_to_id = 113).
+      NEVER filter using string equality on name or login columns (e.g. NEVER write `users.login = 'Arun N'`), because user display names differ from database usernames.
+18. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text outside the SQL block.
 """
 
     @classmethod

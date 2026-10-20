@@ -100,6 +100,8 @@ class JoinPathFinder:
         self.max_hops = max_hops
         # graph: table_name -> list of EdgeInfo
         self._graph: Dict[str, List[EdgeInfo]] = {}
+        # dynamic schema concepts: table_name -> set of concept tokens from table & column knowledge items
+        self._table_concepts: Dict[str, Set[str]] = {}
 
     async def build_graph(
         self,
@@ -107,14 +109,16 @@ class JoinPathFinder:
         schema_version: Optional[str] = None,
         session: Optional[AsyncSession] = None,
     ):
-        """Construct weighted graph from relationship items."""
+        """Construct weighted graph from relationship items and dynamic table/column concepts."""
+        import re
         self._graph.clear()
+        self._table_concepts.clear()
         target_db = session or self.db
 
         stmt = select(KB2KnowledgeItem).where(
             KB2KnowledgeItem.tenant_id == self.tenant_id,
             KB2KnowledgeItem.db_knowledgebase_id == db_knowledgebase_id,
-            KB2KnowledgeItem.item_type == "relationship",
+            KB2KnowledgeItem.item_type.in_(["relationship", "table", "column"]),
             KB2KnowledgeItem.status.in_(["confirmed", "draft"]),
         )
         res = await target_db.execute(stmt)
@@ -122,61 +126,86 @@ class JoinPathFinder:
 
         for it in items:
             p = it.payload or {}
-            c_tbl = (p.get("child_table") or "").lower().split(".")[-1]
-            p_tbl = (p.get("parent_table") or "").lower().split(".")[-1]
-            c_cols = p.get("child_columns") or []
-            p_cols = p.get("parent_columns") or []
-            card = p.get("cardinality") or "1:N"
-            conf = float(p.get("confidence") or 1.0)
-            src = it.source or "inferred"
-            stat = it.status or "draft"
+            if it.item_type == "relationship":
+                c_tbl = (p.get("child_table") or "").lower().split(".")[-1]
+                p_tbl = (p.get("parent_table") or "").lower().split(".")[-1]
+                c_cols = p.get("child_columns") or []
+                p_cols = p.get("parent_columns") or []
+                card = p.get("cardinality") or "1:N"
+                conf = float(p.get("confidence") or 1.0)
+                src = it.source or "inferred"
+                stat = it.status or "draft"
 
-            if not c_tbl or not p_tbl or not c_cols or not p_cols:
-                continue
+                if not c_tbl or not p_tbl or not c_cols or not p_cols:
+                    continue
 
-            c_col = c_cols[0]
-            p_col = p_cols[0]
+                c_col = c_cols[0]
+                p_col = p_cols[0]
 
-            # Compute Dijkstra edge weight
-            # declared: 1.0, confirmed inferred: 1.5, draft inferred: 2.5, N:M: 2.0x multiplier
-            if src == "declared":
-                base_w = 1.0
-            elif stat == "confirmed":
-                base_w = 1.5
-            else:
-                base_w = 2.5
+                # Compute Dijkstra edge weight
+                # declared: 1.0, confirmed inferred: 1.5, draft inferred: 2.5, N:M: 2.0x multiplier
+                if src == "declared":
+                    base_w = 1.0
+                elif stat == "confirmed":
+                    base_w = 1.5
+                else:
+                    base_w = 2.5
 
-            if card == "N:M":
-                base_w *= 2.0
+                if card == "N:M":
+                    base_w *= 2.0
 
-            # Forward edge (child -> parent, typically many-to-one)
-            self._graph.setdefault(c_tbl, []).append(
-                EdgeInfo(
-                    target_table=p_tbl,
-                    left_col=c_col,
-                    right_col=p_col,
-                    cardinality=card,
-                    confidence=conf,
-                    source=src,
-                    status=stat,
-                    weight=base_w,
+                # Forward edge (child -> parent, typically many-to-one)
+                self._graph.setdefault(c_tbl, []).append(
+                    EdgeInfo(
+                        target_table=p_tbl,
+                        left_col=c_col,
+                        right_col=p_col,
+                        cardinality=card,
+                        confidence=conf,
+                        source=src,
+                        status=stat,
+                        weight=base_w,
+                    )
                 )
-            )
 
-            # Reverse edge (parent -> child, one-to-many: potential fanout)
-            rev_card = "1:N_fanout" if card == "1:N" else card
-            self._graph.setdefault(p_tbl, []).append(
-                EdgeInfo(
-                    target_table=c_tbl,
-                    left_col=p_col,
-                    right_col=c_col,
-                    cardinality=rev_card,
-                    confidence=conf,
-                    source=src,
-                    status=stat,
-                    weight=base_w,
+                # Reverse edge (parent -> child, one-to-many: potential fanout)
+                rev_card = "1:N_fanout" if card == "1:N" else card
+                self._graph.setdefault(p_tbl, []).append(
+                    EdgeInfo(
+                        target_table=c_tbl,
+                        left_col=p_col,
+                        right_col=c_col,
+                        cardinality=rev_card,
+                        confidence=conf,
+                        source=src,
+                        status=stat,
+                        weight=base_w,
+                    )
                 )
-            )
+
+            elif it.item_type in ("table", "column"):
+                sem = p.get("semantic") or {}
+                t_raw = p.get("table_name") or it.item_key
+                t_clean = t_raw.lower().split(".")[-1]
+                if not t_clean:
+                    continue
+                c_set = self._table_concepts.setdefault(t_clean, set())
+                c_set.add(t_clean)
+                for part in re.split(r"[_\W]+", t_clean):
+                    if len(part) >= 2:
+                        c_set.add(part.lower())
+                # Table or column aliases & synonyms
+                raw_aliases = (p.get("aliases") or []) + (sem.get("aliases") or []) + (sem.get("synonyms") or [])
+                for a in raw_aliases:
+                    if a and isinstance(a, str):
+                        for part in re.split(r"[_\W]+", a.lower()):
+                            if len(part) >= 2:
+                                c_set.add(part.lower())
+                if it.item_type == "column":
+                    col_name = (p.get("column_name") or it.item_key.split(".")[-1]).lower()
+                    for part in re.split(r"[_\W]+", col_name):
+                        if len(part) >= 2:
+                            c_set.add(part.lower())
 
     def _dijkstra_shortest_path(
         self,
@@ -363,7 +392,14 @@ class JoinPathFinder:
 
         import re
         q_lower = query_text.lower()
-        q_tokens = set(re.findall(r"\b[a-zA-Z0-9_]+\b", q_lower))
+        raw_tokens = set(re.findall(r"\b[a-zA-Z0-9_]+\b", q_lower))
+        _TRAVERSAL_STOPWORDS = {
+            "what", "is", "are", "was", "were", "be", "been", "being",
+            "the", "a", "an", "in", "on", "at", "to", "for", "of", "with", "by", "from",
+            "and", "or", "not", "no", "if", "then", "which", "who", "whom", "whose", "where", "when", "how",
+            "show", "give", "list", "tell", "find", "get", "view",
+        }
+        q_tokens = {t for t in raw_tokens if t not in _TRAVERSAL_STOPWORDS and len(t) > 1 and not t.isdigit()}
 
         DOMAIN_SYNONYMS: Dict[str, Set[str]] = {
             "work_packages": {"task", "tasks", "ticket", "tickets", "issue", "issues", "bug", "bugs", "work_package", "work_packages", "item", "items", "work", "package", "packages", "todo", "assign", "assigned", "assignee", "assignment"},
@@ -398,9 +434,10 @@ class JoinPathFinder:
                 if target.endswith(("_storages", "_queries", "_modules", "_hierarchies", "_settings", "_attachments")):
                     continue
 
-                # Check relevance of target table to user query
+                # Check relevance of target table to user query dynamically from schema knowledge
                 target_parts = set(re.split(r"[_\W]+", target))
-                synonyms = DOMAIN_SYNONYMS.get(target, set()) | target_parts
+                dynamic_concepts = self._table_concepts.get(target, set()) | target_parts
+                synonyms = dynamic_concepts if dynamic_concepts else (DOMAIN_SYNONYMS.get(target, set()) | target_parts)
                 
                 # Check column relevance (e.g. "assigned" matching assigned_to_id)
                 col_tokens = (
@@ -455,7 +492,8 @@ class JoinPathFinder:
                             continue
 
                         target_parts = set(re.split(r"[_\W]+", target2))
-                        synonyms = DOMAIN_SYNONYMS.get(target2, set()) | target_parts
+                        dynamic_concepts2 = self._table_concepts.get(target2, set()) | target_parts
+                        synonyms = dynamic_concepts2 if dynamic_concepts2 else (DOMAIN_SYNONYMS.get(target2, set()) | target_parts)
                         table_match = bool(synonyms & q_tokens)
                         if table_match:
                             matched_tokens = list(synonyms & q_tokens)

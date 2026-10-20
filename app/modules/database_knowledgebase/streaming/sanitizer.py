@@ -30,6 +30,7 @@ ERROR_CODE_MAP = {
     "DatabaseAuthenticationError": "AUTHENTICATION_FAILURE",
     "TenantMismatchError": "TENANT_MISMATCH",
     "QueryExecutionError": "DATABASE_EXECUTION_ERROR",
+    "DatabaseKnowledgebaseNotFoundError": "ENTITY_NOT_FOUND",
     "asyncio.CancelledError": "QUERY_CANCELLED",
     "CancelledError": "QUERY_CANCELLED",
 }
@@ -70,6 +71,9 @@ class StreamingSanitizer:
             return "Failed to establish a connection to the target database."
         elif code == "AUTHENTICATION_FAILURE":
             return "Database authentication failed."
+        elif code == "ENTITY_NOT_FOUND":
+            clean_err = cls.sanitize_text(getattr(exc, "detail", str(exc)))
+            return clean_err or "The requested record or entity was not found in the database."
         elif code == "DATABASE_EXECUTION_ERROR":
             clean_err = cls.sanitize_text(getattr(exc, "detail", str(exc)))
             return f"Database query execution error: {clean_err}"

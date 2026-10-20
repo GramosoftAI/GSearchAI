@@ -651,9 +651,20 @@ class QueryPlanner:
                 continue
             t_tokens = cls._decompose_table_name(t_low)
             clean_tokens = [tok for tok in t_tokens if tok not in {"base", "employee", "public", "app", "tbl", "tab"}]
-            if any(tok in q_tokens for tok in clean_tokens):
-                named_aliases.add(alias)
-                continue
+            if clean_tokens:
+                t_phrase = t_low.replace("_", " ")
+                # 1. Exact multi-word phrase in query (e.g. "work package", "time entry", "leave request")
+                if t_phrase in user_query.lower():
+                    named_aliases.add(alias)
+                    continue
+                # 2. Single-concept table whose only token matches (e.g. "projects", "users", "departments")
+                if len(clean_tokens) == 1 and clean_tokens[0] in q_tokens:
+                    named_aliases.add(alias)
+                    continue
+                # 3. Multi-concept table where ALL distinctive tokens appear in query (e.g. "project types")
+                if len(clean_tokens) > 1 and all(tok in q_tokens or tok in user_query.lower() for tok in clean_tokens):
+                    named_aliases.add(alias)
+                    continue
 
             # Domain concept triggers
             matched_concept = False
@@ -1050,7 +1061,18 @@ class QueryPlanner:
                 elif is_task and any(tok in t_name for tok in ("task", "work_package", "workpackage", "member", "project", "employee", "user")):
                     active_target_aliases.add(a)
                 elif not is_ts and not is_task:
-                    active_target_aliases.add(a)
+                    # Pure project query: only include primary project table and specifically mentioned auxiliary tables
+                    is_pure_project = any(tok in ("project", "projects") for tok in cls._decompose_table_name(t_name)) and not any(aux in t_name for aux in ("status", "type", "custom", "field", "journal", "query", "version", "category", "hierarchy"))
+                    if is_pure_project or t_name == primary_tbl_name:
+                        active_target_aliases.add(a)
+                    elif "member" in q_lower and "member" in t_name:
+                        active_target_aliases.add(a)
+                    elif "manager" in q_lower and any(tok in t_name for tok in ("manager", "user", "employee")):
+                        active_target_aliases.add(a)
+                    elif "status" in q_lower and "status" in t_name:
+                        active_target_aliases.add(a)
+                    elif "type" in q_lower and "type" in t_name:
+                        active_target_aliases.add(a)
             elif has_pms_intent and any(d in t_name for d in ("pms_", "objective", "keyresult", "goal")):
                 active_target_aliases.add(a)
             elif has_disciplinary_intent and "disciplinary" in t_name:
@@ -2886,8 +2908,12 @@ class QueryPlanner:
                 _f = {a for a in needed_aliases if any(tok in alias_to_table[a].table_name.lower() for tok in ("leave", "employee", "user", "staff", "person", "department", "dept", "workinformation", "work_info"))}
                 if _f: needed_aliases = _f
         elif has_project_intent:
-            _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ALLOWED_PROJECT_TABLES}
-            if _f: needed_aliases = _f
+            if not is_ts and not is_task and not any(w in q_lower for w in ("member", "members", "manager", "status", "type", "custom", "field", "hierarchy", "journal")):
+                _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() == primary_tbl_name or any(tok in ("project", "projects") for tok in cls._decompose_table_name(alias_to_table[a].table_name.lower()) if len(cls._decompose_table_name(alias_to_table[a].table_name.lower())) == 1)}
+                if _f: needed_aliases = _f
+            else:
+                _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ALLOWED_PROJECT_TABLES}
+                if _f: needed_aliases = _f
         elif has_leave_intent:
             _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ALLOWED_LEAVE_TABLES}
             if _f: needed_aliases = _f
@@ -2898,6 +2924,16 @@ class QueryPlanner:
             _f = {a for a in needed_aliases if alias_to_table[a].table_name.lower() in ALLOWED_DED_TABLES}
             if _f: needed_aliases = _f
 
+        # General Redundant Join / Dead Table Elimination:
+        # If the query only requires the primary table (e.g. single-entity count or list),
+        # prune all unreferenced auxiliary tables from needed_aliases!
+        projected_aliases = {p.table_alias for p in projections if p.table_alias in alias_to_table}
+        predicate_aliases = {p.table_alias for p in predicates if p.table_alias in alias_to_table}
+        group_by_aliases = {g.split(".")[0] for g in group_by if "." in g and g.split(".")[0] in alias_to_table}
+        explicit_required = {primary_alias} | projected_aliases | predicate_aliases | group_by_aliases
+        if len(explicit_required) == 1:
+            needed_aliases = {primary_alias}
+
         # Construct final minimal table_plans with primary table first
         table_plans = [tp for tp in all_table_plans if tp.alias in needed_aliases]
         table_plans.sort(key=lambda tp: 0 if tp.alias == primary_alias else 1)
@@ -2907,6 +2943,11 @@ class QueryPlanner:
             jp for jp in all_join_plans
             if jp.source_table_alias in needed_aliases and jp.target_table_alias in needed_aliases
         ]
+
+        if not join_plans and not any(w in q_lower for w in ("distinct", "unique", "different")):
+            for p in projections:
+                if p.aggregation == AggregateFunction.COUNT_DISTINCT:
+                    p.aggregation = AggregateFunction.COUNT
 
         # ── Asset join correction pass ────────────────────────────────────────
         # In any asset-intent query we always want to join employee/user via

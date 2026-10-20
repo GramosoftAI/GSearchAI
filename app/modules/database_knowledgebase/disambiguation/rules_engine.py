@@ -36,8 +36,8 @@ class RulesEngine:
                     if table_hint:
                         system_rules.append(
                             f"RULE: The user '{name_hint}' has {table_hint}.{pk_col} = {val_repr}. "
-                            f"If querying '{table_hint}' or tables joining to '{table_hint}' (e.g. employee_user_id_id = {table_hint}.{pk_col}), "
-                            f"filter by that exact ID column. If querying another table that has its own primary key, join appropriately or filter by name string. "
+                            f"Always filter using {table_hint}.{pk_col} = {val_repr} (or the corresponding foreign key column in joined tables, e.g. assigned_to_id = {val_repr}). "
+                            f"NEVER filter by display name or login string (like '{name_hint}') because database usernames/logins differ from display names. "
                             f"Never filter an unrelated table's primary key (like employee_employee.id) directly with {table_hint}.{pk_col} values."
                         )
                     else:
