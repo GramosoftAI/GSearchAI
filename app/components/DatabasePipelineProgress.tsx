@@ -157,8 +157,10 @@ export const DatabasePipelineProgress: React.FC<DatabasePipelineProgressProps> =
 
     if (events.length > 0) {
       setElapsedMs(events[events.length - 1].elapsed_total_ms);
+    } else if (!isStreaming) {
+      setElapsedMs(0);
     }
-  }, [events, cancelled]);
+  }, [events, cancelled, isStreaming]);
 
   // Live timer tick while streaming
   useEffect(() => {
@@ -204,7 +206,7 @@ export const DatabasePipelineProgress: React.FC<DatabasePipelineProgressProps> =
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1 text-xs text-gray-400 font-mono">
             <ClockCircleOutlined />
-            <span>{elapsedMs.toFixed(0)} ms</span>
+            <span>{(elapsedMs / 1000).toFixed(2)}s</span>
           </div>
 
           {isStreaming && (
