@@ -78,6 +78,7 @@ Rules:
         response = await client.chat.completions.create(
             model=chosen_model,
             temperature=0.0,
+            max_tokens=256,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},

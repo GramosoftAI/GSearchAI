@@ -56,20 +56,34 @@ class GroundedAnswerSynthesizer:
             if "count" in col_name or any(w in question.lower() for w in ("how many", "total", "count")):
                 return f"There are {val} records in total matching your query."
 
-        # Send up to 35 representative rows to fit within context while keeping high detail
-        sample_records = rows[:35]
+        # Clean sample records to prevent prompt bloating (cap at 15 rows, truncate long text fields)
+        sample_records = []
+        for r in rows[:15]:
+            if isinstance(r, dict):
+                r_clean = {}
+                for k, v in r.items():
+                    if isinstance(v, str) and len(v) > 250:
+                        r_clean[k] = v[:250] + "..."
+                    else:
+                        r_clean[k] = v
+                sample_records.append(r_clean)
+            elif isinstance(r, (list, tuple)):
+                sample_records.append([
+                    (v[:250] + "...") if isinstance(v, str) and len(v) > 250 else v
+                    for v in r
+                ])
+            else:
+                sample_records.append(r)
 
         system_prompt = """You are an intelligent PostgreSQL database assistant.
 The user asked a database question. SQL was generated and executed against the database.
-Your job is to provide a clear, comprehensive, and well-written natural language answer (passages/paragraphs).
+Your job is to provide a concise, clear, and comprehensive natural language summary with bullet points.
 
 Guidelines:
 1. Do NOT output raw JSON.
-2. Directly answer the question with clear passages, paragraphs, and well-organized bullet points.
+2. Directly answer the question with bullet points.
 3. Highlight specific details like names, dates, statuses, numbers, and progress indicators.
-4. When a `description` field is present (containing task notes, daily updates, or bullet points), thoroughly explain and summarize the specific work items, accomplishments, and activities listed in the description!
-5. If certain numeric fields (like estimated hours or done ratio) are null or empty, note that they are unset, but focus heavily on the actual narrative work details in `description`.
-6. Keep the tone professional, direct, and easy to read.
+4. Keep the answer concise, fast to read, and professional.
 """
 
         user_prompt = f"""Question: {question}
@@ -80,15 +94,16 @@ Executed SQL:
 Database Result ({row_count} total rows{' (truncated to first 200)' if truncated else ''}):
 {json.dumps(sample_records, default=str, ensure_ascii=False)}
 
-Please provide a clear and detailed answer in natural language:"""
+Please provide a clear and concise answer in natural language:"""
 
-        chosen_model = model or getattr(settings, "chat_model", "deepseek-ai/DeepSeek-V4-Flash-0731")
+        chosen_model = model or getattr(settings, "model_answer", None) or getattr(settings, "chat_model", "deepseek-ai/DeepSeek-V3")
         client = cls._get_client()
 
         try:
             response = await client.chat.completions.create(
                 model=chosen_model,
                 temperature=0.2,
+                max_tokens=1024,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},

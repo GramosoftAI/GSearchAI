@@ -48,7 +48,7 @@ class GroundedSQLGenerator:
 
         system_prompt = """You generate accurate PostgreSQL SELECT queries for a database question.
 Rules:
-1. Use only tables and columns explicitly present in the supplied schema context.
+1. Use only tables and columns explicitly present in the supplied schema context. NEVER invent or hallucinate junction table names (such as work_package_types).
 2. Strictly check the Columns table of each schema document. Never assume or invent columns that are not listed.
 3. INCLUDE DESCRIPTIVE COLUMNS: When querying tasks, work packages, or issues for progress, details, or status, ALWAYS include `description`, `subject`, `name`, `status_id`, `updated_at`, etc. so the actual work done can be read. Do NOT omit the `description` column!
 4. BOOLEAN OPERATOR PRECEDENCE (MANDATORY): When combining OR conditions with AND in a WHERE clause, you MUST wrap all OR conditions in parentheses!
@@ -68,16 +68,19 @@ Rules:
                 f"- Login: {target_user.get('login', '')}\n"
                 f"- Email: {target_user.get('mail', '')}\n"
                 f"IMPORTANT: Filter directly for this person using their User ID: {target_user.get('id')} "
-                f"(e.g. `wp.assigned_to_id = {target_user.get('id')}` or `u.id = {target_user.get('id')}`)."
+                f"(e.g. `members.user_id = {target_user.get('id')}` or `wp.assigned_to_id = {target_user.get('id')}` or `u.id = {target_user.get('id')}`). "
+                f"For project assignments, join `projects` with `members` (`m.project_id = p.id AND m.user_id = {target_user.get('id')}`) "
+                f"or `work_packages` (`wp.project_id = p.id AND wp.assigned_to_id = {target_user.get('id')}`)."
             )
         user_content += "\nSQL:"
 
-        chosen_model = model or getattr(settings, "sql_generation_model", "deepseek-ai/DeepSeek-V4-Flash-0731")
+        chosen_model = model or getattr(settings, "sql_generation_model", "deepseek-ai/DeepSeek-V3")
         client = cls._get_client()
 
         response = await client.chat.completions.create(
             model=chosen_model,
             temperature=0.0,
+            max_tokens=256,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},

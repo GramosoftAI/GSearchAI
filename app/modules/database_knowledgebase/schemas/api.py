@@ -125,7 +125,7 @@ class DatabaseQueryApiRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(..., min_length=1, max_length=2000, description="Natural language question")
-    top_k_tables: int = Field(default=5, ge=1, le=50, description="Maximum tables to include in sub-schema")
+    top_k_tables: int = Field(default=8, ge=1, le=50, description="Maximum tables to include in sub-schema")
     top_k_columns_per_table: int = Field(default=25, ge=1, le=100, description="Maximum columns per table")
     use_llm: bool = Field(default=True, description="Whether to use LLM for candidate SQL generation")
     timeout_seconds: Optional[int] = Field(default=5, ge=1, le=60, description="Execution timeout budget in seconds")

@@ -1218,6 +1218,39 @@ class DatabaseKnowledgebaseService:
                 except Exception as ent_err:
                     logger.debug(f"[GROUNDED_PIPELINE] User resolution skipped or failed: {ent_err}")
 
+            if target_user_id is not None:
+                # Ensure junction/membership tables connecting users to projects/tasks are included
+                retrieved_table_set = {d.get("table_name", "").lower() for d in schema_docs}
+                needed_user_tables = ["members", "work_packages"]
+                from ..models.embeddings import DatabaseSchemaEmbedding
+                from sqlalchemy import select
+                for tbl_name in needed_user_tables:
+                    if tbl_name not in retrieved_table_set:
+                        extra_stmt = select(
+                            DatabaseSchemaEmbedding.entity_key,
+                            DatabaseSchemaEmbedding.document_text,
+                            DatabaseSchemaEmbedding.metadata_json,
+                        ).where(
+                            DatabaseSchemaEmbedding.tenant_id == tenant_uuid,
+                            DatabaseSchemaEmbedding.db_knowledgebase_id == kb_id,
+                            DatabaseSchemaEmbedding.entity_type == "table_doc",
+                            DatabaseSchemaEmbedding.entity_key.ilike(f"%{tbl_name}"),
+                        ).limit(1)
+                        extra_res = await self.db.execute(extra_stmt)
+                        extra_row = extra_res.first()
+                        if extra_row:
+                            meta = extra_row.metadata_json or {}
+                            schema_docs.append({
+                                "source": meta.get("source", f"{extra_row.entity_key}.md"),
+                                "title": meta.get("title", extra_row.entity_key),
+                                "text": extra_row.document_text,
+                                "score": 1.0,
+                                "table_name": meta.get("table_name", tbl_name),
+                                "schema_name": meta.get("schema_name", "public"),
+                                "column_names": meta.get("column_names", []),
+                            })
+                            table_names.append(tbl_name)
+
             # 3. Planning Event (Stream compatibility)
             current_stage = "PLANNING"
             if event_sink:
