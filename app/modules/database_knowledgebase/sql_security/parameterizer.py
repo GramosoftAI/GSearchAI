@@ -57,6 +57,12 @@ class SQLParameterizer:
                 if literal.find_ancestor(exp.Limit) or literal.find_ancestor(exp.Offset) or literal.find_ancestor(exp.Interval):
                     continue
 
+                # Do not parameterize arithmetic offsets (e.g. CURRENT_DATE - 1, date + 7)
+                # because untyped PostgreSQL prepared statement parameters infer (date - $n) as (date - date) -> integer,
+                # causing PostgreSQL error: "operator does not exist: date = integer"
+                if literal.find_ancestor(exp.Add, exp.Sub):
+                    continue
+
                 # Do not parameterize literals in SELECT projections (e.g. SELECT 1 in EXISTS subqueries)
                 if cls._is_select_projection(literal):
                     continue
