@@ -36,7 +36,7 @@ CRITICAL: Never trust client-provided tenant_id. Always extract from JWT.
 
 
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, Response, status
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -272,7 +272,7 @@ async def lifespan(app: FastAPI):
                 if not api_url.endswith("/embeddings"):
                     api_url = f"{api_url.rstrip('/')}/embeddings"
                 
-                # Dedicated client — NOT shared with real request pool
+                # Dedicated client - NOT shared with real request pool
                 warmup_client = httpx.AsyncClient(
                     timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0),
                     limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
@@ -426,6 +426,30 @@ app.add_middleware(
     allow_headers=settings.cors_headers,
 
 )
+
+
+# 5. EMBED WIDGET PUBLIC CORS MIDDLEWARE
+# Embed endpoints (/api/v1/embed/*) are called by third-party sites and widgets across the web.
+# Ensures cross-origin requests & OPTIONS preflight succeed regardless of internal CORS_ORIGINS.
+@app.middleware("http")
+async def embed_cors_middleware(request: Request, call_next):
+    if request.url.path.startswith("/api/v1/embed"):
+        origin = request.headers.get("origin") or "*"
+        if request.method == "OPTIONS":
+            resp = Response(status_code=200)
+            resp.headers["Access-Control-Allow-Origin"] = origin
+            resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+            resp.headers["Access-Control-Allow-Headers"] = "*"
+            resp.headers["Access-Control-Allow-Credentials"] = "true"
+            resp.headers["Access-Control-Max-Age"] = "86400"
+            return resp
+
+        response = await call_next(request)
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
+
+    return await call_next(request)
 
 
 

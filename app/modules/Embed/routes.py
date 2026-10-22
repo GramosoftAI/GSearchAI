@@ -25,6 +25,7 @@ import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, Request, HTTPException, status, BackgroundTasks, Query, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
 from pydantic import BaseModel, Field
 
@@ -1055,7 +1056,7 @@ async def list_embed_configs(request: Request):
 async def get_embed_config(
     agent_id: str,
     request: Request,
-    tenant_id: Optional[str] = Query(None, description="Tenant UUID — required for public widget access (no JWT)"),
+    tenant_id: Optional[str] = Query(None, description="Tenant UUID - required for public widget access (no JWT)"),
     device: Optional[str] = Query(None, description="Device type (lap or mobile)"),
 ):
     """
@@ -1099,7 +1100,7 @@ async def get_embed_config(
             config["chat_type"] = "search"
 
     if is_public_access:
-        # Return sanitized public response — excludes internal metadata
+        # Return sanitized public response - excludes internal metadata
         PUBLIC_FIELDS = {
             "agent_id", "theme_color", "theme_text_color", "btn_bg_color", "btn_border_color",
             "header_logo", "header_align", "header_name", "header_subtext",
@@ -1110,9 +1111,23 @@ async def get_embed_config(
             "lead_timing", "escalation_enabled", "escalation_link",
         }
         sanitized = {k: v for k, v in config.items() if k in PUBLIC_FIELDS}
-        return format_success(sanitized)
+        origin = request.headers.get("origin") or "*"
+        return JSONResponse(
+            content=format_success(sanitized),
+            headers={
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Credentials": "true",
+            },
+        )
 
-    return format_success(config)
+    origin = request.headers.get("origin") or "*"
+    return JSONResponse(
+        content=format_success(config),
+        headers={
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+        },
+    )
 
 
 @router.post("/configs", status_code=status.HTTP_200_OK)
