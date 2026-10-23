@@ -1486,21 +1486,78 @@ class DatabaseKnowledgebaseService:
             except Exception as exec_err:
                 err_msg = str(exec_err)
                 logger.warning(f"[GROUNDED_AUTO_REPAIR] SQL execution failed: {err_msg}. Triggering dynamic self-healing...")
-                # 1. Fast path: PostgreSQL HINT for column name typos (e.g. u.email -> u.mail)
-                hint_match = re.search(r'column\s+([a-zA-Z0-9_\.]+)\s+does not exist.*?HINT:\s*Perhaps you meant to reference the column\s+"([a-zA-Z0-9_\.]+)"', err_msg, re.IGNORECASE | re.DOTALL)
                 repaired_sql = None
                 repair_mode = "grounded_hint_repaired"
+
+                # 1. Fast path: PostgreSQL HINT for column name typos (e.g. u.email -> u.mail)
+                hint_match = re.search(r'column\s+([a-zA-Z0-9_\.]+)\s+does not exist.*?HINT:\s*Perhaps you meant to reference the column\s+"([a-zA-Z0-9_\.]+)"', err_msg, re.IGNORECASE | re.DOTALL)
                 if hint_match:
                     bad_ref = hint_match.group(1)
                     good_ref = hint_match.group(2)
                     bad_col = bad_ref.split(".")[-1]
                     good_col = good_ref.split(".")[-1]
-                    logger.info(f"[GROUNDED_AUTO_REPAIR] Auto-repairing column '{bad_col}' -> '{good_col}' based on DB hint")
-                    repaired_sql = re.sub(rf'\b{re.escape(bad_col)}\b', good_col, candidate_sql_clean)
-                else:
-                    # 2. Universal LLM dynamic repair loop: pass error + schema docs + failed query
+                    # Only apply fast-path hint if column name actually changed and modifies query
+                    if bad_col != good_col:
+                        cand_hint_sql = re.sub(rf'\b{re.escape(bad_col)}\b', good_col, candidate_sql_clean)
+                        if cand_hint_sql.strip() != candidate_sql_clean.strip():
+                            logger.info(f"[GROUNDED_AUTO_REPAIR] Attempting fast-path hint repair: '{bad_col}' -> '{good_col}'")
+                            repaired_sql = cand_hint_sql
+
+                # Try executing fast hint repair if available
+                if repaired_sql:
                     try:
-                        logger.info(f"[GROUNDED_AUTO_REPAIR] Invoking LLM repair loop for error: {err_msg}")
+                        repaired_sql_clean = GroundedSQLValidator.validate_readonly_sql(repaired_sql)
+                        if "LIMIT" not in repaired_sql_clean.upper():
+                            default_limit = 1 if "count(" in repaired_sql_clean.lower() else 50
+                            repaired_sql_clean = f"{repaired_sql_clean.rstrip()} LIMIT {default_limit}"
+
+                        parsed_repaired = SQLASTParser.parse_sql(repaired_sql_clean, dialect="postgres")
+                        cand_sql = ValidatedCandidateSQL(
+                            raw_sql=repaired_sql_clean,
+                            sanitized_sql=repaired_sql_clean,
+                            parameterized=SQLParameterizer.parameterize(parsed_repaired),
+                            plan=cand_sql.plan,
+                            validation_report=ValidationResult(is_valid=True, errors=[], warnings=[]),
+                            repair_attempts=1,
+                            sql_generation_mode=repair_mode,
+                        )
+                        canonical_result = await self.execute_candidate_sql(
+                            kb_id=kb_id,
+                            candidate_sql=cand_sql,
+                            execution_config=execution_config,
+                        )
+                        logger.info(f"[GROUNDED_AUTO_REPAIR] Query successfully repaired and executed via fast hint: {repaired_sql_clean}")
+                    except Exception as hint_err:
+                        logger.warning(f"[GROUNDED_AUTO_REPAIR] Fast-path hint repair execution failed: {hint_err}. Falling back to universal LLM repair loop.")
+                        repaired_sql = None
+
+                # 2. Universal LLM dynamic repair loop: pass error + schema docs + failed query
+                if not repaired_sql:
+                    # Dynamically augment schema docs if failed SQL or error references tables missing from schema_docs
+                    if canonical_schema:
+                        existing_doc_tables = {d.get("table_name", "").lower() for d in schema_docs}
+                        sql_tables = set(re.findall(r'\b(?:FROM|JOIN)\s+([a-zA-Z0-9_\.]+)', candidate_sql_clean, re.IGNORECASE))
+                        for raw_tbl in sql_tables:
+                            ref_tbl = raw_tbl.split(".")[-1].lower()
+                            if ref_tbl not in existing_doc_tables:
+                                t_obj = canonical_schema.get_table(ref_tbl) or canonical_schema.get_table(ref_tbl, schema_name="public")
+                                if t_obj:
+                                    from ..schema.markdown_doc_generator import SchemaMarkdownGenerator
+                                    doc_text = SchemaMarkdownGenerator.generate_table_document(t_obj)
+                                    schema_docs.append({
+                                        "source": f"{ref_tbl}.md",
+                                        "title": f"Table: {ref_tbl}",
+                                        "text": doc_text,
+                                        "score": 0.99,
+                                        "table_name": t_obj.table_name,
+                                        "schema_name": t_obj.schema_name or "public",
+                                        "column_names": [c.name for c in t_obj.columns.values()],
+                                    })
+                                    existing_doc_tables.add(ref_tbl)
+                                    logger.info(f"[GROUNDED_AUTO_REPAIR] Dynamically augmented schema docs with '{ref_tbl}' table for LLM repair loop")
+
+                    try:
+                        logger.info(f"[GROUNDED_AUTO_REPAIR] Invoking universal LLM repair loop for error: {err_msg}")
                         repaired_sql = await GroundedSQLGenerator.repair_sql(
                             question=user_query,
                             failed_sql=candidate_sql_clean,
@@ -1514,35 +1571,35 @@ class DatabaseKnowledgebaseService:
                         logger.error(f"[GROUNDED_AUTO_REPAIR] Dynamic LLM repair failed: {repair_exc}")
                         raise exec_err
 
-                if repaired_sql:
-                    try:
-                        repaired_sql_clean = GroundedSQLValidator.validate_readonly_sql(repaired_sql)
-                    except ValueError as val_err:
-                        logger.error(f"[GROUNDED_AUTO_REPAIR] Repaired SQL failed security validation: {val_err}")
+                    if repaired_sql:
+                        try:
+                            repaired_sql_clean = GroundedSQLValidator.validate_readonly_sql(repaired_sql)
+                        except ValueError as val_err:
+                            logger.error(f"[GROUNDED_AUTO_REPAIR] Repaired SQL failed security validation: {val_err}")
+                            raise exec_err
+
+                        if "LIMIT" not in repaired_sql_clean.upper():
+                            default_limit = 1 if "count(" in repaired_sql_clean.lower() else 50
+                            repaired_sql_clean = f"{repaired_sql_clean.rstrip()} LIMIT {default_limit}"
+
+                        parsed_repaired = SQLASTParser.parse_sql(repaired_sql_clean, dialect="postgres")
+                        cand_sql = ValidatedCandidateSQL(
+                            raw_sql=repaired_sql_clean,
+                            sanitized_sql=repaired_sql_clean,
+                            parameterized=SQLParameterizer.parameterize(parsed_repaired),
+                            plan=cand_sql.plan,
+                            validation_report=ValidationResult(is_valid=True, errors=[], warnings=[]),
+                            repair_attempts=1,
+                            sql_generation_mode=repair_mode,
+                        )
+                        canonical_result = await self.execute_candidate_sql(
+                            kb_id=kb_id,
+                            candidate_sql=cand_sql,
+                            execution_config=execution_config,
+                        )
+                        logger.info(f"[GROUNDED_AUTO_REPAIR] Query successfully repaired and executed via LLM: {repaired_sql_clean}")
+                    else:
                         raise exec_err
-
-                    if "LIMIT" not in repaired_sql_clean.upper():
-                        default_limit = 1 if "count(" in repaired_sql_clean.lower() else 50
-                        repaired_sql_clean = f"{repaired_sql_clean.rstrip()} LIMIT {default_limit}"
-
-                    parsed_repaired = SQLASTParser.parse_sql(repaired_sql_clean, dialect="postgres")
-                    cand_sql = ValidatedCandidateSQL(
-                        raw_sql=repaired_sql_clean,
-                        sanitized_sql=repaired_sql_clean,
-                        parameterized=SQLParameterizer.parameterize(parsed_repaired),
-                        plan=cand_sql.plan,
-                        validation_report=ValidationResult(is_valid=True, errors=[], warnings=[]),
-                        repair_attempts=1,
-                        sql_generation_mode=repair_mode,
-                    )
-                    canonical_result = await self.execute_candidate_sql(
-                        kb_id=kb_id,
-                        candidate_sql=cand_sql,
-                        execution_config=execution_config,
-                    )
-                    logger.info(f"[GROUNDED_AUTO_REPAIR] Query successfully repaired and executed: {repaired_sql_clean}")
-                else:
-                    raise exec_err
             t_exec_ms = (time.perf_counter() - t_exec_start) * 1000.0
 
             # Zero-Row dynamic temporal relaxation recovery

@@ -53,6 +53,8 @@ class GroundedSQLGenerator:
 Rules:
 1. Use only tables and columns explicitly present in the supplied schema context. NEVER invent or hallucinate table names or columns.
 2. Strictly check the Columns table of each schema document. Always use the exact column names present in the schema.
+   - If a table does not have a single 'name' column but has split name columns (e.g., 'firstname'/'lastname' or 'first_name'/'last_name'), project CONCAT(first, ' ', last) or the username/login column. Never invent a 'name' column if it does not appear in the Columns table.
+   - Only join tables along valid foreign key paths and bridge tables present in the schema context.
 3. INCLUDE DESCRIPTIVE COLUMNS: When querying records for details, status, or progress, always project meaningful human-readable columns (e.g., name, subject, title, description, status, dates, assignees) alongside IDs so the answer can be clearly understood.
 4. BOOLEAN OPERATOR PRECEDENCE (MANDATORY): When combining OR conditions with AND in a WHERE clause, you MUST wrap all OR conditions in parentheses!
    Example: WHERE (col1 ILIKE '%term%' OR col2 ILIKE '%term%') AND date_col = '2026-10-16'
@@ -165,8 +167,8 @@ Rules:
 The user asked a question, but the generated SQL query failed when executed against PostgreSQL with a specific error.
 Your task is to fix the SQL query so that it successfully executes and accurately answers the question.
 Rules:
-1. Examine the error message carefully. If a column or table does not exist, consult the supplied Schema context and find the correct column/table or remove the invalid reference/join.
-2. Strictly check the Columns table and types of each schema document. Always use the exact column names present in the schema.
+1. Examine the error message carefully. If a column or table does not exist, consult the supplied Schema context and find the actual columns in that table (e.g. check for split name fields like firstname/lastname or alternate column names) or adjust the join/projections. If a table stores names as separate fields (e.g. firstname/lastname), use CONCAT or login/username instead of a non-existent name column.
+2. Strictly check the Columns table and types of each schema document. Always use the exact column names present in the schema. Never guess column names that are not listed.
 3. MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
    When filtering text or name columns by user-entered strings that may contain spaces instead of underscores/hyphens (e.g., user typed 'cream reward', but DB has 'CREAM_Reward' or 'cream-reward'):
    - NEVER use strict equality like `p.name = 'cream reward'`.

@@ -109,8 +109,9 @@ class SchemaDocRetriever:
 
             # Dynamic Schema Graph Augmentation:
             # Traverses canonical schema to discover:
-            # 1. Direct table matches (singular/plural) from user query tokens
-            # 2. 1-hop foreign key parent dimension tables referenced by primary retrieved tables
+            # 1. Direct table concept matches (exact or singular/plural) from user query tokens (score 0.95)
+            # 2. Bridge tables connecting pairs of seed tables using SchemaGraph (score 0.85)
+            # 3. 1-hop foreign key parent dimension tables (discounted score 0.60 to avoid crowding out seeds)
             retrieved_names = {h["table_name"].lower() for h in hits}
             candidate_additions: List[Tuple[str, float]] = []
 
@@ -120,13 +121,31 @@ class SchemaDocRetriever:
                 # 1. Direct Table Concept Matching from DDL (Exact name or singular/plural)
                 for t in canonical_schema.all_tables:
                     t_name = t.table_name.split(".")[-1].lower()
-                    if t_name in retrieved_names:
-                        continue
-                    # Match exact table name or singular/plural
                     if t_name in q_tokens or (t_name.endswith('s') and t_name[:-1] in q_tokens) or (f"{t_name}s" in q_tokens):
-                        candidate_additions.append((t_name, 0.88))
+                        if t_name in retrieved_names:
+                            for h in hits:
+                                if h.get("table_name", "").lower() == t_name:
+                                    h["score"] = max(h.get("score", 0.0), 0.95)
+                        else:
+                            candidate_additions.append((t_name, 0.95))
 
-                # 2. 1-Hop Foreign Key Graph Expansion (only from the top 3 highest-scoring seed tables)
+                # 2. Connecting Bridge Tables between identified seed tables
+                seed_tables = {h["table_name"].lower() for h in hits if h.get("score", 0.0) >= 0.50}
+                seed_tables.update(t_name for t_name, score in candidate_additions if score >= 0.90)
+                if len(seed_tables) >= 2:
+                    try:
+                        from ..schema.graph import SchemaGraph
+                        sg = SchemaGraph.from_database_schema(canonical_schema)
+                        bridge_subgraph_tables, _ = sg.find_connecting_subgraph(seed_tables=seed_tables, max_hops=3)
+                        for b_tbl in bridge_subgraph_tables:
+                            b_clean = b_tbl.split(".")[-1].lower()
+                            if b_clean not in retrieved_names and not any(c[0] == b_clean for c in candidate_additions):
+                                candidate_additions.append((b_clean, 0.85))
+                                logger.info(f"[SchemaDocRetriever] Discovered bridge table '{b_clean}' connecting seed entities")
+                    except Exception as bridge_err:
+                        logger.warning(f"[SchemaDocRetriever] Bridge table discovery failed: {bridge_err}")
+
+                # 3. 1-Hop Foreign Key Graph Expansion (discounted score 0.60 to preserve seed priority)
                 top_seed_names = [h["table_name"].lower() for h in sorted(hits, key=lambda x: x["score"], reverse=True)[:3]]
                 for t_name in top_seed_names:
                     t_schema = canonical_schema.get_table(t_name)
@@ -134,7 +153,7 @@ class SchemaDocRetriever:
                         for fk in t_schema.foreign_keys:
                             ref_tbl = fk.referred_table.split(".")[-1].lower()
                             if ref_tbl not in retrieved_names and not any(c[0] == ref_tbl for c in candidate_additions):
-                                candidate_additions.append((ref_tbl, 0.85))
+                                candidate_additions.append((ref_tbl, 0.60))
 
             for tbl, aug_score in candidate_additions:
                 if tbl not in retrieved_names:
@@ -166,14 +185,27 @@ class SchemaDocRetriever:
                         })
                         retrieved_names.add(tbl)
                         logger.info(f"[SchemaDocRetriever] Dynamically augmented schema docs with '{tbl}' table")
+                    elif canonical_schema:
+                        t_obj = canonical_schema.get_table(tbl) or canonical_schema.get_table(tbl.split(".")[-1])
+                        if t_obj:
+                            doc_text = SchemaMarkdownGenerator.generate_table_document(t_obj)
+                            hits.append({
+                                "source": f"{tbl}.md",
+                                "title": f"Table: {tbl}",
+                                "text": doc_text,
+                                "score": aug_score,
+                                "table_name": t_obj.table_name,
+                                "schema_name": t_obj.schema_name or "public",
+                                "column_names": [c.name for c in t_obj.columns.values()],
+                            })
+                            retrieved_names.add(tbl)
+                            logger.info(f"[SchemaDocRetriever] Dynamically generated on-the-fly doc for '{tbl}' table from DDL")
 
             # Rank and cap final schema context to top_k (max 8)
             hits.sort(key=lambda h: h.get("score", 0.0), reverse=True)
             max_context_tables = max(top_k, 8)
             hits = hits[:max_context_tables]
-            return hits
-
-            logger.info(f"[SchemaDocRetriever] Retrieved {len(hits)} table docs from pgvector for query: '{user_query[:50]}'")
+            logger.info(f"[SchemaDocRetriever] Retrieved {len(hits)} table docs from pgvector/DDL for query: '{user_query[:50]}'")
             return hits
 
         # Fallback: if no 'table_doc' embeddings exist yet, generate from canonical schema
