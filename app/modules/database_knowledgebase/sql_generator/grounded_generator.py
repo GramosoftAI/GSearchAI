@@ -54,7 +54,7 @@ Rules:
 1. Use only tables and columns explicitly present in the supplied schema context. NEVER invent or hallucinate table names or columns.
 2. Strictly check the Columns table of each schema document. Always use the exact column names present in the schema.
    - If a table does not have a single 'name' column but has split name columns (e.g., 'firstname'/'lastname' or 'first_name'/'last_name'), project CONCAT(first, ' ', last) or the username/login column. Never invent a 'name' column if it does not appear in the Columns table.
-   - Only join tables along valid foreign key paths and bridge tables present in the schema context.
+   - Only join tables along valid foreign key paths and bridge tables present in the schema context. NEVER invent direct joins between unrelated tables (e.g., `types.id = projects.id`) or invent columns like `p.creator_id`. Always join through intermediate fact/transaction tables (e.g. `work_packages`) that contain foreign keys to both tables.
 3. INCLUDE DESCRIPTIVE COLUMNS: When querying records for details, status, or progress, always project meaningful human-readable columns (e.g., name, subject, title, description, status, dates, assignees) alongside IDs so the answer can be clearly understood.
 4. BOOLEAN OPERATOR PRECEDENCE (MANDATORY): When combining OR conditions with AND in a WHERE clause, you MUST wrap all OR conditions in parentheses!
    Example: WHERE (col1 ILIKE '%term%' OR col2 ILIKE '%term%') AND date_col = '2026-10-16'
@@ -69,6 +69,21 @@ Rules:
      `(column_name ILIKE '%cream%' AND column_name ILIKE '%reward%')`
      or `column_name ILIKE '%cream%reward%'`
      This guarantees matching regardless of underscores, hyphens, case, or extra internal characters!
+9. "WORKING ON / UNDER" vs "MEMBERS OF" A PROJECT:
+   - When the user asks who is "working on", "working under", "doing work on", or "assigned to" a project/entity, join the active tasks/work items table (e.g., `work_packages`, `tasks`, `issues`, `tickets` via `assigned_to_id` or `author_id`) where actual work assignments reside.
+   - Use the membership roster table (e.g., `members`) only when the user specifically asks for "members", "membership list", or "team permissions".
+10. MANDATORY DISTINCT & ORDER BY IN POSTGRESQL:
+   - When joining across one-to-many relationship tables, use `SELECT DISTINCT` to prevent duplicate rows.
+   - CRITICAL POSTGRESQL SYNTAX RULE: When using `SELECT DISTINCT`, every expression in `ORDER BY` MUST appear in the `SELECT` list.
+     For example, `SELECT DISTINCT col::date ... ORDER BY col::date DESC` is valid; `SELECT DISTINCT col::date ... ORDER BY col DESC` will throw a syntax error.
+     If you only need the latest or earliest single record with `LIMIT 1`, write: `SELECT col::date ... ORDER BY col DESC LIMIT 1` without `DISTINCT`.
+11. SPLIT NAME COLUMNS:
+   - Check the columns of the `users` table: if it contains `firstname` and `lastname` instead of `name`, match using `(u.firstname ILIKE '%...%' OR u.lastname ILIKE '%...%')` and select using `CONCAT(u.firstname, ' ', u.lastname)`. NEVER reference `u.name` unless `name` actually exists in its schema!
+12. POLYMORPHIC AND DUAL ASSOCIATIONS (`entity_type` / `entity_id`):
+   - Tables tracking activities, timesheets, or logs (e.g. `time_entries`, `journals`, `activities`) often support polymorphic links where direct foreign keys (like `work_package_id`) may be NULL in favor of `(entity_type = 'WorkPackage' AND entity_id = wp.id)` or `(journable_type = 'WorkPackage' AND journable_id = wp.id)`.
+   - When joining between work items and time/activity logs, accommodate both columns:
+     `ON (te.work_package_id = wp.id OR (te.entity_type = 'WorkPackage' AND te.entity_id = wp.id))`
+   - When the question asks for primary entities (e.g. "Who updated tasks...") with their logged hours, use `LEFT JOIN` for optional time logs and check the direct `project_id` on the logged table (`te.project_id = p.id`).
 """
 
         user_content = f"Schema context:\n{context}\n\nQuestion: {question}"
@@ -99,8 +114,9 @@ Rules:
 
             user_content += (
                 "\nCRITICAL ENTITY FILTERING INSTRUCTIONS:\n"
-                "1. Filter using the resolved entity IDs directly in WHERE / JOIN clauses "
-                "(e.g. `{alias}.{fk_column} = {id}`) instead of performing loose string matching on names or guessing IDs.\n"
+                "1. When dimension entities are resolved above (e.g. Table 'projects' ID 95, Table 'types' ID 7, Table 'users' ID 104):\n"
+                "   - Filter using the resolved entity IDs on the fact table foreign key columns (e.g. `work_packages.project_id = 95`, `work_packages.type_id = 7`, `work_packages.author_id = 104`) or join the dimension table on its primary key.\n"
+                "   - DO NOT filter project names or type names inside `work_packages.subject`! The project name belongs to `projects.name` (or `project_id`), NOT the work package title/subject.\n"
                 "2. When multiple people or entities are mentioned, map each to their respective role and column.\n"
             )
 
@@ -175,8 +191,19 @@ Rules:
    - ALWAYS split the phrase into individual words and match each word with ILIKE:
      `(column_name ILIKE '%cream%' AND column_name ILIKE '%reward%')`
      or `column_name ILIKE '%cream%reward%'`
-4. Always include LIMIT 50 (or LIMIT 1 for aggregates) at the end.
-5. Return ONLY one single corrected PostgreSQL SELECT query without Markdown code fences, commentary, or multiple statements.
+4. "WORKING ON / UNDER" vs "MEMBERS OF" A PROJECT:
+   - When the user asks who is "working on", "working under", "doing work on", or "assigned to" a project/entity, join the active tasks/work items table (e.g., `work_packages`, `tasks`, `issues`, `tickets` via `assigned_to_id` or `author_id`) where actual work assignments reside.
+   - Use the membership roster table (e.g., `members`) only when the user specifically asks for "members", "membership list", or "team permissions".
+5. POSTGRESQL SELECT DISTINCT & ORDER BY RULE:
+   - In PostgreSQL, when using `SELECT DISTINCT`, every expression in `ORDER BY` MUST appear in the `SELECT` list.
+     For example: `SELECT DISTINCT col::date ... ORDER BY col::date DESC` is valid; `SELECT DISTINCT col::date ... ORDER BY col DESC` will throw a syntax error.
+     If selecting the single latest or earliest record with `LIMIT 1`, use `SELECT col::date ... ORDER BY col DESC LIMIT 1` without `DISTINCT`.
+6. POLYMORPHIC AND DUAL ASSOCIATIONS (`entity_type` / `entity_id`):
+   - Tables tracking activities, timesheets, or logs (e.g. `time_entries`, `journals`) frequently store parent object links in `(entity_type = 'WorkPackage' AND entity_id = wp.id)` where direct foreign keys like `work_package_id` can be NULL. Check both columns:
+     `ON (te.work_package_id = wp.id OR (te.entity_type = 'WorkPackage' AND te.entity_id = wp.id))`
+   - Also prefer joining `projects` via `te.project_id = p.id` and using `LEFT JOIN` for optional time logs.
+7. Always include LIMIT 50 (or LIMIT 1 for aggregates) at the end.
+8. Return ONLY one single corrected PostgreSQL SELECT query without Markdown code fences, commentary, or multiple statements.
 """
 
         user_content = (
@@ -198,7 +225,20 @@ Rules:
             for ent in all_resolved:
                 tbl = ent.get("table", "entity")
                 pk = ent.get("column", "id")
-                user_content += f"- Table '{tbl}' -> {pk}: {ent.get('id')}, Name: '{ent.get('name')}'\n"
+                e_id = ent.get("id")
+                e_name = ent.get("name", "")
+                role_str = f" [Role: '{ent['role']}']" if ent.get("role") else ""
+                col_hints = ent.get("suggested_columns")
+                col_str = f" -> Suggested column(s): {', '.join(col_hints)}" if col_hints else ""
+                user_content += f"- Table '{tbl}' (Key: {pk}) -> ID: {e_id}, Value: '{e_name}'{role_str}{col_str}\n"
+
+            user_content += (
+                "\nCRITICAL ENTITY FILTERING INSTRUCTIONS:\n"
+                "1. When dimension entities are resolved above (e.g. Table 'projects' ID 95, Table 'types' ID 7, Table 'users' ID 104):\n"
+                "   - Filter using the resolved entity IDs on the fact table foreign key columns (e.g. `work_packages.project_id = 95`, `work_packages.type_id = 7`, `work_packages.author_id = 104`) or join the dimension table on its primary key.\n"
+                "   - DO NOT filter project names or type names inside `work_packages.subject`! The project name belongs to `projects.name` (or `project_id`), NOT the work package title/subject.\n"
+                "2. When multiple people or entities are mentioned, map each to their respective role and column.\n"
+            )
 
         user_content += "\nCorrected SQL:"
 

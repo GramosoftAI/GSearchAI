@@ -141,6 +141,8 @@ class SchemaMarkdownGenerator:
 
         return "\n".join(lines)
 
+    generate_table_document = generate_table_markdown
+
     @classmethod
     def generate_all_table_documents(
         cls, schema: DatabaseSchema

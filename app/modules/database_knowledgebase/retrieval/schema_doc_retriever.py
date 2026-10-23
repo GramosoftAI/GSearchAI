@@ -118,16 +118,47 @@ class SchemaDocRetriever:
             if canonical_schema and hasattr(canonical_schema, "all_tables"):
                 q_tokens = set(re.findall(r'\b[a-z0-9]+\b', q_lower))
 
-                # 1. Direct Table Concept Matching from DDL (Exact name or singular/plural)
+                # 1. Direct Table Concept Matching from DDL
                 for t in canonical_schema.all_tables:
                     t_name = t.table_name.split(".")[-1].lower()
-                    if t_name in q_tokens or (t_name.endswith('s') and t_name[:-1] in q_tokens) or (f"{t_name}s" in q_tokens):
+                    if t_name.startswith("github_") and not has_github:
+                        continue
+                    if t_name.startswith("gitlab_") and not has_gitlab:
+                        continue
+                    if t_name.startswith("scim_") and not has_scim:
+                        continue
+                    if (t_name.startswith("good_job_") or t_name == "good_jobs") and not has_jobs:
+                        continue
+                    if t_name.startswith("bcf_") and not has_bcf:
+                        continue
+                    if t_name in ("ar_internal_metadata", "schema_migrations"):
+                        continue
+
+                    t_parts = [p for p in t_name.split("_") if len(p) >= 3]
+
+                    # Exact or singular/plural table match (e.g. "user" -> "users", "project" -> "projects")
+                    is_exact = (
+                        t_name in q_tokens
+                        or (t_name.endswith('s') and t_name[:-1] in q_tokens)
+                        or (f"{t_name}s" in q_tokens)
+                    )
+
+                    # Distinctive action / verb stem match for compound tables (e.g. "working" -> "work_packages")
+                    is_stem_match = False
+                    if not is_exact and len(t_parts) > 1 and not any(t_name.endswith(sfx) or t_name.startswith(sfx) for sfx in ("_journals", "_hierarchies", "_days", "_cache", "_audits", "non_")):
+                        for tok in q_tokens:
+                            if len(tok) >= 4 and any(tok.startswith(p) for p in t_parts if p not in ("project", "user", "table", "data")):
+                                is_stem_match = True
+                                break
+
+                    if is_exact or is_stem_match:
+                        match_score = 0.95 if is_exact else 0.92
                         if t_name in retrieved_names:
                             for h in hits:
                                 if h.get("table_name", "").lower() == t_name:
-                                    h["score"] = max(h.get("score", 0.0), 0.95)
+                                    h["score"] = max(h.get("score", 0.0), match_score)
                         else:
-                            candidate_additions.append((t_name, 0.95))
+                            candidate_additions.append((t_name, match_score))
 
                 # 2. Connecting Bridge Tables between identified seed tables
                 seed_tables = {h["table_name"].lower() for h in hits if h.get("score", 0.0) >= 0.50}
@@ -154,6 +185,36 @@ class SchemaDocRetriever:
                             ref_tbl = fk.referred_table.split(".")[-1].lower()
                             if ref_tbl not in retrieved_names and not any(c[0] == ref_tbl for c in candidate_additions):
                                 candidate_additions.append((ref_tbl, 0.60))
+
+                # 4. Multi-Entity Fact / Intersection Table Discovery:
+                # In relational databases, central fact/transaction tables (e.g. work_packages, orders, tickets, appointments)
+                # contain foreign keys referencing multiple dimension tables (users, projects, types, customers, statuses).
+                # Dynamically discover any table in canonical_schema that connects 2 or more active candidate tables.
+                active_candidate_names = {h["table_name"].lower() for h in hits}
+                active_candidate_names.update(c[0] for c in candidate_additions)
+
+                for t in canonical_schema.all_tables:
+                    t_clean = t.table_name.split(".")[-1].lower()
+                    if any(t_clean.startswith(p) for p in ("github_", "gitlab_", "scim_", "good_job_", "bcf_", "ar_internal_metadata", "schema_migrations")):
+                        continue
+                    if any(t_clean.endswith(sfx) or t_clean.startswith(sfx) for sfx in ("_journals", "_hierarchies", "_days", "_cache", "_audits", "non_")):
+                        continue
+
+                    ref_matches = set()
+                    for fk in t.foreign_keys:
+                        ref = fk.referred_table.split(".")[-1].lower()
+                        if ref in active_candidate_names and ref != t_clean:
+                            ref_matches.add(ref)
+
+                    if len(ref_matches) >= 2:
+                        hub_score = 0.95 if len(ref_matches) >= 3 else 0.88
+                        if t_clean in retrieved_names:
+                            for h in hits:
+                                if h.get("table_name", "").lower() == t_clean:
+                                    h["score"] = max(h.get("score", 0.0), hub_score)
+                        elif not any(c[0] == t_clean for c in candidate_additions):
+                            candidate_additions.append((t_clean, hub_score))
+                            logger.info(f"[SchemaDocRetriever] Discovered central fact table '{t_clean}' connecting {len(ref_matches)} candidate entities: {ref_matches}")
 
             for tbl, aug_score in candidate_additions:
                 if tbl not in retrieved_names:

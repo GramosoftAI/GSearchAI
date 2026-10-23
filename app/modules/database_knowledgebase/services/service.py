@@ -1197,7 +1197,7 @@ class DatabaseKnowledgebaseService:
                         canonical_schema=canonical_schema,
                         conn_config=config,
                         kb_id=str(kb_id),
-                        tenant_id=str(tenant_id),
+                        tenant_id=str(self.tenant_id),
                     )
 
                     # Check for ambiguous entity matches that require user clarification
@@ -1237,6 +1237,7 @@ class DatabaseKnowledgebaseService:
             # c) 1-hop foreign key parent dimension tables
             retrieved_table_set = {d.get("table_name", "").lower() for d in schema_docs}
             dynamically_needed_tables: Set[str] = set()
+            resolved_table_names = {ent.get("table", "").lower() for ent in resolved_dimension_entities if ent.get("table")}
 
             # Add tables containing any resolved entities
             for ent in resolved_dimension_entities:
@@ -1246,16 +1247,34 @@ class DatabaseKnowledgebaseService:
 
             if canonical_schema and hasattr(canonical_schema, "all_tables"):
                 # Dynamically discover junction / connecting tables that link 2 or more resolved entities
-                resolved_table_names = {ent.get("table", "").lower() for ent in resolved_dimension_entities if ent.get("table")}
                 if len(resolved_table_names) >= 2:
+                    discovered_junctions: List[Tuple[str, int]] = []
                     for t in canonical_schema.all_tables:
                         t_clean = t.table_name.split(".")[-1].lower()
                         if t_clean in retrieved_table_set or t_clean in dynamically_needed_tables:
                             continue
+                        if any(t_clean.startswith(pfx) for pfx in ("github_", "gitlab_", "scim_", "good_job_", "bcf_", "ar_internal_metadata", "schema_migrations")):
+                            continue
+                        if any(t_clean.endswith(sfx) or t_clean.startswith(sfx) for sfx in ("_journals", "_hierarchies", "_days", "_cache", "_audits", "non_")):
+                            continue
+
                         fk_targets = {fk.referred_table.split(".")[-1].lower() for fk in t.foreign_keys}
-                        if len(fk_targets.intersection(resolved_table_names)) >= 2:
-                            dynamically_needed_tables.add(t_clean)
-                            logger.info(f"[GROUNDED_PIPELINE] Discovered connecting junction table '{t_clean}' linking {resolved_table_names}")
+                        # Also check foreign key naming patterns (e.g. author_id, user_id, project_id, type_id)
+                        cols = {c.name.lower() for c in t.columns.values()}
+                        for r_tbl in resolved_table_names:
+                            r_singular = r_tbl.rstrip('s')
+                            if f"{r_singular}_id" in cols or (r_tbl == "users" and any(c in cols for c in ("author_id", "assigned_to_id", "creator_id", "user_id"))):
+                                fk_targets.add(r_tbl)
+
+                        inter = fk_targets.intersection(resolved_table_names)
+                        if len(inter) >= 2:
+                            discovered_junctions.append((t_clean, len(inter)))
+
+                    # Sort by number of connected resolved entities descending, prioritizing fact hubs
+                    discovered_junctions.sort(key=lambda x: x[1], reverse=True)
+                    for j_tbl, num_conn in discovered_junctions[:3]:
+                        dynamically_needed_tables.add(j_tbl)
+                        logger.info(f"[GROUNDED_PIPELINE] Discovered connecting junction table '{j_tbl}' linking {num_conn} resolved entities")
 
                 seed_tables = retrieved_table_set.union(dynamically_needed_tables)
                 # 1-hop parent dimension tables referenced via FK from currently selected tables
@@ -1294,7 +1313,7 @@ class DatabaseKnowledgebaseService:
                                 "source": meta.get("source", f"{extra_row.entity_key}.md"),
                                 "title": meta.get("title", extra_row.entity_key),
                                 "text": extra_row.document_text,
-                                "score": 0.95,
+                                "score": 0.98 if tbl_name in resolved_table_names else 0.95,
                                 "table_name": meta.get("table_name", tbl_name),
                                 "schema_name": meta.get("schema_name", "public"),
                                 "column_names": meta.get("column_names", []),
@@ -1302,11 +1321,36 @@ class DatabaseKnowledgebaseService:
                             table_names.append(tbl_name)
                             retrieved_table_set.add(tbl_name)
                             logger.info(f"[GROUNDED_PIPELINE] Dynamically expanded schema graph with '{tbl_name}' table")
+                        elif canonical_schema:
+                            t_obj = canonical_schema.get_table(tbl_name) or canonical_schema.get_table(tbl_name.split(".")[-1])
+                            if t_obj:
+                                from ..schema.markdown_doc_generator import SchemaMarkdownGenerator
+                                doc_text = SchemaMarkdownGenerator.generate_table_markdown(t_obj)
+                                schema_docs.append({
+                                    "source": f"{tbl_name}.md",
+                                    "title": f"Table: {tbl_name}",
+                                    "text": doc_text,
+                                    "score": 0.98 if tbl_name in resolved_table_names else 0.95,
+                                    "table_name": t_obj.table_name,
+                                    "schema_name": t_obj.schema_name or "public",
+                                    "column_names": [c.name for c in t_obj.columns.values()],
+                                })
+                                table_names.append(tbl_name)
+                                retrieved_table_set.add(tbl_name)
+                                logger.info(f"[GROUNDED_PIPELINE] Dynamically generated on-the-fly doc for '{tbl_name}' table from DDL")
+
+            # Prioritize resolved entity tables (score 1.0) and central connecting fact tables (score 0.95)
+            for d in schema_docs:
+                d_tbl = d.get("table_name", "").lower()
+                if d_tbl in resolved_table_names:
+                    d["score"] = max(d.get("score", 0.0), 1.0)
 
             # Rank and cap final schema documents to top 8 tables
             schema_docs.sort(key=lambda d: d.get("score", 0.0), reverse=True)
             schema_docs = schema_docs[:8]
             table_names = [d.get("table_name", "") for d in schema_docs if d.get("table_name")]
+            logger.info(f"[GROUNDED_PIPELINE] Final schema context tables: {table_names}")
+            print(f"[GROUNDED_PIPELINE] Final schema context tables: {table_names}")
 
             # 3. Dynamic Query Intent Analysis & Planning Trace
             current_stage = "PLANNING"
@@ -1556,22 +1600,51 @@ class DatabaseKnowledgebaseService:
                                     existing_doc_tables.add(ref_tbl)
                                     logger.info(f"[GROUNDED_AUTO_REPAIR] Dynamically augmented schema docs with '{ref_tbl}' table for LLM repair loop")
 
-                    try:
-                        logger.info(f"[GROUNDED_AUTO_REPAIR] Invoking universal LLM repair loop for error: {err_msg}")
-                        repaired_sql = await GroundedSQLGenerator.repair_sql(
-                            question=user_query,
-                            failed_sql=candidate_sql_clean,
-                            error_message=err_msg,
-                            retrieved_docs=schema_docs,
-                            resolved_entities=resolved_dimension_entities,
-                            intent_analysis=intent_analysis,
-                        )
-                        repair_mode = "grounded_llm_repaired"
-                    except Exception as repair_exc:
-                        logger.error(f"[GROUNDED_AUTO_REPAIR] Dynamic LLM repair failed: {repair_exc}")
-                        raise exec_err
+                        # Discover any central connecting fact table linking 2+ of the tables used in the failed SQL
+                        clean_sql_tables = {raw_tbl.split(".")[-1].lower() for raw_tbl in sql_tables}
+                        if len(clean_sql_tables) >= 2:
+                            for t in canonical_schema.all_tables:
+                                t_clean = t.table_name.split(".")[-1].lower()
+                                if t_clean not in existing_doc_tables and not any(t_clean.startswith(p) for p in ("github_", "gitlab_", "scim_", "good_job_", "bcf_", "ar_internal_metadata")):
+                                    fks_to_sql = {fk.referred_table.split(".")[-1].lower() for fk in t.foreign_keys if fk.referred_table.split(".")[-1].lower() in clean_sql_tables}
+                                    if len(fks_to_sql) >= 2:
+                                        from ..schema.markdown_doc_generator import SchemaMarkdownGenerator
+                                        doc_text = SchemaMarkdownGenerator.generate_table_document(t)
+                                        schema_docs.append({
+                                            "source": f"{t_clean}.md",
+                                            "title": f"Table: {t_clean}",
+                                            "text": doc_text,
+                                            "score": 0.99,
+                                            "table_name": t.table_name,
+                                            "schema_name": t.schema_name or "public",
+                                            "column_names": [c.name for c in t.columns.values()],
+                                        })
+                                        existing_doc_tables.add(t_clean)
+                                        logger.info(f"[GROUNDED_AUTO_REPAIR] Dynamically injected missing connecting fact table '{t_clean}' (connects {fks_to_sql}) for LLM repair loop")
 
-                    if repaired_sql:
+                    current_failed_sql = candidate_sql_clean
+                    current_err_msg = err_msg
+                    repaired_successfully = False
+
+                    for repair_attempt in range(1, 3):
+                        try:
+                            logger.info(f"[GROUNDED_AUTO_REPAIR] Invoking universal LLM repair loop (attempt {repair_attempt}/2) for error: {current_err_msg}")
+                            repaired_sql = await GroundedSQLGenerator.repair_sql(
+                                question=user_query,
+                                failed_sql=current_failed_sql,
+                                error_message=current_err_msg,
+                                retrieved_docs=schema_docs,
+                                resolved_entities=resolved_dimension_entities,
+                                intent_analysis=intent_analysis,
+                            )
+                            repair_mode = "grounded_llm_repaired"
+                        except Exception as repair_exc:
+                            logger.error(f"[GROUNDED_AUTO_REPAIR] Dynamic LLM repair attempt {repair_attempt} failed: {repair_exc}")
+                            raise exec_err
+
+                        if not repaired_sql:
+                            break
+
                         try:
                             repaired_sql_clean = GroundedSQLValidator.validate_readonly_sql(repaired_sql)
                         except ValueError as val_err:
@@ -1589,16 +1662,25 @@ class DatabaseKnowledgebaseService:
                             parameterized=SQLParameterizer.parameterize(parsed_repaired),
                             plan=cand_sql.plan,
                             validation_report=ValidationResult(is_valid=True, errors=[], warnings=[]),
-                            repair_attempts=1,
+                            repair_attempts=repair_attempt,
                             sql_generation_mode=repair_mode,
                         )
-                        canonical_result = await self.execute_candidate_sql(
-                            kb_id=kb_id,
-                            candidate_sql=cand_sql,
-                            execution_config=execution_config,
-                        )
-                        logger.info(f"[GROUNDED_AUTO_REPAIR] Query successfully repaired and executed via LLM: {repaired_sql_clean}")
-                    else:
+
+                        try:
+                            canonical_result = await self.execute_candidate_sql(
+                                kb_id=kb_id,
+                                candidate_sql=cand_sql,
+                                execution_config=execution_config,
+                            )
+                            logger.info(f"[GROUNDED_AUTO_REPAIR] Query successfully repaired and executed via LLM (attempt {repair_attempt}): {repaired_sql_clean}")
+                            repaired_successfully = True
+                            break
+                        except Exception as second_exec_err:
+                            logger.warning(f"[GROUNDED_AUTO_REPAIR] Execution of repaired SQL failed (attempt {repair_attempt}): {second_exec_err}")
+                            current_failed_sql = repaired_sql_clean
+                            current_err_msg = str(second_exec_err)
+
+                    if not repaired_successfully:
                         raise exec_err
             t_exec_ms = (time.perf_counter() - t_exec_start) * 1000.0
 

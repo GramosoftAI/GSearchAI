@@ -211,14 +211,15 @@ class SchemaGraph:
 
                 JUNCTION_TOKENS = (
                     "member", "members", "assignment", "assigned", "team", "participant",
-                    "allocat", "user_project", "project_user"
+                    "allocat", "user_project", "project_user", "package", "work", "task", "item", "issue"
                 )
                 is_junction = any(tok in n_base for tok in JUNCTION_TOKENS)
 
                 src_cols = [c.lower() for c in (rel.source_columns or [])]
                 tgt_cols = [c.lower() for c in (rel.target_columns or [])]
                 all_cols = src_cols + tgt_cols
-                is_audit_fk = any(c in all_cols for c in ("author_id", "creator_id", "logged_by_id", "updater_id", "modifier_id", "presenter_id"))
+                # Only passive update/modification logging columns are audit discards; author and creator are primary entity roles
+                is_audit_fk = any(c in all_cols for c in ("logged_by_id", "updater_id", "modifier_id", "presenter_id"))
 
                 tier = 2
                 if is_junction and not is_aux:
