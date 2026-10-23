@@ -435,9 +435,9 @@ async def init_rls_policies():
 
             FOR ALL
 
-            USING (id = COALESCE(current_setting('app.current_tenant')::uuid, '00000000-0000-0000-0000-000000000000'))
+            USING (id = COALESCE(NULLIF(current_setting('app.current_tenant', true), '')::uuid, '00000000-0000-0000-0000-000000000000'))
 
-            WITH CHECK (id = COALESCE(current_setting('app.current_tenant')::uuid, '00000000-0000-0000-0000-000000000000'))
+            WITH CHECK (id = COALESCE(NULLIF(current_setting('app.current_tenant', true), '')::uuid, '00000000-0000-0000-0000-000000000000'))
 
             """
 
@@ -521,7 +521,7 @@ async def init_rls_policies():
 
                     { "tenant_id IS NULL OR " if table == "personalities" else "" }
 
-                    tenant_id = COALESCE(current_setting('app.current_tenant')::uuid, '00000000-0000-0000-0000-000000000000')
+                    tenant_id = COALESCE(NULLIF(current_setting('app.current_tenant', true), '')::uuid, '00000000-0000-0000-0000-000000000000')
 
                 )
 
@@ -529,7 +529,7 @@ async def init_rls_policies():
 
                     { "tenant_id IS NULL OR " if table == "personalities" else "" }
 
-                    tenant_id = COALESCE(current_setting('app.current_tenant')::uuid, '00000000-0000-0000-0000-000000000000')
+                    tenant_id = COALESCE(NULLIF(current_setting('app.current_tenant', true), '')::uuid, '00000000-0000-0000-0000-000000000000')
 
                 )
 

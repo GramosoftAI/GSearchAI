@@ -5,11 +5,12 @@ against db_schema_embeddings, directly implementing the semantic retrieval
 pattern proven in D:\\DB\\main.
 """
 
+import re
 import uuid
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
 from app.core.embeddings import EmbeddingGenerator
 from ..models.embeddings import DatabaseSchemaEmbedding
@@ -55,15 +56,45 @@ class SchemaDocRetriever:
         if schema_version:
             stmt = stmt.where(DatabaseSchemaEmbedding.schema_version == schema_version)
 
-        stmt = stmt.order_by(DatabaseSchemaEmbedding.embedding.cosine_distance(query_vector)).limit(top_k)
+        # Fetch up to 16 candidates to allow filtering out noisy integration tables
+        fetch_limit = max(top_k * 2, 16)
+        stmt = stmt.order_by(DatabaseSchemaEmbedding.embedding.cosine_distance(query_vector)).limit(fetch_limit)
 
         res = await session.execute(stmt)
         rows = res.all()
 
         if rows:
             hits = []
+            q_lower = user_query.lower()
+            
+            # Check if user explicitly asked for third-party integration / background job tables
+            has_github = any(w in q_lower for w in ("github", "pull request", " pr ", " prs", "pr#"))
+            has_gitlab = any(w in q_lower for w in ("gitlab", "merge request", " mr ", " mrs"))
+            has_scim = "scim" in q_lower
+            has_jobs = any(w in q_lower for w in ("job", "batch", "background", "queue", "worker"))
+            has_bcf = any(w in q_lower for w in ("bcf", "bim", "viewpoint"))
+            has_wiki = any(w in q_lower for w in ("wiki", "wikis", "documentation", "docs"))
+
             for r in rows:
                 meta = r.metadata_json or {}
+                table_name = meta.get("table_name", r.entity_key.split(".")[-1]).lower()
+                
+                # Filter out noisy third-party integration tables unless explicitly requested
+                if table_name.startswith("github_") and not has_github:
+                    continue
+                if table_name.startswith("gitlab_") and not has_gitlab:
+                    continue
+                if table_name.startswith("scim_") and not has_scim:
+                    continue
+                if (table_name.startswith("good_job_") or table_name == "good_jobs") and not has_jobs:
+                    continue
+                if table_name.startswith("bcf_") and not has_bcf:
+                    continue
+                if (table_name.startswith("wiki_") or table_name == "wikis") and not has_wiki:
+                    continue
+                if table_name in ("ar_internal_metadata", "schema_migrations"):
+                    continue
+
                 hits.append({
                     "source": meta.get("source", f"{r.entity_key}.md"),
                     "title": meta.get("title", r.entity_key),
@@ -73,6 +104,75 @@ class SchemaDocRetriever:
                     "schema_name": meta.get("schema_name", "public"),
                     "column_names": meta.get("column_names", []),
                 })
+                if len(hits) >= top_k:
+                    break
+
+            # Dynamic Schema Graph Augmentation:
+            # Traverses canonical schema to discover:
+            # 1. Direct table matches (singular/plural) from user query tokens
+            # 2. 1-hop foreign key parent dimension tables referenced by primary retrieved tables
+            retrieved_names = {h["table_name"].lower() for h in hits}
+            candidate_additions: List[Tuple[str, float]] = []
+
+            if canonical_schema and hasattr(canonical_schema, "all_tables"):
+                q_tokens = set(re.findall(r'\b[a-z0-9]+\b', q_lower))
+
+                # 1. Direct Table Concept Matching from DDL (Exact name or singular/plural)
+                for t in canonical_schema.all_tables:
+                    t_name = t.table_name.split(".")[-1].lower()
+                    if t_name in retrieved_names:
+                        continue
+                    # Match exact table name or singular/plural
+                    if t_name in q_tokens or (t_name.endswith('s') and t_name[:-1] in q_tokens) or (f"{t_name}s" in q_tokens):
+                        candidate_additions.append((t_name, 0.88))
+
+                # 2. 1-Hop Foreign Key Graph Expansion (only from the top 3 highest-scoring seed tables)
+                top_seed_names = [h["table_name"].lower() for h in sorted(hits, key=lambda x: x["score"], reverse=True)[:3]]
+                for t_name in top_seed_names:
+                    t_schema = canonical_schema.get_table(t_name)
+                    if t_schema:
+                        for fk in t_schema.foreign_keys:
+                            ref_tbl = fk.referred_table.split(".")[-1].lower()
+                            if ref_tbl not in retrieved_names and not any(c[0] == ref_tbl for c in candidate_additions):
+                                candidate_additions.append((ref_tbl, 0.85))
+
+            for tbl, aug_score in candidate_additions:
+                if tbl not in retrieved_names:
+                    dim_stmt = select(
+                        DatabaseSchemaEmbedding.entity_key,
+                        DatabaseSchemaEmbedding.document_text,
+                        DatabaseSchemaEmbedding.metadata_json,
+                    ).where(
+                        DatabaseSchemaEmbedding.tenant_id == tenant_id,
+                        DatabaseSchemaEmbedding.db_knowledgebase_id == kb_id,
+                        DatabaseSchemaEmbedding.entity_type == "table_doc",
+                        or_(
+                            DatabaseSchemaEmbedding.entity_key.ilike(f"%.{tbl}"),
+                            DatabaseSchemaEmbedding.entity_key == tbl,
+                        ),
+                    ).limit(1)
+                    dim_res = await session.execute(dim_stmt)
+                    dim_row = dim_res.first()
+                    if dim_row:
+                        meta = dim_row.metadata_json or {}
+                        hits.append({
+                            "source": meta.get("source", f"{dim_row.entity_key}.md"),
+                            "title": meta.get("title", dim_row.entity_key),
+                            "text": dim_row.document_text,
+                            "score": aug_score,
+                            "table_name": meta.get("table_name", tbl),
+                            "schema_name": meta.get("schema_name", "public"),
+                            "column_names": meta.get("column_names", []),
+                        })
+                        retrieved_names.add(tbl)
+                        logger.info(f"[SchemaDocRetriever] Dynamically augmented schema docs with '{tbl}' table")
+
+            # Rank and cap final schema context to top_k (max 8)
+            hits.sort(key=lambda h: h.get("score", 0.0), reverse=True)
+            max_context_tables = max(top_k, 8)
+            hits = hits[:max_context_tables]
+            return hits
+
             logger.info(f"[SchemaDocRetriever] Retrieved {len(hits)} table docs from pgvector for query: '{user_query[:50]}'")
             return hits
 
@@ -92,7 +192,6 @@ class SchemaDocRetriever:
             return []
 
         all_docs = SchemaMarkdownGenerator.generate_all_table_documents(canonical_schema)
-        import re
 
         # Clean query tokens
         raw_tokens = re.findall(r'[a-zA-Z0-9_]+', user_query.lower())

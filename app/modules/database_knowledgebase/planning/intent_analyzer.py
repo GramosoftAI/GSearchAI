@@ -911,20 +911,44 @@ class QueryIntentAnalyzer:
         grouping_required = False
         grouping_concept: Optional[str] = None
 
-        group_match = re.search(r"\b(?:by|per|for each|in each|grouped by)\s+([a-zA-Z0-9_]+)\b", q_lower)
+        group_match = None
+        for m in re.finditer(r"\b(grouped\s+by|per|for\s+each|in\s+each|by)\s+([a-zA-Z0-9_]+)\b", q_lower):
+            kw = m.group(1).lower()
+            candidate_concept = m.group(2).strip()
+            # If the keyword is just "by", check if it is preceded by an agent/action verb (e.g. "authored by", "created by", "updated by")
+            if kw == "by":
+                preceding = q_lower[:m.start()].strip().split()
+                if preceding and preceding[-1] in {
+                    "authored", "created", "updated", "modified", "edited", "reported",
+                    "reviewed", "assigned", "opened", "closed", "done", "fixed",
+                    "resolved", "verified", "written", "sorted", "ordered", "raised", "submitted", "logged"
+                }:
+                    continue
+                # Exclude stopwords and metrics
+                if candidate_concept in {
+                    "the", "a", "an", "all", "order", "asc", "desc",
+                    "salary", "budget", "amount", "price", "count", "sum", "avg", "min", "max",
+                    "total", "highest", "lowest", "least", "most", "average"
+                }:
+                    continue
+                # For standalone "by <word>", only treat as grouping if there is an aggregation in the query or word is a known category dimension
+                if not aggregations and candidate_concept not in {
+                    "department", "dept", "project", "status", "type", "role", "team",
+                    "priority", "category", "month", "year", "date", "user", "author",
+                    "assignee", "state", "group", "country", "city"
+                }:
+                    continue
+
+            group_match = m
+            break
+
         which_group_match = re.search(r"\bwhich\s+([a-zA-Z0-9_]+)\s+has\s+(?:the\s+)?(most|highest|lowest|least|maximum|minimum)\b", q_lower)
         who_group_match = re.search(r"\b(?:who|which employee)\s+(?:has\s+|had\s+|took\s+|taken\s+|worked\s+)?(?:the\s+)?(most|highest|lowest|least|maximum|minimum)\b", q_lower)
 
         if group_match:
-            candidate_concept = group_match.group(1).strip()
-            # Exclude grammatical stopwords and metric words
-            if candidate_concept not in {
-                "the", "a", "an", "all", "order", "asc", "desc",
-                "salary", "budget", "amount", "price", "count", "sum", "avg", "min", "max",
-                "total", "highest", "lowest", "least", "most", "average"
-            }:
-                grouping_required = True
-                grouping_concept = candidate_concept
+            candidate_concept = group_match.group(2).strip()
+            grouping_required = True
+            grouping_concept = candidate_concept
         elif which_group_match:
             candidate_concept = which_group_match.group(1).strip()
             if candidate_concept not in {"the", "a", "an", "all", "one"}:

@@ -122,9 +122,11 @@ class ReadOnlyPoolManager:
                 return self._pools[pool_key]
 
             ssl_val = self._resolve_ssl(db_config)
-            session_settings = TimeoutManager.get_session_settings(config)
+            session_settings = TimeoutManager.get_session_settings(config, tenant_id=tenant_id)
             # HARD INVARIANT: Read-only transaction enforcement at session level
             session_settings["default_transaction_read_only"] = "on"
+            if tenant_id:
+                session_settings["app.current_tenant"] = str(tenant_id)
 
             connect_timeout = max(float(config.connection_timeout_seconds), self.pool_timeout_seconds, 15.0)
             logger.info(

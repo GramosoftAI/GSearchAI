@@ -36,6 +36,7 @@ async def connect_to_database(
     statement_timeout_ms: Optional[float] = None,
     server_settings: Optional[Dict[str, str]] = None,
     read_only: bool = True,
+    tenant_id: Optional[str] = None,
 ) -> Any:
     """
     Establish a dedicated connection using discrete connection parameters.
@@ -94,6 +95,8 @@ async def connect_to_database(
     settings = dict(server_settings or {})
     if read_only:
         settings["default_transaction_read_only"] = "on"
+    if "app.current_tenant" not in settings or not settings["app.current_tenant"]:
+        settings["app.current_tenant"] = str(tenant_id or "00000000-0000-0000-0000-000000000000")
 
     command_timeout = (statement_timeout_ms / 1000.0) if statement_timeout_ms is not None else None
 

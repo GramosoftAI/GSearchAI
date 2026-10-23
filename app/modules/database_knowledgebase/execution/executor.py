@@ -51,15 +51,18 @@ class ReadOnlyDatabaseExecutor:
         """Convert SSLMode to asyncpg ssl argument."""
         return resolve_ssl_mode(db_config.ssl_mode)
 
-    async def _acquire_connection(self, db_config: DatabaseConnectionConfig) -> asyncpg.Connection:
+    async def _acquire_connection(
+        self, db_config: DatabaseConnectionConfig, tenant_id: Optional[str] = None
+    ) -> asyncpg.Connection:
         """Establish a dedicated read-only asyncpg connection (unpooled path)."""
-        session_settings = TimeoutManager.get_session_settings(self.config)
+        session_settings = TimeoutManager.get_session_settings(self.config, tenant_id=tenant_id)
         return await connect_to_database(
             db_config=db_config,
             timeout_seconds=self.config.connection_timeout_seconds,
             statement_timeout_ms=self.config.statement_timeout_ms,
             server_settings=session_settings,
             read_only=True,
+            tenant_id=tenant_id,
         )
 
     async def _execute_on_connection(
@@ -86,6 +89,7 @@ class ReadOnlyDatabaseExecutor:
             args=pos_args,
             timeout_seconds=timeout_sec,
             dialect=dialect,
+            tenant_id=authorization.tenant_id,
         )
 
         # 3. Result Validation and Type Normalization
@@ -177,7 +181,7 @@ class ReadOnlyDatabaseExecutor:
 
         conn: Optional[Any] = None
         try:
-            conn = await self._acquire_connection(db_config)
+            conn = await self._acquire_connection(db_config, tenant_id=authorization.tenant_id)
             return await self._execute_on_connection(
                 conn=conn,
                 candidate_sql=candidate_sql,

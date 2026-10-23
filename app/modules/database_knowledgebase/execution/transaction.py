@@ -8,7 +8,7 @@ import asyncio
 import datetime
 import logging
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import asyncpg
 
 from ..security.sanitizer import sanitize_error_message
@@ -105,6 +105,7 @@ class TransactionManager:
         args: List[Any],
         timeout_seconds: float,
         dialect: str = "postgres",
+        tenant_id: Optional[str] = None,
     ) -> List[Any]:
         """
         Execute query inside a read-only transaction/execution context.
@@ -113,6 +114,15 @@ class TransactionManager:
         try:
             if isinstance(conn, asyncpg.Connection):
                 async with conn.transaction(readonly=True):
+                    # Guarantee app.current_tenant is set for PostgreSQL RLS policies
+                    if dialect in ("postgres", "postgresql"):
+                        try:
+                            await conn.execute(
+                                "SELECT set_config('app.current_tenant', $1, true)",
+                                str(tenant_id or "00000000-0000-0000-0000-000000000000"),
+                            )
+                        except Exception as guc_err:
+                            logger.debug(f"Failed to set app.current_tenant session config: {guc_err}")
                     try:
                         records = await conn.fetch(sql, *args, timeout=timeout_seconds)
                         return records

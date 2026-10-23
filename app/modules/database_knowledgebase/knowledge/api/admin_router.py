@@ -651,6 +651,18 @@ async def run_pipeline_manual_endpoint(
 ):
     """Manually triggers the Phase 2/3 knowledge pipeline for this KB without Redis."""
     tenant_id, actor = _get_tenant_and_actor(request)
+    from app.core.config import get_settings
+    settings = get_settings()
+    if not getattr(settings, "old_database", False) or not getattr(settings, "enable_phase2_knowledge_layer", False):
+        logger.info(f"[Pipeline Runner] Bypassed Phase 2 7-stage pipeline for KB {kb_id} (Grounded Docs architecture active).")
+        return {
+            "status": "succeeded",
+            "kb_id": str(kb_id),
+            "mode": "grounded_docs",
+            "message": "Fast grounded docs architecture active. 7-stage pipeline bypassed.",
+            "progress_percent": 100,
+        }
+
     from ..jobs.pipeline import run_pipeline_for_kb_local
 
     if run_inline:

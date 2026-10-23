@@ -309,23 +309,40 @@ class NewDBService:
 
         candidate_table_names = [d.get("table_name", "") for d in retrieved_docs]
 
-        # 2. Entity Resolution (User identification)
-        target_user = None
+        # 2. Dynamic Entity Resolution (User identification)
+        resolved_users_list: List[Dict[str, Any]] = []
         disambiguation_notice = None
         disambig_options = None
 
         if resolved_entities:
-            target_user = resolved_entities[0]
+            for ent in resolved_entities:
+                if ent.get("id"):
+                    resolved_users_list.append({
+                        "id": ent.get("id"),
+                        "name": ent.get("name") or ent.get("label"),
+                        "role": ent.get("role"),
+                        "suggested_columns": ent.get("suggested_columns", ["user_id", "author_id", "assigned_to_id"]),
+                    })
         else:
             try:
                 users = await EntityResolver.get_all_users(config)
-                matched_user, candidates, notice = EntityResolver.resolve_user_mention(user_query, users)
-                if matched_user:
-                    target_user = matched_user
-                    disambiguation_notice = notice
-                elif len(candidates) > 1:
-                    disambig_options = candidates
-                    disambiguation_notice = notice
+                resolution_res = EntityResolver.resolve_all_user_entities(user_query, users)
+                ambiguous = resolution_res.get("ambiguous_entities", [])
+                if ambiguous:
+                    first_amb = ambiguous[0]
+                    disambig_options = [
+                        {
+                            "id": c.get("id"),
+                            "name": f"{c.get('firstname', '')} {c.get('lastname', '')}".strip() or c.get("login"),
+                            "login": c.get("login", ""),
+                        }
+                        for c in first_amb.get("candidates", [])[:8]
+                    ]
+                    disambiguation_notice = f"Found multiple matching users for '{first_amb.get('matched_term')}'"
+                else:
+                    resolved_users_list = resolution_res.get("resolved_users", [])
+                    if resolution_res.get("notices"):
+                        disambiguation_notice = "; ".join(resolution_res.get("notices"))
             except Exception as e:
                 logger.debug(f"[NEW_DB] User entity resolution skipped: {e}")
 
@@ -333,7 +350,7 @@ class NewDBService:
         generated_sql_raw = await SQLGenerator.generate_sql(
             question=user_query,
             retrieved_docs=retrieved_docs,
-            target_user=target_user,
+            resolved_users=resolved_users_list,
             model=model,
         )
 

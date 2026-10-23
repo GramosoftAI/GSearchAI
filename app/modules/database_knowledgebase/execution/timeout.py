@@ -4,7 +4,7 @@ Provides helpers to compute and format PostgreSQL statement and lock timeouts,
 guaranteeing safe query execution bounded by explicit latency budgets.
 """
 
-from typing import Dict
+from typing import Dict, Optional
 from .models import ExecutionConfig
 
 
@@ -22,11 +22,14 @@ class TimeoutManager:
         return f"{config.lock_timeout_ms}ms"
 
     @classmethod
-    def get_session_settings(cls, config: ExecutionConfig) -> Dict[str, str]:
+    def get_session_settings(cls, config: ExecutionConfig, tenant_id: Optional[str] = None) -> Dict[str, str]:
         """Return dictionary of server settings for asyncpg connection initialization."""
-        return {
+        settings = {
             "statement_timeout": cls.get_statement_timeout_str(config),
             "lock_timeout": cls.get_lock_timeout_str(config),
             "default_transaction_read_only": "on",
             "application_name": "GSearchAI_ReadOnly_Executor",
+            "app.current_tenant": str(tenant_id or "00000000-0000-0000-0000-000000000000"),
         }
+        return settings
+

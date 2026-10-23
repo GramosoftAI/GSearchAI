@@ -8,7 +8,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 from datetime import datetime
 import uuid
 import sqlglot
@@ -1171,60 +1171,107 @@ class DatabaseKnowledgebaseService:
                     elapsed_stage_ms=t_ret_ms,
                 )
 
-            # 2. Entity Resolution & Disambiguation
-            target_user_id = None
-            target_user_name = None
+            # 2. Dynamic Entity Resolution & Disambiguation
+            # ------------------------------------------------------------------
+            # Phase 2: Fully Dynamic Schema-Driven Dimension Entity Resolution
+            # ------------------------------------------------------------------
+            resolved_dimension_entities: List[Dict[str, Any]] = []
             disambiguation_notices: List[str] = []
 
-            # Check resolved_entities from prior interactive turn
+            # 1. Pre-resolved entities from prior interactive turn
             if resolved_entities:
                 for ent in resolved_entities:
                     if ent.get("id"):
-                        target_user_id = ent.get("id")
-                        target_user_name = ent.get("name") or ent.get("label")
-                        break
+                        resolved_dimension_entities.append(ent)
+                        tbl = ent.get("table", "entity")
+                        name_str = ent.get("name") or ent.get("label") or str(ent.get("id"))
+                        disambiguation_notices.append(f"Targeting pre-resolved {tbl} '{name_str}' (ID {ent['id']})")
 
+            # 2. Dynamic Schema-Driven Dimension Discovery & Entity Resolution
             config = self.secrets.decrypt_credentials(entity.encrypted_credentials)
-            if target_user_id is None:
+            if not resolved_dimension_entities and canonical_schema:
                 from ..retrieval.grounded_entity_resolver import GroundedEntityResolver
                 try:
-                    users = await GroundedEntityResolver.get_all_users(conn_config=config, kb_id=str(kb_id))
-                    matched_term, candidates = GroundedEntityResolver.find_user_candidates(user_query, users)
-                    if len(candidates) == 1:
-                        target_user_id = candidates[0]["id"]
-                        fn = (candidates[0].get("firstname") or "").strip()
-                        ln = (candidates[0].get("lastname") or "").strip()
-                        target_user_name = f"{fn} {ln}".strip() or candidates[0].get("login")
-                        disambiguation_notices.append(f"Targeting user '{target_user_name}' (ID {target_user_id})")
-                    elif len(candidates) > 1:
+                    res_outcome = await GroundedEntityResolver.resolve_entities_in_query(
+                        user_query=user_query,
+                        canonical_schema=canonical_schema,
+                        conn_config=config,
+                        kb_id=str(kb_id),
+                        tenant_id=str(tenant_id),
+                    )
+
+                    # Check for ambiguous entity matches that require user clarification
+                    ambiguous = res_outcome.get("ambiguous_entities", [])
+                    if ambiguous and not resolved_entities:
+                        first_amb = ambiguous[0]
                         options = [
                             {
                                 "id": c["id"],
-                                "label": f"{(c.get('firstname') or '')} {(c.get('lastname') or '')} (login: {c.get('login')}, id: {c['id']})".strip(),
-                                "name": f"{(c.get('firstname') or '')} {(c.get('lastname') or '')}".strip() or c.get("login"),
-                                "table": "users",
-                                "column": "id",
-                                "pk_column": "id",
+                                "label": f"{c.get('name')} (ID: {c['id']})",
+                                "name": c.get("name"),
+                                "table": c.get("table", first_amb.get("dimension_table")),
+                                "column": c.get("column", "id"),
+                                "pk_column": c.get("column", "id"),
                             }
-                            for c in candidates
+                            for c in first_amb.get("candidates", [])
                         ]
                         raise DisambiguationRequiredError(
-                            message=f"Multiple matches found for '{matched_term}'. Which one did you mean?",
+                            message=f"Multiple matches found for '{first_amb.get('matched_term')}'. Which one did you mean?",
                             options=options,
-                            entity_type="users",
+                            entity_type=first_amb.get("dimension_table", "entity"),
                         )
+
+                    resolved_dimension_entities = res_outcome.get("resolved_entities", [])
+                    disambiguation_notices.extend(res_outcome.get("notices", []))
+                    for ent in resolved_dimension_entities:
+                        logger.info(f"[GROUNDED_PIPELINE] Dynamically resolved entity: {ent['table']}.{ent['column']}={ent['id']} ('{ent.get('name')}')")
                 except DisambiguationRequiredError:
                     raise
                 except Exception as ent_err:
-                    logger.debug(f"[GROUNDED_PIPELINE] User resolution skipped or failed: {ent_err}")
+                    logger.debug(f"[GROUNDED_PIPELINE] Dynamic dimension entity resolution skipped: {ent_err}")
 
-            if target_user_id is not None:
-                # Ensure junction/membership tables connecting users to projects/tasks are included
-                retrieved_table_set = {d.get("table_name", "").lower() for d in schema_docs}
-                needed_user_tables = ["members", "work_packages"]
+            # 3. Dynamic Schema Graph Expansion:
+            # Traverses the canonical schema's FK graph dynamically without hardcoded table lists:
+            # a) All tables of resolved entities (users, projects, types, categories, etc.)
+            # b) Connecting / junction tables linking resolved entities together
+            # c) 1-hop foreign key parent dimension tables
+            retrieved_table_set = {d.get("table_name", "").lower() for d in schema_docs}
+            dynamically_needed_tables: Set[str] = set()
+
+            # Add tables containing any resolved entities
+            for ent in resolved_dimension_entities:
+                ent_tbl = ent.get("table", "").lower()
+                if ent_tbl and ent_tbl not in retrieved_table_set:
+                    dynamically_needed_tables.add(ent_tbl)
+
+            if canonical_schema and hasattr(canonical_schema, "all_tables"):
+                # Dynamically discover junction / connecting tables that link 2 or more resolved entities
+                resolved_table_names = {ent.get("table", "").lower() for ent in resolved_dimension_entities if ent.get("table")}
+                if len(resolved_table_names) >= 2:
+                    for t in canonical_schema.all_tables:
+                        t_clean = t.table_name.split(".")[-1].lower()
+                        if t_clean in retrieved_table_set or t_clean in dynamically_needed_tables:
+                            continue
+                        fk_targets = {fk.referred_table.split(".")[-1].lower() for fk in t.foreign_keys}
+                        if len(fk_targets.intersection(resolved_table_names)) >= 2:
+                            dynamically_needed_tables.add(t_clean)
+                            logger.info(f"[GROUNDED_PIPELINE] Discovered connecting junction table '{t_clean}' linking {resolved_table_names}")
+
+                seed_tables = retrieved_table_set.union(dynamically_needed_tables)
+                # 1-hop parent dimension tables referenced via FK from currently selected tables
+                for t_name in list(seed_tables):
+                    t_schema = canonical_schema.get_table(t_name)
+                    if t_schema:
+                        for fk in t_schema.foreign_keys:
+                            ref_tbl = fk.referred_table.split(".")[-1].lower()
+                            if ref_tbl not in retrieved_table_set and ref_tbl not in dynamically_needed_tables:
+                                if ref_tbl in user_query.lower() or ref_tbl.rstrip('s') in user_query.lower():
+                                    dynamically_needed_tables.add(ref_tbl)
+
+            if dynamically_needed_tables:
                 from ..models.embeddings import DatabaseSchemaEmbedding
-                from sqlalchemy import select
-                for tbl_name in needed_user_tables:
+                from sqlalchemy import select, or_
+                for tbl_name in dynamically_needed_tables:
                     if tbl_name not in retrieved_table_set:
                         extra_stmt = select(
                             DatabaseSchemaEmbedding.entity_key,
@@ -1234,7 +1281,10 @@ class DatabaseKnowledgebaseService:
                             DatabaseSchemaEmbedding.tenant_id == tenant_uuid,
                             DatabaseSchemaEmbedding.db_knowledgebase_id == kb_id,
                             DatabaseSchemaEmbedding.entity_type == "table_doc",
-                            DatabaseSchemaEmbedding.entity_key.ilike(f"%{tbl_name}"),
+                            or_(
+                                DatabaseSchemaEmbedding.entity_key.ilike(f"%.{tbl_name}"),
+                                DatabaseSchemaEmbedding.entity_key == tbl_name,
+                            ),
                         ).limit(1)
                         extra_res = await self.db.execute(extra_stmt)
                         extra_row = extra_res.first()
@@ -1244,14 +1294,21 @@ class DatabaseKnowledgebaseService:
                                 "source": meta.get("source", f"{extra_row.entity_key}.md"),
                                 "title": meta.get("title", extra_row.entity_key),
                                 "text": extra_row.document_text,
-                                "score": 1.0,
+                                "score": 0.95,
                                 "table_name": meta.get("table_name", tbl_name),
                                 "schema_name": meta.get("schema_name", "public"),
                                 "column_names": meta.get("column_names", []),
                             })
                             table_names.append(tbl_name)
+                            retrieved_table_set.add(tbl_name)
+                            logger.info(f"[GROUNDED_PIPELINE] Dynamically expanded schema graph with '{tbl_name}' table")
 
-            # 3. Planning Event (Stream compatibility)
+            # Rank and cap final schema documents to top 8 tables
+            schema_docs.sort(key=lambda d: d.get("score", 0.0), reverse=True)
+            schema_docs = schema_docs[:8]
+            table_names = [d.get("table_name", "") for d in schema_docs if d.get("table_name")]
+
+            # 3. Dynamic Query Intent Analysis & Planning Trace
             current_stage = "PLANNING"
             if event_sink:
                 event_sink.start_stage("PLANNING")
@@ -1260,20 +1317,41 @@ class DatabaseKnowledgebaseService:
                     stage="PLANNING",
                     status="started",
                 )
+
+            t_plan_start = time.perf_counter()
+            from ..planning.intent_analyzer import QueryIntentAnalyzer
+            intent_analysis = QueryIntentAnalyzer.analyze(user_query)
+            t_plan_ms = (time.perf_counter() - t_plan_start) * 1000.0
+
+            # Record planning into tracer so Phase 2B shows clean, accurate intent and latency
+            tracer.record_planning(
+                intent=intent_analysis.intent.value,
+                tables=table_names,
+                joins=[],
+                filters=[f"{p.target_concept} {p.operator} {p.value}" for p in intent_analysis.predicates],
+                aggregations=[a.raw_match for a in intent_analysis.aggregations],
+                group_by=[intent_analysis.grouping_concept] if intent_analysis.grouping_concept else [],
+                order_by=[f"{intent_analysis.ranking.target_metric or 'col'} {intent_analysis.ranking.direction.value}"] if intent_analysis.ranking else [],
+                limit=intent_analysis.ranking.limit if intent_analysis.ranking else 50,
+                latency_ms=t_plan_ms,
+            )
+
+            if event_sink:
                 await event_sink.emit(
                     DatabaseStreamEventType.PLANNING_COMPLETED,
                     stage="PLANNING",
                     status="completed",
                     data={
-                        "intent": "GROUNDED_QUERY",
+                        "intent": intent_analysis.intent.value,
                         "tables_count": len(table_names),
+                        "target_tables": table_names,
                         "joins_count": 0,
-                        "has_aggregations": False,
-                        "has_ranking": False,
-                        "limit": 50,
-                        "latency_ms": 1.0,
+                        "has_aggregations": len(intent_analysis.aggregations) > 0,
+                        "has_ranking": intent_analysis.ranking is not None,
+                        "limit": intent_analysis.ranking.limit if intent_analysis.ranking else 50,
+                        "latency_ms": round(t_plan_ms, 2),
                     },
-                    elapsed_stage_ms=1.0,
+                    elapsed_stage_ms=t_plan_ms,
                 )
 
             # 4. SQL Generation
@@ -1290,14 +1368,11 @@ class DatabaseKnowledgebaseService:
             t_sql_start = time.perf_counter()
             from ..sql_generator.grounded_generator import GroundedSQLGenerator
 
-            target_user_dict = None
-            if target_user_id is not None:
-                target_user_dict = {"id": target_user_id, "name": target_user_name}
-
             candidate_sql_raw = await GroundedSQLGenerator.generate_sql(
                 question=user_query,
                 retrieved_docs=schema_docs,
-                target_user=target_user_dict,
+                resolved_entities=resolved_dimension_entities,
+                intent_analysis=intent_analysis,
             )
             t_sql_ms = (time.perf_counter() - t_sql_start) * 1000.0
 
@@ -1388,7 +1463,7 @@ class DatabaseKnowledgebaseService:
                     database_knowledgebase_id=kb_id,
                     schema_version=active_schema_version,
                     user_query=user_query,
-                    intent=IntentType.SELECT_FILTER_MULTI,
+                    intent=intent_analysis.intent,
                     tables=[TablePlan(schema_name="public", table_name=t, alias=t[:2]) for t in table_names],
                     joins=[],
                     projections=[],
@@ -1402,11 +1477,72 @@ class DatabaseKnowledgebaseService:
             )
 
             t_exec_start = time.perf_counter()
-            canonical_result = await self.execute_candidate_sql(
-                kb_id=kb_id,
-                candidate_sql=cand_sql,
-                execution_config=execution_config,
-            )
+            try:
+                canonical_result = await self.execute_candidate_sql(
+                    kb_id=kb_id,
+                    candidate_sql=cand_sql,
+                    execution_config=execution_config,
+                )
+            except Exception as exec_err:
+                err_msg = str(exec_err)
+                logger.warning(f"[GROUNDED_AUTO_REPAIR] SQL execution failed: {err_msg}. Triggering dynamic self-healing...")
+                # 1. Fast path: PostgreSQL HINT for column name typos (e.g. u.email -> u.mail)
+                hint_match = re.search(r'column\s+([a-zA-Z0-9_\.]+)\s+does not exist.*?HINT:\s*Perhaps you meant to reference the column\s+"([a-zA-Z0-9_\.]+)"', err_msg, re.IGNORECASE | re.DOTALL)
+                repaired_sql = None
+                repair_mode = "grounded_hint_repaired"
+                if hint_match:
+                    bad_ref = hint_match.group(1)
+                    good_ref = hint_match.group(2)
+                    bad_col = bad_ref.split(".")[-1]
+                    good_col = good_ref.split(".")[-1]
+                    logger.info(f"[GROUNDED_AUTO_REPAIR] Auto-repairing column '{bad_col}' -> '{good_col}' based on DB hint")
+                    repaired_sql = re.sub(rf'\b{re.escape(bad_col)}\b', good_col, candidate_sql_clean)
+                else:
+                    # 2. Universal LLM dynamic repair loop: pass error + schema docs + failed query
+                    try:
+                        logger.info(f"[GROUNDED_AUTO_REPAIR] Invoking LLM repair loop for error: {err_msg}")
+                        repaired_sql = await GroundedSQLGenerator.repair_sql(
+                            question=user_query,
+                            failed_sql=candidate_sql_clean,
+                            error_message=err_msg,
+                            retrieved_docs=schema_docs,
+                            resolved_entities=resolved_dimension_entities,
+                            intent_analysis=intent_analysis,
+                        )
+                        repair_mode = "grounded_llm_repaired"
+                    except Exception as repair_exc:
+                        logger.error(f"[GROUNDED_AUTO_REPAIR] Dynamic LLM repair failed: {repair_exc}")
+                        raise exec_err
+
+                if repaired_sql:
+                    try:
+                        repaired_sql_clean = GroundedSQLValidator.validate_readonly_sql(repaired_sql)
+                    except ValueError as val_err:
+                        logger.error(f"[GROUNDED_AUTO_REPAIR] Repaired SQL failed security validation: {val_err}")
+                        raise exec_err
+
+                    if "LIMIT" not in repaired_sql_clean.upper():
+                        default_limit = 1 if "count(" in repaired_sql_clean.lower() else 50
+                        repaired_sql_clean = f"{repaired_sql_clean.rstrip()} LIMIT {default_limit}"
+
+                    parsed_repaired = SQLASTParser.parse_sql(repaired_sql_clean, dialect="postgres")
+                    cand_sql = ValidatedCandidateSQL(
+                        raw_sql=repaired_sql_clean,
+                        sanitized_sql=repaired_sql_clean,
+                        parameterized=SQLParameterizer.parameterize(parsed_repaired),
+                        plan=cand_sql.plan,
+                        validation_report=ValidationResult(is_valid=True, errors=[], warnings=[]),
+                        repair_attempts=1,
+                        sql_generation_mode=repair_mode,
+                    )
+                    canonical_result = await self.execute_candidate_sql(
+                        kb_id=kb_id,
+                        candidate_sql=cand_sql,
+                        execution_config=execution_config,
+                    )
+                    logger.info(f"[GROUNDED_AUTO_REPAIR] Query successfully repaired and executed: {repaired_sql_clean}")
+                else:
+                    raise exec_err
             t_exec_ms = (time.perf_counter() - t_exec_start) * 1000.0
 
             # Zero-Row dynamic temporal relaxation recovery

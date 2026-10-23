@@ -258,6 +258,7 @@ class Phase1Adapter:
             "application_name": "Phase2_Knowledge_ReadOnly",
             "default_transaction_read_only": "on",
             "statement_timeout": "10000",  # 10s statement timeout
+            "app.current_tenant": str(tenant_id or "00000000-0000-0000-0000-000000000000"),
         }
         if getattr(config, "schema_filter", None):
             server_settings["search_path"] = ", ".join(f'"{s}"' for s in config.schema_filter) + ", public"
@@ -275,6 +276,11 @@ class Phase1Adapter:
                 command_timeout=10.0,
                 server_settings=server_settings,
             )
+            if tenant_id:
+                try:
+                    await conn.execute("SELECT set_config('app.current_tenant', $1, false)", str(tenant_id))
+                except Exception:
+                    pass
             yield conn
         finally:
             if conn and not conn.is_closed():
