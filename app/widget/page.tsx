@@ -3075,13 +3075,10 @@ function WidgetContent() {
         </div>
       )}
 
-      {/* Powered by Gramosoft */}
+      {/* Powered by GSearchAI & Gramosoft */}
       {chatType !== "search" && (
         <div className="widget-brand-container">
-          <a
-            href="https://gsearchai.com/"
-            target="_blank"
-            rel="noopener noreferrer"
+          <div
             style={{
               pointerEvents: "auto",
               display: "inline-flex",
@@ -3090,11 +3087,10 @@ function WidgetContent() {
               gap: "4px",
               padding: "4px 12px",
               fontSize: "11px",
+              fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
               color: "#18181b",
               fontWeight: 600,
               userSelect: "none",
-              textDecoration: "none",
-              cursor: "pointer",
               borderRadius: "100px",
               background: "#ffffff",
               border: "1px solid #d4d4d8",
@@ -3110,8 +3106,51 @@ function WidgetContent() {
               e.currentTarget.style.boxShadow = "0 2px 6px rgba(0, 0, 0, 0.08)";
             }}
           >
-            Powered by <span style={{ fontWeight: 750, color: themeColor }}>Gsearch</span>
-          </a>
+            <span>Powered by</span>
+            <a
+              href="https://gsearchai.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                color: themeColor && themeColor !== "#0fb5a1" ? themeColor : "#2563eb",
+                fontWeight: 750,
+                fontFamily: "inherit",
+                textDecoration: "none",
+                cursor: "pointer",
+                transition: "opacity 0.2s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.textDecoration = "underline";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.textDecoration = "none";
+              }}
+            >
+              GSearchAI
+            </a>
+            <span style={{ color: "#71717a", fontWeight: 500 }}>&amp;</span>
+            <a
+              href="https://gramosoft.tech/"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                color: "#0b2347",
+                fontWeight: 750,
+                fontFamily: "inherit",
+                textDecoration: "none",
+                cursor: "pointer",
+                transition: "opacity 0.2s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.textDecoration = "underline";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.textDecoration = "none";
+              }}
+            >
+              Gramosoft
+            </a>
+          </div>
         </div>
       )}
       {/* Link Safety Modal */}

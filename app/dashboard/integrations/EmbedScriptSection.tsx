@@ -1886,6 +1886,7 @@ export default function EmbedScriptSection() {
                           gap: "4px",
                           padding: "2px 10px",
                           fontSize: "10px",
+                          fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
                           color: isDarkTheme ? "#e2e8f0" : "#18181b",
                           fontWeight: 600,
                           borderRadius: "100px",
@@ -1894,7 +1895,10 @@ export default function EmbedScriptSection() {
                           boxShadow: "0 2px 6px rgba(0, 0, 0, 0.08)",
                         }}
                       >
-                        Powered by <span style={{ fontWeight: 750, color: draftThemeColor }}>Gsearch</span>
+                        <span>Powered by</span>
+                        <span style={{ fontWeight: 750, color: draftThemeColor && draftThemeColor !== "#0fb5a1" ? draftThemeColor : "#2563eb" }}>GSearchAI</span>
+                        <span style={{ color: isDarkTheme ? "#94a3b8" : "#71717a", fontWeight: 500 }}>&amp;</span>
+                        <span style={{ fontWeight: 750, color: isDarkTheme ? "#ffffff" : "#0b2347" }}>Gramosoft</span>
                       </span>
                     </div>
                   </div>
