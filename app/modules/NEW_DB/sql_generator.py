@@ -64,6 +64,14 @@ Rules:
 6. MANDATORY LIMIT: Always include a LIMIT clause at the end of the query (e.g. `LIMIT 50` for lists, or `LIMIT 1` for single-row aggregates) to ensure safety.
 7. Return only one single SQL query without Markdown code fences, commentary, or multiple statements.
 8. MULTI-ENTITY ROLE DISTINCTION: When multiple persons or entities are mentioned in the question (such as author vs. assignee), carefully respect each entity's distinct role and corresponding ID. Never conflate different people into the same column.
+9. SINGLE TABLE SUFFICIENCY & MINIMAL JOINS:
+   - If the requested projection column and the filter column both exist directly on one candidate table, query that table DIRECTLY. Do NOT join extra tables if one table contains the necessary attributes.
+10. DYNAMIC MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
+   - When filtering text columns by a multi-word or literal phrase (e.g. names, items, codes, products like 'cream & IPA'):
+     * NEVER break a single literal phrase across multiple different columns using conjoined AND (e.g. NEVER do `col1 ILIKE '%part1%' AND col2 ILIKE '%part2%' AND col3 ILIKE '%part3%'`).
+     * Match the target phrase against a single candidate column with ILIKE: `(col ILIKE '%word1%' AND col ILIKE '%word2%')` or `col ILIKE '%word1%word2%'`.
+     * Or test alternative candidate columns with OR: `(col_a ILIKE '%literal%' OR col_b ILIKE '%literal%')`.
+     * For separated names, match against `CONCAT_WS(' ', col_first, col_last) ILIKE '%full literal%'`.
 """
 
         user_content = f"Schema context:\n{context}\n\nQuestion: {question}"

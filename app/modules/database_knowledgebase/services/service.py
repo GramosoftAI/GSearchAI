@@ -2216,7 +2216,16 @@ class DatabaseKnowledgebaseService:
                     resolved_ids = choice_pks if len(choice_pks) > 1 else (pk_val if pk_val is not None else ([choice_pks[0]] if choice_pks else None))
 
                     # Interactive Disambiguation Check: prompt user if multiple ambiguous matches exist
-                    if len(choices) > 1 and not resolved_entities:
+                    # Only prompt user if choices offer genuinely distinct semantic labels.
+                    # If all choices have identical labels (e.g. all are 'BENZ' or 'BENZ (id X)'), or if the query
+                    # already contains a high-entropy specific identifier/code (e.g. alphanumeric code like 'W129589010700'),
+                    # disambiguating a broad category/lookup value is redundant and disrupts user experience.
+                    has_specific_code = bool(re.search(r"\b[A-Za-z0-9_-]{6,}\b", user_query or "") and any(c.isdigit() for c in (user_query or "")))
+                    clean_labels = {re.sub(r"\s*\(id\s+[^)]+\)", "", c.get("label", "")).strip().lower() for c in choices if isinstance(c, dict)}
+                    clean_labels.discard("")
+                    has_differentiated_options = len(clean_labels) > 1
+
+                    if len(choices) > 1 and not resolved_entities and has_differentiated_options and not has_specific_code:
                         from ..disambiguation.exceptions import DisambiguationRequiredError
                         options = [
                             {
@@ -2873,6 +2882,79 @@ class DatabaseKnowledgebaseService:
                                     )
                         except Exception as e3:
                             logger.debug(f"[ZERO_ROW_RECOVERY] Strategy 3 failed: {e3}")
+
+                # Strategy 3.5: Dynamic Single-Table Zero-Row Recovery
+                # If a joined query returned 0 rows, check if the projection table or any single table
+                # in the query contains both the requested attribute and a matching column for the entity literal.
+                if not recovered and len(plan.tables) > 1 and literals:
+                    try:
+                        import sqlglot
+                        from sqlglot import exp
+                        parsed_cur = sqlglot.parse_one(cur_sql_str, read="postgres")
+                        projs = [p.sql(dialect="postgres") for p in parsed_cur.expressions]
+                        
+                        # Inspect each table referenced in the query
+                        referenced_tables = [t.name for t in parsed_cur.find_all(exp.Table)]
+                        for r_tbl in referenced_tables:
+                            tbl_obj = canonical_schema.get_table(r_tbl) if canonical_schema else None
+                            if not tbl_obj:
+                                tbl_obj = next((t for t in retrieval_res.retrieved_tables if t.table_name.lower() == r_tbl.lower()), None)
+                            if not tbl_obj:
+                                continue
+                            
+                            t_cols = {c.lower(): c for c in tbl_obj.columns.keys()}
+                            # Find candidate name/title/text columns in this table
+                            cand_text_cols = [c for c in t_cols if any(k in c for k in ("name", "title", "description", "item", "code")) and not c.endswith(("_id", "_id_id"))]
+                            
+                            for c_text in cand_text_cols:
+                                for lit in literals:
+                                    clean_lit = lit.replace("'", "''")
+                                    # Select direct projections without joins
+                                    single_sql = f"SELECT {', '.join(projs)} FROM {tbl_obj.schema_name or 'public'}.{tbl_obj.table_name} WHERE {c_text} ILIKE '%{clean_lit}%' LIMIT 1"
+                                    # Ensure aliases match if projs use table prefix
+                                    # Strip old table aliases from projs if necessary
+                                    clean_projs = []
+                                    for p_expr in projs:
+                                        col_only = p_expr.split(".")[-1].strip()
+                                        if col_only.lower() in t_cols:
+                                            clean_projs.append(col_only)
+                                    if clean_projs:
+                                        single_sql = f"SELECT {', '.join(clean_projs)} FROM {tbl_obj.schema_name or 'public'}.{tbl_obj.table_name} WHERE {c_text} ILIKE '%{clean_lit}%' LIMIT 1"
+                                        try:
+                                            single_ast = SQLASTParser.parse_sql(single_sql, dialect="postgres")
+                                            single_cand = ValidatedCandidateSQL(
+                                                raw_sql=single_sql,
+                                                sanitized_sql=single_sql,
+                                                parameterized=SQLParameterizer.parameterize(single_ast),
+                                                plan=plan,
+                                                validation_report=candidate_sql.validation_report,
+                                                repair_attempts=candidate_sql.repair_attempts + 1,
+                                                sql_generation_mode="dynamic_single_table_recovery",
+                                                deterministic_sql_compilation=True,
+                                                sql_llm_bypassed=True,
+                                            )
+                                            test_single = await self.execute_candidate_sql(
+                                                kb_id=kb_id,
+                                                candidate_sql=single_cand,
+                                                execution_config=execution_config,
+                                            )
+                                            if test_single.row_count > 0:
+                                                logger.info(
+                                                    f"[ZERO_ROW_RECOVERY] Strategy 3.5 (Single-table fallback on {tbl_obj.table_name}.{c_text}) succeeded with {test_single.row_count} rows!"
+                                                )
+                                                candidate_sql = single_cand
+                                                canonical_result = test_single
+                                                recovered = True
+                                                cur_sql_str = candidate_sql.sanitized_sql
+                                                break
+                                        except Exception as e_s:
+                                            logger.debug(f"[ZERO_ROW_RECOVERY] Strategy 3.5 test failed on {tbl_obj.table_name}: {e_s}")
+                                if recovered:
+                                    break
+                            if recovered:
+                                break
+                    except Exception as e35:
+                        logger.debug(f"[ZERO_ROW_RECOVERY] Strategy 3.5 failed: {e35}")
 
                 # Strategy 4: LLM-Assisted Generation & Repair
                 if not recovered and use_llm:

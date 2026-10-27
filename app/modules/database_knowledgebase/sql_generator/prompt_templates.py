@@ -52,7 +52,16 @@ STRICT CONSTRAINTS:
     - When <grounded_context> or <query_plan> contains a resolved entity with an ID/primary key (e.g. resolved_pk="113" or table.id = 113):
       You MUST filter using that exact numeric ID (e.g. WHERE users.id = 113 or WHERE work_packages.assigned_to_id = 113).
       NEVER filter using string equality on name or login columns (e.g. NEVER write `users.login = 'Arun N'`), because user display names differ from database usernames.
-18. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text outside the SQL block.
+18. SINGLE TABLE SUFFICIENCY & MINIMAL JOINS (CRITICAL):
+    - If the requested projection column (e.g. registration number, code, price, status) AND an entity/filter column (e.g. name, title, item, description) both exist directly on one candidate table, query that table DIRECTLY.
+    - Do NOT introduce unnecessary JOINs to dimension or master tables if the primary candidate table already holds the required data. Only join tables when required fields cannot be found within the primary table.
+19. DYNAMIC MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
+    - When filtering text columns by a multi-word or literal phrase from the user query (e.g. names, items, codes, product phrases like 'cream & IPA'):
+      * NEVER break a single literal phrase across multiple different columns using conjoined AND (e.g. NEVER write `col1 ILIKE '%part1%' AND col2 ILIKE '%part2%' AND col3 ILIKE '%part3%'`).
+      * Match the target phrase against a single candidate column with ILIKE: `(column_name ILIKE '%word1%' AND column_name ILIKE '%word2%')` or `column_name ILIKE '%word1%word2%'`.
+      * Or test candidate columns with OR: `(col_a ILIKE '%literal%' OR col_b ILIKE '%literal%')`.
+      * If matching tables with separated name fields (e.g. firstname, lastname), match against the combined expression: `CONCAT_WS(' ', col_first, col_last) ILIKE '%full literal%'`.
+20. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text outside the SQL block.
 """
 
     @classmethod
@@ -76,12 +85,20 @@ STRICT CONSTRAINTS:
    - If the user query asks about absence, missing items, unperformed actions, or records not done, consider using `LEFT JOIN <related_table> ... WHERE <related_table>.<key> IS NULL` or `NOT EXISTS (SELECT 1 FROM ...)`. You may include a short SQL comment indicating which columns/tables you based the choice on.
 9. PREVENT DUPLICATE ROWS: When querying primary entities joined to 1-to-many child tables, use `SELECT DISTINCT` or proper grouping.
 10. GROUP BY CONSISTENCY: Whenever an aggregate function is present alongside non-aggregated columns, include all non-aggregated columns in GROUP BY.
-11. Output MariaDB / MySQL compatible SQL:
+11. SINGLE TABLE SUFFICIENCY & MINIMAL JOINS:
+   - If the requested projection column and the filter column both exist directly on one candidate table, query that table DIRECTLY. Do NOT introduce unnecessary JOINs.
+12. DYNAMIC MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
+   - When matching free-text, names, items, or literal phrases (e.g. 'cream & IPA'):
+     * NEVER break a single phrase across multiple different columns with AND (e.g. `col1 LIKE '%part1%' AND col2 LIKE '%part2%'`).
+     * Match the target phrase against a single candidate column: `(column_name LIKE '%word1%' AND column_name LIKE '%word2%')`.
+     * Or test alternative candidate columns with OR: `(col_a LIKE '%literal%' OR col_b LIKE '%literal%')`.
+     * For split name columns, use `CONCAT_WS(' ', col_first, col_last) LIKE '%full literal%'`.
+13. Output MariaDB / MySQL compatible SQL:
    - For yesterday's date: `DATE_SUB(CURRENT_DATE, INTERVAL 1 DAY)` or `DATE_ADD(CURRENT_DATE, INTERVAL -1 DAY)`.
    - For today's date: `CURRENT_DATE` or `CURDATE()`.
    - For string search: use `LIKE '%value%'` or `LOWER(column) LIKE LOWER('%value%')`. Do NOT use PostgreSQL `ILIKE` or `::text`.
    - For conditionals: use standard `CASE WHEN condition THEN val1 ELSE val2 END` or `IF(condition, val1, val2)`.
-12. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include explanations outside the SQL block.
+14. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include explanations outside the SQL block.
 """
         return cls.SYSTEM_PROMPT
 

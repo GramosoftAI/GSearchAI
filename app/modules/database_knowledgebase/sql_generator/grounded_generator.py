@@ -62,17 +62,23 @@ Rules:
 5. DATE HANDLING: If a specific date like 'YYYY-MM-DD' is requested, match with date casting (e.g. `col::date = 'YYYY-MM-DD'`).
 6. MANDATORY LIMIT: Always include a LIMIT clause at the end of the query (e.g. `LIMIT 50` for lists, or `LIMIT 1` for single-row aggregates) to ensure safety.
 7. Return only one single SQL query without Markdown code fences, commentary, or multiple statements.
-8. MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
-   When matching free-text, names, titles, or categories where the user enters words separated by spaces while the database may store underscores, hyphens, or camelCase (e.g., user typed 'cream reward', but database stores 'CREAM_Reward' or 'cream-reward'):
-   - NEVER use strict equality like `p.name = 'cream reward'`.
-   - ALWAYS split the phrase into individual words and match each word with ILIKE:
-     `(column_name ILIKE '%cream%' AND column_name ILIKE '%reward%')`
-     or `column_name ILIKE '%cream%reward%'`
-     This guarantees matching regardless of underscores, hyphens, case, or extra internal characters!
-9. "WORKING ON / UNDER" vs "MEMBERS OF" A PROJECT:
+8. SINGLE TABLE SUFFICIENCY & MINIMAL JOINS (CRITICAL):
+   - Check if the requested projection attribute (e.g. registration number, code, status, price) AND an entity/filter column (e.g. name, title, item, description) both exist directly on one of the candidate tables.
+   - If a single candidate table can fully satisfy the query on its own, query that table DIRECTLY without joining additional tables (e.g., do not join master/customer tables if the target table already holds the entity name/code and the requested field).
+   - Only perform JOINs when the requested information is genuinely split across multiple tables.
+9. DYNAMIC MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
+   When matching any free-text, entity names, product items, brands, titles, categories, or literal phrases (such as 'cream & IPA', 'red wine', person names, or item codes):
+   - NEVER fragment a multi-word literal across multiple different columns using AND (e.g. NEVER do `col1 ILIKE '%part1%' AND col2 ILIKE '%part2%' AND col3 ILIKE '%part3%'`).
+   - Match the target string against a single candidate column using ILIKE:
+     * For arbitrary multi-word or separated phrases: `(col ILIKE '%word1%' AND col ILIKE '%word2%')` or `col ILIKE '%word1%word2%'` ON THE SAME COLUMN.
+     * Or test across alternative candidate columns using OR: `(col_a ILIKE '%literal%' OR col_b ILIKE '%literal%')`.
+   - If matching split name fields (like `firstname` and `lastname`), match against the concatenated whole:
+     `CONCAT_WS(' ', col_first, col_last) ILIKE '%full literal%'` or `(col_first ILIKE '%word1%' AND col_last ILIKE '%word2%')`.
+   - This ensures dynamic and robust matching for any names, products, items, or descriptions regardless of spacing, special characters (&, -), or casing.
+10. "WORKING ON / UNDER" vs "MEMBERS OF" A PROJECT:
    - When the user asks who is "working on", "working under", "doing work on", or "assigned to" a project/entity, join the active tasks/work items table (e.g., `work_packages`, `tasks`, `issues`, `tickets` via `assigned_to_id` or `author_id`) where actual work assignments reside.
    - Use the membership roster table (e.g., `members`) only when the user specifically asks for "members", "membership list", or "team permissions".
-10. MANDATORY DISTINCT & ORDER BY IN POSTGRESQL:
+11. MANDATORY DISTINCT & ORDER BY IN POSTGRESQL:
    - When joining across one-to-many relationship tables, use `SELECT DISTINCT` to prevent duplicate rows.
    - CRITICAL POSTGRESQL SYNTAX RULE: When using `SELECT DISTINCT`, every expression in `ORDER BY` MUST appear in the `SELECT` list.
      For example, `SELECT DISTINCT col::date ... ORDER BY col::date DESC` is valid; `SELECT DISTINCT col::date ... ORDER BY col DESC` will throw a syntax error.
@@ -185,13 +191,15 @@ Your task is to fix the SQL query so that it successfully executes and accuratel
 Rules:
 1. Examine the error message carefully. If a column or table does not exist, consult the supplied Schema context and find the actual columns in that table (e.g. check for split name fields like firstname/lastname or alternate column names) or adjust the join/projections. If a table stores names as separate fields (e.g. firstname/lastname), use CONCAT or login/username instead of a non-existent name column.
 2. Strictly check the Columns table and types of each schema document. Always use the exact column names present in the schema. Never guess column names that are not listed.
-3. MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
-   When filtering text or name columns by user-entered strings that may contain spaces instead of underscores/hyphens (e.g., user typed 'cream reward', but DB has 'CREAM_Reward' or 'cream-reward'):
-   - NEVER use strict equality like `p.name = 'cream reward'`.
-   - ALWAYS split the phrase into individual words and match each word with ILIKE:
-     `(column_name ILIKE '%cream%' AND column_name ILIKE '%reward%')`
-     or `column_name ILIKE '%cream%reward%'`
-4. "WORKING ON / UNDER" vs "MEMBERS OF" A PROJECT:
+3. DYNAMIC MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
+   When matching free-text, entity names, products, items, titles, or categories:
+   - NEVER split a multi-word entity or literal into conjoined AND conditions across multiple different columns.
+   - Match the target string against a single candidate column with ILIKE: `(column_name ILIKE '%word1%' AND column_name ILIKE '%word2%')` or `column_name ILIKE '%word1%word2%'`.
+   - Or test across alternative candidate columns with OR: `(col_a ILIKE '%term%' OR col_b ILIKE '%term%')`.
+   - If a table has split names, match against `CONCAT_WS(' ', first, last) ILIKE '%full term%'`.
+4. SINGLE TABLE SUFFICIENCY:
+   - If the requested projection column and the filter column both exist directly on one table, remove unnecessary joins and query that table directly.
+5. "WORKING ON / UNDER" vs "MEMBERS OF" A PROJECT:
    - When the user asks who is "working on", "working under", "doing work on", or "assigned to" a project/entity, join the active tasks/work items table (e.g., `work_packages`, `tasks`, `issues`, `tickets` via `assigned_to_id` or `author_id`) where actual work assignments reside.
    - Use the membership roster table (e.g., `members`) only when the user specifically asks for "members", "membership list", or "team permissions".
 5. POSTGRESQL SELECT DISTINCT & ORDER BY RULE:
