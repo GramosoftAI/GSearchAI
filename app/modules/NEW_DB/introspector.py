@@ -39,7 +39,7 @@ class SchemaIntrospector:
                     table_type
                 FROM information_schema.tables
                 WHERE table_schema = ANY($1::text[])
-                  AND table_type IN ('BASE TABLE', 'VIEW')
+                  AND table_type = 'BASE TABLE'
                 ORDER BY table_schema, table_name;
             """
             table_rows = await conn.fetch(tables_query, schemas_filter)

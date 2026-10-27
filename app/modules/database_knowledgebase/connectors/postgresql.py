@@ -200,6 +200,7 @@ class PostgreSQLConnector(DatabaseConnector):
             LEFT JOIN pg_catalog.pg_description d 
                 ON d.objoid = c.oid AND d.objsubid = 0
             WHERE t.table_schema = ANY($1::text[])
+              AND t.table_type = 'BASE TABLE'
             ORDER BY t.table_schema, t.table_name;
             """
             table_rows = await conn.fetch(tables_query, active_schemas)

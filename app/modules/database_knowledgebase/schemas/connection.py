@@ -113,7 +113,7 @@ class DatabaseConnectionConfig(BaseModel):
                 dsn += f"?ssl={self.ssl_mode.value}"
             return dsn
         elif self.db_type in (DatabaseType.MYSQL, DatabaseType.MARIADB):
-            prefix = "mysql+asyncmy" if async_driver else "mysql+pymysql"
+            prefix = "mysql+aiomysql" if async_driver else "mysql+pymysql"
             return f"{prefix}://{encoded_user}:{encoded_pw}@{self.host}:{self.port}/{self.database_name}"
         elif self.db_type == DatabaseType.SQLITE:
             prefix = "sqlite+aiosqlite" if async_driver else "sqlite"

@@ -304,7 +304,7 @@ class PasswordResetToken(Base):
 class RegistrationOTP(Base):
     """
     Registration OTP model.
-    Stores hashed OTPs for secure email validation during registration.
+    Stores OTPs for email validation during registration.
     """
 
     __tablename__ = "registration_otps"
@@ -337,6 +337,14 @@ class RegistrationOTP(Base):
         Index("ix_registration_otps_expires", "expires_at"),  # For cleanup
     )
 
+    @property
+    def otp(self) -> str:
+        return self.otp_hash
+
+    @otp.setter
+    def otp(self, value: str):
+        self.otp_hash = value
+
     def __repr__(self) -> str:
-        return f"<RegistrationOTP email={self.email} used={self.is_used}>"
+        return f"<RegistrationOTP email={self.email} otp={self.otp_hash} used={self.is_used}>"
 

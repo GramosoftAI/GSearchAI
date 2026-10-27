@@ -9,8 +9,12 @@ import logging
 import ssl
 from typing import Any, Dict, Optional
 import asyncpg
-import asyncmy
-from asyncmy.cursors import DictCursor
+try:
+    import aiomysql
+    from aiomysql.cursors import DictCursor
+except ImportError:
+    aiomysql = None
+    DictCursor = None
 
 from ..schemas.connection import DatabaseConnectionConfig, DatabaseType, SSLMode
 from ..security.sanitizer import sanitize_error_message
@@ -40,7 +44,7 @@ async def connect_to_database(
 ) -> Any:
     """
     Establish a dedicated connection using discrete connection parameters.
-    Supports PostgreSQL (via asyncpg) and MariaDB/MySQL (via asyncmy).
+    Supports PostgreSQL (via asyncpg) and MariaDB/MySQL (via aiomysql).
     
     CRITICAL: Never formats a string DSN with credentials. Passing discrete parameters
     guarantees that passwords with special characters do not corrupt host/port resolution.
@@ -51,6 +55,10 @@ async def connect_to_database(
     )
 
     if db_config.db_type in (DatabaseType.MARIADB, DatabaseType.MYSQL) or getattr(db_config, "port", None) in (3306, 3307):
+        if aiomysql is None:
+            raise QueryConnectionError(
+                detail="aiomysql driver is not available.",
+            )
         ssl_ctx = None
         if db_config.ssl_mode != SSLMode.DISABLE:
             try:
@@ -63,16 +71,16 @@ async def connect_to_database(
 
         try:
             conn = await asyncio.wait_for(
-                asyncmy.connect(
+                aiomysql.connect(
                     host=db_config.host,
                     port=db_config.port or 3306,
                     user=db_config.username,
                     password=db_config.raw_password,
-                    database=db_config.database_name,
+                    db=db_config.database_name,
                     connect_timeout=timeout_seconds,
                     ssl=ssl_ctx,
                     autocommit=True,
-                    cursor_cls=DictCursor,
+                    cursorclass=DictCursor,
                 ),
                 timeout=timeout_seconds + 1.0,
             )

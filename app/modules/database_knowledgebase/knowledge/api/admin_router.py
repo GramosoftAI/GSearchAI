@@ -19,10 +19,13 @@ and managing Phase 2 knowledge items, entity values, and conflicts:
 - Every mutating endpoint writes an audit row to kb2_audit_log.
 """
 
+import logging
 import uuid
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, Request, HTTPException, Query, status
 from sqlalchemy import select, update, delete, func, desc, case
@@ -690,6 +693,28 @@ async def compute_pipeline_status(
     db: AsyncSession,
 ) -> Dict[str, Any]:
     """Computes real-time Phase 2 pipeline status, progress percentage, and active stage."""
+    from app.core.config import get_settings
+    settings = get_settings()
+    pipeline_mode = getattr(settings, "db_kb_pipeline_mode", "grounded_docs")
+    if pipeline_mode == "grounded_docs" or not getattr(settings, "enable_phase2_knowledge_layer", False) or not getattr(settings, "old_database", False):
+        return {
+            "success": True,
+            "status": "succeeded",
+            "is_active": False,
+            "progress_percent": 100,
+            "current_stage": "ready",
+            "current_stage_label": "Ready / Synced (Grounded Docs Mode)",
+            "stages": {
+                "profile": {"status": "succeeded"},
+                "relationships": {"status": "succeeded"},
+                "value_index": {"status": "succeeded"},
+                "enrich": {"status": "succeeded"},
+                "schema_index": {"status": "succeeded"},
+            },
+            "elapsed_seconds": 2,
+            "error": None,
+        }
+
     # 1. Query for active run first (running or queued)
     stmt_active = (
         select(KB2JobRun)
@@ -717,28 +742,6 @@ async def compute_pipeline_status(
         )
         res_latest = await db.execute(stmt_latest)
         run = res_latest.scalar_one_or_none()
-
-    from app.core.config import get_settings
-    settings = get_settings()
-    pipeline_mode = getattr(settings, "db_kb_pipeline_mode", "grounded_docs")
-    if pipeline_mode == "grounded_docs" or not getattr(settings, "enable_phase2_knowledge_layer", False):
-        return {
-            "success": True,
-            "status": "succeeded",
-            "is_active": False,
-            "progress_percent": 100,
-            "current_stage": "ready",
-            "current_stage_label": "Ready / Synced (Grounded Docs Mode)",
-            "stages": {
-                "profile": {"status": "succeeded"},
-                "relationships": {"status": "succeeded"},
-                "value_index": {"status": "succeeded"},
-                "enrich": {"status": "succeeded"},
-                "schema_index": {"status": "succeeded"},
-            },
-            "elapsed_seconds": 2,
-            "error": None,
-        }
 
     if not run:
         return {
