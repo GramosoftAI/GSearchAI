@@ -1192,12 +1192,22 @@ class DatabaseKnowledgebaseService:
             if not resolved_dimension_entities and canonical_schema:
                 from ..retrieval.grounded_entity_resolver import GroundedEntityResolver
                 try:
+                    retrieved_candidate_tables = [d.get("table_name") for d in schema_docs if d.get("table_name")]
                     res_outcome = await GroundedEntityResolver.resolve_entities_in_query(
                         user_query=user_query,
                         canonical_schema=canonical_schema,
                         conn_config=config,
                         kb_id=str(kb_id),
                         tenant_id=str(self.tenant_id),
+                        relevant_tables=retrieved_candidate_tables,
+                    )
+                    res_timings = res_outcome.get("timings", {})
+                    logger.info(
+                        f"[GROUNDED_PIPELINE] Entity resolution timings (ms): "
+                        f"exact={res_timings.get('exact_latency_ms', 0):.2f}, "
+                        f"norm={res_timings.get('normalized_latency_ms', 0):.2f}, "
+                        f"fuzzy={res_timings.get('fuzzy_latency_ms', 0):.2f}, "
+                        f"total={res_timings.get('total_resolution_latency_ms', 0):.2f}"
                     )
 
                     # Check for ambiguous entity matches that require user clarification
@@ -1381,14 +1391,22 @@ class DatabaseKnowledgebaseService:
 
             t_plan_start = time.perf_counter()
             from ..planning.intent_analyzer import QueryIntentAnalyzer
+            from ..planning.schema_aware_rephraser import SchemaAwareQueryRephraser
             intent_analysis = QueryIntentAnalyzer.analyze(user_query)
+            schema_interpretation = SchemaAwareQueryRephraser.rephrase(
+                user_query=user_query,
+                retrieved_docs=schema_docs,
+                canonical_schema=canonical_schema,
+                resolved_entities=resolved_dimension_entities,
+                intent_analysis=intent_analysis,
+            )
             t_plan_ms = (time.perf_counter() - t_plan_start) * 1000.0
 
             # Record planning into tracer so Phase 2B shows clean, accurate intent and latency
             tracer.record_planning(
                 intent=intent_analysis.intent.value,
                 tables=table_names,
-                joins=[],
+                joins=[f"{r.source_table}->{r.target_table}" for r in schema_interpretation.relationships_required],
                 filters=[f"{p.target_concept} {p.operator} {p.value}" for p in intent_analysis.predicates],
                 aggregations=[a.raw_match for a in intent_analysis.aggregations],
                 group_by=[intent_analysis.grouping_concept] if intent_analysis.grouping_concept else [],
@@ -1406,10 +1424,11 @@ class DatabaseKnowledgebaseService:
                         "intent": intent_analysis.intent.value,
                         "tables_count": len(table_names),
                         "target_tables": table_names,
-                        "joins_count": 0,
+                        "joins_count": len(schema_interpretation.relationships_required),
                         "has_aggregations": len(intent_analysis.aggregations) > 0,
                         "has_ranking": intent_analysis.ranking is not None,
                         "limit": intent_analysis.ranking.limit if intent_analysis.ranking else 50,
+                        "rephrased_query": schema_interpretation.rephrased_question,
                         "latency_ms": round(t_plan_ms, 2),
                     },
                     elapsed_stage_ms=t_plan_ms,
@@ -1434,6 +1453,7 @@ class DatabaseKnowledgebaseService:
                 retrieved_docs=schema_docs,
                 resolved_entities=resolved_dimension_entities,
                 intent_analysis=intent_analysis,
+                schema_interpretation=schema_interpretation,
             )
             t_sql_ms = (time.perf_counter() - t_sql_start) * 1000.0
 

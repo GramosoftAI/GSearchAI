@@ -137,6 +137,22 @@ Rules:
                 f"- Required Aggregations: {agg_str}\n"
             )
 
+        # Consume structured schema-aware interpretation if provided
+        schema_interpretation = kwargs.get("schema_interpretation")
+        if schema_interpretation:
+            user_content += "\n\nStructured Schema-Aware Interpretation:\n"
+            if hasattr(schema_interpretation, "rephrased_question") and schema_interpretation.rephrased_question:
+                user_content += f"- Grounded Rephrasing: {schema_interpretation.rephrased_question}\n"
+            if hasattr(schema_interpretation, "filters") and schema_interpretation.filters:
+                filter_descs = [
+                    f"{f.column} {f.operator} {f.expression}" + (" [EXCLUDED/NEGATED]" if f.is_negated else "")
+                    for f in schema_interpretation.filters
+                ]
+                user_content += f"- Identified Filters: {', '.join(filter_descs)}\n"
+            if hasattr(schema_interpretation, "relationships_required") and schema_interpretation.relationships_required:
+                rel_descs = [f"{r.source_table} <-> {r.target_table} ({r.join_type} JOIN on {r.join_columns})" for r in schema_interpretation.relationships_required]
+                user_content += f"- Required Join Paths: {'; '.join(rel_descs)}\n"
+
         user_content += "\nSQL:"
 
         chosen_model = model or getattr(settings, "sql_generation_model", "deepseek-ai/DeepSeek-V3")

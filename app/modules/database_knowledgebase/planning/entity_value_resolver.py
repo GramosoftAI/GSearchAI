@@ -313,10 +313,17 @@ class EntityValueResolver:
             except Exception:
                 pass
 
-            # Stage 2: Normalized match (LOWER)
-            norm_sql = f'SELECT "{col}" FROM "{schema_name}"."{target_table}" WHERE LOWER("{col}") = LOWER($1) LIMIT 10;'
+            # Stage 2: Normalized match (case/space-insensitive and singular/plural)
+            norm_sql = f'SELECT "{col}" FROM "{schema_name}"."{target_table}" WHERE LOWER(TRIM("{col}")) = LOWER(TRIM($1)) LIMIT 10;'
             try:
                 rows = await executor.execute(norm_sql, [query_literal], timeout_seconds=timeout_seconds)
+                if not rows:
+                    # Check singular/plural variation
+                    clean_lit = query_literal.strip().lower()
+                    alt_lit = clean_lit[:-1] if clean_lit.endswith('s') and len(clean_lit) > 3 else (f"{clean_lit}s" if not clean_lit.endswith('s') else clean_lit)
+                    if alt_lit != clean_lit:
+                        rows = await executor.execute(norm_sql, [alt_lit], timeout_seconds=timeout_seconds)
+
                 if len(rows) == 1:
                     matched_val = rows[0][col]
                     pred = PredicatePlan(
@@ -354,10 +361,14 @@ class EntityValueResolver:
             except Exception:
                 pass
 
-            # Stage 3: Bounded fuzzy match (ILIKE %val%)
+            # Stage 3: Bounded fuzzy match (ILIKE %val% with short string guard)
+            # Guard against short strings (<= 2 chars) matching arbitrarily (e.g. 'in', 'on')
+            if len(query_literal.strip()) <= 2:
+                continue
+
             fuzzy_sql = f'SELECT "{col}" FROM "{schema_name}"."{target_table}" WHERE "{col}" ILIKE $1 LIMIT 10;'
             try:
-                fuzzy_val = f"%{query_literal}%"
+                fuzzy_val = f"%{query_literal.strip()}%"
                 rows = await executor.execute(fuzzy_sql, [fuzzy_val], timeout_seconds=timeout_seconds)
                 if len(rows) == 1:
                     matched_val = rows[0][col]
