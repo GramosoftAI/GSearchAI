@@ -196,14 +196,24 @@ class GroundedEntityResolver:
         ambiguous_entities: List[Dict[str, Any]] = []
         seen_entities: Set[Tuple[str, Any]] = set()
 
-        for dim in candidate_dims:
-            rows = await cls.get_dimension_rows(
+        # Limit candidate dimensions to top 8 to prevent excessive external DB connections
+        candidate_dims = candidate_dims[:8]
+
+        # Fetch dimension rows concurrently rather than sequentially
+        dim_row_tasks = [
+            cls.get_dimension_rows(
                 conn_config=conn_config,
                 kb_id=kb_id,
                 dim=dim,
                 tenant_id=tenant_id,
             )
-            if not rows:
+            for dim in candidate_dims
+        ]
+        import asyncio
+        dim_rows_results = await asyncio.gather(*dim_row_tasks, return_exceptions=True)
+
+        for dim, rows in zip(candidate_dims, dim_rows_results):
+            if isinstance(rows, Exception) or not rows:
                 continue
 
             # Greedy matching: sort records by max length of label values descending

@@ -1204,22 +1204,39 @@ class DatabaseKnowledgebaseService:
                     ambiguous = res_outcome.get("ambiguous_entities", [])
                     if ambiguous and not resolved_entities:
                         first_amb = ambiguous[0]
-                        options = [
-                            {
-                                "id": c["id"],
-                                "label": f"{c.get('name')} (ID: {c['id']})",
-                                "name": c.get("name"),
-                                "table": c.get("table", first_amb.get("dimension_table")),
-                                "column": c.get("column", "id"),
-                                "pk_column": c.get("column", "id"),
-                            }
-                            for c in first_amb.get("candidates", [])
-                        ]
-                        raise DisambiguationRequiredError(
-                            message=f"Multiple matches found for '{first_amb.get('matched_term')}'. Which one did you mean?",
-                            options=options,
-                            entity_type=first_amb.get("dimension_table", "entity"),
-                        )
+                        candidates = first_amb.get("candidates", [])
+                        
+                        # Only prompt user if candidates offer genuinely distinct semantic labels/names.
+                        # If all candidates have identical names (e.g. all 30 are 'BENZ'), or if the query
+                        # already contains a high-entropy specific identifier/code (e.g. 'W129589010700'),
+                        # disambiguating identical names is redundant and disrupts user experience.
+                        has_specific_code = bool(re.search(r"\b[A-Za-z0-9_-]{6,}\b", user_query or "") and any(c.isdigit() for c in (user_query or "")))
+                        clean_candidate_names = {re.sub(r"\s*\(id\s+[^)]+\)", "", str(c.get("name") or "")).strip().lower() for c in candidates}
+                        clean_candidate_names.discard("")
+                        has_differentiated = len(clean_candidate_names) > 1
+
+                        if has_differentiated and not has_specific_code:
+                            options = [
+                                {
+                                    "id": c["id"],
+                                    "label": f"{c.get('name')} (ID: {c['id']})",
+                                    "name": c.get("name"),
+                                    "table": c.get("table", first_amb.get("dimension_table")),
+                                    "column": c.get("column", "id"),
+                                    "pk_column": c.get("column", "id"),
+                                }
+                                for c in candidates
+                            ]
+                            raise DisambiguationRequiredError(
+                                message=f"Multiple matches found for '{first_amb.get('matched_term')}'. Which one did you mean?",
+                                options=options,
+                                entity_type=first_amb.get("dimension_table", "entity"),
+                            )
+                        else:
+                            logger.info(
+                                f"[GROUNDED_PIPELINE] Bypassing disambiguation for '{first_amb.get('matched_term')}' "
+                                f"(identical_names={not has_differentiated}, has_specific_code={has_specific_code})"
+                            )
 
                     resolved_dimension_entities = res_outcome.get("resolved_entities", [])
                     disambiguation_notices.extend(res_outcome.get("notices", []))
