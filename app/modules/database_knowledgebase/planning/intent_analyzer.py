@@ -90,7 +90,7 @@ class QueryIntentAnalyzer:
 
     # Aggregation keywords mapping
     AGG_PATTERNS = [
-        (r"\b(total|sum of|sum|revenue)\b", AggregateFunction.SUM),
+        (r"\b(total|sum of|sum|revenue|sales|spending|spend|spent)\b", AggregateFunction.SUM),
         (r"\b(average|mean|avg)\b", AggregateFunction.AVG),
         (r"\b(how many|count of|count|number of|item counts|total count|headcount)\b", AggregateFunction.COUNT),
         (r"\b(highest|maximum|max|most|top)\b", AggregateFunction.MAX),
@@ -184,6 +184,7 @@ class QueryIntentAnalyzer:
         Analyze the natural-language query and return a structured QueryIntentAnalysis.
         """
         q_lower = query.lower()
+        requires_joins = False
 
         # 1. Extract Temporal Constraints
         temporals: List[ExtractedTemporalConstraint] = []
@@ -371,10 +372,10 @@ class QueryIntentAnalyzer:
                 target_metric="experience",
                 raw_match=least_exp_match.group(0),
             )
-        elif "highest" in q_lower or "most frequently" in q_lower or "spent the most" in q_lower or "selling the most" in q_lower:
+        elif "highest" in q_lower or "most frequently" in q_lower or "spent the most" in q_lower or "spent most" in q_lower or "selling the most" in q_lower:
             ranking = ExtractedRanking(
                 direction=OrderDirection.DESC,
-                limit=1 if "highest" in q_lower or "the most" in q_lower else None,
+                limit=1 if "highest" in q_lower or "the most" in q_lower or "spent most" in q_lower else None,
                 raw_match="highest/most",
             )
         elif "lowest" in q_lower or "least" in q_lower or "earliest" in q_lower:
@@ -411,6 +412,11 @@ class QueryIntentAnalyzer:
                         )
                     )
 
+            # Coalesce generic agg keyword ("total", "sum") when a specific domain metric ("revenue", "sales", "spend") is present
+            agg_words = [a.raw_match.lower() for a in aggregations]
+            if ("total" in agg_words or "sum" in agg_words or "sum of" in agg_words) and any(m in agg_words for m in ("revenue", "sales", "spending", "spend", "spent")):
+                aggregations = [a for a in aggregations if a.raw_match.lower() not in ("total", "sum", "sum of")]
+
             # Disambiguate "how many total" / "total count" / "total number of" -> COUNT, not SUM
             has_count = any(a.function == AggregateFunction.COUNT for a in aggregations)
             if has_count:
@@ -420,7 +426,7 @@ class QueryIntentAnalyzer:
                 ]
             elif any(a.function == AggregateFunction.SUM and a.raw_match.lower() == "total" for a in aggregations):
                 # If query mentions "total" but no financial/monetary/numeric terms, it is counting entities (e.g. "total candidates")
-                has_numeric_metric = any(m in q_lower for m in ("expenditure", "spending", "payroll", "salary", "wage", "amount", "budget", "revenue", "cost", "price", "point", "points", "hour", "hours", "second", "seconds", "minute", "minutes", "duration", "balance", "days"))
+                has_numeric_metric = any(m in q_lower for m in ("expenditure", "spending", "payroll", "salary", "wage", "amount", "budget", "revenue", "cost", "price", "point", "points", "hour", "hours", "second", "seconds", "minute", "minutes", "duration", "balance", "days", "fee", "fees", "charge", "charges", "tax", "taxes", "value", "val", "discount", "rate", "rates", "payment", "payments"))
                 if not has_numeric_metric:
                     aggregations = [
                         ExtractedAggregation(function=AggregateFunction.COUNT, raw_match="total") if (a.function == AggregateFunction.SUM and a.raw_match.lower() == "total") else a
@@ -629,7 +635,12 @@ class QueryIntentAnalyzer:
 
         # Product name matching: e.g. "product X"
         prod_match = re.search(r"\bproduct\s+([a-zA-Z0-9_-]+)\b", query, re.IGNORECASE)
-        if prod_match and prod_match.group(1).lower() not in {"name", "category", "price", "catalog"}:
+        PROD_FILTER_STOPWORDS = {
+            "name", "category", "price", "catalog", "has", "have", "had", "is", "are", "was",
+            "were", "with", "sold", "bought", "ordered", "that", "which", "count", "number",
+            "overall", "entire", "complete", "general", "combined", "net", "gross", "all", "total", "every"
+        }
+        if prod_match and prod_match.group(1).lower() not in PROD_FILTER_STOPWORDS:
             predicates.append(
                 ExtractedPredicate(
                     target_concept="product_name",
@@ -911,28 +922,49 @@ class QueryIntentAnalyzer:
         grouping_required = False
         grouping_concept: Optional[str] = None
 
-        group_match = re.search(r"\b(?:by|per|for each|in each|grouped by)\s+([a-zA-Z0-9_]+)\b", q_lower)
-        which_group_match = re.search(r"\bwhich\s+([a-zA-Z0-9_]+)\s+has\s+(?:the\s+)?(most|highest|lowest|least|maximum|minimum)\b", q_lower)
-        who_group_match = re.search(r"\b(?:who|which employee)\s+(?:has\s+|had\s+|took\s+|taken\s+|worked\s+)?(?:the\s+)?(most|highest|lowest|least|maximum|minimum)\b", q_lower)
+        DIM_STOPWORDS = {
+            "the", "a", "an", "all", "each", "every", "both", "this", "that", "these", "those",
+            "what", "which", "how", "who", "whom", "where", "when", "why", "is", "are", "was", "were",
+            "total", "sum", "avg", "average", "count", "min", "max", "minimum", "maximum",
+            "order", "orders", "asc", "desc", "details", "information", "info", "data", "records",
+            "salary", "budget", "amount", "price", "highest", "lowest", "least", "most"
+        }
 
-        if group_match:
-            candidate_concept = group_match.group(1).strip()
-            # Exclude grammatical stopwords and metric words
-            if candidate_concept not in {
-                "the", "a", "an", "all", "order", "asc", "desc",
-                "salary", "budget", "amount", "price", "count", "sum", "avg", "min", "max",
-                "total", "highest", "lowest", "least", "most", "average"
-            }:
+        group_match = re.search(r"\b(?:by|per|for each|in each|grouped by)\s+([a-zA-Z0-9_]+)\b", q_lower)
+        which_group_match = re.search(r"\bwhich\s+([a-zA-Z0-9_]+)\s+(?:has\s+|had\s+|spent\s+|bought\s+|ordered\s+)?(?:the\s+)?(most|highest|lowest|least|maximum|minimum|largest|smallest|greatest|top|best)\b", q_lower)
+        spent_group_match = re.search(r"\b(?:which\s+)?([a-zA-Z0-9_]+)\s+(?:spent|bought|ordered)\s+(?:the\s+)?(most|highest|least|lowest|largest|smallest|greatest)\b", q_lower)
+        who_group_match = re.search(r"\b(?:who|which employee)\s+(?:has\s+|had\s+|took\s+|taken\s+|worked\s+)?(?:the\s+)?(most|highest|lowest|least|maximum|minimum)\b", q_lower)
+        dim_and_agg_match = re.search(
+            r"\b(?:show|list|display|get|find|select)?\s*(?:all|each|every)?\s*([a-zA-Z0-9_]+)(?:\s+(?:name|title|category|id|code))?\s+(?:and|with|having)\s+(?:their\s+|the\s+|all\s+)?(?:total|sum|average|avg|count|minimum|min|maximum|max|mean)\s+([a-zA-Z0-9_]+)\b",
+            q_lower
+        )
+        possessive_match = re.search(
+            r"\b([a-zA-Z0-9_]+)'s\s+(?:total|sum|average|avg|count|spending|spent|sales|revenue|order\s+value|salary|budget)\b",
+            q_lower
+        )
+        top_ent_match = re.search(
+            r"\b(?:top|first|bottom|lowest|highest)\s+(?:\d+|[a-zA-Z]+)?\s*([a-zA-Z0-9_]+)\s+(?:by|with|having)\b",
+            q_lower
+        )
+
+        if group_match and group_match.group(1).strip() not in DIM_STOPWORDS:
+            grouping_required = True
+            grouping_concept = group_match.group(1).strip()
+        elif top_ent_match and top_ent_match.group(1).strip() not in DIM_STOPWORDS:
+            grouping_required = True
+            grouping_concept = top_ent_match.group(1).strip()
+        elif which_group_match or spent_group_match:
+            m = which_group_match or spent_group_match
+            candidate_concept = m.group(1).strip()
+            if candidate_concept not in {"the", "a", "an", "all", "one"} and candidate_concept not in DIM_STOPWORDS:
                 grouping_required = True
                 grouping_concept = candidate_concept
-        elif which_group_match:
-            candidate_concept = which_group_match.group(1).strip()
-            if candidate_concept not in {"the", "a", "an", "all", "one"}:
-                grouping_required = True
-                grouping_concept = candidate_concept
-                superlative = which_group_match.group(2).lower()
-                direction = OrderDirection.DESC if superlative in ("most", "highest", "maximum") else OrderDirection.ASC
-                ranking = ExtractedRanking(direction=direction, limit=1, raw_match=superlative)
+                superlative = m.group(2).lower()
+                direction = OrderDirection.DESC if superlative in ("most", "highest", "maximum", "largest", "greatest", "top", "best") else OrderDirection.ASC
+                target_m = "total_amount" if any(w in q_lower for w in ("spent", "spend", "sales", "revenue", "order value", "bought", "ordered")) else None
+                ranking = ExtractedRanking(direction=direction, limit=1, target_metric=target_m, raw_match=superlative)
+                if any(w in q_lower for w in ("spent", "spend", "sales", "revenue", "bought", "ordered", "order value")):
+                    requires_joins = True
         elif who_group_match:
             superlative = who_group_match.group(1).lower()
             direction = OrderDirection.DESC if superlative in ("most", "highest", "maximum") else OrderDirection.ASC
@@ -940,13 +972,17 @@ class QueryIntentAnalyzer:
                 grouping_required = True
                 grouping_concept = "employee"
             ranking = ExtractedRanking(direction=direction, limit=1, raw_match=superlative)
+        elif dim_and_agg_match and dim_and_agg_match.group(1).strip() not in DIM_STOPWORDS:
+            grouping_required = True
+            grouping_concept = dim_and_agg_match.group(1).strip()
+        elif possessive_match and possessive_match.group(1).strip() not in DIM_STOPWORDS:
+            grouping_required = True
+            grouping_concept = possessive_match.group(1).strip()
         elif aggregations and ("each" in q_lower or "per" in q_lower or "frequently" in q_lower):
             each_match = re.search(r"\beach\s+([a-zA-Z0-9_]+)\b", q_lower)
-            if each_match:
-                candidate_concept = each_match.group(1).strip()
-                if candidate_concept not in {"the", "a", "an", "all", "order", "asc", "desc"}:
-                    grouping_required = True
-                    grouping_concept = candidate_concept
+            if each_match and each_match.group(1).strip() not in DIM_STOPWORDS:
+                grouping_required = True
+                grouping_concept = each_match.group(1).strip()
             else:
                 grouping_required = True
 
@@ -1141,7 +1177,7 @@ class QueryIntentAnalyzer:
 
         # If multiple distinct entities are requested and intent was SELECT_POINT, promote to SELECT_JOIN
         has_multiple_entities = len(candidate_entities) >= 2
-        requires_joins = has_multiple_entities
+        requires_joins = has_multiple_entities or requires_joins
         if has_multiple_entities and intent == IntentType.SELECT_POINT:
             intent = IntentType.SELECT_JOIN
 

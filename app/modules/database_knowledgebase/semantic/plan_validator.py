@@ -77,14 +77,16 @@ class PlanValidator:
 
         # 2. Metric existence check (if a registered metric was requested)
         if requested_metric_id:
-            if not metric_registry or not tenant_id or not knowledgebase_id:
+            if not metric_registry:
                 return PlanValidationResult(
                     outcome=ValidationOutcome.REJECT,
                     reason_code=ValidationReasonCode.METRIC_NOT_FOUND,
                     message=f"Requested metric '{requested_metric_id}' but metric registry is unavailable",
                     offending_object=requested_metric_id,
                 )
-            metric_def = metric_registry.get_metric(tenant_id, knowledgebase_id, requested_metric_id)
+            metric_def = metric_registry.get_metric(tenant_id, knowledgebase_id, requested_metric_id) if knowledgebase_id else None
+            if not metric_def and metric_registry and knowledgebase_id:
+                metric_def = metric_registry.get_metric_by_name(tenant_id, knowledgebase_id, requested_metric_id)
             if not metric_def or metric_def.status != "ACTIVE":
                 return PlanValidationResult(
                     outcome=ValidationOutcome.REJECT,

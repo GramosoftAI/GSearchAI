@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Modal, Button, Spin, Tag, App, Checkbox } from "antd";
+import { Modal, Button, Spin, Tag, App} from "antd";
 import { CheckOutlined, DisconnectOutlined, SyncOutlined, PlusOutlined, LinkOutlined } from "@ant-design/icons";
 import { getCookie } from "../../config/cookies";
 import useAxios from "../../hooks/useAxios";
@@ -38,9 +38,8 @@ export default function IntegrationConnectModal({
   const [connectionStates, setConnectionStates] = useState<Record<string, string[]>>({});
   const [kbIds, setKbIds] = useState<Record<string, string>>({});
 
-  // Endpoint to get agent list
   const [getAgents] = useAxios<any>({ endpoint: "GETAGENTLIST", hideErrorMsg: true });
-  // Disconnect endpoint
+
   const [disconnectKb] = useAxios<any>({ endpoint: "DISCONNECT", hideErrorMsg: true });
 
   const providerLabel = 
@@ -52,37 +51,57 @@ export default function IntegrationConnectModal({
     type === "sharepoint" ? "sharepoint" : 
     type === "email" ? "email" : "outlook";
 
-  // Helper to fetch an existing KB ID for a single agent (read-only query, no side effects)
-  const fetchExistingAgentKbId = async (agentId: string) => {
+  
+  const findExistingAgentKb = async (agentId: string) => {
     try {
       const token = getCookie("AUTH_TOKEN");
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/${agentId}/list_knowledge_bases`,
+        `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/agents/${agentId}?limit=100&offset=0`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
           },
         }
       );
       if (!res.ok) return null;
       const data = await res.json();
-      const kbs: any[] = data?.data?.kbs || [];
-      const match = kbs.find(
-        (kb) =>
-          kb.connected_integration === providerKey ||
-          (kb.source && kb.source.startsWith(providerKey)) ||
-          (kb.name && kb.name.toLowerCase().includes(providerLabel.toLowerCase()))
-      );
-      return match?.id || (kbs.length > 0 ? kbs[0].id : null);
+      const currentAgentKBs: any[] = 
+        Array.isArray(data?.data?.kbs) ? data.data.kbs :
+        Array.isArray(data?.data?.sources) ? data.data.sources :
+        Array.isArray(data?.data) ? data.data :
+        Array.isArray(data?.kbs) ? data.kbs :
+        Array.isArray(data?.sources) ? data.sources : [];
+
+      const searchTerms = 
+        type === "google" ? ["google_drive", "google drive"] :
+        type === "sharepoint" ? ["sharepoint", "share point"] :
+        type === "email" ? ["email", "gmail"] :
+        type === "outlook" ? ["outlook"] :
+        [];
+
+      const existingKB = currentAgentKBs.find((kb) => {
+        const conn = (kb.connected_integration || "").toLowerCase();
+        const kbName = (kb.name || kb.source || "").toLowerCase();
+        return searchTerms.some(term => conn === term || kbName.includes(term));
+      });
+
+      return existingKB?.id || null;
     } catch (err) {
-      console.error(`Error checking existing KB for agent ${agentId}:`, err);
+      console.error(`Error querying existing KBs for agent ${agentId}:`, err);
       return null;
     }
   };
 
-  // Helper to create a new KB on-demand ONLY for the selected agent when connecting
-  const createAgentKbId = async (agentId: string, agentName: string) => {
+  const getOrCreateAgentKbId = async (agentId: string, agentName: string) => {
     try {
+      // 1. Reuse Existing Knowledge Base (Singleton per Agent)
+      const existingId = await findExistingAgentKb(agentId);
+      if (existingId) {
+        return existingId;
+      }
+
+      // 2. Only if it does NOT exist: Create a new Knowledge Base via POST /api/v1/knowledge-bases
       const token = getCookie("AUTH_TOKEN");
       const kbName = 
         type === "google" ? "Google Drive Knowledge" :
@@ -107,7 +126,7 @@ export default function IntegrationConnectModal({
       );
       if (!res.ok) throw new Error("Failed to create knowledge base");
       const data = await res.json();
-      return data?.data?.kb?.id || null;
+      return data?.data?.kb?.id || data?.kb?.id || null;
     } catch (err) {
       console.error(`Error creating KB for agent ${agentId}:`, err);
       return null;
@@ -130,7 +149,6 @@ export default function IntegrationConnectModal({
       return data?.data?.agent?.connected_integrations || [];
     } catch (err) {
       console.error(`Error checking connection for agent ${agentId}:`, err);
-      // Fallback to local storage simulated state
       const localConnections = localStorage.getItem(`mock_connections_${agentId}`);
       if (localConnections) {
         return JSON.parse(localConnections);
@@ -139,11 +157,9 @@ export default function IntegrationConnectModal({
     }
   };
 
-  // Load all agents and their connection states
   const loadAgentsAndConnections = async () => {
     setLoading(true);
     try {
-      // 1. Fetch agents
       let agentsList: Agent[] = [];
       await getAgents(undefined, (payload) => {
         agentsList = payload?.data?.agents ?? [];
@@ -155,20 +171,18 @@ export default function IntegrationConnectModal({
         return;
       }
 
-      // 2. Fetch connection states and existing KB IDs in parallel (read-only, no side effects)
       const statesMap: Record<string, string[]> = {};
       const kbMap: Record<string, string> = {};
 
       await Promise.all(
         agentsList.map(async (agent) => {
-          // Check integration status
           const integrations = await checkAgentConnection(agent.id);
           statesMap[agent.id] = integrations;
 
-          // Check for existing KB ID without creating unwanted empty KBs
-          const kbId = await fetchExistingAgentKbId(agent.id);
-          if (kbId) {
-            kbMap[agent.id] = kbId;
+          // Pure read-only check: do NOT create any KBs during modal list load!
+          const existingKbId = await findExistingAgentKb(agent.id);
+          if (existingKbId) {
+            kbMap[agent.id] = existingKbId;
           }
         })
       );
@@ -193,7 +207,6 @@ export default function IntegrationConnectModal({
     }
   }, [open, type]);
 
-  // Handle Disconnect logic with confirmation dialog
   const handleDisconnectClick = (e: React.MouseEvent, agentId: string, agentName: string) => {
     e.stopPropagation();
 
@@ -208,15 +221,12 @@ export default function IntegrationConnectModal({
       onOk: async () => {
         try {
           if (!agentId) {
-            throw new Error("Agent is not found.");
+            throw new Error("Agent is  not found .");
           }
-
-          // Call disconnect API
           await disconnectKb({
             path: `${agentId}/integration/${providerKey}`,
           });
 
-          // Update local simulated/cached state as a fallback
           const integrations = connectionStates[agentId] || [];
           const updated = integrations.filter((item) => item !== providerKey);
           localStorage.setItem(`mock_connections_${agentId}`, JSON.stringify(updated));
@@ -226,7 +236,6 @@ export default function IntegrationConnectModal({
             description: `${providerLabel} has been disconnected from "${agentName}".`,
           });
 
-          // Reload/refresh agent list in the modal instantly
           await loadAgentsAndConnections();
           if (selectedAgentId === agentId) {
             setSelectedAgentId(null);
@@ -250,10 +259,10 @@ export default function IntegrationConnectModal({
   const handleActionClick = async () => {
     if (!selectedAgentId || !selectedAgent) return;
     let kbId = kbIds[selectedAgentId];
-
-    // If no existing KB was found, create one ON DEMAND for the selected agent ONLY
     if (!kbId) {
-      kbId = await createAgentKbId(selectedAgent.id, selectedAgent.name);
+      setLoading(true);
+      kbId = await getOrCreateAgentKbId(selectedAgent.id, selectedAgent.name);
+      setLoading(false);
       if (kbId) {
         setKbIds((prev) => ({ ...prev, [selectedAgent.id]: kbId }));
       }
@@ -286,7 +295,6 @@ export default function IntegrationConnectModal({
       className="custom-integration-modal"
     >
       <div className="p-6 md:p-8">
-        {/* Header */}
         <div className="mb-6 flex items-center gap-3">
           <div className="p-2.5 bg-purple-500/10 rounded-xl">
             <LinkOutlined className="text-purple-600 text-xl" />
@@ -301,7 +309,6 @@ export default function IntegrationConnectModal({
           </div>
         </div>
 
-        {/* List content */}
         {loading ? (
           <div className="flex flex-col items-center justify-center py-16 gap-3">
             <Spin size="large" />
@@ -328,7 +335,6 @@ export default function IntegrationConnectModal({
                     }`}
                 >
                   <div className="flex items-center gap-3.5 flex-1 min-w-0">
-                    {/* Custom Checkbox */}
                     <div
                       className={`w-5 h-5 rounded-md flex items-center justify-center border transition-all ${isSelected
                           ? "bg-purple-500 border-purple-500 text-white"
@@ -377,7 +383,6 @@ export default function IntegrationConnectModal({
           </div>
         )}
 
-        {/* Footer Actions */}
         <div className="flex justify-end gap-3 pt-4 border-t border-[var(--app-border)]">
           <Button
             size="large"

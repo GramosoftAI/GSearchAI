@@ -95,7 +95,6 @@ class UniversalMetricDiscovery:
                     f"total {c_clean}",
                     f"sum of {c_clean}",
                     f"total {c_prof.column_name}",
-                    c_clean,
                 ]
                 discovered[sum_id] = DiscoveredMetric(
                     metric_id=sum_id,

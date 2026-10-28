@@ -75,8 +75,8 @@ class EntityValueResolver:
         re.compile(r"\bwho\s+(?:is|was)\s+(?:named\s+|called\s+)?([a-zA-Z0-9_\-\.]{2,40})\b", re.IGNORECASE),
         # "employee Kannan", "staff Kannan", "candidate Girinath"
         re.compile(r"\b(?:employee|staff|user|member|person|customer|patient|doctor|client|candidate)\s+([a-zA-Z0-9_\-\.]{2,40})\b", re.IGNORECASE),
-        # Prepositional entity mention: "for Kannan", "against Girinath", "by Girinath", "allocated to Girinath", "given to Girinath"
-        re.compile(r"\b(?:for|on|about|of|assigned\s+to|allocated\s+to|given\s+to|to|against|by|with)\s+(?:employee|staff|user|member|person|customer|patient|doctor|client|candidate)?\s*([a-zA-Z0-9_\-\.]{2,40})\b", re.IGNORECASE),
+        # Prepositional entity mention: "for Kannan", "against Girinath", "by Girinath", "allocated to Girinath", "given to Girinath", "from Chennai"
+        re.compile(r"\b(?:for|on|about|of|assigned\s+to|allocated\s+to|given\s+to|to|against|by|with|from|in|at)\s+(?:employee|staff|user|member|person|customer|patient|doctor|client|candidate)?\s*([a-zA-Z0-9_\-\.]{2,40})\b", re.IGNORECASE),
         # Question frames: "What is Girinath...", "What are Girinath...", "Tell me Girinath...", "Was Girinath...", "Has Girinath..."
         re.compile(r"\b(?:what\s+is|what\s+are|what's|who\s+is|who\s+are|who's|was|were|is|are|has|have|had|give\s+me|tell\s+me|show|list|find|get|check|verify)\s+(?:the\s+)?([a-zA-Z0-9_\-\.]{2,40})\b", re.IGNORECASE),
         # Action frames: "email girinath", "contact girinath", "call girinath"
@@ -90,15 +90,21 @@ class EntityValueResolver:
     # Closed-class non-value words, commands, and structural terms that should never be extracted as entity literals
     _STOPWORDS = {
         "all", "each", "every", "any", "some", "the", "a", "an", "this", "that", "these", "those", "there", "here",
-        "active", "inactive", "pending", "approved", "rejected", "completed",
+        "active", "inactive", "pending", "approved", "rejected", "completed", "closed", "close", "closing", "open", "opened", "opening",
+        "marked", "mark", "marking", "marks", "status", "statuses", "package", "packages", "state", "states", "default",
         "new", "old", "recent", "highest", "lowest", "top", "bottom", "max", "min", "most", "more", "least", "much", "many",
-        "average", "total", "sum", "count", "department", "employee", "customer",
-        "patient", "doctor", "client", "invoice", "order", "table", "details",
+        "latest", "earliest", "last", "first", "next", "previous", "prior", "second", "third", "fourth", "fifth",
+        "average", "total", "sum", "count", "department", "departments", "employee", "employees", "customer", "customers",
+        "patient", "patients", "doctor", "doctors", "client", "clients", "invoice", "invoices", "order", "orders", "table", "tables", "details",
+        "product", "products", "item", "items", "payment", "payments",
+        "revenue", "revenues", "sale", "sales", "turnover", "profit", "profits", "margin", "margins", "spend", "spending", "spent",
+        "compare", "compares", "comparing", "compared", "comparison", "difference", "versus", "vs",
+        "select", "insert", "update", "delete", "into", "from", "where", "join", "values", "database",
         "data", "record", "records", "information", "profile", "today", "yesterday", "tomorrow",
         "friday", "monday", "tuesday", "wednesday", "thursday", "saturday", "sunday",
         "morning", "evening", "night", "week", "month", "year", "daily", "weekly", "monthly", "quarterly", "yearly", "hourly",
         "who", "whose", "whom", "what", "which", "where", "when", "why", "how",
-        "time", "spend", "spent", "work", "worked", "working", "works", "recorded", "hours", "hour", "clock", "clock-in", "clock-out", "check-in", "check-out", "punch", "punch-in", "punch-out",
+        "time", "work", "worked", "working", "works", "recorded", "hours", "hour", "clock", "clock-in", "clock-out", "check-in", "check-out", "punch", "punch-in", "punch-out",
         "is", "are", "was", "were", "do", "does", "did", "have", "has", "had", "be", "been", "being",
         "can", "could", "will", "would", "shall", "should", "may", "might", "must",
         "give", "gives", "giving", "given", "tell", "tells", "telling", "told", "show", "shows", "showing", "showed", "shown",
@@ -110,7 +116,7 @@ class EntityValueResolver:
         "salary", "salaries", "wage", "wages", "pay", "payment", "amount", "amounts",
         "budget", "budgets", "cost", "costs", "price", "prices", "title", "role", "roles",
         "position", "company", "firm", "team", "organization", "system",
-        "attendance", "leave", "shift", "status", "rate", "fee", "hours", "balance",
+        "attendance", "leave", "shift", "status", "rate", "fee", "balance",
         "attend", "attends", "attended", "attending",
         "assign", "assigns", "assigned", "assigning", "assignment", "assignments", "reassign", "reassigned", "reassigning",
         "allocate", "allocates", "allocated", "allocating", "allocation", "allocations",
@@ -126,16 +132,14 @@ class EntityValueResolver:
         "report", "reports", "reported", "reporting",
         "handle", "handles", "handled", "handling",
         "create", "creates", "created", "creating",
-        "update", "updates", "updated", "updating",
-        "delete", "deletes", "deleted", "deleting",
         "view", "views", "viewed", "viewing",
         "returned", "present", "absent", "current", "objective", "objectives", "asset", "assets",
-        "project", "projects", "task", "tasks", "issue", "issues", "item", "items", "member", "members", "user", "users",
+        "project", "projects", "task", "tasks", "issue", "issues", "member", "members", "user", "users",
         "of", "for", "about", "to", "on", "in", "at", "by", "from", "with", "without", "against",
         "candidate", "candidates", "contract", "contracts", "payslip", "payslips", "action", "actions",
         "notice", "notices", "inquiry", "notes", "progress", "target", "review", "reviews", "appraisal",
         "goals", "goal", "roster", "device", "devices", "hardware", "equipment", "lot", "return",
-        "timing", "overtime", "punch", "clock", "arrival", "annual", "deductions", "allowances", "allowance",
+        "timing", "overtime", "annual", "deductions", "allowances", "allowance",
         "stub", "stubs", "checklist", "pipeline", "stage",
         "never", "ever", "not", "no", "none", "neither", "nor", "nothing",
         "submitted", "submit", "submitting", "submits", "applied", "apply", "applying", "applies",
@@ -143,12 +147,18 @@ class EntityValueResolver:
         "joined", "join", "joining", "joins",
         "above", "below", "greater", "less", "than", "over", "under", "between", "equal", "equals", "exceeding", "exceeds",
         "it", "its", "laptop", "laptops", "purchase", "purchased", "warranty", "expire", "expired", "expiring", "expiration", "bought",
-        "late", "early", "arrival", "arrivals", "absent", "absenteeism", "checkin", "checkout", "clockin", "clockout", "out", "in", "check", "clock", "cost", "soon",
+        "late", "early", "arrival", "arrivals", "absenteeism", "checkin", "checkout", "clockin", "clockout", "out", "soon",
         "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
-        "based", "doj", "dob", "criteria", "according", "sort", "sorted", "order", "ordered", "experience", "experienced", "experininced", "senior", "junior", "tenure", "duration", "earliest", "longest",
+        "based", "doj", "dob", "criteria", "according", "sort", "sorted", "ordered", "experience", "experienced", "experininced", "senior", "junior", "tenure", "duration",
         "their", "theirs", "his", "her", "my", "your", "yours", "our", "ours", "identify", "dentify",
         "he", "she", "they", "we", "you", "i", "arrive", "arrived", "depart", "departed", "departure", "departures", "enter", "entered", "exit", "exited", "leaves", "left",
         "validated", "invalidated", "validation",
+        # Generic linguistic modifiers, quantifiers, and aggregation qualifiers
+        "overall", "entire", "complete", "general", "combined", "net", "gross",
+        "cumulative", "grand", "aggregate", "aggregated", "aggregating", "aggregation",
+        "whole", "full", "totaling", "across", "altogether", "comprehensively",
+        "universal", "composite", "global", "approximate", "exact", "standard",
+        "single", "multiple", "together", "joint", "jointly", "separately", "individually",
     }
 
     @classmethod
@@ -199,8 +209,13 @@ class EntityValueResolver:
                 if re.match(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}$", val) or re.match(r"^\d{1,2}[-/]\d{1,2}[-/]\d{4}$", val) or val.isdigit():
                     continue
                 val_low = val.lower()
+                is_stop = (
+                    val_low in cls._STOPWORDS
+                    or (val_low.endswith("s") and len(val_low) > 3 and val_low[:-1] in cls._STOPWORDS)
+                    or (val_low.endswith("es") and len(val_low) > 4 and val_low[:-2] in cls._STOPWORDS)
+                )
                 if (
-                    val_low not in cls._STOPWORDS
+                    not is_stop
                     and val_low not in schema_col_names
                     and val_low not in schema_tbl_names
                     and len(val) >= 2

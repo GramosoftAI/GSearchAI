@@ -27,6 +27,7 @@ Replaces weak matching in the old ValueResolver for Phase 3:
 
 import uuid
 import re
+import asyncio
 import logging
 from typing import Optional, List, Dict, Any, Set, Tuple
 from pydantic import BaseModel, Field
@@ -47,12 +48,26 @@ from .analyzer import QuestionFrame, extract_literals
 
 logger = logging.getLogger(__name__)
 
-# Stopwords set loaded
+# Stopwords and query-structure terms that should never be searched as row-level entities
 _STOPWORDS_SET = {
     "the", "a", "an", "in", "on", "at", "to", "for", "of", "with", "by", "from",
     "is", "are", "was", "were", "and", "or", "what", "which", "who", "whom",
     "where", "when", "why", "how", "all", "each", "every", "both", "few",
+    "list", "show", "give", "get", "find", "select", "display", "fetch", "check", "tell",
+    "that", "as", "marked", "having", "without", "be", "been", "being",
+    "status", "statuses", "state", "states", "closed", "open", "opened", "default", "active", "inactive",
+    "table", "tables", "record", "records", "row", "rows", "column", "columns", "data", "item", "items",
+    "overall", "entire", "complete", "general", "combined", "net", "gross",
+    "cumulative", "grand", "aggregate", "aggregated", "whole", "full", "totaling", "across", "altogether",
+    "universal", "composite", "global", "approximate", "exact", "standard",
     "oda", "sollu", "kela", "la", "ku", "enna", "yaar", "inga", "enga", "nethu", "inniku",
+}
+
+# System/internal metadata tables that should never be targeted for live entity resolution
+_SYSTEM_TABLES = {
+    "queries", "grid_widgets", "grids", "journals", "schema_migrations",
+    "ar_internal_metadata", "settings", "sessions", "custom_styles",
+    "delayed_jobs", "job_statuses", "attachments"
 }
 
 
@@ -95,7 +110,7 @@ class LiveEntityResolver:
         db: AsyncSession,
         tenant_id: str | uuid.UUID,
         adapter: Optional[Phase1Adapter] = None,
-        min_fuzzy_similarity: float = 0.50,
+        min_fuzzy_similarity: float = 0.85,
     ):
         self.db = db
         self.tenant_id = uuid.UUID(str(tenant_id))
@@ -137,14 +152,35 @@ class LiveEntityResolver:
         except Exception as e:
             logger.warning(f"Could not load schema view: {e}")
 
-        # Catalog known table and column names to ignore tokens equal to schema names
-        known_tables: Set[str] = set()
-        known_columns: Set[str] = set()
+        # Catalog known schema terms (tables, columns, sub-tokens, singular/plural, space-separated forms)
+        known_schema_terms: Set[str] = set()
         if schema_view and schema_view.tables:
             for t_k, t_val in schema_view.tables.items():
-                known_tables.add(t_val.table_name.lower())
+                t_clean = t_val.table_name.lower().strip()
+                known_schema_terms.add(t_clean)
+                t_spaced = t_clean.replace("_", " ")
+                known_schema_terms.add(t_spaced)
+                if t_clean.endswith("s") and len(t_clean) > 2:
+                    known_schema_terms.add(t_clean[:-1])
+                    known_schema_terms.add(t_spaced[:-1])
+                for sub in t_clean.split("_"):
+                    if len(sub) >= 2:
+                        known_schema_terms.add(sub)
+                        if sub.endswith("s") and len(sub) > 2:
+                            known_schema_terms.add(sub[:-1])
                 for c_k in t_val.columns.keys():
-                    known_columns.add(c_k.lower())
+                    c_clean = c_k.lower().strip()
+                    known_schema_terms.add(c_clean)
+                    c_spaced = c_clean.replace("_", " ")
+                    known_schema_terms.add(c_spaced)
+                    if c_clean.endswith("s") and len(c_clean) > 2:
+                        known_schema_terms.add(c_clean[:-1])
+                        known_schema_terms.add(c_spaced[:-1])
+                    for sub in c_clean.split("_"):
+                        if len(sub) >= 2:
+                            known_schema_terms.add(sub)
+                            if sub.endswith("s") and len(sub) > 2:
+                                known_schema_terms.add(sub[:-1])
 
         for lit in frame.literal_values:
             lit_type = "plain"
@@ -175,27 +211,35 @@ class LiveEntityResolver:
             )
 
         # 3. Candidate Spans for entity lookup
-        # Form candidate spans: entity_candidates, multi-word spans from tokens, and individual tokens
+        # Form candidate spans: entity_candidates, multi-word spans from raw tokens, and individual tokens
         candidate_spans: List[str] = []
         if frame.entity_candidates:
             candidate_spans.extend(frame.entity_candidates)
 
-        # Also add capitalized or consecutive token phrases from raw text
+        # Generate multi-word spans up to 5 tokens from raw text
         raw_words = frame.original_question.split()
         for i in range(len(raw_words)):
-            for j in range(i + 1, min(i + 4, len(raw_words) + 1)):
+            for j in range(i + 1, min(i + 6, len(raw_words) + 1)):
                 span = " ".join(raw_words[i:j]).strip()
+                # Punctuation-trimmed form (preserves internal hyphens like 'Ultra-HD 27-inch')
+                trimmed_span = span.strip(" \t\n\r.,?!;:\"'()[]{}")
+                if trimmed_span and trimmed_span.lower() not in _STOPWORDS_SET and trimmed_span not in candidate_spans:
+                    candidate_spans.append(trimmed_span)
+                # Alphanumeric-only form
                 clean_span = re.sub(r"[^\w\s]", "", span).strip()
                 if clean_span and clean_span.lower() not in _STOPWORDS_SET and clean_span not in candidate_spans:
                     candidate_spans.append(clean_span)
 
-        # Remove spans that exactly match known table or column names ("customer", "order", etc.)
+        # Remove spans that match stopwords or schema concepts (tables, columns, and their stem/tokens)
         filtered_spans: List[str] = []
         for span in candidate_spans:
             s_low = span.lower().strip()
             if s_low in _STOPWORDS_SET:
                 continue
-            if s_low in known_tables or s_low in known_columns:
+            if s_low in known_schema_terms:
+                continue
+            words = s_low.split()
+            if all(w in known_schema_terms or w in _STOPWORDS_SET for w in words):
                 continue
             filtered_spans.append(span)
 
@@ -317,12 +361,60 @@ class LiveEntityResolver:
                         except Exception as e:
                             logger.warning(f"Composite name query failed: {e}")
 
+            # (C2) Safe fallback for empty/stale value-index: exact match on candidate entity columns
+            if not all_hits and schema_view and len(norm_span) >= 3:
+                candidate_table_cols = []
+                for t_k, t_val in schema_view.tables.items():
+                    clean_t = t_val.table_name.lower()
+                    if clean_t in _SYSTEM_TABLES:
+                        continue
+                    for c_name in t_val.columns.keys():
+                        c_clean = c_name.lower()
+                        if is_sensitive_column(c_clean) or is_sensitive_for_values(c_clean):
+                            continue
+                        if c_clean in ("name", "title", "label", "item_name", "product_name") or (c_clean.endswith("_name") and not c_clean.endswith(("_id_name", "first_name", "last_name"))):
+                            candidate_table_cols.append((t_val, c_name))
+
+                if candidate_table_cols:
+                    try:
+                        async with adapter.open_readonly_connection(self.tenant_id, db_knowledgebase_id) as conn:
+                            for t_meta, col_name in candidate_table_cols[:6]:
+                                clean_t = t_meta.table_name.lower()
+                                pk_col = t_meta.primary_key_columns[0] if t_meta.primary_key_columns else list(t_meta.columns.keys())[0]
+                                table_ref = f'"{t_meta.schema_name}"."{t_meta.table_name}"' if t_meta.schema_name else f'"{t_meta.table_name}"'
+
+                                q_exact = f"""
+                                    SELECT "{pk_col}", "{col_name}"
+                                    FROM {table_ref}
+                                    WHERE LOWER("{col_name}"::text) = $1
+                                    LIMIT 10;
+                                """
+                                rows = await asyncio.wait_for(conn.fetch(q_exact, norm_span), timeout=3.0)
+                                if rows:
+                                    raw_val = rows[0][col_name]
+                                    all_hits.append({
+                                        "table_name": clean_t,
+                                        "column_name": col_name,
+                                        "raw_value": raw_val,
+                                        "normalized_value": norm_span,
+                                        "similarity": 1.0,
+                                        "match_type": "exact",
+                                    })
+                                    break
+                    except NotImplementedError:
+                        pass
+                    except Exception as e:
+                        logger.warning(f"Target DB candidate entity lookup failed: {e}")
+
             # (D) Process matched entity hits with Live Disambiguation
+            live_queries_count = 0
+            MAX_LIVE_QUERIES = 2
+
             for hit in all_hits:
                 tbl = hit["table_name"]
                 col = hit["column_name"]
                 # Clean table name
-                clean_t = tbl.split(".")[-1]
+                clean_t = tbl.split(".")[-1].lower()
                 val = hit["raw_value"]
 
                 dedup_k = (clean_t, col, val.lower())
@@ -330,8 +422,13 @@ class LiveEntityResolver:
                     continue
                 processed_keys.add(dedup_k)
 
-                # Live Disambiguation via customer DB parameterized query (5s timeout)
-                if not schema_view or clean_t not in schema_view.tables:
+                # Skip live customer DB queries for system/metadata tables or when cap is reached
+                if (
+                    not schema_view
+                    or clean_t not in schema_view.tables
+                    or clean_t in _SYSTEM_TABLES
+                    or live_queries_count >= MAX_LIVE_QUERIES
+                ):
                     # Fallback without live query
                     resolved_entities.append(
                         ResolvedEntity(
@@ -367,9 +464,10 @@ class LiveEntityResolver:
                     LIMIT 10;
                 """
 
+                live_queries_count += 1
                 try:
                     async with adapter.open_readonly_connection(self.tenant_id, db_knowledgebase_id) as conn:
-                        rows = await conn.fetch(live_query, val.lower())
+                        rows = await asyncio.wait_for(conn.fetch(live_query, val.lower()), timeout=2.0)
                         if len(rows) == 1:
                             # Exactly one row -> resolved
                             pk_v = rows[0][pk_col]

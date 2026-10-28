@@ -88,7 +88,7 @@ class CandidateSQLGenerator:
         # 3. Projections (SELECT items)
         for proj in plan.projections:
             col_name_clean = proj.column_name.strip()
-            if any(col_name_clean.upper().startswith(fn) for fn in ("SUM(", "AVG(", "COUNT(", "MIN(", "MAX(", "ROUND(", "COALESCE(")) or "/" in col_name_clean:
+            if any(col_name_clean.upper().startswith(fn) for fn in ("SUM(", "AVG(", "COUNT(", "MIN(", "MAX(", "ROUND(", "COALESCE(", "DATE_TRUNC(", "DATE(")) or "/" in col_name_clean:
                 try:
                     parsed_expr = sqlglot.parse_one(col_name_clean, read="postgres")
                     for c in parsed_expr.find_all(exp.Column):
@@ -234,7 +234,10 @@ class CandidateSQLGenerator:
         ]
         if has_aggregations and scalar_projections and not plan.group_by:
             # Auto-populate missing GROUP BY with all scalar projections to ensure valid SQL execution
-            plan.group_by = [f"{p.table_alias}.{p.column_name}" for p in scalar_projections]
+            plan.group_by = [
+                p.column_name if ("(" in p.column_name or "." in p.column_name) else f"{p.table_alias}.{p.column_name}"
+                for p in scalar_projections
+            ]
             logger.info(
                 f"Auto-populated missing GROUP BY in SQL compiler with scalar projections: {plan.group_by}"
             )
@@ -246,7 +249,7 @@ class CandidateSQLGenerator:
 
         if group_by_cols:
             non_agg_cols = [
-                f"{proj.table_alias}.{proj.column_name}"
+                proj.column_name if ("(" in proj.column_name or "." in proj.column_name) else f"{proj.table_alias}.{proj.column_name}"
                 for proj in scalar_projections
             ]
             for col_str in non_agg_cols:
@@ -272,11 +275,17 @@ class CandidateSQLGenerator:
                         group_by_cols.append(expr_str)
 
         for g_expr_str in group_by_cols:
-            parts = g_expr_str.split(".")
-            if len(parts) == 2:
-                g_col = exp.column(parts[1], table=parts[0])
+            if "(" in g_expr_str:
+                try:
+                    g_col = sqlglot.parse_one(g_expr_str, read="postgres")
+                except Exception:
+                    g_col = exp.column(g_expr_str)
             else:
-                g_col = exp.column(g_expr_str)
+                parts = g_expr_str.split(".")
+                if len(parts) == 2:
+                    g_col = exp.column(parts[1], table=parts[0])
+                else:
+                    g_col = exp.column(g_expr_str)
             query = query.group_by(g_col)
 
         # 5.5 HAVING clause
@@ -293,7 +302,7 @@ class CandidateSQLGenerator:
             expr_str = o.expression.strip()
             desc = o.direction.value.upper() == "DESC"
             nulls_last = getattr(o, "nulls_last", None)
-            if any(expr_str.upper().startswith(fn) for fn in ("SUM(", "COUNT(", "AVG(", "MIN(", "MAX(", "ROUND(")):
+            if any(expr_str.upper().startswith(fn) for fn in ("SUM(", "COUNT(", "AVG(", "MIN(", "MAX(", "ROUND(", "DATE_TRUNC(", "DATE(")) or "(" in expr_str:
                 try:
                     o_expr = sqlglot.parse_one(expr_str, read="postgres")
                 except Exception:

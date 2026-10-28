@@ -90,24 +90,167 @@ class JoinPathFinder:
         # graph: table_name -> list of EdgeInfo
         self._graph: Dict[str, List[EdgeInfo]] = {}
 
+    def _ingest_declared_fks_from_canonical(self, schema_obj: Any) -> None:
+        """Ingest declared FK relationships from canonical DatabaseSchema. Never invent relationships."""
+        if not schema_obj:
+            return
+        tables = getattr(schema_obj, "all_tables", [])
+        if not tables and hasattr(schema_obj, "schemas"):
+            for s_info in schema_obj.schemas.values():
+                tables.extend(s_info.tables.values())
+
+        for table in tables:
+            c_tbl = table.table_name.lower().split(".")[-1]
+            fks = getattr(table, "foreign_keys", []) or []
+            for fk in fks:
+                p_tbl = fk.referred_table.lower().split(".")[-1]
+                c_cols = fk.constrained_columns or []
+                p_cols = fk.referred_columns or []
+                if not c_tbl or not p_tbl or not c_cols or not p_cols:
+                    continue
+                c_col = c_cols[0]
+                p_col = p_cols[0]
+
+                # Avoid duplicate edges
+                existing_fwd = self._graph.get(c_tbl, [])
+                if not any(e.target_table == p_tbl and e.left_col == c_col and e.right_col == p_col for e in existing_fwd):
+                    self._graph.setdefault(c_tbl, []).append(
+                        EdgeInfo(
+                            target_table=p_tbl,
+                            left_col=c_col,
+                            right_col=p_col,
+                            cardinality="1:N",
+                            confidence=1.0,
+                            source="declared",
+                            status="confirmed",
+                            weight=1.0,
+                        )
+                    )
+
+                existing_rev = self._graph.get(p_tbl, [])
+                if not any(e.target_table == c_tbl and e.left_col == p_col and e.right_col == c_col for e in existing_rev):
+                    self._graph.setdefault(p_tbl, []).append(
+                        EdgeInfo(
+                            target_table=c_tbl,
+                            left_col=p_col,
+                            right_col=c_col,
+                            cardinality="1:N_fanout",
+                            confidence=1.0,
+                            source="declared",
+                            status="confirmed",
+                            weight=1.0,
+                        )
+                    )
+
+    def _ingest_declared_fks_from_schema_dict(self, raw_data: Dict[str, Any]) -> None:
+        """Ingest declared FK relationships from serialized schema dict."""
+        try:
+            from app.modules.database_knowledgebase.schemas.canonical import DatabaseSchema
+            schema_obj = DatabaseSchema.model_validate(raw_data)
+            self._ingest_declared_fks_from_canonical(schema_obj)
+            return
+        except Exception as e:
+            logger.debug(f"[JoinPathFinder] Failed to validate DatabaseSchema from dict: {e}")
+
+        # Fallback manual traversal
+        schemas = raw_data.get("schemas", {})
+        for s_val in schemas.values():
+            if isinstance(s_val, dict) and "tables" in s_val:
+                for t_name, t_val in s_val["tables"].items():
+                    if not isinstance(t_val, dict):
+                        continue
+                    c_tbl = (t_val.get("table_name") or t_name).lower().split(".")[-1]
+                    for fk in t_val.get("foreign_keys", []):
+                        if not isinstance(fk, dict):
+                            continue
+                        p_tbl = (fk.get("referred_table") or "").lower().split(".")[-1]
+                        c_cols = fk.get("constrained_columns") or []
+                        p_cols = fk.get("referred_columns") or []
+                        if not c_tbl or not p_tbl or not c_cols or not p_cols:
+                            continue
+                        c_col = c_cols[0]
+                        p_col = p_cols[0]
+
+                        existing_fwd = self._graph.get(c_tbl, [])
+                        if not any(e.target_table == p_tbl and e.left_col == c_col and e.right_col == p_col for e in existing_fwd):
+                            self._graph.setdefault(c_tbl, []).append(
+                                EdgeInfo(
+                                    target_table=p_tbl,
+                                    left_col=c_col,
+                                    right_col=p_col,
+                                    cardinality="1:N",
+                                    confidence=1.0,
+                                    source="declared",
+                                    status="confirmed",
+                                    weight=1.0,
+                                )
+                            )
+                        existing_rev = self._graph.get(p_tbl, [])
+                        if not any(e.target_table == c_tbl and e.left_col == p_col and e.right_col == c_col for e in existing_rev):
+                            self._graph.setdefault(p_tbl, []).append(
+                                EdgeInfo(
+                                    target_table=c_tbl,
+                                    left_col=p_col,
+                                    right_col=c_col,
+                                    cardinality="1:N_fanout",
+                                    confidence=1.0,
+                                    source="declared",
+                                    status="confirmed",
+                                    weight=1.0,
+                                )
+                            )
+
     async def build_graph(
         self,
         db_knowledgebase_id: uuid.UUID,
         schema_version: Optional[str] = None,
         session: Optional[AsyncSession] = None,
+        canonical_schema: Optional[Any] = None,
     ):
-        """Construct weighted graph from relationship items."""
+        """Construct weighted graph from relationship items or canonical schema declared FKs."""
         self._graph.clear()
         target_db = session or self.db
 
-        stmt = select(KB2KnowledgeItem).where(
-            KB2KnowledgeItem.tenant_id == self.tenant_id,
-            KB2KnowledgeItem.db_knowledgebase_id == db_knowledgebase_id,
-            KB2KnowledgeItem.item_type == "relationship",
-            KB2KnowledgeItem.status.in_(["confirmed", "draft"]),
-        )
-        res = await target_db.execute(stmt)
-        items = res.scalars().all()
+        items = []
+        if target_db is not None:
+            try:
+                stmt = select(KB2KnowledgeItem).where(
+                    KB2KnowledgeItem.tenant_id == self.tenant_id,
+                    KB2KnowledgeItem.db_knowledgebase_id == db_knowledgebase_id,
+                    KB2KnowledgeItem.item_type == "relationship",
+                    KB2KnowledgeItem.status.in_(["confirmed", "draft"]),
+                )
+                res = await target_db.execute(stmt)
+                if hasattr(res, "scalars"):
+                    scalar_obj = res.scalars()
+                    all_fn = getattr(scalar_obj, "all", None)
+                    if callable(all_fn):
+                        items = all_fn()
+            except Exception as e:
+                logger.debug(f"[JoinPathFinder] KB2 relationship query ignored: {e}")
+
+        if not items:
+            # Cold-start / Phase-2-off: use declared FKs from the canonical schema or
+            # the tenant-scoped snapshot. Never invent joins from column-name heuristics.
+            schema_obj = canonical_schema
+            if schema_obj is None and target_db is not None:
+                from app.modules.database_knowledgebase.models.database_knowledgebase import DatabaseSchemaSnapshot
+
+                snap_stmt = (
+                    select(DatabaseSchemaSnapshot.schema_data)
+                    .where(
+                        DatabaseSchemaSnapshot.tenant_id == self.tenant_id,
+                        DatabaseSchemaSnapshot.db_knowledgebase_id == db_knowledgebase_id,
+                    )
+                    .order_by(DatabaseSchemaSnapshot.created_at.desc())
+                    .limit(1)
+                )
+                snap_res = await target_db.execute(snap_stmt)
+                raw_data = snap_res.scalar_one_or_none()
+                if raw_data and isinstance(raw_data, dict):
+                    self._ingest_declared_fks_from_schema_dict(raw_data)
+            elif schema_obj is not None:
+                self._ingest_declared_fks_from_canonical(schema_obj)
 
         for it in items:
             p = it.payload or {}

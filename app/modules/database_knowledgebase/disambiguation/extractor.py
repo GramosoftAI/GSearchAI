@@ -49,6 +49,12 @@ class EntityExtractor:
         "first", "second", "third", "new", "old", "recent", "current", "previous",
         "pending", "approved", "rejected", "completed", "cancelled",
         "timesheet", "overtime", "shortage", "balance", "deficit",
+        # Generic linguistic modifiers, quantifiers, and aggregation qualifiers
+        "overall", "entire", "complete", "general", "combined", "net", "gross",
+        "cumulative", "grand", "aggregate", "aggregated", "aggregating", "aggregation",
+        "whole", "full", "totaling", "across", "altogether", "comprehensively",
+        "universal", "composite", "global", "approximate", "exact", "standard",
+        "single", "multiple", "together", "joint", "jointly", "separately", "individually",
     }
 
     # Small generic set of common domain nouns (and variants)

@@ -51,7 +51,7 @@ from ..sensitivity import is_sensitive_column, is_sensitive_for_values
 from .analyzer import QuestionAnalyzer, QuestionFrame
 from .table_retriever import TableRetriever, TableCandidate
 from .column_retriever import ColumnRetriever, ColumnCandidate, TableColumnBundle
-from .entity_resolver import LiveEntityResolver, EntityResolutionResult, ResolvedEntity
+from .entity_resolver import LiveEntityResolver, EntityResolutionResult, ResolvedEntity, _SYSTEM_TABLES
 from .join_path import JoinPathFinder, JoinPathResult, JoinHop
 from .cache import knowledge_cache
 
@@ -119,6 +119,7 @@ class ContextPackBuilder:
         question: str,
         reference_date: Optional[date] = None,
         clarification_answers: Optional[Dict[str, Any]] = None,
+        canonical_schema: Optional[Any] = None,
     ) -> ContextPack:
         """Run complete retrieval pipeline and produce token-bounded ContextPack."""
         timings: Dict[str, float] = {}
@@ -173,9 +174,50 @@ class ContextPackBuilder:
             )
             timings["column_retrieval_ms"] = round((time.perf_counter() - t3) * 1000, 2)
 
+            # Integrate resolved entity tables into candidate tables and join targets
+            for re_ent in entity_res.resolved_entities:
+                re_tbl = re_ent.table_name.lower().split(".")[-1]
+                if not re_tbl or re_tbl in _SYSTEM_TABLES:
+                    continue
+                found_cand = next((c for c in candidate_tables if c.table_name.lower() == re_tbl), None)
+                if found_cand:
+                    found_cand.score = max(found_cand.score, 0.95)
+                    found_cand.reasons.append(f"entity_value_match: {re_tbl}.{re_ent.column_name}='{re_ent.matched_value}'")
+                else:
+                    new_cand = TableCandidate(
+                        table_name=re_tbl,
+                        score=0.95,
+                        reasons=[f"entity_value_match: {re_tbl}.{re_ent.column_name}='{re_ent.matched_value}'"],
+                    )
+                    candidate_tables.insert(0, new_cand)
+                    try:
+                        e_bundles = await self.column_retriever.retrieve_for_tables(
+                            db_knowledgebase_id=db_knowledgebase_id,
+                            frame=frame,
+                            candidate_tables=[new_cand],
+                            top_k_columns_per_table=5,
+                        )
+                        column_bundles.extend(e_bundles)
+                    except Exception as e_err:
+                        logger.debug(f"[ContextPackBuilder] Entity column fetch error: {e_err}")
+
             t4 = time.perf_counter()
-            await self.join_finder.build_graph(db_knowledgebase_id=db_knowledgebase_id)
-            join_target_tables = [c.table_name for c in candidate_tables[:4]]
+            await self.join_finder.build_graph(
+                db_knowledgebase_id=db_knowledgebase_id,
+                canonical_schema=canonical_schema,
+            )
+            top_score = candidate_tables[0].score if candidate_tables else 1.0
+            join_target_tables = [
+                c.table_name for c in candidate_tables[:4]
+                if c.score >= max(0.12, top_score * 0.35)
+            ]
+            for re_ent in entity_res.resolved_entities:
+                re_tbl = re_ent.table_name.lower().split(".")[-1]
+                if re_tbl and re_tbl not in _SYSTEM_TABLES and re_tbl not in join_target_tables:
+                    join_target_tables.append(re_tbl)
+
+            if not join_target_tables and candidate_tables:
+                join_target_tables = [candidate_tables[0].table_name]
             join_res: JoinPathResult = self.join_finder.find_join_tree(
                 tables=join_target_tables,
                 frame=frame,
@@ -283,6 +325,7 @@ class ContextPackBuilder:
                         await self.join_finder.build_graph(
                             db_knowledgebase_id=db_knowledgebase_id,
                             session=sess,
+                            canonical_schema=canonical_schema,
                         )
                 except Exception as e:
                     logger.warning(f"[ContextPackBuilder] Join graph build error: {e}")
@@ -328,9 +371,61 @@ class ContextPackBuilder:
                     timings_ms=timings,
                 )
 
+            # Integrate resolved entity tables into candidate tables and join targets
+            new_entity_cands = []
+            for re_ent in entity_res.resolved_entities:
+                re_tbl = re_ent.table_name.lower().split(".")[-1]
+                if not re_tbl or re_tbl in _SYSTEM_TABLES:
+                    continue
+                found_cand = next((c for c in candidate_tables if c.table_name.lower() == re_tbl), None)
+                if found_cand:
+                    found_cand.score = max(found_cand.score, 0.95)
+                    found_cand.reasons.append(f"entity_value_match: {re_tbl}.{re_ent.column_name}='{re_ent.matched_value}'")
+                else:
+                    new_cand = TableCandidate(
+                        table_name=re_tbl,
+                        score=0.95,
+                        reasons=[f"entity_value_match: {re_tbl}.{re_ent.column_name}='{re_ent.matched_value}'"],
+                    )
+                    candidate_tables.insert(0, new_cand)
+                    new_entity_cands.append(new_cand)
+
+            if new_entity_cands:
+                try:
+                    if self.session_factory:
+                        async with self._get_branch_session() as sess:
+                            col_retriever = ColumnRetriever(db=sess, tenant_id=self.tenant_id)
+                            e_bundles = await col_retriever.retrieve_for_tables(
+                                db_knowledgebase_id=db_knowledgebase_id,
+                                frame=frame,
+                                candidate_tables=new_entity_cands,
+                                top_k_columns_per_table=5,
+                            )
+                    else:
+                        e_bundles = await self.column_retriever.retrieve_for_tables(
+                            db_knowledgebase_id=db_knowledgebase_id,
+                            frame=frame,
+                            candidate_tables=new_entity_cands,
+                            top_k_columns_per_table=5,
+                        )
+                    column_bundles.extend(e_bundles)
+                except Exception as e_err:
+                    logger.debug(f"[ContextPackBuilder] Entity column fetch error: {e_err}")
+
             # In-memory join tree computation (candidate tables and graph ready)
             t4 = time.perf_counter()
-            join_target_tables = [c.table_name for c in candidate_tables[:4]]
+            top_score = candidate_tables[0].score if candidate_tables else 1.0
+            join_target_tables = [
+                c.table_name for c in candidate_tables[:4]
+                if c.score >= max(0.12, top_score * 0.35)
+            ]
+            for re_ent in entity_res.resolved_entities:
+                re_tbl = re_ent.table_name.lower().split(".")[-1]
+                if re_tbl and re_tbl not in _SYSTEM_TABLES and re_tbl not in join_target_tables:
+                    join_target_tables.append(re_tbl)
+
+            if not join_target_tables and candidate_tables:
+                join_target_tables = [candidate_tables[0].table_name]
             join_res = self.join_finder.find_join_tree(
                 tables=join_target_tables,
                 frame=frame,
@@ -339,6 +434,7 @@ class ContextPackBuilder:
 
         # 8. Assemble Initial Context
         tables_meta = []
+        candidate_table_names = {t.table_name.lower() for t in candidate_tables}
 
         for t_cand in candidate_tables:
             desc = f"Table {t_cand.table_name}"
@@ -347,12 +443,66 @@ class ContextPackBuilder:
                 t_view = schema_view.tables[t_cand.table_name]
                 if t_view.comment:
                     desc = t_view.comment
+            elif canonical_schema and hasattr(canonical_schema, "get_table"):
+                tbl_sch = canonical_schema.get_table(t_cand.table_name)
+                if tbl_sch and tbl_sch.comment:
+                    desc = tbl_sch.comment
             tables_meta.append({
                 "name": t_cand.table_name,
                 "description": desc,
                 "row_grain": row_grain,
                 "score": t_cand.score,
+                "is_bridge": False,
             })
+
+        # Include verified intermediary / bridge tables from join_res
+        if join_res.success and join_res.bridge_tables:
+            bridge_candidates_to_fetch = []
+            for b_tbl in join_res.bridge_tables:
+                b_clean = b_tbl.lower().split(".")[-1]
+                if b_clean not in candidate_table_names:
+                    candidate_table_names.add(b_clean)
+                    desc = f"Bridge table {b_clean}"
+                    if schema_view and b_clean in schema_view.tables:
+                        t_view = schema_view.tables[b_clean]
+                        if t_view.comment:
+                            desc = t_view.comment
+                    elif canonical_schema and hasattr(canonical_schema, "get_table"):
+                        tbl_sch = canonical_schema.get_table(b_clean)
+                        if tbl_sch and tbl_sch.comment:
+                            desc = tbl_sch.comment
+                    tables_meta.append({
+                        "name": b_clean,
+                        "description": desc,
+                        "row_grain": None,
+                        "score": 0.85,
+                        "is_bridge": True,
+                    })
+                    bridge_candidates_to_fetch.append(
+                        TableCandidate(table_name=b_clean, score=0.85, reasons=["bridge_table"])
+                    )
+
+            if bridge_candidates_to_fetch:
+                try:
+                    if self.session_factory:
+                        async with self._get_branch_session() as sess:
+                            col_retriever = ColumnRetriever(db=sess, tenant_id=self.tenant_id)
+                            b_bundles = await col_retriever.retrieve_for_tables(
+                                db_knowledgebase_id=db_knowledgebase_id,
+                                frame=frame,
+                                candidate_tables=bridge_candidates_to_fetch,
+                                top_k_columns_per_table=5,
+                            )
+                    else:
+                        b_bundles = await self.column_retriever.retrieve_for_tables(
+                            db_knowledgebase_id=db_knowledgebase_id,
+                            frame=frame,
+                            candidate_tables=bridge_candidates_to_fetch,
+                            top_k_columns_per_table=5,
+                        )
+                    column_bundles.extend(b_bundles)
+                except Exception as b_err:
+                    logger.debug(f"[ContextPackBuilder] Bridge column fetch ignored: {b_err}")
 
         # Columns and Metrics (Strictly non-sensitive, no top_values)
         all_cols_meta = []
@@ -376,6 +526,25 @@ class ContextPackBuilder:
                     "expression": m.full_key,
                     "unit": m.unit,
                 })
+
+        # Guarantee that join hop columns are present in all_cols_meta
+        existing_cols = {(c["table"].lower(), c["name"].lower()) for c in all_cols_meta}
+        if join_res.success:
+            for j in join_res.joins:
+                for tbl, col in [(j.left_table, j.left_col), (j.right_table, j.right_col)]:
+                    t_clean = tbl.lower().split(".")[-1]
+                    c_clean = col.lower()
+                    if (t_clean, c_clean) not in existing_cols:
+                        all_cols_meta.append({
+                            "table": t_clean,
+                            "name": c_clean,
+                            "meaning": f"{t_clean}.{c_clean}",
+                            "unit": None,
+                            "role": "foreign_key" if "id" in c_clean and c_clean != "id" else "primary_key",
+                            "aliases": [],
+                            "score": 0.9,
+                        })
+                        existing_cols.add((t_clean, c_clean))
 
         # Joins
         joins_meta = []

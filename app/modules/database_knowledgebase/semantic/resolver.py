@@ -11,7 +11,7 @@ Orchestrates semantic resolution before QueryIntentAnalyzer and QueryPlanner:
 8. Verified Query Memory Recall
 """
 
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 import uuid
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -36,7 +36,7 @@ from .memory import VerifiedQueryMemory
 
 class SemanticResolutionResult(BaseModel):
     """Complete structured semantic resolution outcome."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     normalized_query: str
     ambiguity_report: AmbiguityReport
@@ -46,6 +46,10 @@ class SemanticResolutionResult(BaseModel):
     approved_joins: List[ApprovedRelationship] = Field(default_factory=list)
     context_fingerprint: ContextFingerprint
     recalled_memory: Optional[VerifiedQueryMemoryRecord] = None
+    tenant_id: Optional[uuid.UUID] = None
+    knowledgebase_id: Optional[uuid.UUID] = None
+    metric_registry: Optional[Any] = None
+    semantic_registry: Optional[Any] = None
 
 
 class SemanticResolver:
@@ -166,4 +170,8 @@ class SemanticResolver:
             approved_joins=approved_joins,
             context_fingerprint=ctx_fp,
             recalled_memory=recalled,
+            tenant_id=tenant_id,
+            knowledgebase_id=knowledgebase_id,
+            metric_registry=self.metric_registry,
+            semantic_registry=self.semantic_registry,
         )

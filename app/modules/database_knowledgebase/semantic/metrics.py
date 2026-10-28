@@ -174,21 +174,35 @@ class CanonicalMetricRegistry:
         return metric
 
     def get_metric(
-        self, tenant_id: uuid.UUID, knowledgebase_id: uuid.UUID, metric_id: str
+        self, tenant_id: Optional[uuid.UUID], knowledgebase_id: uuid.UUID, metric_id: str
     ) -> Optional[MetricDefinition]:
         """Get metric by ID."""
-        storage = self._get_kb_storage(tenant_id, knowledgebase_id)
-        return storage.get(metric_id)
+        if tenant_id is not None:
+            storage = self._get_kb_storage(tenant_id, knowledgebase_id)
+            return storage.get(metric_id)
+        # Fallback by knowledgebase_id ONLY if tenant_id is None
+        for (t_id, kb_id), storage in self._storage.items():
+            if kb_id == knowledgebase_id and metric_id in storage:
+                return storage[metric_id]
+        return None
 
     def get_metric_by_name(
-        self, tenant_id: uuid.UUID, knowledgebase_id: uuid.UUID, metric_name: str
+        self, tenant_id: Optional[uuid.UUID], knowledgebase_id: uuid.UUID, metric_name: str
     ) -> Optional[MetricDefinition]:
         """Get metric by canonical name."""
-        storage = self._get_kb_storage(tenant_id, knowledgebase_id)
         clean_name = metric_name.strip().lower()
-        for metric in storage.values():
-            if metric.name.strip().lower() == clean_name:
-                return metric
+        if tenant_id is not None:
+            storage = self._get_kb_storage(tenant_id, knowledgebase_id)
+            for metric in storage.values():
+                if metric.name.strip().lower() == clean_name:
+                    return metric
+            return None
+        # Fallback by knowledgebase_id ONLY if tenant_id is None
+        for (t_id, kb_id), storage in self._storage.items():
+            if kb_id == knowledgebase_id:
+                for metric in storage.values():
+                    if metric.name.strip().lower() == clean_name:
+                        return metric
         return None
 
     def list_metrics(

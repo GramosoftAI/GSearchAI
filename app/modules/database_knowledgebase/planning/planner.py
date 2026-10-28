@@ -6,6 +6,7 @@ into machine-validated QueryPlanIR objects.
 
 import re
 import uuid
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from ..schemas.canonical import ColumnDataType, ColumnSchema, DatabaseSchema, TableSchema
 from ..retrieval.retriever import SchemaRetrievalResult
@@ -21,7 +22,8 @@ from .models import (
     QueryPlanIR,
     TablePlan,
 )
-from .intent_analyzer import QueryIntentAnalyzer, QueryIntentAnalysis, TemporalIntent
+from .intent_analyzer import QueryIntentAnalyzer, QueryIntentAnalysis, TemporalIntent, ExtractedPredicate
+from ..knowledge.retrieval.analyzer import TimeRange
 from .validator import QueryPlanValidator, QueryPlanValidationError
 from ..schema.graph import SchemaGraph
 from ..security.security_classifier import SecurityClassificationEngine, DataClassification
@@ -101,17 +103,48 @@ class QueryPlanner:
         user_query: str,
         alias_to_table: Dict[str, TableSchema],
         primary_alias: str,
+        canonical_schema: Optional[DatabaseSchema] = None,
+        semantic_context: Optional[Any] = None,
+        metric_registry: Optional[Any] = None,
+        tenant_id: Optional[uuid.UUID] = None,
+        knowledgebase_id: Optional[uuid.UUID] = None,
     ) -> Optional[Tuple[str, str]]:
         """
         Resolves target (table_alias, column_name) for an aggregation function.
-        Enforces strict priority:
-        1. Explicit semantic match (column name or exact stem mentioned in query)
-        2. Schema/metadata-supported synonym (narrow, well-defined synonym mapping)
-        3. Unambiguous numeric candidate (table has exactly one numeric metric column)
-        4. Fail closed / return None (fall back to LLM, never guess among ambiguous candidates)
+        Enforces schema-grounded priority:
+        0. Authoritative Canonical Metric Registry
+        1. Explicit semantic match (column name or column comment mentioned in query)
+        2. Schema/metadata-supported semantic metric resolution
+        3. Unambiguous semantically-compatible numeric candidate
+        4. Entity PK count (ONLY for COUNT aggregations)
+        5. Fail closed / return None (fall back to LLM, never guess among ambiguous candidates)
         """
         q_lower = user_query.lower()
         q_tokens = set(re.findall(r"\b[a-zA-Z0-9_]+\b", q_lower))
+
+        # 0. Authoritative Canonical Metric Registry check
+        active_metric_reg = (
+            metric_registry
+            or getattr(semantic_context, "metric_registry", None)
+        )
+        if active_metric_reg and knowledgebase_id:
+            resolved_tuple = active_metric_reg.resolve_metric(user_query, tenant_id, knowledgebase_id)
+            if resolved_tuple:
+                metric_def = resolved_tuple[0]
+                m_agg = (metric_def.aggregation.value if hasattr(metric_def.aggregation, "value") else str(metric_def.aggregation)).upper()
+                is_monetary_q = any(w in q_lower for w in ("value", "amount", "revenue", "sales", "spending", "spent", "spend", "dollar", "price", "cost"))
+                if agg_func in (AggregateFunction.SUM, AggregateFunction.AVG) and (m_agg == "COUNT" or (metric_def.source_column.lower() in ("id", "pk") and is_monetary_q)):
+                    pass
+                else:
+                    m_col = metric_def.source_column.lower()
+                    m_ent = metric_def.source_entity.lower()
+                    for alias, tbl in alias_to_table.items():
+                        if tbl.table_name.lower() in (m_ent, m_ent + "s", m_ent.rstrip("s")):
+                            if m_col in {c.lower() for c in tbl.columns.keys()}:
+                                return alias, metric_def.source_column
+                    for alias, tbl in alias_to_table.items():
+                        if m_col in {c.lower() for c in tbl.columns.keys()}:
+                            return alias, metric_def.source_column
 
         # 1. COUNT Handling
         if agg_func in (AggregateFunction.COUNT, AggregateFunction.COUNT_DISTINCT):
@@ -157,7 +190,7 @@ class QueryPlanner:
                 if any(c_name.lower().endswith(sfx) for sfx in ("_date", "_type", "_status", "_id", "_code", "_name", "_text", "_comment", "_description", "_mode", "_frequency")):
                     continue
                 is_numeric = False
-                if col.data_type in {ColumnDataType.INTEGER, ColumnDataType.DECIMAL, ColumnDataType.FLOAT}:
+                if col.data_type in {ColumnDataType.INTEGER, ColumnDataType.DECIMAL, ColumnDataType.FLOAT, ColumnDataType.NUMERIC, ColumnDataType.DOUBLE, ColumnDataType.REAL}:
                     is_numeric = True
                 elif col.raw_data_type:
                     raw_low = col.raw_data_type.lower()
@@ -186,20 +219,24 @@ class QueryPlanner:
                 table_nouns.add(part)
         metric_tokens = {t for t in q_tokens if len(t) > 2 and t not in STOPWORDS and t not in table_nouns}
 
-        # Priority 1: Explicit semantic match
+        # Priority 1: Explicit semantic match (column name or column comment mentioned in query)
         explicit_matches: List[Tuple[str, str]] = []
         for alias, c_name, tbl, col in numeric_candidates:
             c_low = c_name.lower()
             c_words = set(c_low.split("_"))
             if c_low in q_tokens or (c_words & metric_tokens):
                 explicit_matches.append((alias, c_name))
+            elif col.comment:
+                comment_words = set(re.findall(r"\b[a-zA-Z0-9_]+\b", col.comment.lower()))
+                if metric_tokens & comment_words:
+                    explicit_matches.append((alias, c_name))
 
         # Priority 2: Schema/metadata-supported synonym mapping
         SYNONYM_MAP = {
             "wage": {"salary", "pay", "compensation", "wage", "earnings", "expenditure", "spending", "payroll", "salaries"},
             "salary": {"pay", "compensation", "earnings", "wage", "salaries", "expenditure", "spending", "payroll"},
             "budget": {"budget", "spending", "allowance", "funding"},
-            "total_amount": {"revenue", "sales", "spending", "total", "turnover", "cost", "amount", "price", "subtotal", "expenditure"},
+            "total_amount": {"revenue", "sales", "spending", "spend", "spent", "total", "turnover", "cost", "amount", "price", "subtotal", "expenditure"},
             "amount": {"spending", "spend", "cost", "value", "price", "expenditure"},
             "hours_worked": {"hours", "duration", "time", "worktime", "worked_hour", "worked", "working"},
             "hour": {"hours", "duration", "time", "worktime", "worked_hour", "worked", "working"},
@@ -222,6 +259,19 @@ class QueryPlanner:
                     if any(syn in q_tokens or syn in user_query.lower() for syn in trigger_synonyms):
                         synonym_matches.append((alias, c_name))
                         break
+
+        # Semantic Business Concept: Revenue / Sales / Monetary Value
+        is_revenue_query = any(w in q_tokens or w in q_lower for w in ("revenue", "sales", "spending", "spend", "spent", "turnover"))
+        if is_revenue_query:
+            for alias, c_name, tbl, col in numeric_candidates:
+                c_clean = c_name.lower()
+                c_words = set(c_clean.split("_"))
+                # Auxiliary / deduction / fee columns are not the primary transaction revenue
+                is_auxiliary = any(aux in c_words for aux in ("shipping", "tax", "discount", "fee", "refund", "penalty", "interest", "tip", "freight", "insurance", "handling"))
+                if not is_auxiliary:
+                    # Check core transaction measure stems
+                    if any(stem in c_words or c_clean == stem for stem in ("value", "val", "amount", "amt", "total", "sales", "revenue", "turnover", "subtotal", "price")):
+                        synonym_matches.append((alias, c_name))
 
         # Combine candidates from explicit match and synonyms
         all_matches = list({(m[0], m[1]): m for m in (explicit_matches + synonym_matches)}.values())
@@ -256,13 +306,14 @@ class QueryPlanner:
             if len(named_table_matches) == 1:
                 return named_table_matches[0]
 
-            # 3. Score candidates by token overlap with query
+            # 3. Score candidates by token overlap and semantic evidence
             sup_match = re.search(r"\b(?:most|highest|least|lowest|maximum|minimum)\s+([a-zA-Z0-9_]+)\b", user_query.lower())
             target_metric_word = sup_match.group(1) if sup_match else None
 
             def _candidate_score(cand: Tuple[str, str]) -> float:
                 alias, c_name = cand
                 tbl = alias_to_table[alias]
+                col = tbl.columns.get(c_name)
                 c_clean = c_name.lower()
                 c_parts = set(c_clean.split("_"))
                 score = 0.0
@@ -276,47 +327,101 @@ class QueryPlanner:
                 # Direct match with metric following superlative (e.g. "overtime")
                 if target_metric_word and (target_metric_word in c_parts or target_metric_word in c_clean):
                     score += 10.0
-                # Give bonus if table name contains query tokens (e.g. "attendanceovertime" matches "overtime")
+                # Base relevance for columns that qualified as candidates
+                score += 2.0
+                # Column comment evidence bonus
+                if col and col.comment:
+                    col_comment_words = set(re.findall(r"\b[a-zA-Z0-9_]+\b", col.comment.lower()))
+                    score += 4.0 * len(metric_tokens & col_comment_words)
+                # Primary transaction table context
                 t_low = tbl.table_name.lower()
                 for tok in q_tokens:
                     if len(tok) > 3 and tok in t_low and tok not in {"base", "employee", "public", "app", "tbl"}:
                         score += 3.0
+                if alias == primary_alias:
+                    score += 10.0
+                else:
+                    # Topologically closer table: direct foreign key connection to primary entity
+                    prim_tbl = alias_to_table.get(primary_alias)
+                    if prim_tbl:
+                        has_direct_fk = any(
+                            fk.referred_table.lower() == prim_tbl.table_name.lower()
+                            for fk in getattr(tbl, "foreign_keys", [])
+                        ) or any(
+                            fk.referred_table.lower() == tbl.table_name.lower()
+                            for fk in getattr(prim_tbl, "foreign_keys", [])
+                        )
+                        if has_direct_fk:
+                            score += 5.0
                 return score
 
             sorted_candidates = sorted(candidates_to_rank, key=_candidate_score, reverse=True)
             if sorted_candidates and _candidate_score(sorted_candidates[0]) > 0.0:
-                if len(sorted_candidates) == 1 or _candidate_score(sorted_candidates[0]) > _candidate_score(sorted_candidates[1]):
+                score_0 = _candidate_score(sorted_candidates[0])
+                if len(sorted_candidates) == 1:
                     return sorted_candidates[0]
-                # Tie-breaker: prefer candidate whose table has additional column matches with query tokens
+                score_1 = _candidate_score(sorted_candidates[1])
+                # If there is a distinct winner
+                if score_0 > score_1:
+                    return sorted_candidates[0]
+                # If tie, check if one belongs to a table with more query context
                 best_cand = sorted_candidates[0]
                 best_extra = -1
-                for cand in sorted_candidates:
-                    if _candidate_score(cand) == _candidate_score(sorted_candidates[0]):
-                        cand_tbl = alias_to_table[cand[0]]
-                        extra_cols = sum(1 for c in cand_tbl.columns.keys() if c.lower() in q_tokens and c.lower() not in {"id"})
-                        if extra_cols > best_extra:
-                            best_extra = extra_cols
-                            best_cand = cand
-                return best_cand
+                tied = [c for c in sorted_candidates if _candidate_score(c) == score_0]
+                # If tied candidates are in the same table and no distinguishing evidence exists -> AMBIGUOUS -> fail closed
+                same_table = all(c[0] == tied[0][0] for c in tied)
+                if same_table:
+                    return None
+                for cand in tied:
+                    cand_tbl = alias_to_table[cand[0]]
+                    extra_cols = sum(1 for c in cand_tbl.columns.keys() if c.lower() in q_tokens and c.lower() not in {"id"})
+                    if extra_cols > best_extra:
+                        best_extra = extra_cols
+                        best_cand = cand
+                if best_extra > 0:
+                    return best_cand
+                # Equally plausible candidates across tables -> fail closed
+                return None
 
-            # Ambiguous: multiple matching columns -> fail closed to LLM
+            # Ambiguous: multiple matching columns with no evidence -> fail closed
             return None
 
-        # Priority 3: Unambiguous numeric candidate (only if primary table has exactly one numeric column)
+        # Priority 3: Unambiguous numeric candidate (only if primary table has exactly one numeric column that is semantically compatible)
         prim_candidates = [m for m in numeric_candidates if m[0] == primary_alias]
         if len(prim_candidates) == 1:
-            return prim_candidates[0][0], prim_candidates[0][1]
+            alias, c_name, tbl, col = prim_candidates[0]
+            c_low = c_name.lower()
+            if is_revenue_query:
+                is_monetary = any(m in c_low for m in ("amount", "value", "val", "revenue", "sales", "price", "cost", "total", "spend", "charge", "balance"))
+                if col.comment and any(m in col.comment.lower() for m in ("revenue", "sales", "amount", "price", "currency", "usd")):
+                    is_monetary = True
+                if is_monetary:
+                    return alias, c_name
+                # Non-monetary column must NOT be guessed as revenue
+                return None
+            elif any(w in q_tokens for w in ("salary", "wage", "pay", "compensation", "payroll")):
+                if any(m in c_low for m in ("salary", "wage", "pay", "comp", "rate")):
+                    return alias, c_name
+                return None
+            elif any(w in q_tokens for w in ("hour", "hours", "time", "duration", "overtime")):
+                if any(m in c_low for m in ("hour", "duration", "time", "second", "ot")):
+                    return alias, c_name
+                return None
+            else:
+                return alias, c_name
 
-        # Priority 4: If query mentions an entity or counting concept and no numeric candidates matched, fall back to entity PK count
-        for alias, tbl in alias_to_table.items():
-            t_lower = tbl.table_name.lower()
-            if any(tok in q_tokens for tok in t_lower.split("_") if len(tok) > 3):
-                pk = next((c for c, col in tbl.columns.items() if col.is_primary_key or c == "id"), None)
-                if pk:
-                    return alias, pk
+        # Priority 4: If query mentions an entity or counting concept and no numeric candidates matched, fall back to entity PK count (COUNT only!)
+        if agg_func in (AggregateFunction.COUNT, AggregateFunction.COUNT_DISTINCT):
+            for alias, tbl in alias_to_table.items():
+                t_lower = tbl.table_name.lower()
+                if any(tok in q_tokens for tok in t_lower.split("_") if len(tok) > 3):
+                    pk = next((c for c, col in tbl.columns.items() if col.is_primary_key or c == "id"), None)
+                    if pk:
+                        return alias, pk
 
         # Priority 5: Ambiguous / No match -> fail closed
         return None
+
 
     @classmethod
     def plan(
@@ -328,11 +433,84 @@ class QueryPlanner:
         default_limit: Optional[int] = None,
         semantic_context: Optional[Any] = None,
         resolved_entities: Optional[List[Dict[str, Any]]] = None,
+        tenant_id: Optional[uuid.UUID] = None,
+        metric_registry: Optional[Any] = None,
+        semantic_registry: Optional[Any] = None,
+        relationship_graph: Optional[Any] = None,
+        reference_date: Optional[date] = None,
     ) -> QueryPlanIR:
         """
         Create a machine-validated QueryPlanIR from user query and retrieved sub-schema.
         """
         analysis = QueryIntentAnalyzer.analyze(user_query)
+
+        # Authoritative Temporal Range Ingestion (STEP 7C.3.4)
+        # Propagates TimeRange from retrieval_result.context_pack into planner deterministically
+        authoritative_time_range: Optional[TimeRange] = None
+        if hasattr(retrieval_result, "context_pack") and retrieval_result.context_pack:
+            cp = retrieval_result.context_pack
+            raw_tr = getattr(cp, "time_range", None)
+            if raw_tr is None and isinstance(cp, dict):
+                raw_tr = cp.get("time_range")
+            if raw_tr:
+                if isinstance(raw_tr, TimeRange):
+                    authoritative_time_range = raw_tr
+                elif isinstance(raw_tr, dict):
+                    authoritative_time_range = TimeRange(
+                        start_date=raw_tr.get("start_date"),
+                        end_date=raw_tr.get("end_date"),
+                        expression=raw_tr.get("expression", ""),
+                    )
+
+        if authoritative_time_range is None and user_query:
+            from ..knowledge.retrieval.analyzer import extract_time_range
+            ref_d = reference_date or date.today()
+            authoritative_time_range = extract_time_range(user_query, ref_d)
+
+        if authoritative_time_range and (authoritative_time_range.start_date or authoritative_time_range.end_date):
+            # Guard against duplicate / conflicting predicates
+            has_recurring_dow = any(
+                p.target_concept == "relative_date" and p.value == "friday"
+                for p in analysis.predicates
+            )
+            has_temporal_predicate = any(
+                p.target_concept in ("relative_date", "date_range_start", "date_range_end", "date")
+                for p in analysis.predicates
+            )
+
+            # If no temporal predicate exists yet in analysis.predicates:
+            if not has_recurring_dow and not has_temporal_predicate:
+                if authoritative_time_range.start_date:
+                    analysis.predicates.append(
+                        ExtractedPredicate(
+                            target_concept="date_range_start",
+                            operator=">=",
+                            value=authoritative_time_range.start_date,
+                            raw_match=authoritative_time_range.expression or authoritative_time_range.start_date,
+                        )
+                    )
+                if authoritative_time_range.end_date:
+                    # Half-open interval [start_date, end_date + 1 day) for DATE/TIMESTAMP/TIMESTAMPTZ compatibility
+                    try:
+                        end_dt = datetime.strptime(authoritative_time_range.end_date, "%Y-%m-%d").date()
+                        next_day_str = (end_dt + timedelta(days=1)).isoformat()
+                        analysis.predicates.append(
+                            ExtractedPredicate(
+                                target_concept="date_range_end",
+                                operator="<",
+                                value=next_day_str,
+                                raw_match=authoritative_time_range.expression or next_day_str,
+                            )
+                        )
+                    except Exception:
+                        analysis.predicates.append(
+                            ExtractedPredicate(
+                                target_concept="date_range_end",
+                                operator="<=",
+                                value=authoritative_time_range.end_date,
+                                raw_match=authoritative_time_range.expression or authoritative_time_range.end_date,
+                            )
+                        )
 
         GENERIC_COLUMN_STOPWORDS = {
             "year", "month", "day", "days", "date", "time", "status", "name", "type",
@@ -341,6 +519,8 @@ class QueryPlanner:
             "code", "file", "image", "report", "user", "active", "is_active", "candidate",
             "employee", "details", "record", "request", "view", "count", "score", "note",
             "level", "number", "text", "sequence", "role", "action", "duration", "frequency",
+            "overall", "entire", "complete", "general", "combined", "net", "gross",
+            "cumulative", "grand", "aggregate", "aggregated", "whole", "full",
         }
 
         # 1. Map Retrieved Tables into TablePlan objects with unique aliases
@@ -354,6 +534,7 @@ class QueryPlanner:
             alias = cls._generate_alias(tbl.table_name, used_aliases)
             used_aliases.add(alias)
             table_to_alias[table_key] = alias
+            table_to_alias[tbl.table_name.lower()] = alias
             alias_to_table[alias] = tbl
 
             role = "PRIMARY" if idx == 0 else "JOIN_TARGET"
@@ -538,6 +719,8 @@ class QueryPlanner:
             "activity": {"activity", "activities", "sessions", "session", "clock activity", "punch activity"},
             "late": {"late", "early", "early out", "late come", "leave early", "late arrivals", "arrival", "arrivals"},
             "leave": {"leave", "vacation", "absence", "absent", "absenteeism", "time off", "requested", "leaves"},
+            "order": {"order", "orders", "sale", "sales", "revenue", "spend", "spending", "spent", "purchases", "purchase", "transaction", "transactions"},
+            "payment": {"payment", "payments", "paid", "transaction", "transactions"},
         }
 
         def _is_admin_or_system_table(t_name: str) -> bool:
@@ -684,17 +867,22 @@ class QueryPlanner:
         literals = EntityValueResolver.extract_literal_candidates(user_query, canonical_schema=canonical_schema)
         anchor_alias = None
 
-        # 1. First, check if disambiguation already identified a specific person table and user ID(s)
+        # 1. First, check if disambiguation / entity resolution identified specific target table(s)
         if disambiguation_entities:
             for de in disambiguation_entities:
-                if de.get("type") == "user":
-                    de_tbl = (de.get("table") or "").lower()
-                    if de_tbl:
-                        cand_a = _get_or_create_table_alias(de_tbl, role="JOIN_TARGET")
-                        if cand_a:
+                de_tbl = (de.get("table") or "").lower().split(".")[-1]
+                if de_tbl and not _is_admin_or_system_table(de_tbl):
+                    cand_a = _get_or_create_table_alias(de_tbl, role="JOIN_TARGET")
+                    if cand_a:
+                        named_aliases.add(cand_a)
+                        if not anchor_alias:
                             anchor_alias = cand_a
-                            named_aliases.add(cand_a)
-                            break
+
+        # Check if query expresses person/employee intent
+        has_person_intent = (
+            any(tok in q_tokens for tok in ("employee", "employees", "staff", "person", "people", "user", "users", "worker", "workers", "candidate", "candidates", "who", "whom", "whose", "member", "members", "colleague", "colleagues"))
+            or any(w in user_query.lower() for w in ("who is", "who was", "where does", "phone number", "mobile number", "email of", "salary of", "manager of", "supervisor of", "lead of", "reports to", "reporting to"))
+        )
 
         if literals and not anchor_alias:
             best_alias = None
@@ -704,6 +892,13 @@ class QueryPlanner:
                     continue
                 tbl_cols = {c.lower() for c in tbl.columns.keys()}
                 score = 0.0
+                t_raw = tbl.table_name.lower()
+                # Direct query token match on table name or singular form
+                if t_raw in q_tokens or (t_raw.endswith("s") and t_raw[:-1] in q_tokens):
+                    score += 60.0
+                elif any(p in q_tokens for p in t_raw.split("_") if len(p) > 2):
+                    score += 30.0
+
                 if "onboarding" in user_query.lower() and "onboarding" in tbl.table_name.lower():
                     score += 85.0
                 elif "candidate" in user_query.lower() and "candidate" in tbl.table_name.lower():
@@ -729,8 +924,9 @@ class QueryPlanner:
                     best_alias = a
 
             # If no person table with first_name was found in retrieved tables,
-            # resolve the canonical person/user anchor table directly from canonical_schema!
-            if (not best_alias or best_score < 40.0) and canonical_schema:
+            # resolve the canonical person/user anchor table directly from canonical_schema
+            # ONLY IF person intent is actually present!
+            if has_person_intent and (not best_alias or best_score < 40.0) and canonical_schema:
                 for s_name, s_val in canonical_schema.schemas.items():
                     for t_name, t_obj in s_val.tables.items():
                         if _is_admin_or_system_table(t_name):
@@ -738,10 +934,15 @@ class QueryPlanner:
                         tbl_cols = {c.lower() for c in t_obj.columns.keys()}
                         t_low = t_name.lower()
                         is_person_cand = (
-                            any(tok in t_low for tok in ("employee", "user", "staff", "person"))
-                            or any(fn in tbl_cols for fn in ("first_name", "firstname", "full_name", "employee_first_name"))
-                            or (any("name" in c for c in tbl_cols) and any(any(l in col for l in ("login", "email", "mail", "username")) for col in tbl_cols))
-                        ) and not any(h in t_low for h in ("historical", "backup", "audit", "note", "tag", "detail", "role", "group", "type", "preference"))
+                            (
+                                any(tok in t_low for tok in ("employee", "user", "staff", "person"))
+                                or any(fn in tbl_cols for fn in ("first_name", "firstname", "full_name", "employee_first_name"))
+                                or (any("name" in c for c in tbl_cols) and any(any(l in col for l in ("login", "email", "mail", "username")) for col in tbl_cols))
+                            )
+                            and any(fn in tbl_cols for fn in ("first_name", "firstname", "full_name", "employee_first_name", "name", "username"))
+                            and not any(h in t_low for h in ("historical", "backup", "audit", "note", "tag", "detail", "role", "group", "type", "preference", "accessibility", "permission", "policy", "specific", "exclude"))
+                            and not t_low.endswith("_employees")
+                        )
                         if is_person_cand:
                             cand_alias = _get_or_create_table_alias(t_name, role="PRIMARY")
                             if cand_alias:
@@ -751,7 +952,7 @@ class QueryPlanner:
                     if best_alias and best_score >= 100.0:
                         break
 
-            if best_alias:
+            if best_alias and (best_score >= 40.0 or has_person_intent):
                 anchor_alias = best_alias
                 named_aliases.add(best_alias)
 
@@ -769,10 +970,10 @@ class QueryPlanner:
             explicit_target_alias = _find_best_canonical_table(["activity", "session"], secondary_tokens=["attendance"])
         elif any(w in q_lower for w in ("early out", "leave early", "late come", "late arrival", "late arrivals")) or ("late" in q_tokens and "latest" not in q_tokens) or ("early" in q_tokens):
             explicit_target_alias = _find_best_canonical_table(["latecome", "earlyout", "late_early", "late"])
-        elif any(w in q_lower for w in ("attendance", "check in", "clock in", "check out", "clock out", "punch", "worked", "working", "work", "hours", "checkin", "checkout", "clockin", "clockout", "overtime", "arrive", "arrived", "arrival", "arrivals", "depart", "departed", "departure", "departures", "clock")):
+        elif any(w in q_lower for w in ("attendance", "check in", "clock in", "check out", "clock out", "punch", "worked", "working", "work", "hours", "checkin", "checkout", "clockin", "clockout", "overtime", "arrive", "arrived", "arrival", "arrivals", "depart", "departed", "departure", "departures", "clock")) and not any(wp in q_lower for wp in ("work package", "work packages", "workpackage", "workpackages")):
             explicit_target_alias = _find_best_canonical_table(["attendance"], negative_tokens=["activity", "late", "early"])
         elif any(w in q_lower for w in ("vacation", "absence", "absent", "absenteeism", "time off", "on leave", "leave request", "leave balance", "sick leave", "casual leave")) or ("leave" in q_tokens and not any(w in q_lower for w in ("leave early", "early leave", "left early", "arrive", "arrived", "arrival", "arrivals", "depart", "departed", "departure", "when did", "what time", "clock", "punch", "hours", "worked", "working"))):
-            if not any(w in q_lower for w in ("leave request", "leave requests", "requested")) and any(w in q_lower for w in ("leave balance", "available leave", "remaining leave", "balance", "available days")):
+            if not any(w in q_lower for w in ("leave request", "leave requests", "requested")) and any(w in q_lower for w in ("leave balance", "available leave", "remaining leave", "balance", "available days", "leave days", "how many leave days")):
                 explicit_target_alias = _find_best_canonical_table(["availableleave", "leave_balance", "leave_allocation"])
             else:
                 explicit_target_alias = _find_best_canonical_table(["leave_request", "leaverequest", "leave_application", "leave"], negative_tokens=["type", "balance", "available", "allocation"])
@@ -780,6 +981,10 @@ class QueryPlanner:
             explicit_target_alias = _find_best_canonical_table(["asset", "device", "hardware", "equipment"], negative_tokens=["category", "assignment", "type"])
         elif any(w in q_lower for w in ("department", "departments")):
             explicit_target_alias = _find_best_canonical_table(["department", "dept"])
+        elif any(w in q_lower for w in ("status", "statuses", "state", "states")):
+            explicit_target_alias = _find_best_canonical_table(["statuses", "status"], negative_tokens=["check", "job", "custom", "deploy", "workflow"])
+        elif any(w in q_lower for w in ("work package", "work packages", "workpackage", "workpackages")):
+            explicit_target_alias = _find_best_canonical_table(["work_packages", "work_package"], negative_tokens=["journal", "hierarchy", "ordered", "changeset", "gitlab", "github"])
         elif any(w in q_lower for w in ("project", "projects")):
             explicit_target_alias = _find_best_canonical_table(["project", "projects"], negative_tokens=["type", "template", "update", "psoa", "user", "member", "role"])
         elif any(w in q_lower for w in ("employee", "employees", "staff", "person", "people", "member", "members", "who", "highest-paid", "lowest-paid")):
@@ -793,9 +998,12 @@ class QueryPlanner:
             and any(tok in explicit_target_table.lower() for tok in ("employee", "user", "staff", "person"))
             and not any(tok in explicit_target_table.lower() for tok in ("workinformation", "bank", "bonus", "role", "project"))
         )
+        retrieved_table_set = {t.table_name.lower() for t in retrieval_result.retrieved_tables}
+        is_anchor_retrieved = anchor_alias in alias_to_table and alias_to_table[anchor_alias].table_name.lower() in retrieved_table_set
+
         if explicit_target_alias and not is_employee_table and not any(w in q_lower for w in ("all employees in", "list all employees", "list employees")):
             primary_alias = explicit_target_alias
-        elif anchor_alias:
+        elif anchor_alias and (is_anchor_retrieved or has_person_intent or not all_table_plans):
             primary_alias = anchor_alias
         elif explicit_target_alias and not any(w in q_lower for w in ("all employees in", "list all employees", "list employees")):
             primary_alias = explicit_target_alias
@@ -822,7 +1030,8 @@ class QueryPlanner:
         if primary_alias:
             primary_entity_aliases.append(primary_alias)
         if anchor_alias and anchor_alias not in primary_entity_aliases:
-            primary_entity_aliases.append(anchor_alias)
+            if is_anchor_retrieved or has_person_intent or not all_table_plans:
+                primary_entity_aliases.append(anchor_alias)
         for ea in matched_entity_tables.values():
             if ea not in primary_entity_aliases:
                 primary_entity_aliases.append(ea)
@@ -864,7 +1073,12 @@ class QueryPlanner:
 
         # Semantic Table Disambiguation (Cardinality & Relationship Semantics Guard)
         # 1. Leave Balance vs Leave Request History
-        if any(w in q_lower for w in ("balance", "available", "remaining")):
+        if any(w in q_lower for w in ("balance", "available", "remaining", "leave days", "how many leave days")):
+            avail_alias = next((a for a, tbl in alias_to_table.items() if "availableleave" in tbl.table_name.lower().replace("_", "")), None)
+            if avail_alias:
+                needed_aliases.add(avail_alias)
+                if primary_alias in needed_aliases and "leaverequest" in alias_to_table[primary_alias].table_name.lower().replace("_", ""):
+                    primary_alias = avail_alias
             has_balance_tbl = any("availableleave" in alias_to_table[a].table_name.lower().replace("_", "") for a in needed_aliases if a in alias_to_table)
             if has_balance_tbl:
                 needed_aliases = {
@@ -900,12 +1114,14 @@ class QueryPlanner:
         has_dept_intent = any(w in q_lower for w in ("department", "dept"))
         has_pos_intent = any(w in q_lower for w in ("position", "designation", "role", "job", "work type", "hybrid", "remote", "permanent", "contractual", "intern", "probation"))
         has_manager_intent = any(w in q_lower for w in ("manager", "report", "head", "lead"))
+        has_status_intent = any(w in q_lower for w in ("status", "statuses", "state", "states"))
+        has_work_package_intent = any(w in q_lower for w in ("work package", "work packages", "workpackage", "workpackages"))
         has_att_intent = (
             any(w in q_lower for w in ("attendance", "check in", "clock in", "check out", "clock out", "punch", "worked", "working", "checkin", "checkout", "clockin", "clockout", "clock-in", "clock-out", "check-in", "check-out", "punch-in", "punch-out", "in time", "out time", "arrival time", "exit time", "departure", "overtime", "early out", "early arrivals", "late arrivals", "late come", "leave early", "arrive", "arrived", "arrival", "depart", "departed", "short of", "shortage", "at work", "hours", "hour", "activity", "activities", "sessions", "session", "punch activity", "percentage"))
-            or ("work" in q_words and "work type" not in q_lower and "work information" not in q_lower)
+            or ("work" in q_words and "work type" not in q_lower and "work information" not in q_lower and not has_work_package_intent)
             or ("late" in q_words and "latest" not in q_words)
             or ("early" in q_words)
-        ) and not has_shift_intent and not has_payslip_intent and not has_leave_intent
+        ) and not has_shift_intent and not has_payslip_intent and not has_leave_intent and not has_work_package_intent and not has_status_intent
         has_salary_intent = (
             any(w in q_lower for w in ("salary", "wage", "compensation", "earnings", "contract", "earn"))
             or ("pay" in q_words and not has_payslip_intent)
@@ -999,6 +1215,16 @@ class QueryPlanner:
             t_name = alias_to_table[a].table_name.lower()
             if t_name == primary_tbl_name:
                 active_target_aliases.add(a)
+            elif any(tok in t_name for tok in ("order", "payment", "transaction", "sale", "spending", "invoice")) and not any(aux in t_name for aux in ("item", "detail", "line", "history", "log", "audit")) and any(w in q_lower for w in ("order", "orders", "sale", "sales", "revenue", "spend", "spending", "spent", "bought", "purchase", "purchases")):
+                active_target_aliases.add(a)
+            elif any(tok in t_name for tok in ("order_item", "orderitem", "order_items", "orderitems")) and any(w in q_lower for w in ("item", "items", "product", "products", "quantity", "unit price")):
+                active_target_aliases.add(a)
+            elif any(tok in t_name for tok in ("customer", "client", "buyer")) and any(w in q_lower for w in ("customer", "customers", "client", "clients", "who", "which customer", "buyer", "spent", "spend", "bought")):
+                active_target_aliases.add(a)
+            elif any(tok in t_name for tok in ("product", "item", "good")) and any(w in q_lower for w in ("product", "products", "item", "items", "which product", "highest sales", "sales")):
+                active_target_aliases.add(a)
+            elif getattr(analysis.ranking, "target_metric", None) and any(getattr(analysis.ranking, "target_metric", "").lower() in c.lower() for c in alias_to_table[a].columns):
+                active_target_aliases.add(a)
             elif any(tok in t_name for tok in ("employee", "user", "staff", "person")) and not any(aux in t_name for aux in ("setting", "preference", "role", "work", "bank", "bonus")):
                 active_target_aliases.add(a)
             elif has_dept_intent and any(tok in t_name for tok in ("department", "dept", "workinformation", "work_info", "employee", "user")):
@@ -1019,7 +1245,7 @@ class QueryPlanner:
                 elif any(w in q_lower for w in ("activity", "activities", "session", "sessions", "punch activity")) and "activity" in t_name:
                     active_target_aliases.add(a)
             elif has_leave_intent:
-                is_leave_balance = any(w in q_lower for w in ("leave balance", "available leave", "remaining leave", "balance", "available days", "carry forward", "compensatory"))
+                is_leave_balance = any(w in q_lower for w in ("leave balance", "available leave", "remaining leave", "balance", "available days", "carry forward", "compensatory", "leave days", "how many leave days"))
                 if is_leave_balance and any(tok in t_name for tok in ("availableleave", "leave_balance", "leave_allocation", "leavetype", "leave_type", "employee", "user")):
                     active_target_aliases.add(a)
                 elif not is_leave_balance and any(tok in t_name for tok in ("leaverequest", "leave_request", "leave_application", "leavetype", "leave_type", "employee", "user", "leave")):
@@ -1129,6 +1355,10 @@ class QueryPlanner:
                     mgr_a = _find_best_canonical_table(["manager", "project_manager", "managers"])
                     if mgr_a:
                         active_target_aliases.add(mgr_a)
+        elif has_status_intent:
+            status_a = _find_best_canonical_table(["statuses", "status"], negative_tokens=["check", "job", "custom", "deploy", "workflow"])
+            if status_a:
+                active_target_aliases = {status_a}
         else:
             if "absenteeism" in q_lower or (any(w in q_lower for w in ("absent", "absence")) and "department" in q_lower):
                 dept_a = _find_best_canonical_table(["department", "dept"])
@@ -1195,7 +1425,7 @@ class QueryPlanner:
                         active_target_aliases.add(emp_a)
             elif has_leave_intent:
                 is_leave_request = any(w in q_lower for w in ("leave request", "leave requests", "requested leave", "applied leave"))
-                is_leave_balance = not is_leave_request and any(w in q_lower for w in ("leave balance", "available leave", "remaining leave", "balance", "available days", "carry forward", "compensatory", "how many days of leave"))
+                is_leave_balance = not is_leave_request and any(w in q_lower for w in ("leave balance", "available leave", "remaining leave", "balance", "available days", "carry forward", "compensatory", "how many days of leave", "leave days", "how many leave days"))
                 if is_leave_balance:
                     leave_a = _find_best_canonical_table(["availableleave", "leave_balance", "leave_allocation"])
                 else:
@@ -1268,7 +1498,19 @@ class QueryPlanner:
                 active_target_aliases = _filtered
                 primary_entity_aliases = [a for a in primary_entity_aliases if alias_to_table[a].table_name.lower() in ALLOWED_DED_TABLES]
 
-        needed_aliases = active_target_aliases
+        needed_aliases = set(active_target_aliases)
+        # If retrieval_result provides verified join paths connecting active target aliases,
+        # ensure intermediary bridge tables are preserved in needed_aliases!
+        if len(active_target_aliases) >= 2 and retrieval_result and hasattr(retrieval_result, "join_paths"):
+            for rel in retrieval_result.join_paths:
+                src_key = f"{rel.source_schema}.{rel.source_table}"
+                tgt_key = f"{rel.target_schema}.{rel.target_table}"
+                src_a = table_to_alias.get(src_key) or table_to_alias.get(rel.source_table.lower())
+                tgt_a = table_to_alias.get(tgt_key) or table_to_alias.get(rel.target_table.lower())
+                if src_a and tgt_a and (src_a in active_target_aliases and tgt_a in active_target_aliases):
+                    needed_aliases.add(src_a)
+                    needed_aliases.add(tgt_a)
+
         if primary_alias not in needed_aliases and needed_aliases:
             primary_alias = next(iter(needed_aliases))
 
@@ -1281,6 +1523,8 @@ class QueryPlanner:
             if src_key in table_to_alias and tgt_key in table_to_alias:
                 src_alias = table_to_alias[src_key]
                 tgt_alias = table_to_alias[tgt_key]
+                if src_alias not in needed_aliases or tgt_alias not in needed_aliases:
+                    continue
                 src_col = rel.source_columns[0] if rel.source_columns else "id"
                 tgt_col = rel.target_columns[0] if rel.target_columns else "id"
 
@@ -1303,7 +1547,8 @@ class QueryPlanner:
 
         # 2.1 Minimal Relationship Subgraph Connection (Phase 6.5)
         # If multiple primary entities are requested, ensure they are connected via approved join paths
-        if len(primary_entity_aliases) >= 2:
+        target_conn_endpoints = set(primary_entity_aliases).union(active_target_aliases)
+        if len(target_conn_endpoints) >= 2:
             graph = SchemaGraph.from_database_schema(canonical_schema)
             _base_allowed = {t.table_name.lower() for t in retrieval_result.retrieved_tables}
             
@@ -1337,7 +1582,7 @@ class QueryPlanner:
                                 forbidden_hops.add((a_tbl, p_tbl))
                                 forbidden_hops.add((p_tbl, a_tbl))
 
-            primary_list = sorted(list(primary_entity_aliases))
+            primary_list = sorted(list(target_conn_endpoints))
             for i in range(len(primary_list)):
                 for j in range(i + 1, len(primary_list)):
                     a1, a2 = primary_list[i], primary_list[j]
@@ -1425,6 +1670,7 @@ class QueryPlanner:
         # 3. Formulate Column Projections & Grouping
         projections: List[ColumnProjectionPlan] = []
         group_by: List[str] = []
+        order_by: List[OrderByPlan] = []
 
         bridge_aliases = {
             tp.alias for tp in all_table_plans
@@ -1466,79 +1712,123 @@ class QueryPlanner:
         is_loc_auth = any(w in q_lower for w in ("address", "where does", "where is", "live", "residence", "city", "state", "country", "postal"))
         is_bank_auth = any(w in q_lower for w in ("bank", "account number", "iban", "routing", "swift", "ifsc"))
 
+        # Resolve registries from parameters, semantic_context, or service singletons
+        from ..services.service import DatabaseKnowledgebaseService
+
+        sem_reg = (
+            semantic_registry
+            or getattr(semantic_context, "semantic_registry", None)
+            or getattr(DatabaseKnowledgebaseService, "_semantic_model_registry", None)
+        )
+        met_reg = (
+            metric_registry
+            or getattr(semantic_context, "metric_registry", None)
+            or getattr(DatabaseKnowledgebaseService, "_metric_registry", None)
+        )
+        rel_graph = (
+            relationship_graph
+            or getattr(semantic_context, "relationship_graph", None)
+            or getattr(DatabaseKnowledgebaseService, "_relationship_graph", None)
+        )
+
         # If semantic context has a resolved canonical metric, use its definition as authoritative projection
-        if semantic_context and getattr(semantic_context, "resolved_metric", None):
-            metric = semantic_context.resolved_metric
-            m_target_alias = None
-            m_target_col = metric.source_column
-            for alias, tbl in alias_to_table.items():
-                if tbl.table_name.lower() == metric.source_entity.lower() or tbl.table_name.lower() == (metric.source_entity.lower() + "s"):
-                    m_target_alias = alias
-                    break
-                if m_target_col.lower() in {c.lower() for c in tbl.columns.keys()}:
-                    m_target_alias = alias
-                    break
-            if not m_target_alias:
-                m_target_alias = primary_alias
+        # 1. Check if semantic context resolved an authoritative canonical metric
+        # only if the query intent or explicit analysis aggregations call for metric aggregation
+        has_agg_intent = bool(analysis.aggregations) or any(w in q_lower for w in ("total", "sum", "average", "avg", "mean", "count", "how many", "revenue", "sales", "spending", "spend", "spent"))
 
-            needed_aliases.add(m_target_alias)
-            agg_val = metric.aggregation.value if hasattr(metric.aggregation, "value") else str(metric.aggregation)
-            agg_enum = getattr(AggregateFunction, agg_val.upper(), AggregateFunction.COUNT)
-            projections.append(
-                ColumnProjectionPlan(
-                    table_alias=m_target_alias,
-                    column_name=m_target_col,
-                    output_alias=metric.name,
-                    aggregation=agg_enum,
-                )
-            )
+        # Check if resolved metric is a semantic mismatch (e.g. query explicitly asks for monetary value/amount/spend/revenue, but resolved metric is an entity COUNT)
+        resolved_metric = getattr(semantic_context, "resolved_metric", None) if semantic_context else None
+        if resolved_metric:
+            metric_agg_str = (getattr(resolved_metric, "aggregation", None).value if hasattr(getattr(resolved_metric, "aggregation", None), "value") else str(getattr(resolved_metric, "aggregation", ""))).upper()
+            is_monetary_query = any(w in q_lower for w in ("value", "amount", "revenue", "sales", "spending", "spent", "spend", "dollar", "price", "cost"))
+            if metric_agg_str == "COUNT" and is_monetary_query and not any(w in q_lower for w in ("how many", "count", "number of")):
+                resolved_metric = None
 
-        elif analysis.aggregations:
-            resolved_aggs = []
-            for agg in analysis.aggregations:
-                col_res = cls._resolve_aggregation_column(
-                    agg_func=agg.function,
-                    user_query=user_query,
-                    alias_to_table=alias_to_table,
-                    primary_alias=primary_alias,
-                )
-                if col_res:
-                    resolved_aggs.append((agg, col_res[0], col_res[1]))
-                else:
-                    break
+        if (resolved_metric and has_agg_intent) or analysis.aggregations:
+            if resolved_metric and has_agg_intent:
+                metric = resolved_metric
+                m_target_alias = None
+                m_target_col = metric.source_column
+                for alias, tbl in alias_to_table.items():
+                    if tbl.table_name.lower() == metric.source_entity.lower() or tbl.table_name.lower() == (metric.source_entity.lower() + "s"):
+                        if m_target_col.lower() in {c.lower() for c in tbl.columns.keys()}:
+                            m_target_alias = alias
+                            break
+                    if m_target_col.lower() in {c.lower() for c in tbl.columns.keys()}:
+                        m_target_alias = alias
+                        break
+                if not m_target_alias and primary_alias in alias_to_table:
+                    if m_target_col.lower() in {c.lower() for c in alias_to_table[primary_alias].columns.keys()}:
+                        m_target_alias = primary_alias
 
-            if len(resolved_aggs) < len(analysis.aggregations):
-                # Ambiguous or unresolvable aggregate column: decline deterministic path, fall back to LLM
-                return QueryPlanIR(
-                    database_knowledgebase_id=database_knowledgebase_id,
-                    schema_version=canonical_schema.fingerprint or "unknown",
-                    user_query=user_query,
-                    intent=analysis.intent,
-                    tables=all_table_plans,
-                    projections=[],
-                    joins=all_join_plans,
-                    predicates=[],
-                    group_by=[],
-                    order_by=[],
-                    limit=None,
-                    confidence=0.0,
-                    reasoning="Ambiguous or unresolvable aggregate target column; declining deterministic compilation",
-                )
-
-            # Add aggregate projection(s)
-            for agg, tgt_alias, tgt_col in resolved_aggs:
-                needed_aliases.add(tgt_alias)
-                agg_func = agg.function
-                if agg_func == AggregateFunction.COUNT and all_join_plans:
-                    agg_func = AggregateFunction.COUNT_DISTINCT
-                projections.append(
-                    ColumnProjectionPlan(
-                        table_alias=tgt_alias,
-                        column_name=tgt_col,
-                        output_alias=f"count_{tgt_col}" if agg_func == AggregateFunction.COUNT_DISTINCT else f"{agg.function.value.lower()}_{tgt_col}",
-                        aggregation=agg_func,
+                if m_target_alias:
+                    needed_aliases.add(m_target_alias)
+                    agg_val = metric.aggregation.value if hasattr(metric.aggregation, "value") else str(metric.aggregation)
+                    agg_enum = getattr(AggregateFunction, agg_val.upper(), AggregateFunction.COUNT)
+                    projections.append(
+                        ColumnProjectionPlan(
+                            table_alias=m_target_alias,
+                            column_name=m_target_col,
+                            output_alias=metric.name,
+                            aggregation=agg_enum,
+                        )
                     )
-                )
+
+            elif analysis.aggregations:
+                resolved_aggs = []
+                for agg in analysis.aggregations:
+                    col_res = cls._resolve_aggregation_column(
+                        agg_func=agg.function,
+                        user_query=user_query,
+                        alias_to_table=alias_to_table,
+                        primary_alias=primary_alias,
+                        canonical_schema=canonical_schema,
+                        semantic_context=semantic_context,
+                        metric_registry=met_reg,
+                        tenant_id=tenant_id,
+                        knowledgebase_id=database_knowledgebase_id,
+                    )
+                    if col_res:
+                        resolved_aggs.append((agg, col_res[0], col_res[1]))
+                    else:
+                        break
+
+                if len(resolved_aggs) < len(analysis.aggregations):
+                    # Ambiguous or unresolvable aggregate column: decline deterministic path, fall back to LLM
+                    return QueryPlanIR(
+                        database_knowledgebase_id=database_knowledgebase_id,
+                        schema_version=canonical_schema.fingerprint or "unknown",
+                        user_query=user_query,
+                        intent=analysis.intent,
+                        tables=all_table_plans,
+                        projections=[],
+                        joins=all_join_plans,
+                        predicates=[],
+                        group_by=[],
+                        order_by=[],
+                        limit=None,
+                        confidence=0.0,
+                        reasoning="Ambiguous or unresolvable aggregate target column; declining deterministic compilation",
+                    )
+
+                # Add aggregate projection(s)
+                for agg, tgt_alias, tgt_col in resolved_aggs:
+                    needed_aliases.add(tgt_alias)
+                    agg_func = agg.function
+                    if agg_func == AggregateFunction.COUNT and all_join_plans:
+                        agg_func = AggregateFunction.COUNT_DISTINCT
+                    out_alias = f"count_{tgt_col}" if agg_func == AggregateFunction.COUNT_DISTINCT else f"{agg.function.value.lower()}_{tgt_col}"
+                    if not any(p.table_alias == tgt_alias and p.column_name == tgt_col and p.aggregation == agg_func for p in projections):
+                        projections.append(
+                            ColumnProjectionPlan(
+                                table_alias=tgt_alias,
+                                column_name=tgt_col,
+                                output_alias=out_alias,
+                                aggregation=agg_func,
+                            )
+                        )
+
+            # Grouping handling for both resolved canonical metrics and analyzed aggregations
 
             if analysis.grouping_required:
                 # Grouped aggregate: find grouping column matching concept
@@ -1548,34 +1838,57 @@ class QueryPlanner:
                     g_low = analysis.grouping_concept.lower()
                     # Candidate aliases to search: prioritize aliases already in needed_aliases
                     cand_search_aliases = [a for a in needed_aliases if a in alias_to_table] + [a for a in alias_to_table if a not in needed_aliases]
-                    for alias in cand_search_aliases:
-                        tbl = alias_to_table[alias]
-                        t_low = tbl.table_name.lower()
-                        # Check employee / user concept
-                        if g_low in ("employee", "person", "staff", "who", "user"):
-                            if not any(tok in t_low for tok in ("employee", "user", "staff", "person")) or any(aux in t_low for aux in ("setting", "preference", "role", "work", "bank", "bonus")):
-                                continue
-                            grp_alias = alias
-                            grp_col = next((c for c in tbl.columns.keys() if c.lower() in ("id", "name", "full_name", "username", "employee_id")), "id")
-                            break
-                        # Check department concept
-                        if g_low in ("department", "dept", "division"):
-                            if not any(tok in t_low for tok in ("department", "dept", "division")):
-                                continue
-                            grp_alias = alias
-                            grp_col = next((c for c in tbl.columns.keys() if c.lower() in ("department", "department_name", "name", "title")), "id")
-                            break
-                        if g_low in t_low or (t_low.endswith("s") and t_low[:-1] == g_low):
-                            for c_name in tbl.columns.keys():
-                                if c_name.lower() in ("name", "title", "department_name", "category"):
-                                    grp_alias = alias
-                                    grp_col = c_name
+
+                    # Check temporal concept (e.g. "by month", "by year", "by day")
+                    if g_low in ("month", "monthly", "year", "yearly", "week", "weekly", "date", "day", "quarter"):
+                        date_alias = None
+                        date_col_name = None
+                        for alias in cand_search_aliases:
+                            tbl = alias_to_table[alias]
+                            for c_name, c_col in tbl.columns.items():
+                                c_type = getattr(c_col, "data_type", None)
+                                c_raw = (getattr(c_col, "raw_data_type", "") or "").upper()
+                                is_date_type = c_type in (ColumnDataType.TIMESTAMP, ColumnDataType.DATE, ColumnDataType.TIME) or any(t in c_raw for t in ("TIMESTAMP", "DATE", "TIME"))
+                                if is_date_type or any(d in c_name.lower() for d in ("_date", "date", "created_at", "_at")):
+                                    date_alias = alias
+                                    date_col_name = c_name
                                     break
-                            if not grp_col:
-                                grp_alias = alias
-                                grp_col = next((c for c, col in tbl.columns.items() if col.is_primary_key or c == "id"), None)
-                            if grp_col:
+                            if date_col_name:
                                 break
+                        if date_alias and date_col_name:
+                            grp_alias = date_alias
+                            unit = "month" if g_low in ("month", "monthly") else ("year" if g_low in ("year", "yearly") else ("week" if g_low in ("week", "weekly") else "day"))
+                            grp_col = f"DATE_TRUNC('{unit}', {date_alias}.{date_col_name})"
+
+                    if not grp_col:
+                        for alias in cand_search_aliases:
+                            tbl = alias_to_table[alias]
+                            t_low = tbl.table_name.lower()
+                            # Check employee / user concept
+                            if g_low in ("employee", "person", "staff", "who", "user"):
+                                if not any(tok in t_low for tok in ("employee", "user", "staff", "person")) or any(aux in t_low for aux in ("setting", "preference", "role", "work", "bank", "bonus")):
+                                    continue
+                                grp_alias = alias
+                                grp_col = next((c for c in tbl.columns.keys() if c.lower() in ("id", "name", "full_name", "username", "employee_id")), "id")
+                                break
+                            # Check department concept
+                            if g_low in ("department", "dept", "division"):
+                                if not any(tok in t_low for tok in ("department", "dept", "division")):
+                                    continue
+                                grp_alias = alias
+                                grp_col = next((c for c in tbl.columns.keys() if c.lower() in ("department", "department_name", "name", "title")), "id")
+                                break
+                            if g_low in t_low or (t_low.endswith("s") and t_low[:-1] == g_low):
+                                for c_name in tbl.columns.keys():
+                                    if c_name.lower() in ("name", "title", "department_name", "category"):
+                                        grp_alias = alias
+                                        grp_col = c_name
+                                        break
+                                if not grp_col:
+                                    grp_alias = alias
+                                    grp_col = next((c for c, col in tbl.columns.items() if col.is_primary_key or c == "id"), None)
+                                if grp_col:
+                                    break
                     # 2. Check column matching concept (e.g. "category" -> products.category)
                     if not grp_col:
                         for alias in cand_search_aliases:
@@ -1611,14 +1924,32 @@ class QueryPlanner:
 
                 if grp_alias and grp_col:
                     needed_aliases.add(grp_alias)
+                    is_func_expr = "(" in grp_col or "." in grp_col
                     projections.append(
                         ColumnProjectionPlan(
                             table_alias=grp_alias,
                             column_name=grp_col,
+                            output_alias=f"{g_low}_bucket" if is_func_expr else None,
                             aggregation=AggregateFunction.NONE,
                         )
                     )
-                    group_by.append(f"{grp_alias}.{grp_col}")
+                    grp_expr = grp_col if is_func_expr else f"{grp_alias}.{grp_col}"
+                    group_by.append(grp_expr)
+                    if is_func_expr and not order_by:
+                        order_by.append(
+                            OrderByPlan(
+                                expression=grp_col,
+                                direction=OrderDirection.ASC,
+                            )
+                        )
+            # If grouping is required, ensure all non-aggregate projections are included in group_by
+            if analysis.grouping_required:
+                for p in projections:
+                    if p.aggregation in (None, AggregateFunction.NONE):
+                        p_expr = p.column_name if ("(" in p.column_name or "." in p.column_name) else f"{p.table_alias}.{p.column_name}"
+                        if p_expr not in group_by:
+                            group_by.append(p_expr)
+
             # Note: For pure scalar aggregates (not grouping_required), NO descriptive columns are added!
 
         else:
@@ -1703,7 +2034,7 @@ class QueryPlanner:
                                 should_project = True
                             elif c_low in ("asset_status", "status", "state", "condition") and any(k in q_lower for k in (
                                 "status", "state", "condition", "active",
-                                "available", "in use", "assigned"
+                                "available", "in use"
                             )):
                                 should_project = True
                             elif c_low in ("asset_purchase_cost", "purchase_cost", "cost", "price", "amount") and any(k in q_lower for k in (
@@ -1730,9 +2061,10 @@ class QueryPlanner:
                                 "expiring", "notify", "soon", "alert", "reminder"
                             )):
                                 should_project = True
-                            elif c_low in ("owner_id", "custodian", "assigned_to") and any(k in q_lower for k in (
-                                "owner", "owns", "who has", "who holds",
-                                "who currently", "assigned to"
+                            elif c_low == "owner_id" and any(k in q_lower for k in ("owner", "owns", "ownership")):
+                                should_project = True
+                            elif c_low in ("custodian", "assigned_to") and any(k in q_lower for k in (
+                                "who has", "who holds", "who currently", "assigned to"
                             )):
                                 should_project = True
                             elif c_low in ("vendor_name", "vendor", "supplier") and any(k in q_lower for k in (
@@ -1855,11 +2187,19 @@ class QueryPlanner:
                             if c_low in ("job_position", "job_role", "work_type", "name", "title", "designation"):
                                 should_project = True
 
+                        elif any(tok in t_low for tok in ("status", "statuses")):
+                            if c_low in ("id", "name", "is_closed", "is_default", "position"):
+                                should_project = True
+
+                        elif any(tok in t_low for tok in ("order", "sale", "invoice", "payment", "transaction")):
+                            if c_low in ("id", "order_date", "payment_date", "created_at", "status", "payment_status", "total_amount", "amount", "total"):
+                                should_project = True
+
                         else:
                             # Generic business entity fallback: minimal name/title or primary key
                             if c_low in ("name", "title", "label"):
                                 should_project = True
-                            elif col.is_primary_key and len(projected_cols_per_alias[alias]) == 0:
+                            elif col.is_primary_key and len(projected_cols_per_alias[alias]) == 0 and not any(aux in t_low for aux in ("accessibility", "permission", "preference", "specific", "exclude")):
                                 should_project = True
                             # Query-token-to-column match: if the user explicitly mentions
                             # a column name (exact or underscore-separated form) in the
@@ -1960,7 +2300,13 @@ class QueryPlanner:
 
             # Ensure every requested non-bridge entity table has at least one projected column
             for alias in named_aliases:
-                if alias in needed_aliases and alias not in bridge_aliases and not projected_cols_per_alias.get(alias):
+                if (
+                    alias in needed_aliases
+                    and alias not in bridge_aliases
+                    and not projected_cols_per_alias.get(alias)
+                    and not any(aux in alias_to_table[alias].table_name.lower() for aux in ("accessibility", "permission", "preference", "specific", "exclude"))
+                    and not alias_to_table[alias].table_name.lower().endswith("_employees")
+                ):
                     tbl = alias_to_table[alias]
                     pk_col = next((c for c, col in tbl.columns.items() if col.is_primary_key or c == "id"), next(iter(tbl.columns.keys()), "id"))
                     projections.append(
@@ -2091,18 +2437,32 @@ class QueryPlanner:
                                 score = 10.0
                                 if a in needed_aliases:
                                     score += 60.0
-                                if "attendance_date" in c_lower:
+                                if a == primary_alias:
+                                    score += 20.0
+                                t_singular = tbl.table_name.rstrip("s").lower()
+                                if f"{tbl.table_name.lower()}_date" in c_lower or f"{t_singular}_date" in c_lower:
+                                    score += 55.0
+                                elif "attendance_date" in c_lower:
                                     score += 55.0
                                 elif c_lower == "date":
                                     score += 45.0
                                 elif "clock_in_date" in c_lower or "clock_out_date" in c_lower:
                                     score += 45.0
+                                elif c_lower.endswith("_date"):
+                                    score += 40.0
                                 elif "start_date" in c_lower or "end_date" in c_lower:
                                     score += 40.0
+                                elif c_lower.endswith(("_time", "_at")):
+                                    score += 30.0
                                 elif "created" in c_lower or "updated" in c_lower:
                                     score -= 5.0
-                                if any(ev in tbl.table_name.lower() for ev in ("attendance", "leave", "shift", "event", "punch", "work")):
+                                if any(ev in tbl.table_name.lower() for ev in ("attendance", "leave", "shift", "event", "punch", "work", "order", "payment", "invoice", "transaction", "shipment")):
                                     score += 30.0
+                                if tbl.table_name.lower() in q_lower or t_singular in q_lower:
+                                    score += 25.0
+                                col_pfx = c_lower.split('_')[0]
+                                if len(col_pfx) > 2 and col_pfx in q_tokens:
+                                    score += 20.0
                                 if score > best_date_score:
                                     best_date_score = score
                                     best_date_alias = a
@@ -2113,10 +2473,28 @@ class QueryPlanner:
                         if p.target_concept == "relative_date":
                             if p.value in ("today", "this morning"):
                                 p.value = "CURRENT_DATE"
-                                p.operator = "="
+                                p.operator = ">="
+                                predicates.append(
+                                    PredicatePlan(
+                                        table_alias=matched_alias,
+                                        column_name=matched_col,
+                                        operator="<",
+                                        value="CURRENT_DATE + INTERVAL '1 day'",
+                                        logical_operator="AND",
+                                    )
+                                )
                             elif p.value == "yesterday":
                                 p.value = "CURRENT_DATE - INTERVAL '1 day'"
-                                p.operator = "="
+                                p.operator = ">="
+                                predicates.append(
+                                    PredicatePlan(
+                                        table_alias=matched_alias,
+                                        column_name=matched_col,
+                                        operator="<",
+                                        value="CURRENT_DATE",
+                                        logical_operator="AND",
+                                    )
+                                )
                             elif p.value == "this_week":
                                 p.value = "DATE_TRUNC('week', CURRENT_DATE)"
                                 p.operator = ">="
@@ -2143,14 +2521,32 @@ class QueryPlanner:
                                 score = 10.0
                                 if a in needed_aliases:
                                     score += 60.0
-                                if "attendance_date" in c_lower:
+                                if a == primary_alias:
+                                    score += 20.0
+                                t_singular = tbl.table_name.rstrip("s").lower()
+                                if f"{tbl.table_name.lower()}_date" in c_lower or f"{t_singular}_date" in c_lower:
+                                    score += 55.0
+                                elif "attendance_date" in c_lower:
                                     score += 55.0
                                 elif c_lower == "date":
                                     score += 45.0
+                                elif "clock_in_date" in c_lower or "clock_out_date" in c_lower:
+                                    score += 45.0
+                                elif c_lower.endswith("_date"):
+                                    score += 40.0
                                 elif "start_date" in c_lower or "end_date" in c_lower:
                                     score += 40.0
+                                elif c_lower.endswith(("_time", "_at")):
+                                    score += 30.0
                                 elif "created" in c_lower or "updated" in c_lower:
                                     score -= 5.0
+                                if any(ev in tbl.table_name.lower() for ev in ("attendance", "leave", "shift", "event", "punch", "work", "order", "payment", "invoice", "transaction", "shipment")):
+                                    score += 30.0
+                                if tbl.table_name.lower() in q_lower or t_singular in q_lower:
+                                    score += 25.0
+                                col_pfx = c_lower.split('_')[0]
+                                if len(col_pfx) > 2 and col_pfx in q_tokens:
+                                    score += 20.0
                                 if score > best_date_score:
                                     best_date_score = score
                                     best_date_alias = a
@@ -2375,16 +2771,23 @@ class QueryPlanner:
                         break
 
             if matched_alias and matched_col:
-                needed_aliases.add(matched_alias)
-                predicates.append(
-                    PredicatePlan(
-                        table_alias=matched_alias,
-                        column_name=matched_col,
-                        operator=p.operator,
-                        value=p.value,
-                        logical_operator="AND",
-                    )
+                already_exists = any(
+                    existing_p.table_alias == matched_alias
+                    and existing_p.column_name == matched_col
+                    and existing_p.operator == p.operator
+                    for existing_p in predicates
                 )
+                if not already_exists:
+                    needed_aliases.add(matched_alias)
+                    predicates.append(
+                        PredicatePlan(
+                            table_alias=matched_alias,
+                            column_name=matched_col,
+                            operator=p.operator,
+                            value=p.value,
+                            logical_operator="AND",
+                        )
+                    )
                 if not (analysis.aggregations and not analysis.grouping_required):
                     c_low = matched_col.lower()
                     is_sensitive_pred = (
@@ -2452,42 +2855,49 @@ class QueryPlanner:
 
         # Inject entity value resolution: check for literal value mentions (e.g. employee names like "Kannan")
         if user_query:
-            # 1. First, check if disambiguation already resolved this person to exact database IDs!
+            # 1. First, check if disambiguation already resolved this entity to exact database IDs or values!
             if disambiguation_entities:
                 for de in disambiguation_entities:
-                    if de.get("type") == "user" and de.get("id"):
-                        de_name = de.get("name", "").lower()
-                        de_tbl = (de.get("table") or "").lower()
-                        de_col = de.get("pk_column") or "id"
-                        de_ids = de["id"] if isinstance(de["id"], list) else [de["id"]]
+                    de_name = (de.get("name") or de.get("value") or "").lower()
+                    de_tbl = (de.get("table") or "").lower().split(".")[-1]
+                    de_col = de.get("pk_column") or de.get("column") or "id"
+                    de_ids = de.get("id") if de.get("id") is not None else de.get("ids")
+                    if de_ids is not None:
+                        if not isinstance(de_ids, list):
+                            de_ids = [de_ids]
                         
-                        # Find matching table alias in our planned tables
-                        target_alias = None
-                        target_col = de_col
-                        for a, tbl in alias_to_table.items():
-                            t_low = tbl.table_name.lower()
-                            if de_tbl and t_low == de_tbl:
-                                target_alias = a
-                                break
-                            elif not de_tbl and "employee" in t_low:
-                                target_alias = a
-                                break
+                    # Find matching table alias in our planned tables
+                    target_alias = None
+                    target_col = de_col
+                    for a, tbl in alias_to_table.items():
+                        t_low = tbl.table_name.lower()
+                        if de_tbl and t_low == de_tbl:
+                            target_alias = a
+                            break
+                        elif not de_tbl and de.get("type") == "user" and "employee" in t_low:
+                            target_alias = a
+                            break
 
-                        if not target_alias and de_tbl:
-                            target_alias = _ensure_canonical_table(de_tbl, role="JOIN_TARGET")
+                    if not target_alias and de_tbl:
+                        target_alias = _ensure_canonical_table(de_tbl, role="JOIN_TARGET")
 
-                        if target_alias:
-                            needed_aliases.add(target_alias)
-                            # Remove any prior string-based predicate matching this person's name
+                    if target_alias:
+                        needed_aliases.add(target_alias)
+                        if de_ids:
+                            pk_col = (
+                                de.get("pk_column")
+                                or next((c for c, col in alias_to_table[target_alias].columns.items() if getattr(col, "is_primary_key", False)), None)
+                                or ("id" if "id" in alias_to_table[target_alias].columns else target_col)
+                            )
                             predicates = [
                                 p for p in predicates
-                                if not (p.table_alias == target_alias and any(de_name in str(p.value).lower() for de_name in (de_name, f"%{de_name}%")))
+                                if not (p.table_alias == target_alias and p.column_name == pk_col)
                             ]
                             if len(de_ids) == 1:
                                 predicates.append(
                                     PredicatePlan(
                                         table_alias=target_alias,
-                                        column_name=target_col,
+                                        column_name=pk_col,
                                         operator="=",
                                         value=de_ids[0],
                                         logical_operator="AND",
@@ -2497,13 +2907,26 @@ class QueryPlanner:
                                 predicates.append(
                                     PredicatePlan(
                                         table_alias=target_alias,
-                                        column_name=target_col,
+                                        column_name=pk_col,
                                         operator="IN",
                                         value=de_ids,
                                         logical_operator="AND",
                                     )
                                 )
-                            logger.info(f"[PLANNER] Bound disambiguation entity '{de_name}' to {target_alias}.{target_col} IN {de_ids}")
+                            logger.info(f"[PLANNER] Bound disambiguation entity '{de_name}' to {target_alias}.{pk_col} IN {de_ids}")
+                        elif de.get("value") and de.get("column"):
+                            c_name = de.get("column")
+                            if c_name in alias_to_table[target_alias].columns:
+                                predicates.append(
+                                    PredicatePlan(
+                                        table_alias=target_alias,
+                                        column_name=c_name,
+                                        operator="=",
+                                        value=de.get("value"),
+                                        logical_operator="AND",
+                                    )
+                                )
+                                logger.info(f"[PLANNER] Bound entity value '{de.get('value')}' to {target_alias}.{c_name}")
 
             from .entity_value_resolver import EntityValueResolver
             literals = EntityValueResolver.extract_literal_candidates(user_query, canonical_schema=canonical_schema)
@@ -2522,6 +2945,39 @@ class QueryPlanner:
                     }
                     if lit.lower() in DEPT_OR_POSITION_TERMS or any(term in lit.lower() for term in ("engineer", "developer", "manager", "director", "department", "position")):
                         continue
+
+                    # Generic linguistic modifiers and quantifiers should never be bound as entity literals
+                    GENERIC_MODIFIERS = {
+                        "overall", "entire", "complete", "general", "combined", "net", "gross",
+                        "cumulative", "grand", "aggregate", "aggregated", "aggregating", "aggregation",
+                        "whole", "full", "totaling", "across", "altogether", "comprehensively",
+                        "universal", "composite", "global", "approximate", "exact", "standard",
+                        "single", "multiple", "together", "joint", "jointly", "separately", "individually",
+                        "average", "avg", "total", "sum"
+                    }
+                    if lit.lower() in GENERIC_MODIFIERS:
+                        continue
+
+                    # If this is an overall aggregation query (aggregations present and not grouping_required),
+                    # do NOT inject a phantom literal filter unless there is explicit entity qualification evidence:
+                    is_overall_aggregation = bool(analysis.aggregations and not analysis.grouping_required)
+                    if is_overall_aggregation:
+                        lit_low = lit.lower()
+                        has_prep = any(
+                            f"{prep} {lit_low}" in q_lower
+                            for prep in ("for", "by", "of", "from", "in", "at", "named", "called", "with", "against", "to")
+                        )
+                        has_possessive = f"{lit_low}'s" in q_lower or f"{lit_low}s'" in q_lower
+                        is_multi_word = len(lit.split()) >= 2
+                        is_proper_noun = lit[0].isupper() and lit_low not in GENERIC_MODIFIERS
+                        is_confirmed_entity = (
+                            bool(disambiguation_entities and any(de.get("name", "").lower() == lit_low for de in disambiguation_entities))
+                            or any(lit_low in str(ent).lower() for ent in getattr(analysis, "detected_entities", []))
+                        )
+                        if not (has_prep or has_possessive or is_multi_word or is_proper_noun or is_confirmed_entity):
+                            logger.info(f"[PLANNER] Skipping literal candidate '{lit}' in overall aggregation query without entity qualification evidence.")
+                            continue
+
                     # Search across candidate tables for name columns (preferring tables with employee_first_name or first_name)
                     best_lit_alias = None
                     best_lit_col = None
@@ -2555,6 +3011,11 @@ class QueryPlanner:
                                 score += 30.0
                             elif "title" in c_low:
                                 score += 15.0
+                            elif c_low in ("city", "state", "country", "location", "region", "address") or any(loc in c_low for loc in ("city", "location", "address")):
+                                if any(prep in q_lower for prep in (f"from {lit.lower()}", f"in {lit.lower()}", f"at {lit.lower()}")):
+                                    score += 65.0
+                                else:
+                                    score += 25.0
 
                             if a == primary_alias:
                                 score += 20.0
@@ -2565,6 +3026,22 @@ class QueryPlanner:
                                 best_lit_col = c_name
 
                     if best_lit_alias and best_lit_col:
+                        # Guard: If binding lit requires joining a non-primary table (best_lit_alias != primary_alias),
+                        # ensure lit has evidence or the table is an identified entity table, to avoid pulling in unrelated tables.
+                        if best_lit_alias != primary_alias:
+                            lit_low = lit.lower()
+                            has_entity_evidence = (
+                                any(f"{prep} {lit_low}" in q_lower for prep in ("for", "by", "of", "from", "in", "at", "named", "called", "with", "against", "product"))
+                                or f"{lit_low}'s" in q_lower
+                                or len(lit.split()) >= 2
+                                or (lit[0].isupper() and lit_low not in GENERIC_MODIFIERS)
+                                or any(lit_low in str(e).lower() for e in getattr(analysis, "detected_entities", []))
+                                or (disambiguation_entities and any(de.get("name", "").lower() == lit_low for de in disambiguation_entities))
+                            )
+                            if not has_entity_evidence:
+                                logger.info(f"[PLANNER] Skipping join expansion to '{best_lit_alias}' for unverified literal '{lit}'.")
+                                continue
+
                         needed_aliases.add(best_lit_alias)
                         predicates.append(
                             PredicatePlan(
@@ -2636,7 +3113,8 @@ class QueryPlanner:
             forbidden_hops = set()
             if has_asset_intent and not any(w in q_lower for w in ("owner", "owns", "owned", "ownership")):
                 asset_tables = {t.lower() for t in ALLOWED_ASSET_TABLES if any(tok in t.lower() for tok in ("asset", "hardware", "device")) and not any(tok in t.lower() for tok in ("assign", "history", "log"))}
-                person_tables = {t.lower() for t in canonical_schema.tables.keys() if any(tok in t.lower() for tok in ("employee", "user", "staff", "person"))}
+                schema_tables = [t.name for t in canonical_schema.all_tables] if hasattr(canonical_schema, "all_tables") else (list(canonical_schema.tables.keys()) if hasattr(canonical_schema, "tables") else [])
+                person_tables = {t.lower() for t in schema_tables if any(tok in t.lower() for tok in ("employee", "user", "staff", "person"))}
                 for at in asset_tables:
                     for pt in person_tables:
                         forbidden_hops.add((at, pt))
@@ -2867,7 +3345,8 @@ class QueryPlanner:
             predicates = [p for p in predicates if p.table_alias in connected_aliases]
 
         # 5. Formulate Order By
-        order_by: List[OrderByPlan] = []
+        if order_by is None:
+            order_by = []
 
         if analysis.ranking:
             # Rank by aggregated column if present, otherwise metric column
@@ -2929,8 +3408,17 @@ class QueryPlanner:
         active_table_aliases = {tp.alias for tp in table_plans}
         predicates = [p for p in predicates if p.table_alias in active_table_aliases]
         projections = [p for p in projections if p.table_alias in active_table_aliases]
-        group_by = [g for g in group_by if g.split(".")[0] in active_table_aliases]
-        order_by = [o for o in order_by if getattr(o, "table_alias", None) in (None, "") or o.table_alias in active_table_aliases]
+        group_by = [
+            g for g in group_by
+            if (g.split(".")[0] in active_table_aliases)
+            or ("(" in g and any(f"{a}." in g for a in active_table_aliases))
+        ]
+        order_by = [
+            o for o in order_by
+            if getattr(o, "table_alias", None) in (None, "")
+            or o.table_alias in active_table_aliases
+            or ("(" in getattr(o, "expression", "") and any(f"{a}." in o.expression for a in active_table_aliases))
+        ]
 
         # Deduplicate predicates while preserving order
         seen_pred = set()
@@ -3054,16 +3542,31 @@ class QueryPlanner:
         from ..services.service import DatabaseKnowledgebaseService
 
         # Resolve registries from semantic_context or fallback to service shared singletons
-        sem_reg = getattr(semantic_context, "semantic_registry", None) or getattr(DatabaseKnowledgebaseService, "_semantic_model_registry", None)
-        met_reg = getattr(semantic_context, "metric_registry", None) or getattr(DatabaseKnowledgebaseService, "_metric_registry", None)
-        rel_graph = getattr(semantic_context, "relationship_graph", None) or getattr(DatabaseKnowledgebaseService, "_relationship_graph", None)
+        sem_reg = (
+            sem_reg
+            or getattr(semantic_context, "semantic_registry", None)
+            or getattr(DatabaseKnowledgebaseService, "_semantic_model_registry", None)
+        )
+        met_reg = (
+            met_reg
+            or getattr(semantic_context, "metric_registry", None)
+            or getattr(DatabaseKnowledgebaseService, "_metric_registry", None)
+        )
+        rel_graph = (
+            rel_graph
+            or getattr(semantic_context, "relationship_graph", None)
+            or getattr(DatabaseKnowledgebaseService, "_relationship_graph", None)
+        )
         
         # Resolve tenant_id
-        t_id = getattr(semantic_context, "tenant_id", None)
-        if not t_id and hasattr(plan, "tenant_id") and plan.tenant_id:
-            t_id = plan.tenant_id
-        if not t_id and hasattr(canonical_schema, "metadata") and canonical_schema.metadata:
-            t_id = canonical_schema.metadata.get("tenant_id")
+        t_id = (
+            tenant_id
+            or getattr(semantic_context, "tenant_id", None)
+            or (getattr(getattr(semantic_context, "resolved_metric", None), "tenant_id", None))
+            or (semantic_context.resolved_entities[0].tenant_id if getattr(semantic_context, "resolved_entities", None) else None)
+            or getattr(plan, "tenant_id", None)
+            or (canonical_schema.metadata.get("tenant_id") if hasattr(canonical_schema, "metadata") and canonical_schema.metadata else None)
+        )
 
         req_metric_id = None
         if semantic_context and getattr(semantic_context, "resolved_metric", None):
@@ -3082,8 +3585,29 @@ class QueryPlanner:
             resolved_entities=schema_resolved_entities if schema_resolved_entities else None,
         )
         if val_res.outcome == ValidationOutcome.REJECT:
-            raise QueryPlanValidationError(
-                f"Plan validation rejected [{val_res.reason_code.value if val_res.reason_code else 'ERROR'}]: {val_res.message}"
+            from ..semantic.models import ValidationReasonCode
+            if val_res.reason_code == ValidationReasonCode.SECURITY_POLICY_VIOLATION:
+                raise QueryPlanValidationError(
+                    f"Plan validation rejected [{val_res.reason_code.value}]: {val_res.message}"
+                )
+            logger.warning(
+                f"Plan validation rejected [{val_res.reason_code.value if val_res.reason_code else 'ERROR'}]: "
+                f"{val_res.message}. Falling back to LLM generation."
+            )
+            return QueryPlanIR(
+                database_knowledgebase_id=database_knowledgebase_id,
+                schema_version=canonical_schema.fingerprint or "unknown",
+                user_query=user_query,
+                intent=analysis.intent,
+                tables=all_table_plans,
+                projections=[],
+                joins=[],
+                predicates=[],
+                group_by=[],
+                order_by=[],
+                limit=None,
+                confidence=0.0,
+                reasoning=f"Plan validation rejected: {val_res.message}. Falling back to LLM.",
             )
 
         return plan
@@ -3208,6 +3732,43 @@ class QueryPlanner:
                             logical_operator="AND",
                         )
                     )
+
+            # Closed record filter whenever "closed" is in query and "is_closed" in tbl.columns
+            if any(w in q_low for w in ("closed", "marked as closed", "close")) and "is_closed" in tbl.columns:
+                if not any(p.table_alias == alias and p.column_name == "is_closed" for p in predicates):
+                    predicates.append(
+                        PredicatePlan(
+                            table_alias=alias,
+                            column_name="is_closed",
+                            operator="=",
+                            value=True,
+                            logical_operator="AND",
+                        )
+                    )
+            elif any(w in q_low for w in ("open", "opened", "not closed")) and "is_closed" in tbl.columns:
+                if not any(p.table_alias == alias and p.column_name == "is_closed" for p in predicates):
+                    predicates.append(
+                        PredicatePlan(
+                            table_alias=alias,
+                            column_name="is_closed",
+                            operator="=",
+                            value=False,
+                            logical_operator="AND",
+                        )
+                    )
+
+            if "default" in q_low and "is_default" in tbl.columns:
+                if not any(p.table_alias == alias and p.column_name == "is_default" for p in predicates):
+                    predicates.append(
+                        PredicatePlan(
+                            table_alias=alias,
+                            column_name="is_default",
+                            operator="=",
+                            value=True,
+                            logical_operator="AND",
+                        )
+                    )
+
 
             # A. Current Salary vs Historical Salary (payroll_contract)
             if "contract" in t_name:

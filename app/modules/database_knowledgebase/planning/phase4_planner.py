@@ -195,9 +195,13 @@ JSON Output Format (Strictly valid JSON):
                 seed_tables.add("jobs")
                 if "employees" in available_tables:
                     seed_tables.add("employees")
-        if any(w in q_low for w in ["work package", "work packages", "accountable", "assignee", "assigned", "responsible"]):
-            if "work_packages" in available_tables:
+        if any(w in q_low for w in ["status", "statuses", "state", "states"]):
+            if "statuses" in available_tables:
+                seed_tables.add("statuses")
+        if any(w in q_low for w in ["work package", "work packages"]):
+            if "work_packages" in available_tables and not any(w in q_low for w in ["status", "statuses"]):
                 seed_tables.add("work_packages")
+        if any(w in q_low for w in ["accountable", "assignee", "assigned", "responsible"]):
             if "users" in available_tables:
                 seed_tables.add("users")
 
@@ -300,6 +304,14 @@ JSON Output Format (Strictly valid JSON):
 
         if "dept 10" in q_low and "departments" in subgraph_tables:
             predicates_plan.append(PredicatePlan(table_alias=alias_map["departments"], column_name="id", operator="=", value=10))
+
+        if "statuses" in subgraph_tables:
+            s_obj = available_tables.get("statuses")
+            if s_obj and "is_closed" in s_obj.columns:
+                if any(w in q_low for w in ["closed", "marked as closed", "close"]):
+                    predicates_plan.append(PredicatePlan(table_alias=alias_map["statuses"], column_name="is_closed", operator="=", value=True))
+                elif any(w in q_low for w in ["open", "marked as open"]):
+                    predicates_plan.append(PredicatePlan(table_alias=alias_map["statuses"], column_name="is_closed", operator="=", value=False))
 
         # 6. Projections, Group By, Order By, Limit
         projections_plan: List[ColumnProjectionPlan] = []

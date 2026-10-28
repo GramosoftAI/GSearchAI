@@ -101,7 +101,7 @@ class QueryPlanValidator:
                         "month", "year", "day", "date", "case", "when", "then", "else", "end",
                         "extract", "dow"
                     }
-                    col_words = [w for w in words if w.lower() not in SQL_KEYWORDS]
+                    col_words = [w for w in words if w.lower() not in SQL_KEYWORDS and w.lower() not in set(alias_to_table.keys())]
                     if not col_words or not all(w in table.columns for w in col_words):
                         raise QueryPlanValidationError(
                             f"Column '{proj.column_name}' does not exist on table '{s_name}.{t_name}'"
@@ -191,7 +191,10 @@ class QueryPlanValidator:
         ]
         if has_aggregations and scalar_projections and not plan.group_by:
             # Auto-populate missing GROUP BY with all scalar projections to ensure valid SQL execution
-            plan.group_by = [f"{p.table_alias}.{p.column_name}" for p in scalar_projections]
+            plan.group_by = [
+                p.column_name if ("(" in p.column_name or "." in p.column_name) else f"{p.table_alias}.{p.column_name}"
+                for p in scalar_projections
+            ]
             logger.info(
                 f"Auto-populated missing GROUP BY in query plan with scalar projections: {plan.group_by}"
             )

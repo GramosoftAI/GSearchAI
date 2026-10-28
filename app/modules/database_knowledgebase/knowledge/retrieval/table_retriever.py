@@ -179,18 +179,54 @@ class TableRetriever:
             res_snap = await self.db.execute(stmt_snap)
             snap_data = res_snap.scalar_one_or_none()
             if snap_data and isinstance(snap_data, dict):
+                def _process_snap_table(t_name_raw: str, t_val_raw: Any):
+                    t_name = t_val_raw.get("table_name", t_name_raw) if isinstance(t_val_raw, dict) else t_name_raw
+                    _add_terms_for_table(t_name)
+                    if isinstance(t_val_raw, dict):
+                        t_clean = t_name.lower().strip()
+                        if "." in t_clean:
+                            t_clean = t_clean.split(".")[-1]
+                        t_set = table_terms.setdefault(t_clean, set())
+                        # Table description tokens
+                        t_desc = t_val_raw.get("description") or t_val_raw.get("comment") or ""
+                        if t_desc and isinstance(t_desc, str):
+                            for tok in re.findall(r"[a-zA-Z0-9_]{3,}", t_desc.lower()):
+                                t_set.add(tok)
+                        # Column names, sub-tokens, and semantic concepts
+                        cols = t_val_raw.get("columns", {})
+                        if isinstance(cols, dict):
+                            has_monetary = False
+                            has_temporal = False
+                            for c_k, c_info in cols.items():
+                                c_clean = c_k.lower()
+                                t_set.add(c_clean)
+                                for part in c_clean.split("_"):
+                                    if len(part) >= 3:
+                                        t_set.add(part)
+                                c_desc = c_info.get("description") or c_info.get("comment") if isinstance(c_info, dict) else ""
+                                if c_desc and isinstance(c_desc, str):
+                                    for tok in re.findall(r"[a-zA-Z0-9_]{3,}", c_desc.lower()):
+                                        t_set.add(tok)
+                                if any(m in c_clean for m in ("amount", "price", "revenue", "cost", "total", "spend", "unit_price", "salary", "wage", "budget")):
+                                    has_monetary = True
+                                c_type = (c_info.get("data_type") if isinstance(c_info, dict) else "") or ""
+                                if any(t_kw in str(c_type).upper() for t_kw in ("DATE", "TIME", "TIMESTAMP")) or any(d in c_clean for d in ("date", "_at", "time")):
+                                    has_temporal = True
+                            if has_monetary or any(tok in t_clean for tok in ("order", "sale", "invoice", "transaction", "payment", "purchase")):
+                                t_set.update(["sales", "sale", "revenue", "spend", "spending", "spent"])
+                            if has_temporal:
+                                t_set.update(["month", "monthly", "year", "yearly", "week", "weekly", "date", "day"])
+
                 # 1. Canonical schema format: { "schemas": { "schema_name": { "tables": { ... } } } }
                 if "schemas" in snap_data and isinstance(snap_data["schemas"], dict):
                     for s_k, s_v in snap_data["schemas"].items():
                         if isinstance(s_v, dict) and "tables" in s_v and isinstance(s_v["tables"], dict):
                             for t_k, t_val in s_v["tables"].items():
-                                t_name = t_val.get("table_name", t_k) if isinstance(t_val, dict) else t_k
-                                _add_terms_for_table(t_name)
+                                _process_snap_table(t_k, t_val)
                 # 2. Flat tables format: { "tables": { ... } }
                 if "tables" in snap_data and isinstance(snap_data["tables"], dict):
                     for t_k, t_val in snap_data["tables"].items():
-                        t_name = t_val.get("table_name", t_k) if isinstance(t_val, dict) else t_k
-                        _add_terms_for_table(t_name)
+                        _process_snap_table(t_k, t_val)
         except Exception as e:
             logger.debug(f"[TableRetriever] Failed to load snapshot for table terms: {e}")
 
@@ -312,6 +348,30 @@ class TableRetriever:
         # 4. Keyword / Token Exact Table Name Match Boost
         # -------------------------------------------------------------
         table_terms_map = await self._get_kb_table_terms(db_knowledgebase_id=db_knowledgebase_id)
+        q_low_text = clean_text.lower()
+
+        AUXILIARY_PREFIX_SUFFIX = (
+            "changeset", "ordered_", "gitlab_", "github_", "_journals", "_hierarchies",
+            "_status_checks", "custom_actions_", "done_statuses", "_tokens", "historic",
+            "_members", "_roles", "_custom_fields"
+        )
+
+        for t_known, terms in table_terms_map.items():
+            t_low = t_known.lower()
+            t_spaced = t_low.replace("_", " ")
+            is_aux = any(aux in t_low for aux in AUXILIARY_PREFIX_SUFFIX)
+
+            # Check full table phrase or singular match in original query
+            matched_phrase = False
+            if t_low in q_low_text or t_spaced in q_low_text:
+                matched_phrase = True
+            elif (t_low.endswith("s") and t_low[:-1] in q_low_text) or (t_spaced.endswith("s") and t_spaced[:-1] in q_low_text):
+                matched_phrase = True
+
+            if matched_phrase:
+                score_boost = 0.50 if not is_aux else 0.15
+                _add_score(t_known, score_boost, f"Full table phrase match '{t_known}'", "table_phrase_exact")
+
         for tok in frame.tokens:
             matched_tables_for_tok: Set[str] = set()
             for t_known, terms in table_terms_map.items():
@@ -320,7 +380,11 @@ class TableRetriever:
                         matched_tables_for_tok.add(t_known)
                         break
             for t_known in matched_tables_for_tok:
-                _add_score(t_known, 0.05, f"Direct token match '{tok}'", "token_exact")
+                t_low = t_known.lower()
+                is_aux = any(aux in t_low for aux in AUXILIARY_PREFIX_SUFFIX)
+                is_concept_tok = tok in ("sales", "sale", "revenue", "spend", "spending", "spent", "month", "monthly")
+                delta = 0.25 if is_concept_tok and not is_aux else (0.05 if not is_aux else 0.02)
+                _add_score(t_known, delta, f"Direct token match '{tok}'", "token_exact")
 
         # Compile candidates
         candidates: List[TableCandidate] = []

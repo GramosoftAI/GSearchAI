@@ -31,7 +31,7 @@ class ReadOnlyPoolManager:
     _instance: Optional["ReadOnlyPoolManager"] = None
     _singleton_lock = asyncio.Lock()
 
-    def __init__(self, min_size: int = 2, max_size: int = 10, pool_timeout_seconds: float = 5.0):
+    def __init__(self, min_size: int = 1, max_size: int = 10, pool_timeout_seconds: float = 15.0):
         self.min_size = min_size
         self.max_size = max_size
         self.pool_timeout_seconds = pool_timeout_seconds
@@ -42,9 +42,9 @@ class ReadOnlyPoolManager:
     @classmethod
     async def get_instance(
         cls,
-        min_size: int = 2,
+        min_size: int = 1,
         max_size: int = 10,
-        pool_timeout_seconds: float = 5.0,
+        pool_timeout_seconds: float = 15.0,
     ) -> "ReadOnlyPoolManager":
         """Asynchronous singleton accessor."""
         if cls._instance is None:
@@ -131,6 +131,13 @@ class ReadOnlyPoolManager:
                 f"(min={self.min_size}, max={self.max_size}, tenant={tenant_id})"
             )
 
+            timeout_sec = max(
+                self.pool_timeout_seconds,
+                float(getattr(config, "connection_timeout_seconds", 5)),
+                float(getattr(db_config, "connection_timeout", 10.0) or 10.0),
+                10.0
+            )
+
             try:
                 new_pool = await asyncpg.create_pool(
                     host=db_config.host,
@@ -144,7 +151,7 @@ class ReadOnlyPoolManager:
                     max_inactive_connection_lifetime=300.0,
                     command_timeout=config.statement_timeout_ms / 1000.0,
                     server_settings=session_settings,
-                    timeout=self.pool_timeout_seconds,
+                    timeout=timeout_sec,
                 )
                 self._pools[pool_key] = new_pool
                 self._pool_metadata[pool_key] = {

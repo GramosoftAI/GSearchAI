@@ -71,6 +71,7 @@ from ..semantic.business_rules import BusinessRuleRegistry
 from ..semantic.memory import VerifiedQueryMemory
 from ..semantic.profiling import ValueProfiler
 from ..semantic.resolver import SemanticResolver, SemanticResolutionResult
+from ..pipeline.context import QueryPipelineContext
 
 logger = logging.getLogger(__name__)
 
@@ -645,6 +646,7 @@ class DatabaseKnowledgebaseService:
             question=user_query,
             reference_date=reference_date,
             clarification_answers=clarification_answers,
+            canonical_schema=canonical_schema,
         )
 
         # 3. Fail-closed security guard on unanswerable sensitive access
@@ -662,7 +664,13 @@ class DatabaseKnowledgebaseService:
         selected_scores: Dict[str, TableRetrievalScore] = {}
         retrieved_table_schemas: List[Any] = []
 
-        for cand in pack.tables:
+        # Separate primary candidates and bridge tables:
+        # Retain primary candidates up to top_k_tables, and always include all connecting bridge tables
+        primary_cands = [c for c in pack.tables if not c.get("is_bridge")]
+        bridge_cands = [c for c in pack.tables if c.get("is_bridge")]
+        ordered_cands = primary_cands[:top_k_tables] + bridge_cands
+
+        for cand in ordered_cands:
             tbl_clean = cand.get("name", "").lower()
             matching_schema = canonical_tables_map.get(tbl_clean)
             if matching_schema:
@@ -684,8 +692,6 @@ class DatabaseKnowledgebaseService:
                 selected_scores[matching_schema.table_name] = score_obj
                 if matching_schema not in retrieved_table_schemas:
                     retrieved_table_schemas.append(matching_schema)
-            if len(retrieved_table_schemas) >= top_k_tables:
-                break
 
         # Fallback to Phase 2A hybrid if Phase 3 yields no candidate tables (e.g. unindexed KB or cold start)
         if not retrieved_table_schemas:
@@ -907,6 +913,7 @@ class DatabaseKnowledgebaseService:
             canonical_schema=canonical_schema,
             retrieval_result=retrieval_res,
             semantic_context=semantic_res,
+            tenant_id=tenant_uuid,
         )
 
     async def generate_candidate_sql(
@@ -950,6 +957,7 @@ class DatabaseKnowledgebaseService:
             canonical_schema=canonical_schema,
             retrieval_result=retrieval_res,
             semantic_context=semantic_res,
+            tenant_id=tenant_uuid,
         )
         return await SQLRepairEngine.generate_and_validate(
             user_query=user_query,
@@ -1040,6 +1048,17 @@ class DatabaseKnowledgebaseService:
             request_id=request_id,
             user_id=user_id,
         )
+        ctx = QueryPipelineContext.create(
+            original_question=user_query,
+            tenant_id=self.tenant_id,
+            knowledgebase_id=kb_id,
+            query_id=query_id,
+            request_id=request_id,
+            user_id=user_id,
+        )
+        ctx.tracer = tracer
+        # Context identifiers are correlation only — authorization is the repo lookup below.
+        ctx.assert_scope(self.tenant_id, kb_id)
 
         # Verify tenant ownership of knowledgebase
         entity = await self.repo.get_by_id(kb_id)
@@ -1047,15 +1066,16 @@ class DatabaseKnowledgebaseService:
             raise TenantMismatchError(detail=f"Database knowledgebase '{kb_id}' not found.")
         security_overrides = entity.settings.get("security_overrides", {}) if hasattr(entity, "settings") and entity.settings else {}
 
-        audit_ctx = {
-            "query_id": query_id,
-            "tenant_id": self.tenant_id,
-            "knowledgebase_id": kb_id,
-        }
+        audit_ctx = ctx.audit_context
 
         # Load canonical schema snapshot early for pre-validation and planning
         snapshot = await self.repo.get_latest_schema_snapshot(kb_id)
         canonical_schema = DatabaseSchema(**snapshot.schema_data) if snapshot else None
+        ctx.bind_schema(
+            canonical_schema=canonical_schema,
+            schema_version=getattr(canonical_schema, "fingerprint", None) if canonical_schema else None,
+            security_overrides=security_overrides,
+        )
 
         current_stage = "INITIALIZATION"
         try:
@@ -1075,7 +1095,7 @@ class DatabaseKnowledgebaseService:
             # Security Pre-Validation: Fail-closed on direct DDL/DML, system catalog exfiltration, or adversarial injections
             user_query_clean = user_query.strip()
             hostile_ddl_dml = re.search(
-                r"\b(drop\s+table|delete\s+from|update\s+\w+\s+set|truncate\s+table|alter\s+table|grant\s+all|revoke\s+all)\b",
+                r"\b(drop\s+table|delete\s+from|insert\s+into|update\s+\w+\s+set|truncate\s+table|alter\s+table|grant\s+all|revoke\s+all)\b",
                 user_query_clean,
                 re.IGNORECASE,
             )
@@ -1136,7 +1156,7 @@ class DatabaseKnowledgebaseService:
                                 raise SQLValidationError(
                                     f"Security policy rejection: Unauthorized column '{col_name}' is not permitted."
                                 )
-                elif isinstance(parsed_expr, (exp.Drop, exp.Update, exp.Delete, exp.Insert, exp.AlterTable, exp.TruncateTable)):
+                elif isinstance(parsed_expr, (exp.Drop, exp.Update, exp.Delete, exp.Insert, exp.Alter, exp.TruncateTable)):
                     raise SQLValidationError(
                         f"Security policy rejection: Non-SELECT statement '{type(parsed_expr).__name__}' is forbidden."
                     )
@@ -1212,6 +1232,8 @@ class DatabaseKnowledgebaseService:
             if strict_rules:
                 query_with_rules += "\n\n" + "\n".join(strict_rules)
                 logger.info(f"[DISAMBIGUATION] Injected {len(strict_rules)} rules into query")
+            ctx.set_working_question(query_with_rules)
+            ctx.record_entities(resolved_entities_list, disambiguation_notices)
                 
             # NOTE: We intentionally do NOT append resolved entity table names to query_with_rules.
             # Appending table names (e.g. 'users' or 'employee_employee') pollutes the user query
@@ -1236,13 +1258,36 @@ class DatabaseKnowledgebaseService:
                 top_k_tables=top_k_tables,
                 top_k_columns_per_table=top_k_columns_per_table,
                 include_relationships=True,
-                canonical_schema=canonical_schema,
+                canonical_schema=ctx.canonical_schema,
             )
             t_ret_ms = (time.perf_counter() - t_ret_start) * 1000.0
+            ctx.record_retrieval(retrieval_res, latency_ms=t_ret_ms)
 
             if hasattr(retrieval_res, "context_pack") and retrieval_res.context_pack:
-                if getattr(retrieval_res.context_pack, "clarifications", None):
-                    disambiguation_notices.extend(retrieval_res.context_pack.clarifications)
+                c_pack = retrieval_res.context_pack
+                if getattr(c_pack, "clarifications", None):
+                    extra = list(c_pack.clarifications)
+                    disambiguation_notices.extend(extra)
+
+                for pe in getattr(c_pack, "entities", []) or []:
+                    pe_val = pe.get("value") or pe.get("span")
+                    pe_tbl = pe.get("table")
+                    if pe_val and not any(
+                        (e.get("name") == pe_val or e.get("value") == pe_val) and e.get("table") == pe_tbl
+                        for e in resolved_entities_list
+                    ):
+                        resolved_entities_list.append({
+                            "type": pe_tbl or "entity",
+                            "id": pe.get("pk"),
+                            "name": pe_val,
+                            "value": pe_val,
+                            "table": pe_tbl,
+                            "column": pe.get("column"),
+                            "pk_column": "id",
+                            "ambiguous": pe.get("status") == "ambiguous",
+                            "choices": pe.get("choices", []),
+                        })
+                ctx.record_entities(resolved_entities_list, disambiguation_notices)
 
             tracer.schema_version = retrieval_res.schema_version
             table_scores = {}
@@ -1302,26 +1347,34 @@ class DatabaseKnowledgebaseService:
                 )
 
             t_plan_start = time.perf_counter()
-            if canonical_schema is None:
+            if ctx.canonical_schema is None:
                 snapshot = await self.repo.get_latest_schema_snapshot(kb_id)
                 canonical_schema = DatabaseSchema(**snapshot.schema_data) if snapshot else None
+                ctx.bind_schema(
+                    canonical_schema=canonical_schema,
+                    schema_version=getattr(canonical_schema, "fingerprint", None) if canonical_schema else None,
+                )
+            else:
+                canonical_schema = ctx.canonical_schema
 
             # Phase 6: Semantic Context Resolution
             tenant_uuid = uuid.UUID(self.tenant_id) if isinstance(self.tenant_id, str) else self.tenant_id
             semantic_res = self.semantic_resolver.resolve(
-                query=user_query,
+                query=ctx.original_question,
                 tenant_id=tenant_uuid,
                 knowledgebase_id=kb_id,
                 schema_version=canonical_schema.fingerprint if canonical_schema else "unknown",
             )
+            ctx.record_semantic(semantic_res)
 
             plan = QueryPlanner.plan(
-                user_query=user_query,
+                user_query=ctx.original_question,
                 database_knowledgebase_id=kb_id,
                 canonical_schema=canonical_schema,
                 retrieval_result=retrieval_res,
                 semantic_context=semantic_res,
                 resolved_entities=resolved_entities_list,
+                tenant_id=tenant_uuid,
             )
             # Ensure all tables planned from canonical schema are registered in retrieval_res.retrieved_tables
             # so AST security policy recognizes valid schema bridges and anchors
@@ -1335,6 +1388,7 @@ class DatabaseKnowledgebaseService:
                                 retrieved_names.add(tp.table_name.lower())
                                 break
             t_plan_ms = (time.perf_counter() - t_plan_start) * 1000.0
+            ctx.record_plan(plan, latency_ms=t_plan_ms)
             tracer.record_planning(
                 intent=plan.intent.value if hasattr(plan.intent, "value") else str(plan.intent),
                 tables=[t.table_name for t in plan.tables],
@@ -1431,6 +1485,18 @@ class DatabaseKnowledgebaseService:
                         matched_schema_tokens.append(f"table_singular:{t_schema.table_name}:{tok[:-1]}")
                     elif tok.endswith("es") and tok[:-2] in t_parts:
                         matched_schema_tokens.append(f"table_singular:{t_schema.table_name}:{tok[:-2]}")
+                    elif tok in ("month", "monthly", "year", "yearly", "week", "weekly", "date", "day"):
+                        for c_n, c_s in t_schema.columns.items():
+                            c_dt = getattr(c_s, "data_type", "") or ""
+                            if any(d_kw in str(c_dt).upper() for d_kw in ("DATE", "TIME", "TIMESTAMP")) or any(d in c_n.lower() for d in ("date", "_at", "time")):
+                                matched_schema_tokens.append(f"col_temporal:{t_schema.table_name}:{tok}")
+                                break
+                    elif tok in ("revenue", "sales", "spend", "spending", "spent", "amount", "cost", "price"):
+                        for c_n, c_s in t_schema.columns.items():
+                            c_dt = getattr(c_s, "data_type", "") or ""
+                            if any(n_kw in str(c_dt).upper() for n_kw in ("NUMERIC", "DECIMAL", "FLOAT", "INT")) or any(m in c_n.lower() for m in ("amount", "price", "revenue", "cost", "total", "spend")):
+                                matched_schema_tokens.append(f"col_monetary:{t_schema.table_name}:{tok}")
+                                break
 
             pack = getattr(retrieval_res, "context_pack", None)
             glossary_matches = len(getattr(pack, "glossary_matches", []) or [])
@@ -1547,6 +1613,7 @@ class DatabaseKnowledgebaseService:
                         },
                     )
 
+                ctx.record_answer(guard_answer)
                 return guard_answer
 
             # 3. SQL Generation
@@ -1571,6 +1638,7 @@ class DatabaseKnowledgebaseService:
                 audit_context=audit_ctx,
             )
             t_sql_ms = (time.perf_counter() - t_sql_start) * 1000.0
+            ctx.record_sql(candidate_sql, latency_ms=t_sql_ms)
             tracer.record_sql_generation(
                 candidate_sql=candidate_sql.parameterized.parameterized_sql,
                 parameters=candidate_sql.parameterized.parameters,
@@ -1654,6 +1722,7 @@ class DatabaseKnowledgebaseService:
                 execution_config=execution_config,
             )
             t_norm_ms = max(0.0, (time.perf_counter() - t_exec_start) * 1000.0 - canonical_result.execution_time_ms)
+            ctx.record_execution(canonical_result, latency_ms=canonical_result.execution_time_ms)
             tracer.record_execution(
                 executed=True,
                 row_count=canonical_result.row_count,
@@ -1700,6 +1769,8 @@ class DatabaseKnowledgebaseService:
                         )
                         candidate_sql = retry_candidate
                         canonical_result = retry_result
+                        ctx.record_sql(candidate_sql)
+                        ctx.record_execution(canonical_result)
                 except Exception as retry_err:
                     logger.warning(f"[ZERO_ROW_RECOVERY] Recovery attempt failed: {retry_err}")
 
@@ -1736,6 +1807,7 @@ class DatabaseKnowledgebaseService:
                 use_llm=use_llm,
             )
             t_syn_ms = (time.perf_counter() - t_syn_start) * 1000.0
+            ctx.record_answer(answer, latency_ms=t_syn_ms)
             is_fallback = getattr(answer.grounding_status, "value", str(answer.grounding_status)) == "FALLBACK_DETERMINISTIC"
             tracer.record_synthesis(
                 answer_type=answer.answer_type.value if hasattr(answer.answer_type, "value") else str(answer.answer_type),

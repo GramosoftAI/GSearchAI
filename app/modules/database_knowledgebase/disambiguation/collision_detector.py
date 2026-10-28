@@ -89,6 +89,8 @@ class CollisionDetector:
             score = len(name_cols) * 10
             if re.search(r"(employee|staff|worker)", t_lower):
                 score += 80
+            elif re.search(r"(customer|client)", t_lower):
+                score += 65
             elif re.search(r"(user|person|member|account|contact)", t_lower):
                 score += 40
             if t_schema.primary_key_columns:

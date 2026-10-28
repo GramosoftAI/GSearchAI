@@ -68,7 +68,8 @@ class SQLRepairEngine:
         "early", "missing", "not", "no", "never", "without",
         "except", "greater", "less", "more", "fewer", "below",
         "above", "under", "over", "exceed", "minimum", "maximum",
-        "equal", "where", "whose", "which", "if", "when", "unassigned",
+        "equal", "where", "whose", "if", "when", "unassigned",
+        "bought", "purchased",
     }
     NEGATION_WORDS = {
         "absent", "missing", "not", "no", "without", "none", "never",
@@ -101,13 +102,25 @@ class SQLRepairEngine:
             has_time_word = bool(words & cls.TIME_WORDS)
             has_condition_word = bool(words & cls.CONDITION_WORDS)
 
+            # Check if time words are consumed by temporal grouping expressions (e.g. DATE_TRUNC, EXTRACT)
+            has_temporal_grouping = any(
+                any(fn in str(g).upper() for fn in ("DATE_TRUNC(", "EXTRACT(", "DATE("))
+                for g in (plan.group_by or [])
+            ) or any(
+                any(fn in str(p.column_name).upper() for fn in ("DATE_TRUNC(", "EXTRACT(", "DATE("))
+                for p in plan.projections
+            )
+
             # If the plan has zero predicates but the question contains a time word or condition word,
-            # the planner missed filters -> force the LLM path
-            if len(plan.predicates) == 0 and (has_time_word or has_condition_word):
+            # the planner missed filters -> force the LLM path (unless time word is consumed by temporal grouping)
+            if len(plan.predicates) == 0 and has_condition_word:
+                return False
+
+            if len(plan.predicates) == 0 and has_time_word and not has_temporal_grouping:
                 return False
 
             # If question has time filters, ensure plan actually has temporal predicates
-            if has_time_word:
+            if has_time_word and not has_temporal_grouping:
                 temporal_col_kw = ("date", "time", "created", "updated", "year", "month", "day", "at")
                 has_temporal_pred = any(
                     any(k in p.column_name.lower() for k in temporal_col_kw)
@@ -126,8 +139,25 @@ class SQLRepairEngine:
             if any(k in words for k in ("pending", "shortage", "deficit", "remaining")) and any(k in words for k in ("hour", "hours", "work", "time", "attendance")):
                 return False
 
-            # Multi-table list/who/name queries involving joins need LLM reasoning
-            if len(plan.tables) > 1 and any(w in words for w in ("who", "list", "name", "names", "which")):
+            # Multi-table list/who/name queries involving joins need LLM reasoning (unless fully structured grouped/ranking plan)
+            is_grouped_or_ranking = (
+                getattr(plan.intent, "value", str(plan.intent)) in ("SELECT_RANKING", "SELECT_AGGREGATE")
+                and bool(plan.group_by or (plan.order_by and plan.limit))
+                and any(
+                    getattr(p.aggregation, "value", str(p.aggregation)) not in (None, "NONE")
+                    for p in plan.projections
+                )
+            )
+            if len(plan.tables) > 1 and not is_grouped_or_ranking:
+                if any(w in words for w in ("who", "list", "name", "names", "which")):
+                    return False
+
+            # If query asks for sales/revenue but the plan only projects price, the metric is composite (quantity * unit_price)
+            # which is not yet represented in the AST compiler -> retain LLM fallback
+            if ("sales" in words or "revenue" in words) and not any(
+                any(m in p.column_name.lower() for m in ("amount", "sales", "revenue", "total"))
+                for p in plan.projections
+            ):
                 return False
 
         # Projections check: every projection must have supported aggregation
