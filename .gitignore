@@ -280,10 +280,12 @@ datasets/
 wffvgr.csv
 
 # No test scripts or testing folders
-tests/
+!tests/
+tests/*
 testing/
 test_*.py
 *_test.py
+!tests/test_query_path_entity_resolution.py
 *cleanup*
 
 frontend/

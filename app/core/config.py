@@ -44,6 +44,9 @@ class Settings(BaseSettings):
 
     debug: bool = False
     
+    # ============= DATABASE ARCHITECTURE TOGGLE =============
+    old_database: bool = False  # If True, use old 7-stage profiling pipeline. If False, use new fast Grounded Docs architecture.
+
     # ============= EXPERIMENTAL FEATURES =============
     chunking_v2_enabled: bool = False
     chunking_v2_kb_ids: str = ""  # Comma separated list of KB IDs
@@ -54,11 +57,18 @@ class Settings(BaseSettings):
     phase2_profiler_stats_max_age_days: int = 7  # Re-profile stats after 7 days
     phase2_enrich_llm_timeout_seconds: float = 120.0  # Per-table LLM call timeout
     phase2_enrich_max_retries: int = 2  # Max retries per table in enrich stage
-    phase2_enrich_max_concurrency: int = 4  # Max concurrency for table enrichment
+    phase2_enrich_max_concurrency: int = 8  # Max concurrency for table enrichment
     phase2_manual_inline_fallback: bool = True  # If True and Redis unavailable, allow running inline/local
-    db_kb_insufficient_schema_guard_enabled: bool = True
+    db_kb_insufficient_schema_guard_enabled: bool = False
     db_kb_min_table_retrieval_score: float = 0.30
     db_kb_min_planner_confidence: float = 0.20
+    db_kb_guard_min_top1_score: float = 0.030  # Calibrated: positives min 0.0330, negatives absent 0.0284
+    db_kb_guard_min_margin: float = 0.0010     # Calibrated: positives min 0.0013
+    db_kb_guard_require_table_signal: bool = True
+    candidate_pruning_score_ratio: float = 0.5
+    candidate_pruning_max_hops: int = 2
+    value_index_distinct_cap: int = 20000
+    embedding_warmup_interval_seconds: float = 45.0
     # ============= SERVER SETTINGS =============
 
 
@@ -305,7 +315,7 @@ class Settings(BaseSettings):
 
     # ============= EXTERNAL SERVICES =============
 
-    sql_generation_model: str = "deepseek-ai/DeepSeek-V4-Flash-0731"
+    sql_generation_model: str = "deepseek-ai/DeepSeek-V3"
 
     llm_gateway_api_key: Optional[str] = None
     gdocz_api_key: Optional[str] = None  # For PDF  Markdown extraction (primary)
@@ -458,6 +468,19 @@ class Settings(BaseSettings):
     slack_signing_secret: Optional[str] = None
     slack_redirect_uri: Optional[str] = None
     slack_token_encryption_key: Optional[str] = None
+
+    # ============= DATABASE KNOWLEDGEBASE & RETRIEVAL GUARD =============
+    db_kb_insufficient_schema_guard_enabled: bool = False
+    db_kb_guard_min_top1_score: float = 0.030
+    db_kb_guard_min_margin: float = 0.0010
+    db_kb_guard_require_table_signal: bool = True
+    candidate_pruning_score_ratio: float = 0.5
+    candidate_pruning_max_hops: int = 2
+    value_index_distinct_cap: int = 20000
+    embedding_warmup_interval_seconds: float = 45.0
+    db_kb_deterministic_sql_enabled: bool = True
+    db_kb_deterministic_answer_enabled: bool = True
+    db_kb_pipeline_mode: str = "grounded_docs"  # "grounded_docs" (D:\DB\main architecture) or "legacy_planner"
 
     # ============= CORS =============
 

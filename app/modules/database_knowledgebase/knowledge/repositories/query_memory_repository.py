@@ -70,6 +70,8 @@ class QueryMemoryRepository(BaseRepository):
             await self.db.flush()
             return existing
 
+        from sqlalchemy.exc import IntegrityError
+
         item = KB2QueryMemory(
             id=uuid.uuid4(),
             tenant_id=self.tenant_id,
@@ -87,9 +89,36 @@ class QueryMemoryRepository(BaseRepository):
             created_at=now_utc,
             last_used_at=now_utc,
         )
-        self.db.add(item)
-        await self.db.flush()
-        return item
+        try:
+            async with self.db.begin_nested():
+                self.db.add(item)
+                await self.db.flush()
+            return item
+        except IntegrityError:
+            stmt = (
+                select(KB2QueryMemory)
+                .where(
+                    KB2QueryMemory.db_knowledgebase_id == db_knowledgebase_id,
+                    KB2QueryMemory.schema_version == schema_version,
+                    KB2QueryMemory.normalized_query == norm_query,
+                )
+                .with_for_update()
+            )
+            res = await self.db.execute(stmt)
+            existing = res.scalar_one_or_none()
+            if existing:
+                if not existing.is_locked_by_admin:
+                    existing.compiled_sql = compiled_sql.strip()
+                    existing.plan_ir = plan_ir
+                    existing.referenced_items = referenced_items
+                    existing.execution_stats = execution_stats
+                    if embedding:
+                        existing.embedding = embedding
+                    existing.status = status
+                existing.last_used_at = now_utc
+                await self.db.flush()
+                return existing
+            return item
 
     async def list_suggested_questions(
         self,

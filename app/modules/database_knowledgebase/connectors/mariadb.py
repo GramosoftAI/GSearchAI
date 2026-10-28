@@ -10,8 +10,14 @@ import ssl
 import asyncio
 import logging
 from typing import Optional, List, Dict, Any
-import asyncmy
-from asyncmy.cursors import DictCursor
+try:
+    import aiomysql
+    from aiomysql.cursors import DictCursor
+    import pymysql.err as mysql_errors
+except ImportError:
+    aiomysql = None
+    DictCursor = None
+    mysql_errors = None
 
 from .base import DatabaseConnector
 from ..schemas.connection import DatabaseConnectionConfig, ConnectionTestResult, SSLMode
@@ -49,21 +55,26 @@ class MariaDBConnector(DatabaseConnector):
         except Exception:
             return None
 
-    async def _get_raw_connection(self) -> asyncmy.Connection:
-        """Create a dedicated direct asyncmy connection with configured timeouts."""
+    async def _get_raw_connection(self) -> Any:
+        """Create a dedicated direct aiomysql connection with configured timeouts."""
+        if aiomysql is None:
+            raise DatabaseConnectionError(
+                detail="aiomysql driver is not available.",
+                details={"host": self.config.host, "port": self.config.port},
+            )
         ssl_ctx = self._resolve_ssl()
         try:
             conn = await asyncio.wait_for(
-                asyncmy.connect(
+                aiomysql.connect(
                     host=self.config.host,
                     port=self.config.port or 3306,
                     user=self.config.username,
                     password=self.config.raw_password,
-                    database=self.config.database_name,
+                    db=self.config.database_name,
                     connect_timeout=self.config.connection_timeout,
                     ssl=ssl_ctx,
                     autocommit=True,
-                    cursor_cls=DictCursor,
+                    cursorclass=DictCursor,
                 ),
                 timeout=self.config.connection_timeout + 1.0,
             )
@@ -74,8 +85,8 @@ class MariaDBConnector(DatabaseConnector):
                 detail=f"Connection to MariaDB host '{self.config.host}:{self.config.port}' timed out after {self.config.connection_timeout}s.",
                 details={"host": self.config.host, "port": self.config.port},
             ) from e
-        except (asyncmy.errors.OperationalError, asyncmy.errors.InternalError) as e:
-            err_code = getattr(e, "args", [None])[0] if e.args else None
+        except Exception as e:
+            err_code = getattr(e, "args", [None])[0] if getattr(e, "args", None) else None
             # 1045 is ER_ACCESS_DENIED_ERROR
             if err_code == 1045:
                 logger.warning(f"Authentication failed for user '{self.config.username}' on {self.config.host}")
@@ -96,20 +107,13 @@ class MariaDBConnector(DatabaseConnector):
                 detail=f"Failed to connect to MariaDB server: {safe_msg}",
                 details={"host": self.config.host, "port": self.config.port},
             ) from e
-        except Exception as e:
-            safe_msg = sanitize_error_message(e)
-            logger.warning(f"MariaDB connection error: {safe_msg}")
-            raise DatabaseConnectionError(
-                detail=f"Failed to connect to MariaDB server: {safe_msg}",
-                details={"host": self.config.host, "port": self.config.port},
-            ) from e
 
     async def test_connection(self) -> ConnectionTestResult:
         """
         Safely test connectivity to MariaDB/MySQL. Captures latency and server info.
         """
         t0 = time.perf_counter()
-        conn: Optional[asyncmy.Connection] = None
+        conn: Optional[Any] = None
         try:
             conn = await self._get_raw_connection()
             latency = (time.perf_counter() - t0) * 1000.0
@@ -186,7 +190,7 @@ class MariaDBConnector(DatabaseConnector):
         """
         # In MariaDB/MySQL, schema = database
         target_schemas = schemas or self.config.schema_filter or [self.config.database_name]
-        conn: Optional[asyncmy.Connection] = None
+        conn: Optional[Any] = None
         try:
             conn = await self._get_raw_connection()
 

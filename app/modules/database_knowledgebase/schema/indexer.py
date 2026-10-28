@@ -80,32 +80,54 @@ class SchemaIndexer:
             glossary_entries=None
         )
 
-        if not docs:
-            return 0
-
-        # Generate embeddings and create DatabaseSchemaEmbedding records
         embedding_records = []
-        for i in range(0, len(docs), BATCH_SIZE):
-            batch = docs[i : i + BATCH_SIZE]
-            
-            # Concurrent embedding generation for current batch
-            tasks = [EmbeddingGenerator.generate_embedding(doc.embedding_text) for doc in batch]
-            embeddings = await asyncio.gather(*tasks)
+        if docs:
+            # Generate embeddings and create DatabaseSchemaEmbedding records
+            for i in range(0, len(docs), BATCH_SIZE):
+                batch = docs[i : i + BATCH_SIZE]
+                tasks = [EmbeddingGenerator.generate_embedding(doc.embedding_text) for doc in batch]
+                embeddings = await asyncio.gather(*tasks)
 
-            for doc, emb in zip(batch, embeddings):
-                meta = doc.model_dump()
-                record = DatabaseSchemaEmbedding(
-                    id=uuid.uuid4(),
-                    tenant_id=self.tenant_id,
-                    db_knowledgebase_id=kb_id,
-                    schema_version=schema_version,
-                    entity_type=doc.document_type.value,
-                    entity_key=doc.entity_key,
-                    document_text=doc.embedding_text,
-                    embedding=emb,
-                    metadata_json=meta
-                )
-                embedding_records.append(record)
+                for doc, emb in zip(batch, embeddings):
+                    meta = doc.model_dump()
+                    record = DatabaseSchemaEmbedding(
+                        id=uuid.uuid4(),
+                        tenant_id=self.tenant_id,
+                        db_knowledgebase_id=kb_id,
+                        schema_version=schema_version,
+                        entity_type=doc.document_type.value,
+                        entity_key=doc.entity_key,
+                        document_text=doc.embedding_text,
+                        embedding=emb,
+                        metadata_json=meta
+                    )
+                    embedding_records.append(record)
+
+        # Build AI-understandable table markdown documents (inspired by D:\DB\main architecture)
+        from .markdown_doc_generator import SchemaMarkdownGenerator
+        table_docs = SchemaMarkdownGenerator.generate_all_table_documents(schema=schema)
+        if table_docs:
+            for i in range(0, len(table_docs), BATCH_SIZE):
+                batch_td = table_docs[i : i + BATCH_SIZE]
+                tasks = [EmbeddingGenerator.generate_embedding(td["text"]) for td in batch_td]
+                embeddings_td = await asyncio.gather(*tasks)
+
+                for td, emb in zip(batch_td, embeddings_td):
+                    record = DatabaseSchemaEmbedding(
+                        id=uuid.uuid4(),
+                        tenant_id=self.tenant_id,
+                        db_knowledgebase_id=kb_id,
+                        schema_version=schema_version,
+                        entity_type="table_doc",
+                        entity_key=td["entity_key"],
+                        document_text=td["text"],
+                        embedding=emb,
+                        metadata_json=td,
+                    )
+                    embedding_records.append(record)
+
+        if not embedding_records:
+            return 0
 
         # Prune old versions (clean replacement)
         if prune_old_versions:

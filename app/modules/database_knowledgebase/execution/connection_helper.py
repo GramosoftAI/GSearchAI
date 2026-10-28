@@ -9,8 +9,12 @@ import logging
 import ssl
 from typing import Any, Dict, Optional
 import asyncpg
-import asyncmy
-from asyncmy.cursors import DictCursor
+try:
+    import aiomysql
+    from aiomysql.cursors import DictCursor
+except ImportError:
+    aiomysql = None
+    DictCursor = None
 
 from ..schemas.connection import DatabaseConnectionConfig, DatabaseType, SSLMode
 from ..security.sanitizer import sanitize_error_message
@@ -19,15 +23,15 @@ from .errors import QueryConnectionError
 logger = logging.getLogger(__name__)
 
 
-def resolve_ssl_mode(ssl_mode: SSLMode) -> Optional[str]:
-    """Convert SSLMode enum to asyncpg ssl argument string or None."""
+def resolve_ssl_mode(ssl_mode: SSLMode) -> Any:
+    """Convert SSLMode enum to asyncpg ssl argument string or False."""
     if ssl_mode == SSLMode.DISABLE:
-        return None
+        return False
     elif ssl_mode in (SSLMode.REQUIRE, SSLMode.VERIFY_CA, SSLMode.VERIFY_FULL):
         return "require"
     elif ssl_mode == SSLMode.PREFER:
         return "prefer"
-    return None
+    return False
 
 
 async def connect_to_database(
@@ -36,10 +40,11 @@ async def connect_to_database(
     statement_timeout_ms: Optional[float] = None,
     server_settings: Optional[Dict[str, str]] = None,
     read_only: bool = True,
+    tenant_id: Optional[str] = None,
 ) -> Any:
     """
     Establish a dedicated connection using discrete connection parameters.
-    Supports PostgreSQL (via asyncpg) and MariaDB/MySQL (via asyncmy).
+    Supports PostgreSQL (via asyncpg) and MariaDB/MySQL (via aiomysql).
     
     CRITICAL: Never formats a string DSN with credentials. Passing discrete parameters
     guarantees that passwords with special characters do not corrupt host/port resolution.
@@ -50,6 +55,10 @@ async def connect_to_database(
     )
 
     if db_config.db_type in (DatabaseType.MARIADB, DatabaseType.MYSQL) or getattr(db_config, "port", None) in (3306, 3307):
+        if aiomysql is None:
+            raise QueryConnectionError(
+                detail="aiomysql driver is not available.",
+            )
         ssl_ctx = None
         if db_config.ssl_mode != SSLMode.DISABLE:
             try:
@@ -62,16 +71,16 @@ async def connect_to_database(
 
         try:
             conn = await asyncio.wait_for(
-                asyncmy.connect(
+                aiomysql.connect(
                     host=db_config.host,
                     port=db_config.port or 3306,
                     user=db_config.username,
                     password=db_config.raw_password,
-                    database=db_config.database_name,
+                    db=db_config.database_name,
                     connect_timeout=timeout_seconds,
                     ssl=ssl_ctx,
                     autocommit=True,
-                    cursor_cls=DictCursor,
+                    cursorclass=DictCursor,
                 ),
                 timeout=timeout_seconds + 1.0,
             )
@@ -94,6 +103,8 @@ async def connect_to_database(
     settings = dict(server_settings or {})
     if read_only:
         settings["default_transaction_read_only"] = "on"
+    if "app.current_tenant" not in settings or not settings["app.current_tenant"]:
+        settings["app.current_tenant"] = str(tenant_id or "00000000-0000-0000-0000-000000000000")
 
     command_timeout = (statement_timeout_ms / 1000.0) if statement_timeout_ms is not None else None
 

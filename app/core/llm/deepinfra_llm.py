@@ -742,7 +742,7 @@ class DeepInfraLLMClient:
             models_to_try.append(self.model_answer_fallback)
 
         client = await self.get_client()
-        stream_timeout = httpx.Timeout(connect=10.0, read=12.0, write=30.0, pool=30.0)
+        stream_timeout = httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=30.0)
 
         for model_idx, target_model in enumerate(models_to_try):
             is_fallback_model = (model_idx > 0)

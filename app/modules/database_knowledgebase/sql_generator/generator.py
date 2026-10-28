@@ -6,7 +6,7 @@ or deterministic AST compilation.
 
 import logging
 import re
-import datetime
+from datetime import date, datetime, time as dt_time
 from typing import Optional, Any
 import sqlglot
 from sqlglot import exp
@@ -42,6 +42,14 @@ class CandidateSQLGenerator:
         primary = plan.tables[0]
         primary_tbl_expr = exp.table_(primary.table_name, db=primary.schema_name, alias=primary.alias)
         query = exp.select().from_(primary_tbl_expr)
+        has_aggregations = any(
+            proj.aggregation != AggregateFunction.NONE
+            or any(proj.column_name.strip().upper().startswith(fn) for fn in ("SUM(", "AVG(", "COUNT(", "MIN(", "MAX(", "ROUND(", "COALESCE("))
+            or "/" in proj.column_name
+            for proj in plan.projections
+        )
+        if len(plan.tables) > 1 and not has_aggregations and not plan.group_by:
+            query = query.distinct()
 
         # 2. Joins
         # Map table alias to table name
@@ -88,7 +96,7 @@ class CandidateSQLGenerator:
         # 3. Projections (SELECT items)
         for proj in plan.projections:
             col_name_clean = proj.column_name.strip()
-            if any(col_name_clean.upper().startswith(fn) for fn in ("SUM(", "AVG(", "COUNT(", "MIN(", "MAX(", "ROUND(", "COALESCE(", "DATE_TRUNC(", "DATE(")) or "/" in col_name_clean:
+            if any(col_name_clean.upper().startswith(fn) for fn in ("SUM(", "AVG(", "COUNT(", "MIN(", "MAX(", "ROUND(", "COALESCE(")) or "/" in col_name_clean:
                 try:
                     parsed_expr = sqlglot.parse_one(col_name_clean, read="postgres")
                     for c in parsed_expr.find_all(exp.Column):
@@ -146,11 +154,20 @@ class CandidateSQLGenerator:
         for p in plan.predicates:
             col_expr = exp.column(p.column_name, table=p.table_alias)
             is_time_val = (
-                isinstance(p.value, datetime.time)
+                isinstance(p.value, dt_time)
                 or (isinstance(p.value, str) and bool(re.match(r"^\d{1,2}:\d{2}(:\d{2})?(\.\d+)?$", p.value.strip())))
             )
             if is_time_val:
                 col_expr = exp.Cast(this=col_expr, to=exp.DataType.build("time"))
+
+            is_date_val = (
+                isinstance(p.value, (date, datetime))
+                or (isinstance(p.value, str) and bool(re.match(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}", p.value.strip())))
+                or (isinstance(p.value, str) and any(kw in p.value.lower() for kw in ("current_date", "interval", "now()", "current_timestamp")))
+                or any(d_term in p.column_name.lower() for d_term in ("_date", "date", "_at", "created_at", "updated_at"))
+            )
+            if any(p.column_name.lower().endswith(s) for s in ("_at", "_timestamp")) and is_date_val:
+                col_expr = exp.Cast(this=col_expr, to=exp.DataType.build("date"))
 
             op = p.operator.upper().strip()
 
@@ -160,9 +177,21 @@ class CandidateSQLGenerator:
                     expression=exp.Literal.number(p.value),
                 )
             elif op in {"=", "=="}:
-                cond = exp.EQ(this=col_expr, expression=_literal(p.value))
+                if isinstance(p.value, str) and not is_date_val and not is_time_val:
+                    cond = exp.EQ(
+                        this=exp.Anonymous(this="LOWER", expressions=[col_expr]),
+                        expression=exp.Literal.string(p.value.lower()),
+                    )
+                else:
+                    cond = exp.EQ(this=col_expr, expression=_literal(p.value))
             elif op == "!=":
-                cond = exp.NEQ(this=col_expr, expression=_literal(p.value))
+                if isinstance(p.value, str) and not is_date_val and not is_time_val:
+                    cond = exp.NEQ(
+                        this=exp.Anonymous(this="LOWER", expressions=[col_expr]),
+                        expression=exp.Literal.string(p.value.lower()),
+                    )
+                else:
+                    cond = exp.NEQ(this=col_expr, expression=_literal(p.value))
             elif op == ">":
                 cond = exp.GT(this=col_expr, expression=_literal(p.value))
             elif op == "<":
@@ -182,7 +211,13 @@ class CandidateSQLGenerator:
             elif op == "IS NOT NULL":
                 cond = exp.Not(this=exp.Is(this=col_expr, expression=exp.Null()))
             elif op == "IN":
-                if isinstance(p.value, (list, tuple, set)):
+                if isinstance(p.value, (list, tuple, set)) and any(isinstance(v, str) for v in p.value):
+                    expressions = [exp.Literal.string(str(v).lower()) for v in p.value]
+                    cond = exp.In(
+                        this=exp.Anonymous(this="LOWER", expressions=[col_expr]),
+                        expressions=expressions,
+                    )
+                elif isinstance(p.value, (list, tuple, set)):
                     expressions = [_literal(v) for v in p.value]
                     cond = exp.In(this=col_expr, expressions=expressions)
                 else:
@@ -234,10 +269,7 @@ class CandidateSQLGenerator:
         ]
         if has_aggregations and scalar_projections and not plan.group_by:
             # Auto-populate missing GROUP BY with all scalar projections to ensure valid SQL execution
-            plan.group_by = [
-                p.column_name if ("(" in p.column_name or "." in p.column_name) else f"{p.table_alias}.{p.column_name}"
-                for p in scalar_projections
-            ]
+            plan.group_by = [f"{p.table_alias}.{p.column_name}" for p in scalar_projections]
             logger.info(
                 f"Auto-populated missing GROUP BY in SQL compiler with scalar projections: {plan.group_by}"
             )
@@ -249,7 +281,7 @@ class CandidateSQLGenerator:
 
         if group_by_cols:
             non_agg_cols = [
-                proj.column_name if ("(" in proj.column_name or "." in proj.column_name) else f"{proj.table_alias}.{proj.column_name}"
+                f"{proj.table_alias}.{proj.column_name}"
                 for proj in scalar_projections
             ]
             for col_str in non_agg_cols:
@@ -275,17 +307,11 @@ class CandidateSQLGenerator:
                         group_by_cols.append(expr_str)
 
         for g_expr_str in group_by_cols:
-            if "(" in g_expr_str:
-                try:
-                    g_col = sqlglot.parse_one(g_expr_str, read="postgres")
-                except Exception:
-                    g_col = exp.column(g_expr_str)
+            parts = g_expr_str.split(".")
+            if len(parts) == 2:
+                g_col = exp.column(parts[1], table=parts[0])
             else:
-                parts = g_expr_str.split(".")
-                if len(parts) == 2:
-                    g_col = exp.column(parts[1], table=parts[0])
-                else:
-                    g_col = exp.column(g_expr_str)
+                g_col = exp.column(g_expr_str)
             query = query.group_by(g_col)
 
         # 5.5 HAVING clause
@@ -302,7 +328,7 @@ class CandidateSQLGenerator:
             expr_str = o.expression.strip()
             desc = o.direction.value.upper() == "DESC"
             nulls_last = getattr(o, "nulls_last", None)
-            if any(expr_str.upper().startswith(fn) for fn in ("SUM(", "COUNT(", "AVG(", "MIN(", "MAX(", "ROUND(", "DATE_TRUNC(", "DATE(")) or "(" in expr_str:
+            if any(expr_str.upper().startswith(fn) for fn in ("SUM(", "COUNT(", "AVG(", "MIN(", "MAX(", "ROUND(")):
                 try:
                     o_expr = sqlglot.parse_one(expr_str, read="postgres")
                 except Exception:
@@ -406,6 +432,25 @@ class CandidateSQLGenerator:
                         if re.search(r"\bFROM\s+work_packages\b", sql_candidate, re.IGNORECASE) and re.search(r"\bJOIN\s+time_entries\b", sql_candidate, re.IGNORECASE):
                             if not re.search(r"\bSELECT\s+DISTINCT\b", sql_candidate, re.IGNORECASE):
                                 sql_candidate = re.sub(r"\bSELECT\b", "SELECT DISTINCT", sql_candidate, count=1, flags=re.IGNORECASE)
+
+                        # Dynamically substitute unverified string name filters with verified entity IDs
+                        if plan and plan.predicates:
+                            for pred in plan.predicates:
+                                if pred.operator in ("=", "==") and isinstance(pred.value, (int, str)) and str(pred.value).isdigit():
+                                    alias = pred.table_alias
+                                    col = pred.column_name
+                                    val = pred.value
+                                    patt = rf"\b(?:{alias}|[a-zA-Z0-9_]+)\.(?:login|firstname|lastname|name|username|full_name)\s*=\s*['\"][^'\"]+['\"]"
+                                    if re.search(patt, sql_candidate, re.IGNORECASE):
+                                        logger.info(
+                                            f"[DYNAMIC_ENTITY_BINDING] Replacing hallucinated string filter with verified {alias}.{col} = {val}"
+                                        )
+                                        sql_candidate = re.sub(
+                                            patt,
+                                            f"{alias}.{col} = {val}",
+                                            sql_candidate,
+                                            flags=re.IGNORECASE,
+                                        )
                         return sql_candidate
             except Exception as e:
                 logger.warning(f"LLM candidate SQL generation failed, falling back to deterministic compiler: {e}")

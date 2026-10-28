@@ -117,7 +117,7 @@ async def run_seed_query_memory(
     item_repo: KnowledgeItemRepository,
     query_repo: QueryMemoryRepository,
     llm_client: Optional[Any] = None,
-    target_pair_count: int = 30,
+    target_pair_count: int = 15,
 ) -> Dict[str, Any]:
     """Generate and verify seed queries for a knowledge base."""
     logger.info(f"[Seed Query Memory] Starting generation for KB={kb_id}, version={schema_version}")
@@ -193,6 +193,16 @@ Output ONLY valid JSON matching this schema:
             pairs_data = batch.pairs
     except Exception as exc:
         logger.warning(f"[Seed Query Memory] LLM question generation failed: {exc}")
+
+    # Deduplicate candidate pairs by normalized question
+    seen_queries = set()
+    deduped_pairs = []
+    for pair in pairs_data:
+        norm_q = " ".join(pair.question.strip().lower().split())
+        if norm_q and norm_q not in seen_queries:
+            seen_queries.add(norm_q)
+            deduped_pairs.append(pair)
+    pairs_data = deduped_pairs
 
     verified_count = 0
     rejections = {

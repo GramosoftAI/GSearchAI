@@ -435,9 +435,9 @@ async def init_rls_policies():
 
             FOR ALL
 
-            USING (id = COALESCE(current_setting('app.current_tenant')::uuid, '00000000-0000-0000-0000-000000000000'))
+            USING (id = COALESCE(NULLIF(current_setting('app.current_tenant', true), '')::uuid, '00000000-0000-0000-0000-000000000000'))
 
-            WITH CHECK (id = COALESCE(current_setting('app.current_tenant')::uuid, '00000000-0000-0000-0000-000000000000'))
+            WITH CHECK (id = COALESCE(NULLIF(current_setting('app.current_tenant', true), '')::uuid, '00000000-0000-0000-0000-000000000000'))
 
             """
 
@@ -521,7 +521,7 @@ async def init_rls_policies():
 
                     { "tenant_id IS NULL OR " if table == "personalities" else "" }
 
-                    tenant_id = COALESCE(current_setting('app.current_tenant')::uuid, '00000000-0000-0000-0000-000000000000')
+                    tenant_id = COALESCE(NULLIF(current_setting('app.current_tenant', true), '')::uuid, '00000000-0000-0000-0000-000000000000')
 
                 )
 
@@ -529,7 +529,7 @@ async def init_rls_policies():
 
                     { "tenant_id IS NULL OR " if table == "personalities" else "" }
 
-                    tenant_id = COALESCE(current_setting('app.current_tenant')::uuid, '00000000-0000-0000-0000-000000000000')
+                    tenant_id = COALESCE(NULLIF(current_setting('app.current_tenant', true), '')::uuid, '00000000-0000-0000-0000-000000000000')
 
                 )
 
@@ -898,10 +898,12 @@ async def init_db():
                 if curr_type and curr_type != target_type:
                     logger.info(f"Migrating document_chunks.embedding from {curr_type} to {target_type}...")
                     # Must drop indexes referencing embedding before altering vector dimensions
-                    await conn.execute(text("DROP INDEX IF EXISTS idx_chunks_embedding_bge_hnsw;"))
-                    await conn.execute(text("DROP INDEX IF EXISTS idx_doc_chunks_embedding_hnsw;"))
+                    await conn.execute(text("DROP INDEX IF EXISTS idx_chunks_embedding_bge_hnsw CASCADE;"))
+                    await conn.execute(text("DROP INDEX IF EXISTS idx_doc_chunks_embedding_hnsw CASCADE;"))
+                    await conn.execute(text("DROP INDEX IF EXISTS idx_doc_chunks_bge CASCADE;"))
+                    await conn.execute(text("DROP INDEX IF EXISTS idx_chunks_embedding_hnsw CASCADE;"))
                     await conn.execute(
-                        text(f"ALTER TABLE document_chunks ALTER COLUMN embedding TYPE {target_type};")
+                        text(f"ALTER TABLE document_chunks ALTER COLUMN embedding TYPE {target_type} USING (CASE WHEN embedding_bge IS NOT NULL THEN embedding_bge ELSE NULL END);")
                     )
                 else:
                     logger.debug(f"document_chunks.embedding verified as {target_type}")

@@ -24,7 +24,7 @@ STRICT CONSTRAINTS:
 3. Every table join MUST use explicit INNER JOIN or LEFT JOIN with exact foreign key or matching key ON conditions. Never create Cartesian (CROSS) joins.
 4. PLANNER HINT ADVISORY: The Query Plan is an advisory hint and may be incomplete or incorrect. You are NOT required to strictly follow its table choices, projections, or joins. Choose the primary table and joins from the full pruned <untrusted_database_schema> that accurately satisfy the user query.
 5. All queries must include a LIMIT clause (maximum 1000).
-6. Select descriptive and requested columns (e.g. names, identifiers, titles, metrics, dates) needed to directly and informatively answer the user query.
+6. Select descriptive and requested columns (e.g. names, identifiers, titles, metrics, dates) needed to directly and informatively answer the user query. NEVER use `SELECT *` or `table.*`. Always explicitly project specific column names. Using `SELECT *` is strictly forbidden and rejected by security policy.
 7. RELEVANT JOINS: Choose and join tables from <untrusted_database_schema> that are strictly necessary to satisfy the user query. Do NOT join unrelated child tables.
 8. PREVENT DUPLICATE ROWS: When querying primary entities joined to 1-to-many child tables, use `SELECT DISTINCT` or proper grouping to prevent duplicate rows.
 9. GROUP BY CONSISTENCY: Whenever any aggregation function (SUM, AVG, MIN, MAX, COUNT) is present alongside non-aggregated columns in SELECT, EVERY single non-aggregated column in the SELECT clause MUST be explicitly included in the GROUP BY clause.
@@ -48,7 +48,20 @@ STRICT CONSTRAINTS:
 15. TYPE CASTING: Never use string operators (LIKE, ILIKE) on numeric or ID columns without explicitly casting them to TEXT (e.g. CAST(column AS TEXT) ILIKE '%value%').
 16. USER TABLE ALIASES & CONVERSATIONAL TERMS:
     - When the sub-schema XML contains <active_table_aliases>, the user's conversational terms MUST be treated as direct references to those canonical tables.
-17. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text outside the SQL block.
+17. CRITICAL RESOLVED ENTITY BINDINGS:
+    - When <grounded_context> or <query_plan> contains a resolved entity with an ID/primary key (e.g. resolved_pk="113" or table.id = 113):
+      You MUST filter using that exact numeric ID (e.g. WHERE users.id = 113 or WHERE work_packages.assigned_to_id = 113).
+      NEVER filter using string equality on name or login columns (e.g. NEVER write `users.login = 'Arun N'`), because user display names differ from database usernames.
+18. SINGLE TABLE SUFFICIENCY & MINIMAL JOINS (CRITICAL):
+    - If the requested projection column (e.g. registration number, code, price, status) AND an entity/filter column (e.g. name, title, item, description) both exist directly on one candidate table, query that table DIRECTLY.
+    - Do NOT introduce unnecessary JOINs to dimension or master tables if the primary candidate table already holds the required data. Only join tables when required fields cannot be found within the primary table.
+19. DYNAMIC MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
+    - When filtering text columns by a multi-word or literal phrase from the user query (e.g. names, items, codes, product phrases like 'cream & IPA'):
+      * NEVER break a single literal phrase across multiple different columns using conjoined AND (e.g. NEVER write `col1 ILIKE '%part1%' AND col2 ILIKE '%part2%' AND col3 ILIKE '%part3%'`).
+      * Match the target phrase against a single candidate column with ILIKE: `(column_name ILIKE '%word1%' AND column_name ILIKE '%word2%')` or `column_name ILIKE '%word1%word2%'`.
+      * Or test candidate columns with OR: `(col_a ILIKE '%literal%' OR col_b ILIKE '%literal%')`.
+      * If matching tables with separated name fields (e.g. firstname, lastname), match against the combined expression: `CONCAT_WS(' ', col_first, col_last) ILIKE '%full literal%'`.
+20. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text outside the SQL block.
 """
 
     @classmethod
@@ -66,18 +79,26 @@ STRICT CONSTRAINTS:
 3. Every table join MUST use explicit INNER JOIN or LEFT JOIN with exact foreign key or matching key ON conditions. Never create Cartesian (CROSS) joins.
 4. PLANNER HINT ADVISORY: The Query Plan is an advisory hint (which may be wrong or incomplete). You are NOT required to strictly follow its table choices, projections, or joins. Choose the primary table and joins from the full pruned <untrusted_database_schema> that accurately satisfy the user query.
 5. All queries must include a LIMIT clause (maximum 1000).
-6. Select descriptive and requested columns needed to directly answer the user query.
+6. Select descriptive and requested columns needed to directly answer the user query. NEVER use `SELECT *` or `table.*`. Always explicitly project specific column names. Using `SELECT *` is strictly forbidden and rejected by security policy.
 7. RELEVANT JOINS: Choose and join tables from <untrusted_database_schema> strictly necessary to satisfy the user query. Do NOT join unrelated child tables.
 8. ABSENCE & NEGATION PATTERNS:
    - If the user query asks about absence, missing items, unperformed actions, or records not done, consider using `LEFT JOIN <related_table> ... WHERE <related_table>.<key> IS NULL` or `NOT EXISTS (SELECT 1 FROM ...)`. You may include a short SQL comment indicating which columns/tables you based the choice on.
 9. PREVENT DUPLICATE ROWS: When querying primary entities joined to 1-to-many child tables, use `SELECT DISTINCT` or proper grouping.
 10. GROUP BY CONSISTENCY: Whenever an aggregate function is present alongside non-aggregated columns, include all non-aggregated columns in GROUP BY.
-11. Output MariaDB / MySQL compatible SQL:
+11. SINGLE TABLE SUFFICIENCY & MINIMAL JOINS:
+   - If the requested projection column and the filter column both exist directly on one candidate table, query that table DIRECTLY. Do NOT introduce unnecessary JOINs.
+12. DYNAMIC MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
+   - When matching free-text, names, items, or literal phrases (e.g. 'cream & IPA'):
+     * NEVER break a single phrase across multiple different columns with AND (e.g. `col1 LIKE '%part1%' AND col2 LIKE '%part2%'`).
+     * Match the target phrase against a single candidate column: `(column_name LIKE '%word1%' AND column_name LIKE '%word2%')`.
+     * Or test alternative candidate columns with OR: `(col_a LIKE '%literal%' OR col_b LIKE '%literal%')`.
+     * For split name columns, use `CONCAT_WS(' ', col_first, col_last) LIKE '%full literal%'`.
+13. Output MariaDB / MySQL compatible SQL:
    - For yesterday's date: `DATE_SUB(CURRENT_DATE, INTERVAL 1 DAY)` or `DATE_ADD(CURRENT_DATE, INTERVAL -1 DAY)`.
    - For today's date: `CURRENT_DATE` or `CURDATE()`.
    - For string search: use `LIKE '%value%'` or `LOWER(column) LIKE LOWER('%value%')`. Do NOT use PostgreSQL `ILIKE` or `::text`.
    - For conditionals: use standard `CASE WHEN condition THEN val1 ELSE val2 END` or `IF(condition, val1, val2)`.
-12. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include explanations outside the SQL block.
+14. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include explanations outside the SQL block.
 """
         return cls.SYSTEM_PROMPT
 
@@ -93,22 +114,47 @@ STRICT CONSTRAINTS:
         schema_xml = retrieval_result.untrusted_boundary_text
         db_type = getattr(retrieval_result, "database_type", "postgresql") or "postgresql"
 
-        # Ensure grounded context time range is present if available on context pack
+        # Ensure grounded context is present if available on context pack
         pack = getattr(retrieval_result, "context_pack", None)
-        if pack and getattr(pack, "time_range", None) and "<grounded_context>" not in schema_xml:
-            tr = pack.time_range
-            gc_xml = (
-                f"<!-- PHASE 3 GROUNDED CONTEXT PACK -->\n"
-                f"<grounded_context>\n"
-                f'  <time_range start="{tr.get("start_date")}" end="{tr.get("end_date")}" expression="{tr.get("expression")}"/>\n'
-                f"</grounded_context>"
-            )
-            if "</database>" in schema_xml:
-                schema_xml = schema_xml.replace("</database>", f"{gc_xml}\n</database>")
-            elif "</untrusted_database_schema>" in schema_xml:
-                schema_xml = schema_xml.replace("</untrusted_database_schema>", f"{gc_xml}\n</untrusted_database_schema>")
-            else:
-                schema_xml = f"{schema_xml}\n{gc_xml}"
+        if pack and "<grounded_context>" not in schema_xml:
+            gc_elements = []
+            if getattr(pack, "entities", None):
+                gc_elements.append("  <entities>")
+                for e in pack.entities:
+                    span = e.get("span", "")
+                    tbl = e.get("table", "")
+                    col = e.get("column", "")
+                    val = e.get("matched_value") or e.get("value", "")
+                    pk = e.get("pk")
+                    gc_elements.append(
+                        f'    <entity span="{span}" table="{tbl}" column="{col}" matched_value="{val}" resolved_pk="{pk}"/>'
+                    )
+                gc_elements.append("  </entities>")
+            if getattr(pack, "time_range", None):
+                tr = pack.time_range
+                gc_elements.append(
+                    f'  <time_range start="{tr.get("start_date")}" end="{tr.get("end_date")}" expression="{tr.get("expression")}"/>'
+                )
+            if gc_elements:
+                gc_xml = "<!-- PHASE 3 GROUNDED CONTEXT PACK -->\n<grounded_context>\n" + "\n".join(gc_elements) + "\n</grounded_context>"
+                if "</database>" in schema_xml:
+                    schema_xml = schema_xml.replace("</database>", f"{gc_xml}\n</database>")
+                elif "</untrusted_database_schema>" in schema_xml:
+                    schema_xml = schema_xml.replace("</untrusted_database_schema>", f"{gc_xml}\n</untrusted_database_schema>")
+                else:
+                    schema_xml = f"{schema_xml}\n{gc_xml}"
+
+        plan_note = "planner hint (may be wrong)"
+        plan_conf = getattr(plan, "confidence", 1.0)
+        plan_reason = getattr(plan, "reasoning", "").lower()
+        if (
+            plan_conf == 0.0
+            or "planner failed" in plan_reason
+            or "cartesian" in plan_reason
+            or "failed" in plan_reason
+            or not getattr(plan, "projections", [])
+        ):
+            plan_note = "planner failed, hint unreliable"
 
         prompt = f"""Generate a {db_type.upper()} SELECT query to answer the user query based on the database schema below.
 The query plan is provided only as an advisory planner hint (which may be incomplete or wrong). Choose tables, joins, and filters from the full pruned schema in <untrusted_database_schema>.
@@ -117,7 +163,7 @@ The query plan is provided only as an advisory planner hint (which may be incomp
 {user_query}
 </user_query>
 
-<query_plan note="planner hint (may be wrong)">
+<query_plan note="{plan_note}">
 {plan_json}
 </query_plan>
 

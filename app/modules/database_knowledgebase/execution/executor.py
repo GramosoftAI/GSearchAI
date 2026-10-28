@@ -51,15 +51,18 @@ class ReadOnlyDatabaseExecutor:
         """Convert SSLMode to asyncpg ssl argument."""
         return resolve_ssl_mode(db_config.ssl_mode)
 
-    async def _acquire_connection(self, db_config: DatabaseConnectionConfig) -> asyncpg.Connection:
+    async def _acquire_connection(
+        self, db_config: DatabaseConnectionConfig, tenant_id: Optional[str] = None
+    ) -> asyncpg.Connection:
         """Establish a dedicated read-only asyncpg connection (unpooled path)."""
-        session_settings = TimeoutManager.get_session_settings(self.config)
+        session_settings = TimeoutManager.get_session_settings(self.config, tenant_id=tenant_id)
         return await connect_to_database(
             db_config=db_config,
             timeout_seconds=self.config.connection_timeout_seconds,
             statement_timeout_ms=self.config.statement_timeout_ms,
             server_settings=session_settings,
             read_only=True,
+            tenant_id=tenant_id,
         )
 
     async def _execute_on_connection(
@@ -86,6 +89,7 @@ class ReadOnlyDatabaseExecutor:
             args=pos_args,
             timeout_seconds=timeout_sec,
             dialect=dialect,
+            tenant_id=authorization.tenant_id,
         )
 
         # 3. Result Validation and Type Normalization
@@ -153,40 +157,46 @@ class ReadOnlyDatabaseExecutor:
 
         if self.use_pooling and db_config.db_type == DatabaseType.POSTGRESQL:
             pool_manager = ReadOnlyPoolManager.get_instance_sync()
-            async with pool_manager.acquire(
-                tenant_id=authorization.tenant_id,
-                kb_id=authorization.knowledgebase_id,
-                db_config=db_config,
-                config=self.config,
-            ) as conn:
-                return await self._execute_on_connection(
-                    conn=conn,
-                    candidate_sql=candidate_sql,
-                    authorization=authorization,
-                    query_id=query_id,
-                    t0=t0,
-                    is_pooled=True,
-                    dialect="postgres",
-                )
-        else:
-            conn: Optional[Any] = None
             try:
-                conn = await self._acquire_connection(db_config)
-                return await self._execute_on_connection(
-                    conn=conn,
-                    candidate_sql=candidate_sql,
-                    authorization=authorization,
-                    query_id=query_id,
-                    t0=t0,
-                    is_pooled=False,
-                    dialect=dialect,
+                async with pool_manager.acquire(
+                    tenant_id=authorization.tenant_id,
+                    kb_id=authorization.knowledgebase_id,
+                    db_config=db_config,
+                    config=self.config,
+                ) as conn:
+                    return await self._execute_on_connection(
+                        conn=conn,
+                        candidate_sql=candidate_sql,
+                        authorization=authorization,
+                        query_id=query_id,
+                        t0=t0,
+                        is_pooled=True,
+                        dialect="postgres",
+                    )
+            except QueryConnectionError as pool_err:
+                logger.warning(
+                    f"[EXECUTOR] Pooled connection failed ({pool_err}). "
+                    f"Falling back to dedicated direct connection..."
                 )
-            finally:
-                if conn:
-                    try:
-                        if hasattr(conn, "ensure_closed"):
-                            await conn.ensure_closed()
-                        elif hasattr(conn, "close"):
-                            await conn.close()
-                    except Exception:
-                        pass
+
+        conn: Optional[Any] = None
+        try:
+            conn = await self._acquire_connection(db_config, tenant_id=authorization.tenant_id)
+            return await self._execute_on_connection(
+                conn=conn,
+                candidate_sql=candidate_sql,
+                authorization=authorization,
+                query_id=query_id,
+                t0=t0,
+                is_pooled=False,
+                dialect=dialect,
+            )
+        finally:
+            if conn:
+                try:
+                    if hasattr(conn, "ensure_closed"):
+                        await conn.ensure_closed()
+                    elif hasattr(conn, "close"):
+                        await conn.close()
+                except Exception:
+                    pass

@@ -31,7 +31,7 @@ class ReadOnlyPoolManager:
     _instance: Optional["ReadOnlyPoolManager"] = None
     _singleton_lock = asyncio.Lock()
 
-    def __init__(self, min_size: int = 1, max_size: int = 10, pool_timeout_seconds: float = 15.0):
+    def __init__(self, min_size: int = 2, max_size: int = 10, pool_timeout_seconds: float = 5.0):
         self.min_size = min_size
         self.max_size = max_size
         self.pool_timeout_seconds = pool_timeout_seconds
@@ -42,9 +42,9 @@ class ReadOnlyPoolManager:
     @classmethod
     async def get_instance(
         cls,
-        min_size: int = 1,
+        min_size: int = 2,
         max_size: int = 10,
-        pool_timeout_seconds: float = 15.0,
+        pool_timeout_seconds: float = 5.0,
     ) -> "ReadOnlyPoolManager":
         """Asynchronous singleton accessor."""
         if cls._instance is None:
@@ -73,15 +73,15 @@ class ReadOnlyPoolManager:
                 cls._instance = None
 
     @staticmethod
-    def _resolve_ssl(db_config: DatabaseConnectionConfig) -> Optional[str]:
+    def _resolve_ssl(db_config: DatabaseConnectionConfig) -> Any:
         """Convert SSLMode to asyncpg ssl argument."""
         if db_config.ssl_mode == SSLMode.DISABLE:
-            return None
+            return False
         elif db_config.ssl_mode in (SSLMode.REQUIRE, SSLMode.VERIFY_CA, SSLMode.VERIFY_FULL):
             return "require"
         elif db_config.ssl_mode == SSLMode.PREFER:
             return "prefer"
-        return None
+        return False
 
     @classmethod
     def generate_pool_key(
@@ -122,20 +122,17 @@ class ReadOnlyPoolManager:
                 return self._pools[pool_key]
 
             ssl_val = self._resolve_ssl(db_config)
-            session_settings = TimeoutManager.get_session_settings(config)
+            session_settings = TimeoutManager.get_session_settings(config, tenant_id=tenant_id)
             # HARD INVARIANT: Read-only transaction enforcement at session level
             session_settings["default_transaction_read_only"] = "on"
+            if tenant_id:
+                session_settings["app.current_tenant"] = str(tenant_id)
 
+            connect_timeout = max(float(config.connection_timeout_seconds), self.pool_timeout_seconds, 15.0)
             logger.info(
                 f"Creating bounded read-only connection pool for KB {kb_id} "
-                f"(min={self.min_size}, max={self.max_size}, tenant={tenant_id})"
-            )
-
-            timeout_sec = max(
-                self.pool_timeout_seconds,
-                float(getattr(config, "connection_timeout_seconds", 5)),
-                float(getattr(db_config, "connection_timeout", 10.0) or 10.0),
-                10.0
+                f"(host='{db_config.host}', port={db_config.port}, db='{db_config.database_name}', "
+                f"min={self.min_size}, max={self.max_size}, timeout={connect_timeout}s, tenant={tenant_id})"
             )
 
             try:
@@ -151,7 +148,7 @@ class ReadOnlyPoolManager:
                     max_inactive_connection_lifetime=300.0,
                     command_timeout=config.statement_timeout_ms / 1000.0,
                     server_settings=session_settings,
-                    timeout=timeout_sec,
+                    timeout=connect_timeout,
                 )
                 self._pools[pool_key] = new_pool
                 self._pool_metadata[pool_key] = {
@@ -163,6 +160,8 @@ class ReadOnlyPoolManager:
 
             except Exception as e:
                 safe_msg = sanitize_error_message(e)
+                if not safe_msg or "timed out" in str(e).lower() or isinstance(e, (TimeoutError, asyncio.TimeoutError)):
+                    safe_msg = f"Connection to {db_config.host}:{db_config.port} timed out after {connect_timeout}s"
                 logger.error(f"Failed to create read-only connection pool: {safe_msg}")
                 raise QueryConnectionError(
                     detail=f"Failed to establish read-only connection pool: {safe_msg}"

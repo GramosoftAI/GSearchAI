@@ -219,6 +219,23 @@ async def run_phase2_pipeline(
     r_id = run_id or uuid.uuid4()
     now_utc = datetime.now(timezone.utc)
     settings = get_settings()
+
+    # Guard: if old_database=False or enable_phase2_knowledge_layer=False, skip the legacy 7-stage pipeline
+    if not getattr(settings, "old_database", False) or not getattr(settings, "enable_phase2_knowledge_layer", False):
+        logger.info(f"[Phase 2 Pipeline] Bypassed Phase 2 7-stage pipeline for KB {k_id} (Grounded Docs architecture active).")
+        return JobRunRecord(
+            run_id=r_id,
+            tenant_id=t_id,
+            kb_id=k_id,
+            schema_version=schema_version,
+            status=JobStatus.SUCCEEDED,
+            started_at=now_utc,
+            finished_at=now_utc,
+            heartbeat_at=now_utc,
+            stages={},
+            error=None,
+        )
+
     stale_threshold = getattr(settings, "phase2_job_stale_threshold_seconds", 900)
 
     async def _execute_with_session(session):
@@ -584,11 +601,21 @@ async def run_phase2_pipeline(
             except Exception as e:
                 stage_duration = time.perf_counter() - t_stage_start
                 logger.error(f"[Phase 2 Pipeline] [{stage_idx}/{total_stages}] Stage '{stage_name.value}' failed in {stage_duration:.1f}s: {e}", exc_info=True)
+
+                # CRITICAL: Roll back the aborted transaction so subsequent SQL commands can execute!
+                try:
+                    await session.rollback()
+                except Exception as rb_err:
+                    logger.debug(f"Rollback on aborted session failed: {rb_err}")
+
                 stage_rec.status = JobStatus.FAILED
                 stage_rec.finished_at = datetime.now(timezone.utc)
                 stage_rec.error = str(e)
                 stage_rec.metrics["duration_seconds"] = round(stage_duration, 2)
-                await stage_heartbeat_cb()
+                try:
+                    await stage_heartbeat_cb()
+                except Exception as hb_err:
+                    logger.warning(f"stage_heartbeat_cb on failed stage failed: {hb_err}")
 
                 # Stage independence:
                 # If ENRICH, GLOSSARY_SEED, or EXAMPLES fail, continue so SCHEMA_INDEX is never blocked
@@ -601,13 +628,16 @@ async def run_phase2_pipeline(
                     run_record.finished_at = datetime.now(timezone.utc)
                     run_record.error = f"Stage {stage_name.value} failed: {e}"
 
-                    await repo.finish_run(
-                        run_id=r_id,
-                        status="failed",
-                        stages={k: v.model_dump(mode="json") for k, v in run_record.stages.items()},
-                        error=run_record.error,
-                    )
-                    await session.commit()
+                    try:
+                        await repo.finish_run(
+                            run_id=r_id,
+                            status="failed",
+                            stages={k: v.model_dump(mode="json") for k, v in run_record.stages.items()},
+                            error=run_record.error,
+                        )
+                        await session.commit()
+                    except Exception:
+                        pass
                     return run_record
 
         # All stages executed
@@ -775,6 +805,25 @@ async def run_pipeline_for_kb_local(
     Resolves tenant_id and schema_version from database snapshots, then executes the pipeline.
     """
     k_id = uuid.UUID(str(kb_id))
+    t_id = uuid.UUID(str(tenant_id)) if tenant_id else uuid.uuid4()
+    now_utc = datetime.now(timezone.utc)
+    settings = get_settings()
+
+    if not getattr(settings, "old_database", False) or not getattr(settings, "enable_phase2_knowledge_layer", False):
+        logger.info(f"[Local Pipeline Runner] Bypassed Phase 2 7-stage pipeline for KB {k_id} (Grounded Docs architecture active).")
+        return JobRunRecord(
+            run_id=uuid.uuid4(),
+            tenant_id=t_id,
+            kb_id=k_id,
+            schema_version="grounded_docs",
+            status=JobStatus.SUCCEEDED,
+            started_at=now_utc,
+            finished_at=now_utc,
+            heartbeat_at=now_utc,
+            stages={},
+            error=None,
+        )
+
     async with AsyncSessionLocal() as session:
         stmt = (
             select(DatabaseSchemaSnapshot)

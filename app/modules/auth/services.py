@@ -60,7 +60,7 @@ settings = get_settings()
 from fastapi import BackgroundTasks
 
 async def send_registration_otp(request: schemas.SendRegistrationOTPRequest, background_tasks: BackgroundTasks, db: AsyncSession) -> dict:
-    """Generate OTP, store hash, and send email."""
+    """Generate OTP, store raw OTP, and send email."""
     email = request.email
     
     # Check if email is already registered
@@ -90,18 +90,18 @@ async def send_registration_otp(request: schemas.SendRegistrationOTPRequest, bac
     import random
     otp = f"{random.randint(0, 999999):06d}"
     
-    # Hash OTP
-    otp_hash = hash_password(otp)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
 
+    # Store raw OTP directly in the database
     registration_otp = RegistrationOTP(
         id=uuid.uuid4(),
         email=email,
-        otp_hash=otp_hash,
+        otp_hash=otp,
         expires_at=expires_at
     )
     db.add(registration_otp)
     await db.commit()
+    logger.info(f"🔑 [REGISTRATION OTP] Generated raw OTP for {email}: {otp}")
     
     # Send Email asynchronously in background
     background_tasks.add_task(EmailService.send_registration_otp_email, email, otp, request.first_name)
@@ -164,7 +164,17 @@ async def register_user(request: schemas.RegisterRequest, db: AsyncSession) -> d
         if latest_otp.expires_at < now:
             return {"success": False, "error": "This OTP has expired. Please request a new one."}
         
-        if not verify_password(request.otp, latest_otp.otp_hash):
+        # Verify OTP (compares raw OTP directly, with fallback for any legacy bcrypt hashes)
+        user_otp_input = request.otp.strip() if request.otp else ""
+        stored_otp = (latest_otp.otp_hash or "").strip()
+        is_valid_otp = (user_otp_input == stored_otp)
+        if not is_valid_otp and (stored_otp.startswith("$2") or stored_otp.startswith("$")):
+            try:
+                is_valid_otp = verify_password(user_otp_input, stored_otp)
+            except Exception:
+                is_valid_otp = False
+
+        if not is_valid_otp:
             latest_otp.failed_attempts += 1
             if latest_otp.failed_attempts >= 3:
                 latest_otp.locked_until = now + timedelta(minutes=int(os.getenv("OTP_LOCKOUT_MINUTES", 5)))

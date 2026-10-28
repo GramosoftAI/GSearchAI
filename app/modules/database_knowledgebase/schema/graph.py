@@ -76,9 +76,12 @@ class SchemaGraph:
                 if c_low.endswith("_id") or c_low.endswith("_id_id"):
                     stem = re.sub(r"_id(_id)?$", "", c_low)
                     candidates = [stem, stem + "s", stem + "es", f"base_{stem}", f"tab{stem.capitalize()}", f"tab{stem}"]
-                    if stem in ("assigned_to", "author", "responsible", "created_by", "updated_by", "owner", "member", "user"):
+                    if stem in ("assigned_to", "author", "responsible", "created_by", "updated_by", "owner", "member", "user", "assignee"):
+                        for exact_u in ("users", "user", "employees", "employee", "members", "member", "people", "person"):
+                            if exact_u in all_canonical_tables:
+                                candidates.append(exact_u)
                         for cand_t in all_canonical_tables.keys():
-                            if any(tok in cand_t for tok in ("user", "employee", "member", "person", "staff")) and not any(aux in cand_t for aux in ("setting", "preference", "role", "work", "bank", "bonus")):
+                            if any(tok in cand_t for tok in ("user", "employee", "member", "person", "staff")) and not any(aux in cand_t for aux in ("setting", "preference", "role", "work", "bank", "bonus", "password")):
                                 candidates.append(cand_t)
                     for cand in candidates:
                         if cand in all_canonical_tables:
@@ -208,14 +211,15 @@ class SchemaGraph:
 
                 JUNCTION_TOKENS = (
                     "member", "members", "assignment", "assigned", "team", "participant",
-                    "allocat", "user_project", "project_user"
+                    "allocat", "user_project", "project_user", "package", "work", "task", "item", "issue"
                 )
                 is_junction = any(tok in n_base for tok in JUNCTION_TOKENS)
 
                 src_cols = [c.lower() for c in (rel.source_columns or [])]
                 tgt_cols = [c.lower() for c in (rel.target_columns or [])]
                 all_cols = src_cols + tgt_cols
-                is_audit_fk = any(c in all_cols for c in ("author_id", "creator_id", "logged_by_id", "updater_id", "modifier_id", "presenter_id"))
+                # Only passive update/modification logging columns are audit discards; author and creator are primary entity roles
+                is_audit_fk = any(c in all_cols for c in ("logged_by_id", "updater_id", "modifier_id", "presenter_id"))
 
                 tier = 2
                 if is_junction and not is_aux:

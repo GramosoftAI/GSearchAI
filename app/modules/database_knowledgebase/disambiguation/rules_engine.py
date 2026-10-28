@@ -11,7 +11,7 @@ class RulesEngine:
         
         # 1. ID Resolution Injection
         for entity in resolved_entities:
-            if entity.get("type") == "user" and "id" in entity:
+            if entity.get("type") == "user" and entity.get("id") is not None:
                 user_id = entity["id"]
                 table_hint = entity.get("table")
                 pk_col = entity.get("pk_column") or "id"
@@ -36,8 +36,8 @@ class RulesEngine:
                     if table_hint:
                         system_rules.append(
                             f"RULE: The user '{name_hint}' has {table_hint}.{pk_col} = {val_repr}. "
-                            f"If querying '{table_hint}' or tables joining to '{table_hint}' (e.g. employee_user_id_id = {table_hint}.{pk_col}), "
-                            f"filter by that exact ID column. If querying another table that has its own primary key, join appropriately or filter by name string. "
+                            f"Always filter using {table_hint}.{pk_col} = {val_repr} (or the corresponding foreign key column in joined tables, e.g. assigned_to_id = {val_repr}). "
+                            f"NEVER filter by display name or login string (like '{name_hint}') because database usernames/logins differ from display names. "
                             f"Never filter an unrelated table's primary key (like employee_employee.id) directly with {table_hint}.{pk_col} values."
                         )
                     else:
@@ -45,13 +45,24 @@ class RulesEngine:
                             f"RULE: The user mentioned in the query has exactly ID = {val_repr}. "
                             f"Filter by ID = {val_repr} on the matching user table."
                         )
+            elif entity.get("type") == "user" and entity.get("values"):
+                vals = entity.get("values")
+                col = entity.get("column") or "name"
+                table_hint = entity.get("table")
+                name_hint = entity.get("name", "user")
+                val_list = ", ".join(f"'{v}'" for v in vals)
+                if table_hint:
+                    system_rules.append(
+                        f"RULE: The user '{name_hint}' matches records where {table_hint}.{col} IN ({val_list})."
+                    )
         
         # 2. Assignee vs Author Clarification
         query_lower = original_query.lower()
-        if "work package" in query_lower or "work packages" in query_lower:
+        if any(term in query_lower for term in ("work package", "work packages", "progress", "task", "tasks")):
             system_rules.append(
-                "RULE: When asked for 'work packages for [User]', ALWAYS assume they mean "
-                "the user it is assigned to, UNLESS they explicitly say 'authored by' or 'created by'."
+                "RULE: When asked for 'work packages' or 'progress' for a user, ALWAYS assume "
+                "the user it is assigned to (e.g. work_packages.assigned_to_id = users.id), "
+                "UNLESS they explicitly say 'authored by' or 'created by'."
             )
             
         return system_rules

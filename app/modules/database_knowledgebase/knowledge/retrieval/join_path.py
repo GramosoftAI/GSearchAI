@@ -53,6 +53,17 @@ class JoinPathResult(BaseModel):
     total_cost: float = 0.0
 
 
+class TraversedNeighbor(BaseModel):
+    """Result of entity ID traversal along foreign key graph."""
+    table_name: str
+    anchor_table: str
+    left_col: str
+    right_col: str
+    relevance_score: float
+    matched_concept: str
+    hops: int = 1
+
+
 class EdgeInfo:
     def __init__(
         self,
@@ -89,231 +100,120 @@ class JoinPathFinder:
         self.max_hops = max_hops
         # graph: table_name -> list of EdgeInfo
         self._graph: Dict[str, List[EdgeInfo]] = {}
-
-    def _ingest_declared_fks_from_canonical(self, schema_obj: Any) -> None:
-        """Ingest declared FK relationships from canonical DatabaseSchema. Never invent relationships."""
-        if not schema_obj:
-            return
-        tables = getattr(schema_obj, "all_tables", [])
-        if not tables and hasattr(schema_obj, "schemas"):
-            for s_info in schema_obj.schemas.values():
-                tables.extend(s_info.tables.values())
-
-        for table in tables:
-            c_tbl = table.table_name.lower().split(".")[-1]
-            fks = getattr(table, "foreign_keys", []) or []
-            for fk in fks:
-                p_tbl = fk.referred_table.lower().split(".")[-1]
-                c_cols = fk.constrained_columns or []
-                p_cols = fk.referred_columns or []
-                if not c_tbl or not p_tbl or not c_cols or not p_cols:
-                    continue
-                c_col = c_cols[0]
-                p_col = p_cols[0]
-
-                # Avoid duplicate edges
-                existing_fwd = self._graph.get(c_tbl, [])
-                if not any(e.target_table == p_tbl and e.left_col == c_col and e.right_col == p_col for e in existing_fwd):
-                    self._graph.setdefault(c_tbl, []).append(
-                        EdgeInfo(
-                            target_table=p_tbl,
-                            left_col=c_col,
-                            right_col=p_col,
-                            cardinality="1:N",
-                            confidence=1.0,
-                            source="declared",
-                            status="confirmed",
-                            weight=1.0,
-                        )
-                    )
-
-                existing_rev = self._graph.get(p_tbl, [])
-                if not any(e.target_table == c_tbl and e.left_col == p_col and e.right_col == c_col for e in existing_rev):
-                    self._graph.setdefault(p_tbl, []).append(
-                        EdgeInfo(
-                            target_table=c_tbl,
-                            left_col=p_col,
-                            right_col=c_col,
-                            cardinality="1:N_fanout",
-                            confidence=1.0,
-                            source="declared",
-                            status="confirmed",
-                            weight=1.0,
-                        )
-                    )
-
-    def _ingest_declared_fks_from_schema_dict(self, raw_data: Dict[str, Any]) -> None:
-        """Ingest declared FK relationships from serialized schema dict."""
-        try:
-            from app.modules.database_knowledgebase.schemas.canonical import DatabaseSchema
-            schema_obj = DatabaseSchema.model_validate(raw_data)
-            self._ingest_declared_fks_from_canonical(schema_obj)
-            return
-        except Exception as e:
-            logger.debug(f"[JoinPathFinder] Failed to validate DatabaseSchema from dict: {e}")
-
-        # Fallback manual traversal
-        schemas = raw_data.get("schemas", {})
-        for s_val in schemas.values():
-            if isinstance(s_val, dict) and "tables" in s_val:
-                for t_name, t_val in s_val["tables"].items():
-                    if not isinstance(t_val, dict):
-                        continue
-                    c_tbl = (t_val.get("table_name") or t_name).lower().split(".")[-1]
-                    for fk in t_val.get("foreign_keys", []):
-                        if not isinstance(fk, dict):
-                            continue
-                        p_tbl = (fk.get("referred_table") or "").lower().split(".")[-1]
-                        c_cols = fk.get("constrained_columns") or []
-                        p_cols = fk.get("referred_columns") or []
-                        if not c_tbl or not p_tbl or not c_cols or not p_cols:
-                            continue
-                        c_col = c_cols[0]
-                        p_col = p_cols[0]
-
-                        existing_fwd = self._graph.get(c_tbl, [])
-                        if not any(e.target_table == p_tbl and e.left_col == c_col and e.right_col == p_col for e in existing_fwd):
-                            self._graph.setdefault(c_tbl, []).append(
-                                EdgeInfo(
-                                    target_table=p_tbl,
-                                    left_col=c_col,
-                                    right_col=p_col,
-                                    cardinality="1:N",
-                                    confidence=1.0,
-                                    source="declared",
-                                    status="confirmed",
-                                    weight=1.0,
-                                )
-                            )
-                        existing_rev = self._graph.get(p_tbl, [])
-                        if not any(e.target_table == c_tbl and e.left_col == p_col and e.right_col == c_col for e in existing_rev):
-                            self._graph.setdefault(p_tbl, []).append(
-                                EdgeInfo(
-                                    target_table=c_tbl,
-                                    left_col=p_col,
-                                    right_col=c_col,
-                                    cardinality="1:N_fanout",
-                                    confidence=1.0,
-                                    source="declared",
-                                    status="confirmed",
-                                    weight=1.0,
-                                )
-                            )
+        # dynamic schema concepts: table_name -> set of concept tokens from table & column knowledge items
+        self._table_concepts: Dict[str, Set[str]] = {}
 
     async def build_graph(
         self,
         db_knowledgebase_id: uuid.UUID,
         schema_version: Optional[str] = None,
         session: Optional[AsyncSession] = None,
-        canonical_schema: Optional[Any] = None,
     ):
-        """Construct weighted graph from relationship items or canonical schema declared FKs."""
+        """Construct weighted graph from relationship items and dynamic table/column concepts."""
+        import re
         self._graph.clear()
+        self._table_concepts.clear()
         target_db = session or self.db
 
-        items = []
-        if target_db is not None:
-            try:
-                stmt = select(KB2KnowledgeItem).where(
-                    KB2KnowledgeItem.tenant_id == self.tenant_id,
-                    KB2KnowledgeItem.db_knowledgebase_id == db_knowledgebase_id,
-                    KB2KnowledgeItem.item_type == "relationship",
-                    KB2KnowledgeItem.status.in_(["confirmed", "draft"]),
-                )
-                res = await target_db.execute(stmt)
-                if hasattr(res, "scalars"):
-                    scalar_obj = res.scalars()
-                    all_fn = getattr(scalar_obj, "all", None)
-                    if callable(all_fn):
-                        items = all_fn()
-            except Exception as e:
-                logger.debug(f"[JoinPathFinder] KB2 relationship query ignored: {e}")
-
-        if not items:
-            # Cold-start / Phase-2-off: use declared FKs from the canonical schema or
-            # the tenant-scoped snapshot. Never invent joins from column-name heuristics.
-            schema_obj = canonical_schema
-            if schema_obj is None and target_db is not None:
-                from app.modules.database_knowledgebase.models.database_knowledgebase import DatabaseSchemaSnapshot
-
-                snap_stmt = (
-                    select(DatabaseSchemaSnapshot.schema_data)
-                    .where(
-                        DatabaseSchemaSnapshot.tenant_id == self.tenant_id,
-                        DatabaseSchemaSnapshot.db_knowledgebase_id == db_knowledgebase_id,
-                    )
-                    .order_by(DatabaseSchemaSnapshot.created_at.desc())
-                    .limit(1)
-                )
-                snap_res = await target_db.execute(snap_stmt)
-                raw_data = snap_res.scalar_one_or_none()
-                if raw_data and isinstance(raw_data, dict):
-                    self._ingest_declared_fks_from_schema_dict(raw_data)
-            elif schema_obj is not None:
-                self._ingest_declared_fks_from_canonical(schema_obj)
+        stmt = select(KB2KnowledgeItem).where(
+            KB2KnowledgeItem.tenant_id == self.tenant_id,
+            KB2KnowledgeItem.db_knowledgebase_id == db_knowledgebase_id,
+            KB2KnowledgeItem.item_type.in_(["relationship", "table", "column"]),
+            KB2KnowledgeItem.status.in_(["confirmed", "draft"]),
+        )
+        res = await target_db.execute(stmt)
+        items = res.scalars().all()
 
         for it in items:
             p = it.payload or {}
-            c_tbl = (p.get("child_table") or "").lower().split(".")[-1]
-            p_tbl = (p.get("parent_table") or "").lower().split(".")[-1]
-            c_cols = p.get("child_columns") or []
-            p_cols = p.get("parent_columns") or []
-            card = p.get("cardinality") or "1:N"
-            conf = float(p.get("confidence") or 1.0)
-            src = it.source or "inferred"
-            stat = it.status or "draft"
+            if it.item_type == "relationship":
+                c_tbl = (p.get("child_table") or "").lower().split(".")[-1]
+                p_tbl = (p.get("parent_table") or "").lower().split(".")[-1]
+                c_cols = p.get("child_columns") or []
+                p_cols = p.get("parent_columns") or []
+                card = p.get("cardinality") or "1:N"
+                conf = float(p.get("confidence") or 1.0)
+                src = it.source or "inferred"
+                stat = it.status or "draft"
 
-            if not c_tbl or not p_tbl or not c_cols or not p_cols:
-                continue
+                if not c_tbl or not p_tbl or not c_cols or not p_cols:
+                    continue
 
-            c_col = c_cols[0]
-            p_col = p_cols[0]
+                c_col = c_cols[0]
+                p_col = p_cols[0]
 
-            # Compute Dijkstra edge weight
-            # declared: 1.0, confirmed inferred: 1.5, draft inferred: 2.5, N:M: 2.0x multiplier
-            if src == "declared":
-                base_w = 1.0
-            elif stat == "confirmed":
-                base_w = 1.5
-            else:
-                base_w = 2.5
+                # Compute Dijkstra edge weight
+                # declared: 1.0, confirmed inferred: 1.5, draft inferred: 2.5, N:M: 2.0x multiplier
+                if src == "declared":
+                    base_w = 1.0
+                elif stat == "confirmed":
+                    base_w = 1.5
+                else:
+                    base_w = 2.5
 
-            if card == "N:M":
-                base_w *= 2.0
+                if card == "N:M":
+                    base_w *= 2.0
 
-            # Forward edge (child -> parent, typically many-to-one)
-            self._graph.setdefault(c_tbl, []).append(
-                EdgeInfo(
-                    target_table=p_tbl,
-                    left_col=c_col,
-                    right_col=p_col,
-                    cardinality=card,
-                    confidence=conf,
-                    source=src,
-                    status=stat,
-                    weight=base_w,
+                # Forward edge (child -> parent, typically many-to-one)
+                self._graph.setdefault(c_tbl, []).append(
+                    EdgeInfo(
+                        target_table=p_tbl,
+                        left_col=c_col,
+                        right_col=p_col,
+                        cardinality=card,
+                        confidence=conf,
+                        source=src,
+                        status=stat,
+                        weight=base_w,
+                    )
                 )
-            )
 
-            # Reverse edge (parent -> child, one-to-many: potential fanout)
-            rev_card = "1:N_fanout" if card == "1:N" else card
-            self._graph.setdefault(p_tbl, []).append(
-                EdgeInfo(
-                    target_table=c_tbl,
-                    left_col=p_col,
-                    right_col=c_col,
-                    cardinality=rev_card,
-                    confidence=conf,
-                    source=src,
-                    status=stat,
-                    weight=base_w,
+                # Reverse edge (parent -> child, one-to-many: potential fanout)
+                rev_card = "1:N_fanout" if card == "1:N" else card
+                self._graph.setdefault(p_tbl, []).append(
+                    EdgeInfo(
+                        target_table=c_tbl,
+                        left_col=p_col,
+                        right_col=c_col,
+                        cardinality=rev_card,
+                        confidence=conf,
+                        source=src,
+                        status=stat,
+                        weight=base_w,
+                    )
                 )
-            )
+
+            elif it.item_type in ("table", "column"):
+                sem = p.get("semantic") or {}
+                t_raw = p.get("table_name") or it.item_key
+                t_clean = t_raw.lower().split(".")[-1]
+                if not t_clean:
+                    continue
+                c_set = self._table_concepts.setdefault(t_clean, set())
+                c_set.add(t_clean)
+                for part in re.split(r"[_\W]+", t_clean):
+                    if len(part) >= 2:
+                        c_set.add(part.lower())
+                # Table or column aliases & synonyms
+                raw_aliases = (p.get("aliases") or []) + (sem.get("aliases") or []) + (sem.get("synonyms") or [])
+                for a in raw_aliases:
+                    if a and isinstance(a, str):
+                        for part in re.split(r"[_\W]+", a.lower()):
+                            if len(part) >= 2:
+                                c_set.add(part.lower())
+                if it.item_type == "column":
+                    col_name = (p.get("column_name") or it.item_key.split(".")[-1]).lower()
+                    for part in re.split(r"[_\W]+", col_name):
+                        if len(part) >= 2:
+                            c_set.add(part.lower())
 
     def _dijkstra_shortest_path(
-        self, start_table: str, end_table: str
+        self,
+        start_table: str,
+        end_table: str,
+        query_text: Optional[str] = None,
     ) -> Optional[Tuple[float, List[Tuple[str, EdgeInfo]]]]:
-        """Find lowest-weight path between two tables within max_hops."""
+        """Find lowest-weight path between two tables within max_hops, preferring query-aligned FK columns."""
         start = start_table.lower()
         end = end_table.lower()
 
@@ -323,6 +223,8 @@ class JoinPathFinder:
         # Priority queue: (cost, hops, current_table, path_taken)
         pq: List[Tuple[float, int, str, List[Tuple[str, EdgeInfo]]]] = [(0.0, 0, start, [])]
         best_costs: Dict[str, float] = {start: 0.0}
+
+        q_low = query_text.lower() if query_text else ""
 
         while pq:
             cost, hops, current, path = heapq.heappop(pq)
@@ -335,7 +237,24 @@ class JoinPathFinder:
 
             for edge in self._graph.get(current, []):
                 nxt = edge.target_table
-                new_cost = cost + edge.weight
+                edge_weight = edge.weight
+
+                # Semantic FK intent discount when query_text is present:
+                # E.g. "assigned" query prioritizes assigned_to_id over author_id
+                if q_low:
+                    col_str = f"{edge.left_col} {edge.right_col}".lower()
+                    if "assign" in q_low and "assigned" in col_str:
+                        edge_weight *= 0.5
+                    elif "assign" in q_low and (nxt == "members" or current == "members"):
+                        edge_weight *= 0.5
+                    elif "assign" in q_low and any(w in col_str for w in ("creator", "author", "created_by")):
+                        edge_weight *= 10.0
+                    elif any(w in q_low for w in ("create", "created", "author", "opened", "reported")) and "author" in col_str:
+                        edge_weight *= 0.5
+                    elif any(w in q_low for w in ("manager", "managed", "lead")) and "manager" in col_str:
+                        edge_weight *= 0.5
+
+                new_cost = cost + edge_weight
                 if nxt not in best_costs or new_cost < best_costs[nxt]:
                     best_costs[nxt] = new_cost
                     new_path = path + [(current, edge)]
@@ -347,6 +266,7 @@ class JoinPathFinder:
         self,
         tables: List[str],
         frame: Optional[QuestionFrame] = None,
+        query_text: Optional[str] = None,
     ) -> JoinPathResult:
         """Find minimum connecting tree for target tables (Steiner approximation)."""
         clean_tables = [t.lower().split(".")[-1] for t in tables]
@@ -358,16 +278,24 @@ class JoinPathFinder:
         if len(clean_tables) == 1:
             return JoinPathResult(success=True)
 
-        # Check if all tables exist in graph
-        for t in clean_tables:
-            if t not in self._graph:
-                return JoinPathResult(
-                    success=False,
-                    unreachable_tables=[t],
-                )
+        # Separate tables present in graph vs disconnected/unindexed tables
+        graph_tables = [t for t in clean_tables if t in self._graph]
+        unreachable_nodes: List[str] = [t for t in clean_tables if t not in self._graph]
+
+        if not graph_tables:
+            return JoinPathResult(
+                success=len(clean_tables) <= 1,
+                unreachable_tables=unreachable_nodes,
+            )
+
+        if len(graph_tables) == 1:
+            return JoinPathResult(
+                success=True,
+                unreachable_tables=unreachable_nodes,
+            )
 
         # 1. Pick anchor table: table with highest degree/connectivity or first target table
-        anchor = max(clean_tables, key=lambda t: len(self._graph.get(t, [])))
+        anchor = max(graph_tables, key=lambda t: len(self._graph.get(t, [])))
 
         # 2. Shortest paths from anchor to all other tables
         visited_nodes: Set[str] = {anchor}
@@ -376,8 +304,9 @@ class JoinPathFinder:
         fanout_warnings: List[str] = []
         total_cost = 0.0
 
-        targets_to_connect = [t for t in clean_tables if t != anchor]
+        targets_to_connect = [t for t in graph_tables if t != anchor]
         has_aggregation = bool(frame and frame.aggregation_cues)
+        q_text = query_text or (frame.original_question if frame else None)
 
         for target in targets_to_connect:
             if target in visited_nodes:
@@ -387,17 +316,14 @@ class JoinPathFinder:
             best_res = None
             best_weight = float("inf")
             for v_node in visited_nodes:
-                res = self._dijkstra_shortest_path(v_node, target)
+                res = self._dijkstra_shortest_path(v_node, target, query_text=q_text)
                 if res and res[0] < best_weight:
                     best_weight = res[0]
                     best_res = res
 
             if not best_res:
-                # Disconnected!
-                return JoinPathResult(
-                    success=False,
-                    unreachable_tables=[target],
-                )
+                unreachable_nodes.append(target)
+                continue
 
             path_cost, edges = best_res
             total_cost += path_cost
@@ -442,9 +368,147 @@ class JoinPathFinder:
                 visited_nodes.add(nxt)
 
         return JoinPathResult(
-            success=True,
+            success=bool(all_hops or len(clean_tables) <= 1),
             joins=all_hops,
             bridge_tables=list(bridge_tables),
             fanout_warnings=fanout_warnings,
+            unreachable_tables=unreachable_nodes,
             total_cost=round(total_cost, 3),
         )
+
+    def traverse_entity_neighborhood(
+        self,
+        anchor_tables: List[str],
+        query_text: str,
+        max_hops: int = 2,
+    ) -> List[TraversedNeighbor]:
+        """
+        Traverse graph from entity anchor tables (e.g. 'users') and score connected
+        neighbor tables based on query keywords, table synonyms, and FK column semantics.
+        Enables Graph/ID Traversal Search to directly locate the target table and join path.
+        """
+        if not anchor_tables or not query_text:
+            return []
+
+        import re
+        q_lower = query_text.lower()
+        raw_tokens = set(re.findall(r"\b[a-zA-Z0-9_]+\b", q_lower))
+        _TRAVERSAL_STOPWORDS = {
+            "what", "is", "are", "was", "were", "be", "been", "being",
+            "the", "a", "an", "in", "on", "at", "to", "for", "of", "with", "by", "from",
+            "and", "or", "not", "no", "if", "then", "which", "who", "whom", "whose", "where", "when", "how",
+            "show", "give", "list", "tell", "find", "get", "view",
+        }
+        q_tokens = {t for t in raw_tokens if t not in _TRAVERSAL_STOPWORDS and len(t) > 1 and not t.isdigit()}
+
+        DOMAIN_SYNONYMS: Dict[str, Set[str]] = {
+            "work_packages": {"task", "tasks", "ticket", "tickets", "issue", "issues", "bug", "bugs", "work_package", "work_packages", "item", "items", "work", "package", "packages", "todo", "assign", "assigned", "assignee", "assignment"},
+            "time_entries": {"time", "timesheet", "timesheets", "hour", "hours", "spent", "logged", "log", "duration", "work", "entry", "entries"},
+            "projects": {"project", "projects", "program", "programs"},
+            "versions": {"version", "versions", "sprint", "sprints", "milestone", "milestones", "release", "releases"},
+            "meetings": {"meeting", "meetings", "call", "calls", "agenda", "discussion"},
+            "meeting_participants": {"meeting", "meetings", "participant", "participants", "attendee", "attendees"},
+            "messages": {"message", "messages", "post", "posts", "comment", "comments", "forum", "chat"},
+            "documents": {"document", "documents", "doc", "docs", "file", "files"},
+            "attachments": {"attachment", "attachments", "file", "files"},
+            "budgets": {"budget", "budgets", "cost", "costs", "expense", "expenses"},
+            "cost_entries": {"cost", "costs", "expense", "expenses", "rate", "rates", "billing"},
+            "members": {"member", "members", "membership", "memberships", "assign", "assigned", "assignment", "assignments", "project_member"},
+            "roles": {"role", "roles", "permission", "permissions"},
+            "statuses": {"status", "state", "phases", "phase"},
+            "users": {"user", "users", "employee", "employees", "person", "staff", "member"},
+        }
+
+        results: Dict[str, TraversedNeighbor] = {}
+
+        for anchor in anchor_tables:
+            anchor_clean = anchor.lower().split(".")[-1]
+            if anchor_clean not in self._graph:
+                continue
+
+            # 1-hop traversal
+            for edge in self._graph.get(anchor_clean, []):
+                target = edge.target_table
+                if target in anchor_tables or target == anchor_clean:
+                    continue
+                if target.endswith(("_storages", "_queries", "_modules", "_hierarchies", "_settings", "_attachments")):
+                    continue
+
+                # Check relevance of target table to user query dynamically from schema knowledge
+                target_parts = set(re.split(r"[_\W]+", target))
+                dynamic_concepts = self._table_concepts.get(target, set()) | target_parts
+                synonyms = dynamic_concepts if dynamic_concepts else (DOMAIN_SYNONYMS.get(target, set()) | target_parts)
+                
+                # Check column relevance (e.g. "assigned" matching assigned_to_id)
+                col_tokens = (
+                    (set(re.split(r"[_\W]+", edge.left_col.lower())) | set(re.split(r"[_\W]+", edge.right_col.lower())))
+                    - {"id", "pk", "fk", "to", "by", "on"}
+                )
+                
+                col_match = bool(col_tokens & q_tokens)
+                table_match = bool(synonyms & q_tokens)
+
+                matched_tokens = list((synonyms | col_tokens) & q_tokens)
+                concept_str = ", ".join(matched_tokens) if matched_tokens else target
+
+                if table_match or col_match:
+                    score = 1.0
+                    if table_match:
+                        score += 1.5
+                    if col_match:
+                        score += 1.0
+
+                    # Specific verb/FK alignment bonuses
+                    col_str = f"{edge.left_col} {edge.right_col}".lower()
+                    if "assign" in q_lower and "assigned" in col_str:
+                        score += 1.0
+                    elif any(w in q_lower for w in ("create", "created", "author", "opened", "reported")) and "author" in col_str:
+                        score += 1.0
+
+                    if target not in results or score > results[target].relevance_score:
+                        results[target] = TraversedNeighbor(
+                            table_name=target,
+                            anchor_table=anchor_clean,
+                            left_col=edge.left_col,
+                            right_col=edge.right_col,
+                            relevance_score=score,
+                            matched_concept=concept_str,
+                            hops=1,
+                        )
+
+            # 2-hop traversal if max_hops >= 2
+            if max_hops >= 2:
+                for edge1 in self._graph.get(anchor_clean, []):
+                    hop1_table = edge1.target_table
+                    if hop1_table in anchor_tables or hop1_table == anchor_clean:
+                        continue
+                    for edge2 in self._graph.get(hop1_table, []):
+                        target2 = edge2.target_table
+                        if target2 in anchor_tables or target2 == anchor_clean or target2 == hop1_table:
+                            continue
+                        if target2.endswith(("_storages", "_queries", "_modules", "_hierarchies", "_settings", "_attachments")):
+                            continue
+                        if target2 in results and results[target2].hops == 1:
+                            continue
+
+                        target_parts = set(re.split(r"[_\W]+", target2))
+                        dynamic_concepts2 = self._table_concepts.get(target2, set()) | target_parts
+                        synonyms = dynamic_concepts2 if dynamic_concepts2 else (DOMAIN_SYNONYMS.get(target2, set()) | target_parts)
+                        table_match = bool(synonyms & q_tokens)
+                        if table_match:
+                            matched_tokens = list(synonyms & q_tokens)
+                            concept_str = ", ".join(matched_tokens)
+                            score = 1.2
+                            if target2 not in results or score > results[target2].relevance_score:
+                                results[target2] = TraversedNeighbor(
+                                    table_name=target2,
+                                    anchor_table=anchor_clean,
+                                    left_col=edge2.left_col,
+                                    right_col=edge2.right_col,
+                                    relevance_score=score,
+                                    matched_concept=concept_str,
+                                    hops=2,
+                                )
+
+        sorted_results = sorted(results.values(), key=lambda x: x.relevance_score, reverse=True)
+        return sorted_results

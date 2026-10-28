@@ -247,10 +247,22 @@ class SQLSecurityPolicyEngine:
             if t_clean in cls.FORBIDDEN_TABLES or tbl.schema_name.lower() in cls.FORBIDDEN_CATALOGS:
                 continue
 
-            if (
-                t_clean not in approved_table_names
-                and tbl.table_name.lower() not in approved_table_names
-                and t_clean not in canonical_tables_map
+            if approved_table_names:
+                if (
+                    t_clean not in approved_table_names
+                    and tbl.table_name.lower() not in approved_table_names
+                ):
+                    errors.append(
+                        DiagnosticError(
+                            error_code=DiagnosticErrorCode.UNAPPROVED_TABLE,
+                            severity=DiagnosticSeverity.ERROR,
+                            message=f"Table '{tbl.table_name}' was not retrieved in the sub-schema for this query",
+                            offending_node=tbl.table_name,
+                            suggested_action=f"Use only approved tables from the schema: {', '.join(sorted(list(approved_table_names)))}",
+                        )
+                    )
+            elif (
+                t_clean not in canonical_tables_map
                 and tbl.table_name.lower() not in canonical_tables_map
             ):
                 errors.append(
@@ -259,7 +271,7 @@ class SQLSecurityPolicyEngine:
                         severity=DiagnosticSeverity.ERROR,
                         message=f"Table '{tbl.table_name}' was not retrieved in the sub-schema for this query",
                         offending_node=tbl.table_name,
-                        suggested_action=f"Use only approved tables: {', '.join(sorted(list(approved_table_names)))}",
+                        suggested_action="Use only approved tables from the database schema",
                     )
                 )
 
