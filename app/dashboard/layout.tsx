@@ -105,7 +105,7 @@ export default function DashboardLayout({
           body: { padding: 0, background: 'var(--app-surface)' },
           section: { background: 'var(--app-surface)' }
         }}
-        width="100%"
+        style={{ width: "100%" }}
         closeIcon={null}
       >
         <Sidebar collapsed={false} onToggle={() => setMobileMenuOpen(false)} onItemClick={() => setMobileMenuOpen(false)} />

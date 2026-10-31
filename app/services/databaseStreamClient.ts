@@ -64,7 +64,9 @@ export interface StreamQueryOptions {
   timeoutSeconds?: number;
   abortSignal?: AbortSignal;
   resolvedEntities?: any[];
-  onDisambiguationRequired?: (data: { message: string; options: any[] }) => void;
+  selectedTables?: string[];
+  executionStrategy?: "separate" | "union";
+  onDisambiguationRequired?: (data: { message: string; options: any[]; entity_type?: string; candidate_tables?: any[]; all_tables?: string[]; table_aliases?: Record<string, string[]> }) => void;
   onEvent?: (event: DatabaseStreamEvent) => void;
   onAnswer?: (answer: any) => void;
   onError?: (error: StreamQueryError) => void;
@@ -86,6 +88,7 @@ export class DatabaseStreamClient {
       timeoutSeconds,
       abortSignal,
       resolvedEntities,
+      selectedTables,
       onDisambiguationRequired,
       onEvent,
       onAnswer,
@@ -108,6 +111,8 @@ export class DatabaseStreamClient {
       query,
       use_llm: useLlm,
       resolved_entities: resolvedEntities,
+      selected_tables: selectedTables,
+      execution_strategy: options.executionStrategy,
     };
     if (timeoutSeconds) {
       payload["timeout_seconds"] = timeoutSeconds;
@@ -223,6 +228,10 @@ export class DatabaseStreamClient {
                 onDisambiguationRequired({
                   message: parsedEvent.data?.message || "Multiple matches found.",
                   options: parsedEvent.data?.options || [],
+                  entity_type: parsedEvent.data?.entity_type,
+                  candidate_tables: parsedEvent.data?.candidate_tables,
+                  all_tables: parsedEvent.data?.all_tables,
+                  table_aliases: parsedEvent.data?.table_aliases || {},
                 });
               } else if (onError) {
                 onError({
