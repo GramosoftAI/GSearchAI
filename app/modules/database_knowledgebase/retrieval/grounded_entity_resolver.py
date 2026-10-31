@@ -250,12 +250,16 @@ class GroundedEntityResolver:
         rel_tbls_clean = {t.lower() for t in relevant_tables or [] if t}
 
         # Select candidate dimension tables dynamically:
-        # If relevant_tables (from schema retrieval) is provided, prioritize them directly
+        # If relevant_tables (from schema retrieval) is provided, prioritize them directly.
+        # Also always include person/user dimension tables if person markers ('for', 'by', 'author', 'assigned') appear in query.
+        has_person_signal = any(k in q_clean for k in ("for", "by", "author", "assign", "user", "owner", "creator"))
         candidate_dims: List[DimensionTableMeta] = []
         if rel_tbls_clean:
             for d in dims:
                 t_name = d.table_name.lower()
                 if t_name in rel_tbls_clean or t_name in q_clean or (t_name.rstrip('s') in q_clean):
+                    candidate_dims.append(d)
+                elif has_person_signal and any(tok in t_name for tok in ("user", "member", "employee", "person")):
                     candidate_dims.append(d)
         else:
             for d in dims:

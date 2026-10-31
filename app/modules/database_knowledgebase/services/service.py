@@ -1055,6 +1055,8 @@ class DatabaseKnowledgebaseService:
         user_id: Optional[Any] = None,
         event_sink: Optional[DatabasePipelineEventSink] = None,
         resolved_entities: Optional[list] = None,
+        selected_tables: Optional[list] = None,
+        execution_strategy: Optional[str] = None,
     ) -> GroundedDatabaseAnswer:
         """
         Streamlined, grounded database knowledgebase pipeline inspired by D:\\DB\\main.
@@ -1092,6 +1094,261 @@ class DatabaseKnowledgebaseService:
                         "timestamp": datetime.now().isoformat(),
                     },
                 )
+
+            # Multi-Table Separate Execution Mode
+            # If the user selected multiple tables and opted for separate execution, run query for each table independently
+            # and aggregate the answers into a clear, unified multi-table breakdown.
+            if execution_strategy == "separate" and selected_tables and len(selected_tables) > 1:
+                logger.info(f"[SEPARATE_EXECUTION] Running independent queries across {len(selected_tables)} tables: {selected_tables}")
+                per_table_answers = []
+                aggregated_rows = []
+                aggregated_columns = []
+                total_rows = 0
+
+                for idx, single_table in enumerate(selected_tables):
+                    try:
+                        sub_answer = await self._query_database_grounded_docs(
+                            kb_id=kb_id,
+                            entity=entity,
+                            user_query=user_query,
+                            top_k_tables=top_k_tables,
+                            top_k_columns_per_table=top_k_columns_per_table,
+                            use_llm=use_llm,
+                            execution_config=execution_config,
+                            request_id=f"{request_id or query_id}_sub_{idx}",
+                            user_id=user_id,
+                            event_sink=None,
+                            resolved_entities=resolved_entities,
+                            selected_tables=[single_table],
+                            execution_strategy=None,
+                        )
+                        per_table_answers.append((single_table, sub_answer))
+                        if sub_answer.rows:
+                            for r in sub_answer.rows:
+                                row_with_src = {"source_table": single_table, **r}
+                                aggregated_rows.append(row_with_src)
+                            if not aggregated_columns and sub_answer.columns:
+                                aggregated_columns = ["source_table"] + [c for c in sub_answer.columns if c != "source_table"]
+                        total_rows += sub_answer.row_count
+                    except Exception as sub_exc:
+                        logger.warning(f"[SEPARATE_EXECUTION] Sub-query for '{single_table}' failed: {sub_exc}")
+                        per_table_answers.append((single_table, None))
+
+                # Synthesize combined narrative summary for all tables
+                summary_lines = [
+                    f"### Multi-Table Query Breakdown ({len(selected_tables)} Tables Queried)\n",
+                    f"**Question:** {user_query}\n"
+                ]
+                combined_sqls = []
+                aggregated_warnings = []
+                total_db_time_ms = 0.0
+                total_planning_ms = 0.0
+                total_sql_gen_ms = 0.0
+                total_synthesis_ms = 0.0
+                has_any_success = False
+
+                for tbl_name, ans in per_table_answers:
+                    if ans and ans.answer_text:
+                        has_any_success = True
+                        clean_ans = ans.answer_text.strip()
+                        summary_lines.append(f"#### 📊 Table: `{tbl_name}` ({ans.row_count} records)")
+                        summary_lines.append(clean_ans + "\n")
+                        if ans.warnings:
+                            aggregated_warnings.extend(ans.warnings)
+                        if ans.pipeline_trace:
+                            pt = ans.pipeline_trace
+                            if pt.sql_generation and pt.sql_generation.candidate_sql:
+                                combined_sqls.append(f"-- [{tbl_name}]\n{pt.sql_generation.candidate_sql}")
+                            total_db_time_ms += (pt.execution.execution_time_ms if pt.execution else 0.0)
+                            total_planning_ms += (pt.planning.latency_ms if pt.planning else 0.0)
+                            total_sql_gen_ms += (pt.sql_generation.latency_ms if pt.sql_generation else 0.0)
+                            total_synthesis_ms += (pt.synthesis.latency_ms if pt.synthesis else 0.0)
+                        elif ans.generation_metadata and "sql" in ans.generation_metadata:
+                            combined_sqls.append(f"-- [{tbl_name}]\n{ans.generation_metadata['sql']}")
+                    else:
+                        summary_lines.append(f"#### 📊 Table: `{tbl_name}`\nNo matching records or query could not be executed.\n")
+
+                from ..answering.models import EvidenceModel, AnswerType, GroundingStatus, VerificationStatus
+
+                combined_answer_text = "\n".join(summary_lines)
+                combined_sql_str = "\n\n".join(combined_sqls) if combined_sqls else f"-- Multiple queries executed across {len(selected_tables)} tables"
+
+                # Populate parent tracer diagnostics so telemetry/UI displays correct phase metrics
+                tracer.schema_version = entity.schema_version or "grounded_docs"
+                tracer.retrieval_trace.retrieved_tables = list(selected_tables)
+                tracer.retrieval_trace.table_scores = {tbl: 1.0 for tbl in selected_tables}
+                tracer.retrieval_trace.latency_ms = round((time.perf_counter() - tracer.start_time) * 1000.0, 2)
+
+                tracer.planning_trace.intent = "MULTI_TABLE_SEPARATE_QUERY"
+                tracer.planning_trace.tables = list(selected_tables)
+                tracer.planning_trace.latency_ms = round(total_planning_ms, 2)
+
+                tracer.sql_trace.candidate_sql = combined_sql_str
+                tracer.sql_trace.ast_valid = True
+                tracer.sql_trace.sql_generation_mode = "grounded_docs_multi"
+                tracer.sql_trace.latency_ms = round(total_sql_gen_ms, 2)
+
+                tracer.execution_trace.executed = has_any_success
+                tracer.execution_trace.row_count = total_rows
+                tracer.execution_trace.column_count = len(aggregated_columns) if aggregated_columns else 1
+                tracer.execution_trace.execution_time_ms = round(total_db_time_ms, 2)
+
+                tracer.synthesis_trace.answer_type = "NARRATIVE"
+                tracer.synthesis_trace.grounding_status = "VERIFIED" if has_any_success else "UNVERIFIED"
+                tracer.synthesis_trace.verification_status = "PASSED" if has_any_success else "NO_DATA"
+                tracer.synthesis_trace.latency_ms = round(total_synthesis_ms, 2)
+
+                evidence_model = EvidenceModel(
+                    query_id=query_id,
+                    database_knowledgebase_id=kb_id,
+                    schema_version=entity.schema_version or "grounded_docs",
+                    columns=aggregated_columns if aggregated_columns else ["source_table"],
+                    rows=aggregated_rows if aggregated_rows else [],
+                    row_count=total_rows,
+                    truncated=False,
+                )
+
+                final_sep_answer = GroundedDatabaseAnswer(
+                    query_id=query_id,
+                    database_knowledgebase_id=kb_id,
+                    schema_version=entity.schema_version or "grounded_docs",
+                    answer_text=combined_answer_text,
+                    answer_type=AnswerType.NARRATIVE,
+                    evidence=evidence_model,
+                    source_columns=aggregated_columns if aggregated_columns else ["source_table"],
+                    row_count=total_rows,
+                    truncated=False,
+                    grounding_status=GroundingStatus.VERIFIED if has_any_success else GroundingStatus.FAILED,
+                    verification_status=VerificationStatus.PASSED if has_any_success else VerificationStatus.FAILED,
+                    warnings=aggregated_warnings,
+                    rows=aggregated_rows if aggregated_rows else [],
+                    columns=aggregated_columns if aggregated_columns else ["source_table"],
+                    candidate_tables=selected_tables,
+                    status="success" if has_any_success else "no_relevant_data",
+                    generation_metadata={
+                        "execution_strategy": "separate",
+                        "tables": selected_tables,
+                        "sql": combined_sql_str,
+                    },
+                    pipeline_trace=tracer.finalize(),
+                )
+
+                if event_sink:
+                    # Emit stage progression events so UI real-time pipeline execution stepper lights up
+                    await event_sink.emit(
+                        DatabaseStreamEventType.RETRIEVAL_COMPLETED,
+                        stage="RETRIEVAL",
+                        status="completed",
+                        data={
+                            "retrieved_tables_count": len(selected_tables),
+                            "retrieved_tables": list(selected_tables),
+                            "latency_ms": tracer.retrieval_trace.latency_ms,
+                            "schema_version": tracer.schema_version,
+                        },
+                    )
+                    await event_sink.emit(
+                        DatabaseStreamEventType.PLANNING_COMPLETED,
+                        stage="PLANNING",
+                        status="completed",
+                        data={
+                            "intent": tracer.planning_trace.intent,
+                            "tables_count": len(selected_tables),
+                            "target_tables": list(selected_tables),
+                            "joins_count": 0,
+                            "has_aggregations": True,
+                            "has_ranking": False,
+                            "limit": 50,
+                            "rephrased_query": user_query,
+                            "latency_ms": tracer.planning_trace.latency_ms,
+                        },
+                    )
+                    await event_sink.emit(
+                        DatabaseStreamEventType.SQL_GENERATION_COMPLETED,
+                        stage="SQL_GENERATION",
+                        status="completed",
+                        data={
+                            "sql_generation_mode": "grounded_docs_multi",
+                            "deterministic_sql_compilation": False,
+                            "sql_llm_bypassed": False,
+                            "repair_attempts": 0,
+                            "latency_ms": tracer.sql_trace.latency_ms,
+                        },
+                    )
+                    await event_sink.emit(
+                        DatabaseStreamEventType.VALIDATION_COMPLETED,
+                        stage="VALIDATION",
+                        status="completed",
+                        data={"is_valid": True, "warnings_count": 0, "errors_count": 0},
+                    )
+                    await event_sink.emit(
+                        DatabaseStreamEventType.AUTHORIZATION_COMPLETED,
+                        stage="AUTHORIZATION",
+                        status="completed",
+                        data={"allowed": True, "mode": "READ_ONLY", "reason": "Execution policy approved"},
+                    )
+                    await event_sink.emit(
+                        DatabaseStreamEventType.EXECUTION_COMPLETED,
+                        stage="EXECUTION",
+                        status="completed",
+                        data={
+                            "row_count": total_rows,
+                            "truncated": False,
+                            "execution_time_ms": tracer.execution_trace.execution_time_ms,
+                            "columns_count": len(aggregated_columns) if aggregated_columns else 1,
+                        },
+                    )
+                    await event_sink.emit(
+                        DatabaseStreamEventType.SYNTHESIS_COMPLETED,
+                        stage="SYNTHESIS",
+                        status="completed",
+                        data={
+                            "answer_type": "NARRATIVE",
+                            "deterministic": False,
+                            "latency_ms": tracer.synthesis_trace.latency_ms,
+                        },
+                    )
+                    await event_sink.emit(
+                        DatabaseStreamEventType.GROUNDING_COMPLETED,
+                        stage="GROUNDING",
+                        status="completed",
+                        data={
+                            "grounding_status": "VERIFIED" if has_any_success else "FAILED",
+                            "verification_status": "PASSED" if has_any_success else "FAILED",
+                            "repair_attempts": 0,
+                        },
+                    )
+                    await event_sink.emit(
+                        DatabaseStreamEventType.ANSWER_COMPLETED,
+                        stage="ANSWER",
+                        status="completed",
+                        data={
+                            "answer_text": final_sep_answer.answer_text,
+                            "answer_type": final_sep_answer.answer_type.value if hasattr(final_sep_answer.answer_type, "value") else str(final_sep_answer.answer_type),
+                            "row_count": final_sep_answer.row_count,
+                            "grounding_status": final_sep_answer.grounding_status.value if hasattr(final_sep_answer.grounding_status, "value") else str(final_sep_answer.grounding_status),
+                            "verification_status": final_sep_answer.verification_status.value if hasattr(final_sep_answer.verification_status, "value") else str(final_sep_answer.verification_status),
+                            "rows": final_sep_answer.rows,
+                            "columns": final_sep_answer.columns,
+                            "source_columns": final_sep_answer.source_columns,
+                            "truncated": final_sep_answer.truncated,
+                            "warnings": final_sep_answer.warnings,
+                            "pipeline_trace": final_sep_answer.pipeline_trace.model_dump(mode="json") if final_sep_answer.pipeline_trace else None,
+                        },
+                    )
+                    await event_sink.emit(
+                        DatabaseStreamEventType.STREAM_COMPLETED,
+                        stage="STREAM",
+                        status="completed",
+                        data={
+                            "total_duration_ms": event_sink.get_total_elapsed_ms(),
+                            "final_status": "SUCCESS",
+                            "events_emitted": event_sink._seq,
+                            "query_id": query_id,
+                            "row_count": total_rows,
+                        },
+                    )
+
+                return final_sep_answer
 
             # Security Pre-Validation
             user_query_clean = user_query.strip()
@@ -1134,6 +1391,8 @@ class DatabaseKnowledgebaseService:
             canonical_schema = DatabaseSchema(**snapshot.schema_data) if snapshot and snapshot.schema_data else None
 
             tenant_uuid = uuid.UUID(str(self.tenant_id)) if isinstance(self.tenant_id, (str, uuid.UUID)) else self.tenant_id
+            
+            # Fetch all schema docs or retrieve matching docs
             schema_docs = await SchemaDocRetriever.retrieve_schema_docs(
                 session=self.db,
                 tenant_id=tenant_uuid,
@@ -1143,6 +1402,258 @@ class DatabaseKnowledgebaseService:
                 canonical_schema=canonical_schema,
             )
             t_ret_ms = (time.perf_counter() - t_ret_start) * 1000.0
+
+            # Track resolved column alias mappings: alias_token -> {table, column, alias}
+            resolved_column_alias_mappings: List[Dict[str, str]] = []
+
+            # If user explicitly selected tables from interactive prompt
+            if selected_tables:
+                selected_set = {t.lower().strip() for t in selected_tables if t and t.strip()}
+                if selected_set:
+                    matched_docs = [d for d in schema_docs if d.get("table_name", "").lower() in selected_set]
+                    # Also load any selected tables that were not in initial top_k retrieved schema_docs
+                    matched_names = {d.get("table_name", "").lower() for d in matched_docs}
+                    missing_tables = selected_set - matched_names
+                    if missing_tables and canonical_schema:
+                        from ..schema.markdown_doc_generator import SchemaMarkdownGenerator
+                        for missing_t in missing_tables:
+                            t_obj = canonical_schema.get_table(missing_t) or canonical_schema.get_table(missing_t.split(".")[-1])
+                            if t_obj:
+                                doc_text = SchemaMarkdownGenerator.generate_table_markdown(t_obj)
+                                matched_docs.append({
+                                    "source": f"{missing_t}.md",
+                                    "title": f"Table: {missing_t}",
+                                    "text": doc_text,
+                                    "score": 1.0,
+                                    "table_name": t_obj.table_name,
+                                    "schema_name": t_obj.schema_name or "public",
+                                    "column_names": [c.name for c in t_obj.columns.values()],
+                                })
+                    # Relationship Traversal: also include 1-hop foreign key linked tables if canonical schema is available
+                    if matched_docs and canonical_schema:
+                        from ..schema.markdown_doc_generator import SchemaMarkdownGenerator
+                        existing_names = {d.get("table_name", "").lower() for d in matched_docs}
+                        for d in list(matched_docs):
+                            tbl_obj = canonical_schema.get_table(d.get("table_name", "")) or canonical_schema.get_table(d.get("table_name", "").split(".")[-1])
+                            if tbl_obj:
+                                for fk in getattr(tbl_obj, "foreign_keys", []):
+                                    ref_tbl_name = fk.referred_table.split(".")[-1].lower()
+                                    if ref_tbl_name not in existing_names:
+                                        ref_tbl_obj = canonical_schema.get_table(ref_tbl_name)
+                                        if ref_tbl_obj:
+                                            ref_doc_text = SchemaMarkdownGenerator.generate_table_markdown(ref_tbl_obj)
+                                            matched_docs.append({
+                                                "source": f"{ref_tbl_name}.md",
+                                                "title": f"Table: {ref_tbl_name}",
+                                                "text": ref_doc_text,
+                                                "score": 0.80,
+                                                "table_name": ref_tbl_obj.table_name,
+                                                "schema_name": ref_tbl_obj.schema_name or "public",
+                                                "column_names": [c.name for c in ref_tbl_obj.columns.values()],
+                                            })
+                                            existing_names.add(ref_tbl_name)
+                                            logger.info(f"[FK_TRAVERSAL] Included linked foreign key table '{ref_tbl_name}' referenced by '{tbl_obj.table_name}'")
+
+                    if matched_docs:
+                        schema_docs = matched_docs
+            else:
+                # Check whether user explicitly named any table in their natural language question
+                all_known_tables: List[str] = []
+                if canonical_schema and hasattr(canonical_schema, "all_tables"):
+                    all_known_tables = [t.table_name.split(".")[-1] for t in canonical_schema.all_tables]
+                elif canonical_schema and hasattr(canonical_schema, "schemas"):
+                    for s in canonical_schema.schemas.values():
+                        all_known_tables.extend(list(s.tables.keys()))
+                
+                # Also collect from DatabaseSchemaEmbedding table_doc entity_keys to guarantee complete catalog
+                from ..models.embeddings import DatabaseSchemaEmbedding
+                from sqlalchemy import select
+                try:
+                    all_emb_stmt = select(DatabaseSchemaEmbedding.entity_key).where(
+                        DatabaseSchemaEmbedding.tenant_id == tenant_uuid,
+                        DatabaseSchemaEmbedding.db_knowledgebase_id == kb_id,
+                        DatabaseSchemaEmbedding.entity_type == "table_doc",
+                    )
+                    all_emb_res = await self.db.execute(all_emb_stmt)
+                    for row in all_emb_res.scalars().all():
+                        t_name = str(row).split(".")[-1]
+                        if t_name and t_name not in all_known_tables:
+                            all_known_tables.append(t_name)
+                except Exception as ex_emb:
+                    logger.debug(f"Failed to fetch table_doc entity keys: {ex_emb}")
+
+                
+                # Fetch existing table aliases from database catalog
+                db_table_aliases: Dict[str, List[str]] = {}
+                try:
+                    db_table_aliases = await self.get_table_aliases(kb_id=kb_id)
+                except Exception as ex_alias:
+                    logger.debug(f"Failed to fetch table aliases: {ex_alias}")
+
+                # Fetch existing column aliases from database catalog
+                db_column_aliases: Dict[str, Dict[str, List[str]]] = {}
+                try:
+                    db_column_aliases = await self.get_column_aliases(kb_id=kb_id)
+                except Exception as ex_col_alias:
+                    logger.debug(f"Failed to fetch column aliases: {ex_col_alias}")
+
+                # Track resolved column alias mappings: alias_token -> {table, column, alias}
+                resolved_column_alias_mappings: List[Dict[str, str]] = []
+
+                # Check for explicit mention in query:
+                # 1. Direct table name (e.g. "adt_work_flows", "cm_cate_log")
+                # 2. Table alias / alternative name (e.g. "category log", "attendance")
+                # 3. Column alias / alternative name (e.g. "workflow stage" directly resolves to table "adt_work_flows")
+                q_words = set(re.findall(r"\b[a-zA-Z0-9_]+\b", user_query.lower()))
+                q_lower = user_query.lower()
+                explicit_table_found = False
+                matched_alias_tables = set()
+
+                for tbl in all_known_tables:
+                    tbl_clean = tbl.lower()
+                    if tbl_clean in q_words or (len(tbl_clean) >= 4 and tbl_clean in q_lower):
+                        explicit_table_found = True
+                        break
+
+                if not explicit_table_found and db_table_aliases:
+                    for tbl, aliases in db_table_aliases.items():
+                        for alias in aliases:
+                            alias_clean = alias.strip().lower()
+                            if not alias_clean:
+                                continue
+                            if " " in alias_clean:
+                                if alias_clean in q_lower:
+                                    explicit_table_found = True
+                                    matched_alias_tables.add(tbl)
+                                    break
+                            else:
+                                if alias_clean in q_words or (len(alias_clean) >= 4 and alias_clean in q_lower):
+                                    explicit_table_found = True
+                                    matched_alias_tables.add(tbl)
+                                    break
+                        if explicit_table_found:
+                            break
+
+                # Also check column aliases: if user mentions a column alias, it uniquely identifies the intended table
+                # AND we must track the mapping so the SQL generator knows it's a column reference, NOT a filter value
+                if db_column_aliases:
+                    for tbl, cols in db_column_aliases.items():
+                        for col_name, aliases in cols.items():
+                            for alias in aliases:
+                                alias_clean = alias.strip().lower()
+                                if not alias_clean:
+                                    continue
+                                alias_matched = False
+                                if " " in alias_clean:
+                                    if alias_clean in q_lower:
+                                        alias_matched = True
+                                else:
+                                    if alias_clean in q_words or (len(alias_clean) >= 4 and alias_clean in q_lower):
+                                        alias_matched = True
+                                if alias_matched:
+                                    if not explicit_table_found:
+                                        explicit_table_found = True
+                                    matched_alias_tables.add(tbl)
+                                    resolved_column_alias_mappings.append({
+                                        "alias": alias.strip(),
+                                        "table": tbl,
+                                        "column": col_name,
+                                    })
+                                    logger.info(f"[COLUMN_ALIAS_MATCH] Query matched column alias '{alias}' -> table '{tbl}', col '{col_name}'")
+
+                # If query matched specific table(s) via alias (table or column alias), ensure schema_docs contains them
+                if explicit_table_found and matched_alias_tables:
+                    matched_alias_set = {t.lower().strip() for t in matched_alias_tables if t and t.strip()}
+                    alias_docs = [d for d in schema_docs if d.get("table_name", "").lower() in matched_alias_set]
+                    matched_found_names = {d.get("table_name", "").lower() for d in alias_docs}
+                    missing_alias_tables = matched_alias_set - matched_found_names
+
+                    # If the matched alias table wasn't in initial top-k pgvector retrieval (e.g. 100+ tables catalog),
+                    # construct the schema doc directly from canonical_schema so the query targets the EXACT assigned table!
+                    if missing_alias_tables and canonical_schema:
+                        from ..schema.markdown_doc_generator import SchemaMarkdownGenerator
+                        for missing_t in missing_alias_tables:
+                            t_obj = canonical_schema.get_table(missing_t) or canonical_schema.get_table(missing_t.split(".")[-1])
+                            if t_obj:
+                                doc_text = SchemaMarkdownGenerator.generate_table_markdown(t_obj)
+                                alias_docs.append({
+                                    "source": f"{missing_t}.md",
+                                    "title": f"Table: {missing_t}",
+                                    "text": doc_text,
+                                    "score": 1.0,
+                                    "table_name": t_obj.table_name,
+                                    "schema_name": t_obj.schema_name or "public",
+                                    "column_names": [c.name for c in t_obj.columns.values()],
+                                })
+                                logger.info(f"[ALIAS_TABLE_LOADED] Loaded canonical schema doc for alias-matched table '{missing_t}'")
+
+                    # Relationship Traversal: include foreign-key linked tables so cross-table joins can be performed
+                    if alias_docs and canonical_schema:
+                        from ..schema.markdown_doc_generator import SchemaMarkdownGenerator
+                        existing_names = {d.get("table_name", "").lower() for d in alias_docs}
+                        for d in list(alias_docs):
+                            tbl_obj = canonical_schema.get_table(d.get("table_name", "")) or canonical_schema.get_table(d.get("table_name", "").split(".")[-1])
+                            if tbl_obj:
+                                for fk in getattr(tbl_obj, "foreign_keys", []):
+                                    ref_tbl_name = fk.referred_table.split(".")[-1].lower()
+                                    if ref_tbl_name not in existing_names:
+                                        ref_tbl_obj = canonical_schema.get_table(ref_tbl_name)
+                                        if ref_tbl_obj:
+                                            ref_doc_text = SchemaMarkdownGenerator.generate_table_markdown(ref_tbl_obj)
+                                            alias_docs.append({
+                                                "source": f"{ref_tbl_name}.md",
+                                                "title": f"Table: {ref_tbl_name}",
+                                                "text": ref_doc_text,
+                                                "score": 0.80,
+                                                "table_name": ref_tbl_obj.table_name,
+                                                "schema_name": ref_tbl_obj.schema_name or "public",
+                                                "column_names": [c.name for c in ref_tbl_obj.columns.values()],
+                                            })
+                                            existing_names.add(ref_tbl_name)
+                                            logger.info(f"[FK_TRAVERSAL] Included linked foreign key table '{ref_tbl_name}' referenced by alias table '{tbl_obj.table_name}'")
+
+                    if alias_docs:
+                        schema_docs = alias_docs
+
+                # If query did NOT explicitly mention a table, and we have multiple candidate tables,
+                # prompt user with Multi-Select Table Selection (MSQ + search bar support)
+                if not explicit_table_found and len(schema_docs) > 1:
+                    candidate_table_list = []
+                    seen_candidates = set()
+                    for d in schema_docs:
+                        t_name = d.get("table_name", "")
+                        if not t_name or t_name in seen_candidates:
+                            continue
+                        seen_candidates.add(t_name)
+                        # Hide or demote raw backups or archives by default unless queried
+                        is_backup = "_bk_" in t_name.lower() or t_name.lower().endswith("_backup") or t_name.lower().startswith("archive_")
+                        candidate_table_list.append({
+                            "table_name": t_name,
+                            "score": round(float(d.get("score", 0.0)), 3),
+                            "is_backup": is_backup,
+                        })
+
+                    # Build multi-select options for frontend
+                    msq_options = [
+                        {
+                            "id": c["table_name"],
+                            "label": c["table_name"],
+                            "table": c["table_name"],
+                            "score": c["score"],
+                            "is_backup": c["is_backup"],
+                        }
+                        for c in candidate_table_list
+                    ]
+
+                    all_tables_list = sorted(list(set(all_known_tables)))
+                    raise DisambiguationRequiredError(
+                        message=f"Which table(s) would you like to query for '{user_query}'?",
+                        options=msq_options,
+                        entity_type="table",
+                        candidate_tables=candidate_table_list,
+                        all_tables=all_tables_list,
+                        table_aliases=db_table_aliases,
+                    )
 
             table_names = [d.get("table_name", "") for d in schema_docs if d.get("table_name")]
             table_scores = {d.get("table_name", f"table_{i}"): d.get("score", 1.0) for i, d in enumerate(schema_docs)}
@@ -1170,6 +1681,7 @@ class DatabaseKnowledgebaseService:
                     },
                     elapsed_stage_ms=t_ret_ms,
                 )
+
 
             # 2. Dynamic Entity Resolution & Disambiguation
             # ------------------------------------------------------------------
@@ -1448,12 +1960,23 @@ class DatabaseKnowledgebaseService:
             t_sql_start = time.perf_counter()
             from ..sql_generator.grounded_generator import GroundedSQLGenerator
 
+            docs_for_sql = schema_docs
+            if execution_strategy == "union" and selected_tables:
+                # Restrict context docs directly to the selected target tables to prevent LLM from being confused by unselected FK tables
+                sel_set = {t.lower().strip() for t in selected_tables}
+                filtered_docs = [d for d in schema_docs if d.get("table_name", "").lower() in sel_set]
+                if filtered_docs:
+                    docs_for_sql = filtered_docs
+
             candidate_sql_raw = await GroundedSQLGenerator.generate_sql(
                 question=user_query,
-                retrieved_docs=schema_docs,
+                retrieved_docs=docs_for_sql,
                 resolved_entities=resolved_dimension_entities,
                 intent_analysis=intent_analysis,
                 schema_interpretation=schema_interpretation,
+                column_alias_mappings=resolved_column_alias_mappings if resolved_column_alias_mappings else None,
+                execution_strategy=execution_strategy,
+                selected_tables=selected_tables,
             )
             t_sql_ms = (time.perf_counter() - t_sql_start) * 1000.0
 
@@ -1673,6 +2196,7 @@ class DatabaseKnowledgebaseService:
                                 retrieved_docs=schema_docs,
                                 resolved_entities=resolved_dimension_entities,
                                 intent_analysis=intent_analysis,
+                                column_alias_mappings=resolved_column_alias_mappings if resolved_column_alias_mappings else None,
                             )
                             repair_mode = "grounded_llm_repaired"
                         except Exception as repair_exc:
@@ -1721,51 +2245,75 @@ class DatabaseKnowledgebaseService:
                         raise exec_err
             t_exec_ms = (time.perf_counter() - t_exec_start) * 1000.0
 
-            # Zero-Row dynamic temporal relaxation recovery
+            # Zero-Row dynamic temporal relaxation recovery (AST-aware: strictly preserves entity and non-temporal filters)
             if canonical_result.row_count == 0 and any(
                 kw in candidate_sql_raw.lower()
-                for kw in ("current_date", "now()", "interval", "_at::date", "date =", "date >=", "date <=")
+                for kw in ("current_date", "now()", "interval", "_at::date", "_on::date", "date =", "date >=", "date <=")
             ):
-                logger.info("[GROUNDED_ZERO_ROW] Zero rows returned with temporal filter. Relaxing temporal bound...")
-                lines = candidate_sql_raw.splitlines()
-                filtered_lines = [
-                    ln for ln in lines
-                    if not any(kw in ln.lower() for kw in ("current_date", "now()", "interval", "_at::date", "_at >=", "_at <="))
-                ]
-                relaxed_sql = "\n".join(filtered_lines)
-                relaxed_sql = re.sub(r"\bWHERE\s+AND\b", "WHERE", relaxed_sql, flags=re.IGNORECASE)
-                relaxed_sql = re.sub(r"\bAND\s*$", "", relaxed_sql, flags=re.MULTILINE)
+                logger.info("[GROUNDED_ZERO_ROW] Zero rows returned with temporal filter. Relaxing temporal bound while strictly preserving entity filters...")
+                try:
+                    import sqlglot
+                    from sqlglot import exp
 
-                if relaxed_sql != candidate_sql_raw:
-                    try:
-                        relaxed_sql_clean = GroundedSQLValidator.validate_readonly_sql(relaxed_sql)
-                        if "LIMIT" not in relaxed_sql_clean.upper():
-                            default_limit = 1 if "count(" in relaxed_sql_clean.lower() else 50
-                            relaxed_sql_clean = f"{relaxed_sql_clean.rstrip()} LIMIT {default_limit}"
-                        parsed_relaxed = SQLASTParser.parse_sql(relaxed_sql_clean, dialect="postgres")
-                        cand_relaxed = ValidatedCandidateSQL(
-                            raw_sql=relaxed_sql_clean,
-                            sanitized_sql=relaxed_sql_clean,
-                            parameterized=SQLParameterizer.parameterize(parsed_relaxed),
-                            plan=cand_sql.plan,
-                            validation_report=ValidationResult(is_valid=True, errors=[], warnings=[]),
-                            repair_attempts=1,
-                            sql_generation_mode="grounded_temporal_relaxed",
-                        )
-                        relaxed_result = await self.execute_candidate_sql(
-                            kb_id=kb_id,
-                            candidate_sql=cand_relaxed,
-                            execution_config=execution_config,
-                        )
-                        if relaxed_result.row_count > 0:
-                            logger.info(f"[GROUNDED_ZERO_ROW] Relaxed query recovered {relaxed_result.row_count} rows!")
-                            canonical_result = relaxed_result
-                            cand_sql = cand_relaxed
-                            disambiguation_notices.append(
-                                "No activity was found strictly for the specified date. Showing latest associated activity."
+                    parsed_for_relax = sqlglot.parse_one(candidate_sql_raw, read="postgres")
+                    where_node = parsed_for_relax.find(exp.Where)
+
+                    if where_node and where_node.this:
+                        def _is_temporal_cond(node):
+                            node_sql = node.sql().lower()
+                            return any(
+                                kw in node_sql
+                                for kw in ("current_date", "now()", "interval", "_at::date", "_on::date", "date =", "date >=", "date <=", "spent_on", "created_at", "updated_at")
                             )
-                    except Exception as rel_err:
-                        logger.debug(f"[GROUNDED_ZERO_ROW] Relaxed query attempt failed: {rel_err}")
+
+                        def _prune_temporal(node):
+                            if not node:
+                                return None
+                            if isinstance(node, exp.And):
+                                left = _prune_temporal(node.left)
+                                right = _prune_temporal(node.right)
+                                if left and right:
+                                    return exp.And(this=left, expression=right)
+                                return left or right
+                            elif _is_temporal_cond(node):
+                                return None
+                            return node
+
+                        pruned_where = _prune_temporal(where_node.this)
+                        # Only proceed with relaxation if non-temporal entity filters still remain!
+                        # We must NEVER drop all filters to avoid dumping random unrelated database records.
+                        if pruned_where is not None:
+                            where_node.set("this", pruned_where)
+                            relaxed_sql = parsed_for_relax.sql(dialect="postgres")
+
+                            relaxed_sql_clean = GroundedSQLValidator.validate_readonly_sql(relaxed_sql)
+                            if "LIMIT" not in relaxed_sql_clean.upper():
+                                default_limit = 1 if "count(" in relaxed_sql_clean.lower() else 50
+                                relaxed_sql_clean = f"{relaxed_sql_clean.rstrip()} LIMIT {default_limit}"
+                            parsed_relaxed = SQLASTParser.parse_sql(relaxed_sql_clean, dialect="postgres")
+                            cand_relaxed = ValidatedCandidateSQL(
+                                raw_sql=relaxed_sql_clean,
+                                sanitized_sql=relaxed_sql_clean,
+                                parameterized=SQLParameterizer.parameterize(parsed_relaxed),
+                                plan=cand_sql.plan,
+                                validation_report=ValidationResult(is_valid=True, errors=[], warnings=[]),
+                                repair_attempts=1,
+                                sql_generation_mode="grounded_temporal_relaxed",
+                            )
+                            relaxed_result = await self.execute_candidate_sql(
+                                kb_id=kb_id,
+                                candidate_sql=cand_relaxed,
+                                execution_config=execution_config,
+                            )
+                            if relaxed_result.row_count > 0:
+                                logger.info(f"[GROUNDED_ZERO_ROW] Relaxed query recovered {relaxed_result.row_count} rows for the target entity!")
+                                canonical_result = relaxed_result
+                                cand_sql = cand_relaxed
+                                disambiguation_notices.append(
+                                    "No activity was found strictly for the specified date. Showing latest associated activity."
+                                )
+                except Exception as rel_err:
+                    logger.warning(f"[GROUNDED_ZERO_ROW] Relaxed query attempt failed or safely skipped: {rel_err}", exc_info=True)
 
             tracer.record_sql_generation(
                 candidate_sql=cand_sql.sanitized_sql,
@@ -1819,7 +2367,6 @@ class DatabaseKnowledgebaseService:
             from ..answering.models import (
                 AnswerType,
                 EvidenceModel,
-                GroundedDatabaseAnswer,
                 GroundingStatus,
                 VerificationStatus,
             )
@@ -1833,6 +2380,7 @@ class DatabaseKnowledgebaseService:
                     "row_count": canonical_result.row_count,
                     "truncated": canonical_result.truncated,
                 },
+                schema_interpretation=schema_interpretation,
             )
             t_syn_ms = (time.perf_counter() - t_syn_start) * 1000.0
 
@@ -2016,6 +2564,10 @@ class DatabaseKnowledgebaseService:
                         "message": disambig_err.message,
                         "correlation_id": tracer.request_id or query_id,
                         "options": disambig_err.options,
+                        "entity_type": getattr(disambig_err, "entity_type", "user"),
+                        "candidate_tables": getattr(disambig_err, "candidate_tables", []),
+                        "all_tables": getattr(disambig_err, "all_tables", []),
+                        "table_aliases": getattr(disambig_err, "table_aliases", {}),
                     },
                 )
             raise
@@ -2048,6 +2600,8 @@ class DatabaseKnowledgebaseService:
         user_id: Optional[Any] = None,
         event_sink: Optional[DatabasePipelineEventSink] = None,
         resolved_entities: Optional[list] = None,
+        selected_tables: Optional[list] = None,
+        execution_strategy: Optional[str] = None,
     ) -> GroundedDatabaseAnswer:
         """
         Complete end-to-end database knowledgebase querying pipeline with Phase 3A observability
@@ -2075,7 +2629,10 @@ class DatabaseKnowledgebaseService:
                 user_id=user_id,
                 event_sink=event_sink,
                 resolved_entities=resolved_entities,
+                selected_tables=selected_tables,
+                execution_strategy=execution_strategy,
             )
+
 
         query_id = str(uuid.uuid4())
         tracer = PipelineTracer(
@@ -2263,7 +2820,6 @@ class DatabaseKnowledgebaseService:
                     has_differentiated_options = len(clean_labels) > 1
 
                     if len(choices) > 1 and not resolved_entities and has_differentiated_options and not has_specific_code:
-                        from ..disambiguation.exceptions import DisambiguationRequiredError
                         options = [
                             {
                                 "id": c["pk"],
@@ -2553,7 +3109,6 @@ class DatabaseKnowledgebaseService:
                 from ..answering.models import (
                     AnswerType,
                     EvidenceModel,
-                    GroundedDatabaseAnswer,
                     GroundingStatus,
                     VerificationStatus,
                 )
@@ -3265,6 +3820,10 @@ class DatabaseKnowledgebaseService:
                         "retryable": False,
                         "message": disambig_err.message,
                         "options": disambig_err.options,
+                        "entity_type": getattr(disambig_err, "entity_type", "user"),
+                        "candidate_tables": getattr(disambig_err, "candidate_tables", []),
+                        "all_tables": getattr(disambig_err, "all_tables", []),
+                        "table_aliases": getattr(disambig_err, "table_aliases", {}),
                         "correlation_id": tracer.request_id or query_id,
                     },
                 )
@@ -3560,6 +4119,125 @@ class DatabaseKnowledgebaseService:
             "table_aliases": remaining,
             "deleted_table": table_name,
         }
+
+    async def get_column_aliases(self, kb_id: uuid.UUID) -> Dict[str, Dict[str, List[str]]]:
+        """Fetch all user-defined column aliases as a nested dict {table_name: {column_name: [aliases]}}."""
+        records = await self.repo.get_column_aliases(kb_id=kb_id)
+        col_aliases_map: Dict[str, Dict[str, List[str]]] = {}
+        for r in records:
+            if r.table_name not in col_aliases_map:
+                col_aliases_map[r.table_name] = {}
+            col_aliases_map[r.table_name][r.column_name] = r.aliases if isinstance(r.aliases, list) else []
+        return col_aliases_map
+
+    async def save_column_aliases(
+        self,
+        kb_id: uuid.UUID,
+        column_aliases_data: Any,
+    ) -> Dict[str, Any]:
+        """
+        Save single or batch column aliases.
+        Enforces NO DUPLICATE aliases across columns within the database knowledgebase.
+        """
+        incoming_map: Dict[str, Dict[str, List[str]]] = {}
+
+        if isinstance(column_aliases_data, dict):
+            if "column_aliases" in column_aliases_data and isinstance(column_aliases_data["column_aliases"], dict):
+                incoming_map.update(column_aliases_data["column_aliases"])
+            elif "columnAliases" in column_aliases_data and isinstance(column_aliases_data["columnAliases"], dict):
+                incoming_map.update(column_aliases_data["columnAliases"])
+
+            t_name = column_aliases_data.get("table_name") or column_aliases_data.get("tableName")
+            c_name = column_aliases_data.get("column_name") or column_aliases_data.get("columnName")
+            aliases = column_aliases_data.get("aliases")
+            if t_name and c_name and isinstance(aliases, list):
+                if t_name not in incoming_map:
+                    incoming_map[t_name] = {}
+                incoming_map[t_name][c_name] = aliases
+
+            items = column_aliases_data.get("items")
+            if items and isinstance(items, list):
+                for item in items:
+                    it_t = item.get("table_name") or item.get("tableName")
+                    it_c = item.get("column_name") or item.get("columnName")
+                    it_aliases = item.get("aliases") or []
+                    if it_t and it_c:
+                        if it_t not in incoming_map:
+                            incoming_map[it_t] = {}
+                        incoming_map[it_t][it_c] = it_aliases
+        elif hasattr(column_aliases_data, "column_aliases") and column_aliases_data.column_aliases:
+            incoming_map.update(column_aliases_data.column_aliases)
+        elif hasattr(column_aliases_data, "table_name") and hasattr(column_aliases_data, "column_name") and column_aliases_data.table_name and column_aliases_data.column_name:
+            t_name = column_aliases_data.table_name
+            c_name = column_aliases_data.column_name
+            if t_name not in incoming_map:
+                incoming_map[t_name] = {}
+            incoming_map[t_name][c_name] = column_aliases_data.aliases or []
+
+        # Check existing column aliases to strictly reject collisions / duplicates
+        existing_aliases = await self.get_column_aliases(kb_id=kb_id)
+        # Build registry of current aliases: alias_lower -> (table, column)
+        alias_registry: Dict[str, tuple[str, str]] = {}
+        for ex_t, cols in existing_aliases.items():
+            for ex_c, alist in cols.items():
+                for a in alist:
+                    a_clean = str(a).strip().lower()
+                    if a_clean:
+                        alias_registry[a_clean] = (ex_t, ex_c)
+
+        # Validate incoming aliases against registry
+        for inc_t, cols in incoming_map.items():
+            for inc_c, alist in cols.items():
+                for a in alist:
+                    a_clean = str(a).strip().lower()
+                    if not a_clean:
+                        continue
+                    if a_clean in alias_registry:
+                        owner_t, owner_c = alias_registry[a_clean]
+                        if owner_t.lower() != inc_t.lower() or owner_c.lower() != inc_c.lower():
+                            raise ValueError(
+                                f"Duplicate alias '{a}' is not allowed: already assigned to {owner_t}.{owner_c}"
+                            )
+
+        saved = await self.repo.save_column_aliases(kb_id=kb_id, column_aliases_map=incoming_map)
+
+        # Invalidate retrieval caches
+        try:
+            from ..retrieval.cache import SchemaRetrievalCache
+            SchemaRetrievalCache.get_instance().invalidate_kb(str(self.tenant_id), str(kb_id))
+        except Exception:
+            pass
+
+        result_map: Dict[str, Dict[str, List[str]]] = {}
+        for r in saved:
+            if r.table_name not in result_map:
+                result_map[r.table_name] = {}
+            result_map[r.table_name][r.column_name] = r.aliases if isinstance(r.aliases, list) else []
+
+        return {
+            "success": True,
+            "column_aliases": result_map,
+            "saved_count": len(saved),
+        }
+
+    async def delete_column_alias(self, kb_id: uuid.UUID, table_name: str, column_name: str) -> Dict[str, Any]:
+        """Delete aliases for a specific column."""
+        await self.repo.delete_column_alias(kb_id=kb_id, table_name=table_name, column_name=column_name)
+
+        try:
+            from ..retrieval.cache import SchemaRetrievalCache
+            SchemaRetrievalCache.get_instance().invalidate_kb(str(self.tenant_id), str(kb_id))
+        except Exception:
+            pass
+
+        remaining = await self.get_column_aliases(kb_id=kb_id)
+        return {
+            "success": True,
+            "column_aliases": remaining,
+            "deleted_table": table_name,
+            "deleted_column": column_name,
+        }
+
 
 
 

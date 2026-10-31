@@ -122,7 +122,7 @@ class GenerateSQLApiRequest(BaseModel):
 
 class DatabaseQueryApiRequest(BaseModel):
     """Payload to execute safe, end-to-end natural-language database query."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     query: str = Field(..., min_length=1, max_length=2000, description="Natural language question")
     top_k_tables: int = Field(default=8, ge=1, le=50, description="Maximum tables to include in sub-schema")
@@ -130,6 +130,10 @@ class DatabaseQueryApiRequest(BaseModel):
     use_llm: bool = Field(default=True, description="Whether to use LLM for candidate SQL generation")
     timeout_seconds: Optional[int] = Field(default=5, ge=1, le=60, description="Execution timeout budget in seconds")
     resolved_entities: Optional[List[Dict[str, Any]]] = Field(default=None, description="Pre-resolved entities to bypass extraction/collision checks")
+    selected_tables: Optional[List[str]] = Field(default=None, alias="selectedTables", description="Explicit user-selected tables to target directly")
+    execution_strategy: Optional[str] = Field(default=None, alias="executionStrategy", description="Strategy when querying multiple tables: 'separate' | 'union'")
+
+
 
 
 class StandardApiResponse(BaseModel):
@@ -198,5 +202,37 @@ class TableAliasResponse(BaseModel):
     success: bool = True
     table_aliases: Dict[str, List[str]] = Field(default_factory=dict)
     message: Optional[str] = None
+
+
+class ColumnAliasItem(BaseModel):
+    """Single column alias entry."""
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    table_name: str = Field(..., alias="tableName")
+    column_name: str = Field(..., alias="columnName")
+    aliases: List[str] = Field(default_factory=list)
+    description: Optional[str] = Field(default=None)
+
+
+class ColumnAliasSaveRequest(BaseModel):
+    """Save column aliases payload (supports single column or nested/batch dict)."""
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    table_name: Optional[str] = Field(default=None, alias="tableName")
+    column_name: Optional[str] = Field(default=None, alias="columnName")
+    aliases: Optional[List[str]] = Field(default=None)
+    column_aliases: Optional[Dict[str, Dict[str, List[str]]]] = Field(default=None, alias="columnAliases")
+    items: Optional[List[ColumnAliasItem]] = Field(default=None)
+    description: Optional[str] = Field(default=None)
+
+
+class ColumnAliasResponse(BaseModel):
+    """Response containing column aliases mapping: { [tableName]: { [columnName]: [alias1, ...] } }."""
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    success: bool = True
+    column_aliases: Dict[str, Dict[str, List[str]]] = Field(default_factory=dict)
+    message: Optional[str] = None
+
 
 

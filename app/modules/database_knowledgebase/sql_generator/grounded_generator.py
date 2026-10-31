@@ -90,6 +90,13 @@ Rules:
    - When joining between work items and time/activity logs, accommodate both columns:
      `ON (te.work_package_id = wp.id OR (te.entity_type = 'WorkPackage' AND te.entity_id = wp.id))`
    - When the question asks for primary entities (e.g. "Who updated tasks...") with their logged hours, use `LEFT JOIN` for optional time logs and check the direct `project_id` on the logged table (`te.project_id = p.id`).
+13. COLUMN ALIAS RESOLUTION (CRITICAL):
+   - If a "CRITICAL COLUMN ALIAS RESOLUTION" section is provided below, it lists user-defined alternative names (aliases) for database columns.
+   - These alias tokens are COLUMN REFERENCES, NOT filter values. NEVER use an alias token (e.g. 'cape_stage') as a WHERE clause value.
+   - Map the alias to the actual column name and extract the real filter value from the rest of the question.
+   - Example: User says "how many completed in cape_stage column" where 'cape_stage' is an alias for column 'stage'.
+     CORRECT: WHERE stage = 'completed'
+     WRONG:  WHERE stage = 'cape_stage'
 """
 
         user_content = f"Schema context:\n{context}\n\nQuestion: {question}"
@@ -152,6 +159,47 @@ Rules:
             if hasattr(schema_interpretation, "relationships_required") and schema_interpretation.relationships_required:
                 rel_descs = [f"{r.source_table} <-> {r.target_table} ({r.join_type} JOIN on {r.join_columns})" for r in schema_interpretation.relationships_required]
                 user_content += f"- Required Join Paths: {'; '.join(rel_descs)}\n"
+
+        # Consume column alias mappings: these are user-defined alternative names for columns
+        # CRITICAL: When a column alias is detected, the alias token is a COLUMN REFERENCE, NOT a filter value.
+        execution_strategy = kwargs.get("execution_strategy")
+        target_tables = kwargs.get("selected_tables") or [d.get("table_name") for d in retrieved_docs if d.get("table_name")]
+        if execution_strategy == "union":
+            tbl_list_str = ", ".join(f"'{t}'" for t in target_tables if t)
+            user_content += "\n\nCRITICAL MANDATORY INSTRUCTION - UNION ALL REQUIRED:\n"
+            user_content += (
+                f"The user explicitly selected multiple tables and chose the 'UNION' execution strategy.\n"
+                f"Target tables: [{tbl_list_str}].\n"
+                "You MUST generate a single SQL query that uses UNION ALL to combine the results across ALL of these target tables.\n"
+                "DO NOT query only one table! You MUST write a query of the form:\n"
+                "  SELECT 'table_1' AS source_table, COUNT(*) AS count FROM table_1 WHERE <condition>\n"
+                "  UNION ALL\n"
+                "  SELECT 'table_2' AS source_table, COUNT(*) AS count FROM table_2 WHERE <condition>\n"
+                "All branches of the UNION ALL must have identical column names and compatible types.\n"
+                "Failure to include all target tables in the UNION ALL will violate the user's explicit request.\n"
+            )
+
+        column_alias_mappings = kwargs.get("column_alias_mappings")
+        if column_alias_mappings:
+            user_content += "\n\nCRITICAL COLUMN ALIAS RESOLUTION:\n"
+            user_content += (
+                "The following tokens in the user's question are ALTERNATIVE NAMES (aliases) for database columns.\n"
+                "They are NOT filter values. You MUST:\n"
+                "1. Replace each alias with the actual column name in the SQL query.\n"
+                "2. Extract the actual filter/condition value from the OTHER words in the question.\n"
+                "3. NEVER use the alias token as a WHERE clause value.\n\n"
+            )
+            for mapping in column_alias_mappings:
+                alias = mapping.get("alias", "")
+                table = mapping.get("table", "")
+                column = mapping.get("column", "")
+                user_content += (
+                    f"- '{alias}' is an alternative name for column '{column}' in table '{table}'.\n"
+                    f"  In the SQL, use '{table}.{column}' (NOT '{alias}' as a value).\n"
+                    f"  The filter value should come from the rest of the question (e.g., if user says "
+                    f"'how many completed in {alias}', the SQL should be: WHERE {column} = 'completed').\n"
+                )
+
 
         user_content += "\nSQL:"
 
@@ -263,6 +311,26 @@ Rules:
                 "   - DO NOT filter project names or type names inside `work_packages.subject`! The project name belongs to `projects.name` (or `project_id`), NOT the work package title/subject.\n"
                 "2. When multiple people or entities are mentioned, map each to their respective role and column.\n"
             )
+
+        # Column alias context for repair as well
+        column_alias_mappings = kwargs.get("column_alias_mappings")
+        if column_alias_mappings:
+            user_content += "\n\nCRITICAL COLUMN ALIAS RESOLUTION:\n"
+            user_content += (
+                "The following tokens in the user's question are ALTERNATIVE NAMES (aliases) for database columns.\n"
+                "They are NOT filter values. You MUST:\n"
+                "1. Replace each alias with the actual column name in the SQL query.\n"
+                "2. Extract the actual filter/condition value from the OTHER words in the question.\n"
+                "3. NEVER use the alias token as a WHERE clause value.\n\n"
+            )
+            for mapping in column_alias_mappings:
+                alias = mapping.get("alias", "")
+                table = mapping.get("table", "")
+                column = mapping.get("column", "")
+                user_content += (
+                    f"- '{alias}' is an alternative name for column '{column}' in table '{table}'.\n"
+                    f"  In the SQL, use '{table}.{column}' (NOT '{alias}' as a value).\n"
+                )
 
         user_content += "\nCorrected SQL:"
 
