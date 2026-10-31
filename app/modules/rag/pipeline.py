@@ -877,7 +877,7 @@ class RAGPipeline:
             WEIGHT_VECTOR = 1.0
             WEIGHT_EXACT_MATCH = 3.0
             RRF_CANDIDATE_POOL_SIZE = 60  # Pre-fusion raw candidate limit per engine
-            TOP_N = self.settings.rag_final_chunk_limit  # Post-fusion cutoff for reranker
+            TOP_N = max(40, getattr(self.settings, "rag_final_chunk_limit", 20))  # Post-fusion candidate pool for reranker
 
             # Convert analysis metadata to dictionary for RetrievalTasks
             meta_dict = {}

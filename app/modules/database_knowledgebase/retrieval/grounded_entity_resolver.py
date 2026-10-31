@@ -327,11 +327,14 @@ class GroundedEntityResolver:
                     if len(val_str) < 2:
                         continue
 
-                    # Exact substring match bounded by word boundaries or punctuation
-                    pattern = r'(?<![a-zA-Z0-9_])' + re.escape(val_str) + r'(?![a-zA-Z0-9_])'
-                    if re.search(pattern, user_query):
-                        exact_matches.append((pk_val, val_str, val_str, r))
-                        break
+                    # Fast exact substring match with word boundary check
+                    if val_str in user_query:
+                        idx = user_query.find(val_str)
+                        left_boundary = (idx == 0 or not user_query[idx - 1].isalnum())
+                        right_boundary = (idx + len(val_str) == len(user_query) or not user_query[idx + len(val_str)].isalnum())
+                        if left_boundary and right_boundary:
+                            exact_matches.append((pk_val, val_str, val_str, r))
+                            break
 
             timings["exact_latency_ms"] += (time.perf_counter() - t_exact_start) * 1000.0
 
@@ -418,37 +421,41 @@ class GroundedEntityResolver:
                         val_clean = val_orig.lower()
                         val_words = [w for w in re.split(r'[^a-z0-9]+', val_clean) if w]
 
-                        # 1. Whole term word-boundary match (case-insensitive)
-                        pat_word = r'(?<![a-z0-9_])' + re.escape(val_clean) + r'(?![a-z0-9_])'
-                        if re.search(pat_word, q_clean):
+                        # 1. Whole term match (fast exact lower check before regex)
+                        if val_clean in q_clean:
+                            # Verify word boundary safely without heavy regex overhead
+                            idx = q_clean.find(val_clean)
+                            left_boundary = (idx == 0 or not q_clean[idx - 1].isalnum())
+                            right_boundary = (idx + len(val_clean) == len(q_clean) or not q_clean[idx + len(val_clean)].isalnum())
+                            if left_boundary and right_boundary:
+                                matched = True
+                                matched_val = val_orig
+                                matched_text = val_orig
+                                break
+
+                        # 2. Singular / Plural variation
+                        singular_form = val_clean[:-1] if val_clean.endswith('s') and len(val_clean) > 3 else None
+                        plural_form = f"{val_clean}s" if not val_clean.endswith('s') else None
+
+                        if singular_form and singular_form in q_tokens:
                             matched = True
                             matched_val = val_orig
                             matched_text = val_orig
                             break
-
-                        # 2. Singular / Plural variation with word boundaries
-                        # e.g., user asks 'bugs' -> db has 'Bug' or 'Bugs'
-                        singular_form = val_clean[:-1] if val_clean.endswith('s') and len(val_clean) > 3 else val_clean
-                        plural_form = f"{val_clean}s" if not val_clean.endswith('s') else val_clean
-
-                        pat_singular = r'(?<![a-z0-9_])' + re.escape(singular_form) + r'(?![a-z0-9_])'
-                        pat_plural = r'(?<![a-z0-9_])' + re.escape(plural_form) + r'(?![a-z0-9_])'
-
-                        if (singular_form != val_clean and re.search(pat_singular, q_clean)) or \
-                           (plural_form != val_clean and re.search(pat_plural, q_clean)):
+                        if plural_form and plural_form in q_tokens:
                             matched = True
                             matched_val = val_orig
                             matched_text = val_orig
                             break
 
                         # 3. Separator-normalized match (e.g. CREAM_Reward <-> CREAM Reward)
-                        norm_sep_val = re.sub(r'[\s_\-]+', ' ', val_clean)
-                        pat_sep = r'(?<![a-z0-9_])' + re.escape(norm_sep_val) + r'(?![a-z0-9_])'
-                        if re.search(pat_sep, q_clean):
-                            matched = True
-                            matched_val = val_orig
-                            matched_text = val_orig
-                            break
+                        if '_' in val_clean or '-' in val_clean:
+                            norm_sep_val = re.sub(r'[\s_\-]+', ' ', val_clean)
+                            if norm_sep_val in q_clean:
+                                matched = True
+                                matched_val = val_orig
+                                matched_text = val_orig
+                                break
 
                         # 4. Multi-word constituent match (all non-stop words of entity in query tokens)
                         sub_words = [w for w in val_words if len(w) >= 3 and w not in STOP_WORDS]
@@ -528,18 +535,21 @@ class GroundedEntityResolver:
                         continue
 
                     val_lower = val_str.lower()
+                    len_val = len(val_lower)
                     best_sim = 0.0
                     best_span = ""
-
                     for span in q_spans:
                         span_lower = span.lower()
                         # Short span guard
-                        if len(span_lower) <= 2:
+                        len_span = len(span_lower)
+                        if len_span <= 2:
+                            continue
+
+                        # Length diff guard: If length diff is too large, similarity cannot reach fuzzy_threshold
+                        if abs(len_val - len_span) / max(len_val, len_span) > (1.0 - fuzzy_threshold):
                             continue
 
                         # Substring false positive guard:
-                        # If one is a strict substring of the other but lengths differ significantly (e.g. bug vs Debug),
-                        # do not treat as a fuzzy match unless similarity is genuinely high
                         sim = cls._levenshtein_similarity(val_lower, span_lower)
                         if sim > best_sim:
                             best_sim = sim

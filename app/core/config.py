@@ -315,7 +315,8 @@ class Settings(BaseSettings):
 
     # ============= EXTERNAL SERVICES =============
 
-    sql_generation_model: str = "deepseek-ai/DeepSeek-V3"
+    sql_generation_model: str = "Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
+    sql_generation_model_fallback: str = "deepseek-ai/DeepSeek-V3"
 
     llm_gateway_api_key: Optional[str] = None
     gdocz_api_key: Optional[str] = None  # For PDF  Markdown extraction (primary)

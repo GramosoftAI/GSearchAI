@@ -23,11 +23,13 @@ class GroundedAnswerSynthesizer:
     """Synthesizes rich, detailed natural language answers from query execution results with data provenance."""
 
     @classmethod
-    def _get_client(cls) -> AsyncOpenAI:
+    def _get_client(cls, timeout: Optional[float] = None) -> AsyncOpenAI:
+        req_timeout = timeout or getattr(settings, "synthesis_llm_timeout_seconds", 90.0)
         return AsyncOpenAI(
             api_key=settings.deepinfra_api_key or "anonymous",
             base_url=settings.deepinfra_api_url or "https://api.deepinfra.com/v1/openai",
-            timeout=60.0,
+            timeout=req_timeout,
+            max_retries=2,
         )
 
     @classmethod

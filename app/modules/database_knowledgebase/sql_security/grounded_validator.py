@@ -79,4 +79,17 @@ class GroundedSQLValidator:
             if name in BLOCKED_FUNCTIONS:
                 raise ValueError(f"Database function '{name}' is forbidden for security policy.")
 
-        return cleaned
+        # Convert all string literal equality checks to case-insensitive ILIKE in PostgreSQL
+        for eq in list(tree.find_all(exp.EQ)):
+            if isinstance(eq.expression, exp.Literal) and eq.expression.is_string:
+                eq.replace(exp.ILike(this=eq.this, expression=eq.expression))
+            elif isinstance(eq.this, exp.Literal) and eq.this.is_string:
+                eq.replace(exp.ILike(this=eq.expression, expression=eq.this))
+
+        for neq in list(tree.find_all(exp.NEQ)):
+            if isinstance(neq.expression, exp.Literal) and neq.expression.is_string:
+                neq.replace(exp.Not(this=exp.ILike(this=neq.this, expression=neq.expression)))
+            elif isinstance(neq.this, exp.Literal) and neq.this.is_string:
+                neq.replace(exp.Not(this=exp.ILike(this=neq.expression, expression=neq.this)))
+
+        return tree.sql(dialect="postgres")

@@ -60,8 +60,9 @@ STRICT CONSTRAINTS:
       * NEVER break a single literal phrase across multiple different columns using conjoined AND (e.g. NEVER write `col1 ILIKE '%part1%' AND col2 ILIKE '%part2%' AND col3 ILIKE '%part3%'`).
       * Match the target phrase against a single candidate column with ILIKE: `(column_name ILIKE '%word1%' AND column_name ILIKE '%word2%')` or `column_name ILIKE '%word1%word2%'`.
       * Or test candidate columns with OR: `(col_a ILIKE '%literal%' OR col_b ILIKE '%literal%')`.
-      * If matching tables with separated name fields (e.g. firstname, lastname), match against the combined expression: `CONCAT_WS(' ', col_first, col_last) ILIKE '%full literal%'`.
-20. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text outside the SQL block.
+20. MANDATORY CASE-INSENSITIVE STRING MATCHING (USE ILIKE ONLY):
+    - In PostgreSQL, `=` is strictly case-sensitive. Always use `ILIKE` for all string/text/varchar value checks, statuses, categories, stages, types, names, codes, and literal filters (e.g. `stage ILIKE 'Submitted'`, `capex_revex ILIKE 'CAPEX'`). NEVER use `=` for string/text values!
+21. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text outside the SQL block.
 """
 
     @classmethod
