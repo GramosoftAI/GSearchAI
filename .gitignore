@@ -87,6 +87,7 @@ scratch_mod*.py
 test_chunk*.py
 old_service.py
 test_widget.html
+rps_hospital.html
 remote_responses_log.json
 *.patch
 diff*.patch
