@@ -1,0 +1,48 @@
+{
+  "case_id": "G04",
+  "category": "G_entity",
+  "question": "Show customer alice johnson.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 2067.29949999135,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "customers"
+  ],
+  "join_path": [],
+  "planner_confidence": null,
+  "generated_sql": "SELECT c.id, c.name FROM public.customers AS c WHERE c.id = :p1 AND CAST(c.name AS TEXT) ILIKE :p2 LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 1,
+  "result_rows_preview": [
+    {
+      "id": 1,
+      "name": "Alice Johnson"
+    }
+  ],
+  "final_answer": "The customer is Alice Johnson, with an ID of 1.",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": null,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

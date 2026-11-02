@@ -1,0 +1,52 @@
+{
+  "case_id": "H05",
+  "category": "H_temporal",
+  "question": "Show orders created last month.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 7196.806799969636,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products"
+  ],
+  "planned_tables": [
+    "orders"
+  ],
+  "join_path": [
+    "orders.customer_id -> customers.id",
+    "orders.id -> payments.order_id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT o.id, o.order_date, o.status, o.total_amount FROM public.orders AS o WHERE o.order_date >= :p1 AND o.order_date < :p2 LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 1,
+  "result_rows_preview": [
+    {
+      "id": 6,
+      "order_date": "2026-09-15T10:00:00+00:00",
+      "status": "COMPLETED",
+      "total_amount": "449.49"
+    }
+  ],
+  "final_answer": "| Id | Order Date | Status | Total Amount |\n| --- | --- | --- | --- |\n| 6 | 2026-09-15T10:00:00+00:00 | COMPLETED | $449.49 |\n\n**Summary:** Total Total Amount: $449.49",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": true,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

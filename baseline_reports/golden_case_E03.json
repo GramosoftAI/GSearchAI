@@ -1,0 +1,67 @@
+{
+  "case_id": "E03",
+  "category": "E_joins",
+  "question": "Show customer name and total order value.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 4535.741699975915,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "customers",
+    "orders"
+  ],
+  "join_path": [
+    "o.customer_id = c.id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT SUM(o.total_amount) AS sum_total_amount, c.name FROM public.orders AS o INNER JOIN public.customers AS c ON o.customer_id = c.id GROUP BY c.name LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 7,
+  "result_rows_preview": [
+    {
+      "sum_total_amount": "12.50",
+      "name": "john doe"
+    },
+    {
+      "sum_total_amount": "149.99",
+      "name": "Evan Wright"
+    },
+    {
+      "sum_total_amount": "798.00",
+      "name": "Charlie Davis"
+    },
+    {
+      "sum_total_amount": "748.99",
+      "name": "John Doe"
+    },
+    {
+      "sum_total_amount": "494.49",
+      "name": "Alice Johnson"
+    }
+  ],
+  "final_answer": "Here are the customer names along with their total order values:\n* John Doe: $12.50 and $748.99\n* Evan Wright: $149.99\n* Charlie Davis: $798.00\n* Alice Johnson: $494.49\n* Bob Smith: $299.50\n* Diana Prince: $745.00 \n\nNote that there are two separate orders for a customer named \"John Doe\", with different total order values.",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": true,
+    "filters": null,
+    "aggregations": true,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

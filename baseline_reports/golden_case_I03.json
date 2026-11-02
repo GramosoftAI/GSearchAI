@@ -1,0 +1,59 @@
+{
+  "case_id": "I03",
+  "category": "I_comparative",
+  "question": "Show the top 3 products by price.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 4339.195000007749,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "products"
+  ],
+  "join_path": [],
+  "planner_confidence": null,
+  "generated_sql": "SELECT p.id, p.price, p.name FROM public.products AS p ORDER BY p.price DESC NULLS LAST LIMIT 3",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 3,
+  "result_rows_preview": [
+    {
+      "id": 3,
+      "price": "399.00",
+      "name": "Ultra-HD 27-inch Monitor"
+    },
+    {
+      "id": 5,
+      "price": "350.00",
+      "name": "Adjustable Lumbar Support Chair"
+    },
+    {
+      "id": 2,
+      "price": "299.50",
+      "name": "Wireless Noise-Cancelling Headphones"
+    }
+  ],
+  "final_answer": "The top 3 products by price are:\n* Ultra-HD 27-inch Monitor (#3): $399.00\n* Adjustable Lumbar Support Chair (#5): $350.00\n* Wireless Noise-Cancelling Headphones (#2): $299.50",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": true,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

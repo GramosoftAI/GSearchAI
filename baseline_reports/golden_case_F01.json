@@ -1,0 +1,76 @@
+{
+  "case_id": "F01",
+  "category": "F_complex_joins",
+  "question": "Show each customer with the products they bought and quantities.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 16463.833699934185,
+  "llm_call_count": 2,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "products"
+  ],
+  "join_path": [
+    "oi.product_id = p.id",
+    "c.id = o.customer_id",
+    "o.id = oi.order_id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT c.name AS customer_name, p.name AS product_name, oi.quantity FROM public.customers AS c INNER JOIN public.orders AS o ON c.id = o.customer_id INNER JOIN public.order_items AS oi ON o.id = oi.order_id INNER JOIN public.products AS p ON oi.product_id = p.id LIMIT 1000",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 11,
+  "result_rows_preview": [
+    {
+      "customer_name": "Alice Johnson",
+      "product_name": "Ergonomic Mechanical Keyboard",
+      "quantity": 1
+    },
+    {
+      "customer_name": "Alice Johnson",
+      "product_name": "Wireless Noise-Cancelling Headphones",
+      "quantity": 1
+    },
+    {
+      "customer_name": "Bob Smith",
+      "product_name": "Wireless Noise-Cancelling Headphones",
+      "quantity": 1
+    },
+    {
+      "customer_name": "Charlie Davis",
+      "product_name": "Ultra-HD 27-inch Monitor",
+      "quantity": 1
+    },
+    {
+      "customer_name": "Diana Prince",
+      "product_name": "Standing Desk Mat",
+      "quantity": 1
+    }
+  ],
+  "final_answer": "Here are the customers with the products they bought and quantities:\n* Alice Johnson: \n  + Ergonomic Mechanical Keyboard (1)\n  + Wireless Noise-Cancelling Headphones (1)\n  + Standing Desk Mat (1)\n* Bob Smith: \n  + Wireless Noise-Cancelling Headphones (1)\n* Charlie Davis: \n  + Ultra-HD 27-inch Monitor (1)\n* Diana Prince: \n  + Standing Desk Mat (1)\n  + Adjustable Lumbar Support Chair (1)\n* Evan Wright: \n  + Ergonomic Mechanical Keyboard (1)\n* John Doe: \n  + Ergonomic Mechanical Keyboard (1)\n  + Wireless Noise-Cancelling Headphones (1)\n* john doe: \n  + Budget USB Mouse (1)\nNote: The database result contains two entries for \"John Doe\" and \"john doe\" which may be the same person due to case difference, but they are treated as separate entries based on the provided data.",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": true,
+    "filters": null,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

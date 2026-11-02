@@ -1,0 +1,55 @@
+{
+  "case_id": "F03",
+  "category": "F_complex_joins",
+  "question": "Which customers bought the Ultra-HD 27-inch Monitor?",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 14165.49390007276,
+  "llm_call_count": 2,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "products"
+  ],
+  "join_path": [
+    "o.customer_id = c.id",
+    "oi.order_id = o.id",
+    "p.id = oi.product_id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT DISTINCT c.name, c.id FROM customers AS c INNER JOIN orders AS o ON c.id = o.customer_id INNER JOIN order_items AS oi ON o.id = oi.order_id INNER JOIN products AS p ON oi.product_id = p.id WHERE p.name = :p1 LIMIT 1000",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 1,
+  "result_rows_preview": [
+    {
+      "name": "Charlie Davis",
+      "id": 3
+    }
+  ],
+  "final_answer": "The customer who bought the Ultra-HD 27-inch Monitor is Charlie Davis, with customer ID 3.",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": true,
+    "filters": null,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

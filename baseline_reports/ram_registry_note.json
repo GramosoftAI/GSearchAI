@@ -1,0 +1,5 @@
+{
+  "in_process_class_registry_shared": true,
+  "cross_process_restart": "NOT TESTED",
+  "multi_worker": "NOT TESTED"
+}

@@ -1,0 +1,67 @@
+{
+  "case_id": "E01",
+  "category": "E_joins",
+  "question": "Which customers placed orders?",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 7584.50479991734,
+  "llm_call_count": 2,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "customers",
+    "orders"
+  ],
+  "join_path": [
+    "o.customer_id = c.id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT DISTINCT c.id, c.name FROM public.customers AS c INNER JOIN public.orders AS o ON c.id = o.customer_id LIMIT 1000",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 8,
+  "result_rows_preview": [
+    {
+      "id": 8,
+      "name": "john doe"
+    },
+    {
+      "id": 3,
+      "name": "Charlie Davis"
+    },
+    {
+      "id": 6,
+      "name": "John Doe"
+    },
+    {
+      "id": 1,
+      "name": "Alice Johnson"
+    },
+    {
+      "id": 4,
+      "name": "Diana Prince"
+    }
+  ],
+  "final_answer": "The following customers placed orders:\n* #8: John Doe\n* #3: Charlie Davis\n* #6: John Doe\n* #1: Alice Johnson\n* #4: Diana Prince\n* #2: Bob Smith\n* #5: Evan Wright\n* #7: John Doe \n\nNote that there are multiple instances of \"John Doe\" in the list, indicating that the same customer name appears multiple times in the database result.",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": true,
+    "filters": null,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

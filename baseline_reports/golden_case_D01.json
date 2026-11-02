@@ -1,0 +1,69 @@
+{
+  "case_id": "D01",
+  "category": "D_grouping",
+  "question": "Show sales by customer.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 9897.60899997782,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "customers",
+    "order_items",
+    "orders"
+  ],
+  "join_path": [
+    "c.id = o.customer_id",
+    "o.id = oi.order_id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT SUM(o.total_amount) AS sum_total_amount, c.name FROM public.customers AS c INNER JOIN public.orders AS o ON c.id = o.customer_id INNER JOIN public.order_items AS oi ON o.id = oi.order_id GROUP BY c.name LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 7,
+  "result_rows_preview": [
+    {
+      "sum_total_amount": "12.50",
+      "name": "john doe"
+    },
+    {
+      "sum_total_amount": "149.99",
+      "name": "Evan Wright"
+    },
+    {
+      "sum_total_amount": "798.00",
+      "name": "Charlie Davis"
+    },
+    {
+      "sum_total_amount": "1198.48",
+      "name": "John Doe"
+    },
+    {
+      "sum_total_amount": "943.98",
+      "name": "Alice Johnson"
+    }
+  ],
+  "final_answer": "Here are the sales by customer:\n* John Doe: $12.50 and $1198.48\n* Evan Wright: $149.99\n* Charlie Davis: $798.00\n* Alice Johnson: $943.98\n* Bob Smith: $299.50\n* Diana Prince: $1140.00 \n\nNote: The database result contains two separate entries for \"John Doe\", which are reported separately above.",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": true,
+    "filters": null,
+    "aggregations": true,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

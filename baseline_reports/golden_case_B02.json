@@ -1,0 +1,39 @@
+{
+  "case_id": "B02",
+  "category": "B_filter",
+  "question": "Show products above 1000.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 2965.9451000625268,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "order_items",
+    "products"
+  ],
+  "planned_tables": [
+    "products"
+  ],
+  "join_path": [],
+  "planner_confidence": null,
+  "generated_sql": "SELECT DISTINCT p.id, p.name, p.price FROM public.products AS p WHERE p.price > :p1 LIMIT 1000",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 0,
+  "result_rows_preview": [],
+  "final_answer": "No matching records were found in the database for this query.",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": true,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

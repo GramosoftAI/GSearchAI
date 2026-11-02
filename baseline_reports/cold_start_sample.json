@@ -1,0 +1,16 @@
+{
+  "latency_ms": 2.6860999932978302,
+  "security_reject": false,
+  "disambiguation": false,
+  "rows": [],
+  "retrieved_tables": [],
+  "planned_tables": [],
+  "joins": [],
+  "sql": null,
+  "status": "error",
+  "row_count": null,
+  "answer": "Event loop is closed",
+  "planner_confidence": null,
+  "llm_call_count": null,
+  "error": "RuntimeError: Event loop is closed\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"asyncpg/protocol/protocol.pyx\", line 360, in query\n  File \"asyncpg/protocol/protocol.pyx\", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter\n  File \"C:\\Users\\GIRINATH\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\asyncio\\base_events.py\", line 765, in call_later\n    timer = self.call_at(self.time() + delay, callback, *args,\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\GIRINATH\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\asyncio\\base_events.py\", line 778, in call_at\n    self._check_closed()\n  File \"C:\\Users\\GIRINATH\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\asyncio\\base_events.py\", line 545, in _check_closed\n    raise RuntimeError('Event loop is closed')\nRuntimeError: Event loop is closed\n"
+}

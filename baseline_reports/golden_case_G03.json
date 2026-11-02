@@ -1,0 +1,48 @@
+{
+  "case_id": "G03",
+  "category": "G_entity",
+  "question": "Show details for product mech keyboard.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 4158.922299975529,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "products"
+  ],
+  "join_path": [],
+  "planner_confidence": null,
+  "generated_sql": "SELECT p.id, p.name FROM public.products AS p WHERE CAST(p.name AS TEXT) ILIKE :p1 LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 1,
+  "result_rows_preview": [
+    {
+      "id": 1,
+      "name": "Ergonomic Mechanical Keyboard"
+    }
+  ],
+  "final_answer": "The product \"mech keyboard\" has one matching record in the database, which is:\n* Product #1: Ergonomic Mechanical Keyboard",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": null,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

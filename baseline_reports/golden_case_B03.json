@@ -1,0 +1,50 @@
+{
+  "case_id": "B03",
+  "category": "B_filter",
+  "question": "Show products with price above 300.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 3407.5515000149608,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "order_items",
+    "products"
+  ],
+  "planned_tables": [
+    "products"
+  ],
+  "join_path": [],
+  "planner_confidence": null,
+  "generated_sql": "SELECT p.id, p.price, p.name FROM public.products AS p WHERE p.price > :p1 LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 2,
+  "result_rows_preview": [
+    {
+      "id": 3,
+      "price": "399.00",
+      "name": "Ultra-HD 27-inch Monitor"
+    },
+    {
+      "id": 5,
+      "price": "350.00",
+      "name": "Adjustable Lumbar Support Chair"
+    }
+  ],
+  "final_answer": "Here are the products with a price above 300:\n* Ultra-HD 27-inch Monitor (#3) - $399.00\n* Adjustable Lumbar Support Chair (#5) - $350.00",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": true,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

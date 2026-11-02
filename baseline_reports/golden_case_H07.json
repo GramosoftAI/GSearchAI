@@ -1,0 +1,49 @@
+{
+  "case_id": "H07",
+  "category": "H_temporal",
+  "question": "Show orders from the previous year.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 9092.00560010504,
+  "llm_call_count": 2,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products"
+  ],
+  "planned_tables": [
+    "orders"
+  ],
+  "join_path": [],
+  "planner_confidence": null,
+  "generated_sql": "SELECT id, order_date, status, total_amount FROM orders WHERE EXTRACT(YEAR FROM order_date) = EXTRACT(YEAR FROM CURRENT_DATE) - :p1 LIMIT 1000",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 1,
+  "result_rows_preview": [
+    {
+      "id": 11,
+      "order_date": "2025-11-01T10:00:00+00:00",
+      "status": "COMPLETED",
+      "total_amount": "350.00"
+    }
+  ],
+  "final_answer": "Here is the order from the previous year:\n* Order #11: Placed on 2025-11-01, Status: COMPLETED, Total Amount: $350.00",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": true,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

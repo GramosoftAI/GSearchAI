@@ -1,0 +1,51 @@
+{
+  "case_id": "I02",
+  "category": "I_comparative",
+  "question": "Which customer spent the most?",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 2897.828000015579,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "customers",
+    "orders"
+  ],
+  "join_path": [
+    "c.id = o.customer_id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT SUM(o.total_amount) AS sum_total_amount, c.name FROM public.customers AS c INNER JOIN public.orders AS o ON c.id = o.customer_id GROUP BY c.name ORDER BY sum_total_amount DESC NULLS LAST LIMIT 1",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 1,
+  "result_rows_preview": [
+    {
+      "sum_total_amount": "798.00",
+      "name": "Charlie Davis"
+    }
+  ],
+  "final_answer": "The customer who spent the most is Charlie Davis, with a total amount of $798.00.",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": true,
+    "filters": null,
+    "aggregations": true,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

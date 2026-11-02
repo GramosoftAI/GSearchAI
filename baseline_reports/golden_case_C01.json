@@ -1,0 +1,47 @@
+{
+  "case_id": "C01",
+  "category": "C_aggregation",
+  "question": "How many customers are there?",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 2120.441299979575,
+  "llm_call_count": 0,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "customers"
+  ],
+  "join_path": [],
+  "planner_confidence": null,
+  "generated_sql": "SELECT COUNT(c.id) AS count_customers FROM public.customers AS c LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 1,
+  "result_rows_preview": [
+    {
+      "count_customers": 8
+    }
+  ],
+  "final_answer": "The total count is 8.",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": null,
+    "aggregations": true,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

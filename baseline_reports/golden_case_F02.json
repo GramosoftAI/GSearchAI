@@ -1,0 +1,99 @@
+{
+  "case_id": "F02",
+  "category": "F_complex_joins",
+  "question": "Show customers and their successful payment amounts.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 11277.37739996519,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "customers",
+    "orders",
+    "payments"
+  ],
+  "join_path": [
+    "o.customer_id = c.id",
+    "p.order_id = o.id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT o.id, o.total_amount, o.status, o.order_date, c.id, c.name, p.id, p.payment_status, p.payment_date, p.amount FROM public.payments AS p INNER JOIN public.orders AS o ON p.order_id = o.id INNER JOIN public.customers AS c ON o.customer_id = c.id LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 11,
+  "result_rows_preview": [
+    {
+      "id": 1,
+      "total_amount": "449.49",
+      "status": "COMPLETED",
+      "order_date": "2026-02-01T10:30:00+00:00",
+      "name": "Alice Johnson",
+      "payment_status": "SUCCESS",
+      "payment_date": "2026-02-01T10:35:00+00:00",
+      "amount": "449.49"
+    },
+    {
+      "id": 2,
+      "total_amount": "299.50",
+      "status": "COMPLETED",
+      "order_date": "2026-02-05T15:00:00+00:00",
+      "name": "Bob Smith",
+      "payment_status": "SUCCESS",
+      "payment_date": "2026-02-05T15:02:00+00:00",
+      "amount": "299.50"
+    },
+    {
+      "id": 3,
+      "total_amount": "399.00",
+      "status": "SHIPPED",
+      "order_date": "2026-02-12T12:00:00+00:00",
+      "name": "Charlie Davis",
+      "payment_status": "SUCCESS",
+      "payment_date": "2026-02-12T12:05:00+00:00",
+      "amount": "399.00"
+    },
+    {
+      "id": 4,
+      "total_amount": "395.00",
+      "status": "COMPLETED",
+      "order_date": "2026-02-18T17:30:00+00:00",
+      "name": "Diana Prince",
+      "payment_status": "SUCCESS",
+      "payment_date": "2026-02-18T17:35:00+00:00",
+      "amount": "395.00"
+    },
+    {
+      "id": 5,
+      "total_amount": "149.99",
+      "status": "PENDING",
+      "order_date": "2026-02-25T09:00:00+00:00",
+      "name": "Evan Wright",
+      "payment_status": "PENDING",
+      "payment_date": "2026-02-25T09:05:00+00:00",
+      "amount": "149.99"
+    }
+  ],
+  "final_answer": "Here are the customers with their successful payment amounts:\n* Alice Johnson: $449.49, $45.00\n* Bob Smith: $299.50\n* Charlie Davis: $399.00, $399.00\n* Diana Prince: $395.00, $350.00\n* John Doe: $449.49, $299.50, $12.50 \n\nNote that the list only includes customers with a payment status of \"SUCCESS\".",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": true,
+    "filters": null,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

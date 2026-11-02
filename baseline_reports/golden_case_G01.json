@@ -1,0 +1,61 @@
+{
+  "case_id": "G01",
+  "category": "G_entity",
+  "question": "Show orders for Alice Johnson.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 8699.534800020047,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "customers",
+    "orders"
+  ],
+  "join_path": [
+    "c.id = o.customer_id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT o.id, o.order_date, o.status, o.total_amount, c.id, c.name FROM public.customers AS c INNER JOIN public.orders AS o ON c.id = o.customer_id WHERE c.id = :p1 AND CAST(c.name AS TEXT) ILIKE :p2 LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 2,
+  "result_rows_preview": [
+    {
+      "id": 1,
+      "order_date": "2026-02-01T10:30:00+00:00",
+      "status": "COMPLETED",
+      "total_amount": "449.49",
+      "name": "Alice Johnson"
+    },
+    {
+      "id": 1,
+      "order_date": "2026-10-22T14:00:00+00:00",
+      "status": "COMPLETED",
+      "total_amount": "45.00",
+      "name": "Alice Johnson"
+    }
+  ],
+  "final_answer": "| Id | Order Date | Status | Total Amount | Id | Name |\n| --- | --- | --- | --- | --- | --- |\n| 1 | 2026-02-01T10:30:00+00:00 | COMPLETED | $449.49 | 1 | Alice Johnson |\n| 1 | 2026-10-22T14:00:00+00:00 | COMPLETED | $45.00 | 1 | Alice Johnson |\n\n**Summary:** Total Total Amount: $494.49",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": null,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

@@ -1,0 +1,69 @@
+{
+  "case_id": "B04",
+  "category": "B_filter",
+  "question": "Show orders created this month.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 9495.094500016421,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments"
+  ],
+  "planned_tables": [
+    "orders"
+  ],
+  "join_path": [
+    "orders.id -> payments.order_id",
+    "orders.customer_id -> customers.id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT o.id, o.order_date, o.status, o.total_amount FROM public.orders AS o WHERE o.order_date >= DATE_TRUNC('MONTH', CURRENT_DATE) LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 4,
+  "result_rows_preview": [
+    {
+      "id": 7,
+      "order_date": "2026-10-01T11:00:00+00:00",
+      "status": "COMPLETED",
+      "total_amount": "299.50"
+    },
+    {
+      "id": 8,
+      "order_date": "2026-10-10T09:00:00+00:00",
+      "status": "COMPLETED",
+      "total_amount": "399.00"
+    },
+    {
+      "id": 9,
+      "order_date": "2026-10-22T14:00:00+00:00",
+      "status": "COMPLETED",
+      "total_amount": "45.00"
+    },
+    {
+      "id": 10,
+      "order_date": "2026-10-23T08:00:00+00:00",
+      "status": "COMPLETED",
+      "total_amount": "12.50"
+    }
+  ],
+  "final_answer": "| Id | Order Date | Status | Total Amount |\n| --- | --- | --- | --- |\n| 7 | 2026-10-01T11:00:00+00:00 | COMPLETED | $299.50 |\n| 8 | 2026-10-10T09:00:00+00:00 | COMPLETED | $399.00 |\n| 9 | 2026-10-22T14:00:00+00:00 | COMPLETED | $45.00 |\n| 10 | 2026-10-23T08:00:00+00:00 | COMPLETED | $12.50 |\n\n**Summary:** Total Total Amount: $756.00",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": true,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

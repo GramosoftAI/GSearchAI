@@ -1,0 +1,46 @@
+{
+  "case_id": "C03",
+  "category": "C_aggregation",
+  "question": "What is the average order value?",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 2157.3768999660388,
+  "llm_call_count": 0,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products"
+  ],
+  "planned_tables": [
+    "orders"
+  ],
+  "join_path": [],
+  "planner_confidence": null,
+  "generated_sql": "SELECT AVG(o.total_amount) AS avg_total_amount FROM public.orders AS o LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 1,
+  "result_rows_preview": [
+    {
+      "avg_total_amount": "295.3154545454545455"
+    }
+  ],
+  "final_answer": "The average value is $295.32.",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": null,
+    "aggregations": true,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

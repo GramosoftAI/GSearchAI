@@ -1,0 +1,51 @@
+{
+  "case_id": "C02",
+  "category": "C_aggregation",
+  "question": "What is the total revenue?",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 1066.4775000186637,
+  "llm_call_count": 0,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "orders"
+  ],
+  "join_path": [
+    "orders.id -> payments.order_id",
+    "orders.id -> order_items.order_id",
+    "order_items.product_id -> products.id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT SUM(o.total_amount) AS sum_total_amount FROM public.orders AS o LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 1,
+  "result_rows_preview": [
+    {
+      "sum_total_amount": "3248.47"
+    }
+  ],
+  "final_answer": "The total sales across all orders is $3,248.47.",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": null,
+    "aggregations": true,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}
