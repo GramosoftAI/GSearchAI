@@ -105,13 +105,13 @@ Rules:
    - The status column values are typically single states like `'pending'`, `'open'`, `'approved'`, `'closed'`, or `'completed'`.
    - NEVER combine the entity noun with the status value into the filter (e.g. NEVER do `WHERE status = 'request pending'` or `WHERE status = 'task open'`).
    - Use the exact identified filter from the Structured Schema-Aware Interpretation (e.g., `WHERE status ILIKE 'pending'`).
-15. MANDATORY CASE-INSENSITIVE STRING MATCHING (USE ILIKE ONLY):
-   - In PostgreSQL, `=` is strictly case-sensitive. If the database stores lowercase (e.g. 'submitted' or 'capex'), but the query uses 'Submitted' or 'CAPEX', `= '...'` fails and returns 0 rows!
-   - You MUST ALWAYS use `ILIKE` for all string/text/varchar value checks, statuses, categories, stages, types, names, codes, and literal filters.
-   - NEVER use `=` for string/text/varchar columns! ALWAYS use `ILIKE`!
-     * CORRECT: WHERE stage ILIKE 'Submitted' AND capex_revex ILIKE 'CAPEX' AND finance_year ILIKE '2026'
-     * WRONG:   WHERE stage = 'Submitted' AND capex_revex = 'CAPEX' AND finance_year = '2026'
-   - For numeric IDs (e.g. `id = 123`) and booleans (`active = TRUE`), use `=`. But for ALL text/character/enum values, use ONLY `ILIKE`.
+15. MANDATORY CASE-INSENSITIVE STRING MATCHING (USE ILIKE WITH WILDCARDS):
+   - In PostgreSQL, `=` is strictly case-sensitive. If the database stores lowercase, mixed case, suffixes, or year prefixes (e.g. 'Completed', 'FY 2026', 'capex'), exact `= '...'` or exact `ILIKE 'word'` will fail and return 0 rows!
+   - You MUST ALWAYS use `ILIKE` for all string/text/varchar value checks, statuses, categories, stages, types, names, codes, financial years, and literal filters.
+   - ALWAYS wrap text/category/status/stage filters and year strings in wildcards (`%<value>%`) to accommodate tense differences (e.g. 'complete' vs 'Completed'), prefix years ('FY 2025-2026' vs '2026'), and whitespace:
+     * CORRECT: WHERE stage ILIKE '%complete%' AND capex_revex ILIKE '%capex%' AND finance_year ILIKE '%2026%'
+     * WRONG:   WHERE stage = 'complete' OR stage ILIKE 'complete' (fails to match 'Completed'!)
+   - For numeric IDs (e.g. `id = 123`) and booleans (`active = TRUE`), use `=`. But for ALL text/character/enum values, use ONLY `ILIKE` with `%...%`.
 """
 
         user_content = f"Schema context:\n{context}\n\nQuestion: {question}"
@@ -311,8 +311,9 @@ Rules:
      `ON (te.work_package_id = wp.id OR (te.entity_type = 'WorkPackage' AND te.entity_id = wp.id))`
    - Also prefer joining `projects` via `te.project_id = p.id` and using `LEFT JOIN` for optional time logs.
 7. Always include LIMIT 50 (or LIMIT 1 for aggregates) at the end.
-8. MANDATORY CASE-INSENSITIVE STRING MATCHING (USE ILIKE ONLY):
-   - In PostgreSQL, `=` is strictly case-sensitive. Always use `ILIKE` for all string/text/varchar value checks, statuses, categories, stages, types, names, codes, and literal filters (e.g. `stage ILIKE 'Submitted'`, `capex_revex ILIKE 'CAPEX'`). NEVER use `=` for string/text values!
+8. MANDATORY CASE-INSENSITIVE STRING MATCHING (USE ILIKE WITH WILDCARDS):
+   - In PostgreSQL, `=` is strictly case-sensitive. Always use `ILIKE` for all string/text/varchar value checks, statuses, categories, stages, types, names, codes, financial years, and literal filters. NEVER use `=` for string/text values!
+   - ALWAYS wrap text/status/stage and year filters with wildcards (`%...%`) (e.g. `stage ILIKE '%complete%'`, `capex_revex ILIKE '%capex%'`, `finance_year ILIKE '%2026%'`) to handle tense differences ('complete' vs 'Completed') and prefixes ('FY 2025-2026').
 9. Return ONLY one single corrected PostgreSQL SELECT query without Markdown code fences, commentary, or multiple statements.
 """
 
