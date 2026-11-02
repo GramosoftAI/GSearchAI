@@ -19,6 +19,7 @@ from fastapi import Request
 
 from .models import DatabaseStreamEvent, DatabaseStreamEventType
 from .sink import DatabasePipelineEventSink
+from .sanitizer import StreamingSanitizer
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,8 @@ async def stream_database_query(
     execution_config: Optional[Any] = None,
     heartbeat_interval_seconds: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
     resolved_entities: Optional[list] = None,
+    selected_tables: Optional[list] = None,
+    execution_strategy: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Asynchronously executes a database query and streams lifecycle events as SSE frames.
@@ -61,7 +64,10 @@ async def stream_database_query(
                 request_id=correlation_id,
                 event_sink=sink,
                 resolved_entities=resolved_entities,
+                selected_tables=selected_tables,
+                execution_strategy=execution_strategy,
             )
+
         except DisambiguationRequiredError as exc:
             logger.info(f"Disambiguation required for query {query_id}")
             if not sink.is_terminal:
@@ -75,9 +81,14 @@ async def stream_database_query(
                         "retryable": False,
                         "message": exc.message,
                         "options": exc.options,
+                        "entity_type": getattr(exc, "entity_type", "user"),
+                        "candidate_tables": getattr(exc, "candidate_tables", []),
+                        "all_tables": getattr(exc, "all_tables", []),
+                        "table_aliases": getattr(exc, "table_aliases", {}),
                         "correlation_id": correlation_id,
                     },
                 )
+
         except asyncio.CancelledError:
             logger.info(f"Query task cancelled for query {query_id}")
             raise

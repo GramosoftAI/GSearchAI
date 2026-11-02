@@ -20,11 +20,13 @@ class GroundedSQLGenerator:
     """Generates accurate PostgreSQL SQL grounded in Markdown schema docs."""
 
     @classmethod
-    def _get_client(cls) -> AsyncOpenAI:
+    def _get_client(cls, timeout: Optional[float] = None) -> AsyncOpenAI:
+        req_timeout = timeout or getattr(settings, "sql_llm_timeout_seconds", 90.0)
         return AsyncOpenAI(
             api_key=settings.deepinfra_api_key or "anonymous",
             base_url=settings.deepinfra_api_url or "https://api.deepinfra.com/v1/openai",
-            timeout=60.0,
+            timeout=req_timeout,
+            max_retries=2,
         )
 
     @classmethod
@@ -63,8 +65,9 @@ Rules:
 6. MANDATORY LIMIT: Always include a LIMIT clause at the end of the query (e.g. `LIMIT 50` for lists, or `LIMIT 1` for single-row aggregates) to ensure safety.
 7. Return only one single SQL query without Markdown code fences, commentary, or multiple statements.
 8. SINGLE TABLE SUFFICIENCY & MINIMAL JOINS (CRITICAL):
-   - Check if the requested projection attribute (e.g. registration number, code, status, price) AND an entity/filter column (e.g. name, title, item, description) both exist directly on one of the candidate tables.
-   - If a single candidate table can fully satisfy the query on its own, query that table DIRECTLY without joining additional tables (e.g., do not join master/customer tables if the target table already holds the entity name/code and the requested field).
+   - Check if the requested projection attribute (e.g. COUNT(*), amount, code, status, price) AND an entity/filter column (e.g. status, name, title) both exist directly on one of the candidate tables.
+   - If a candidate table already has the required columns (e.g. table `ipa_budget_clarification` has `status` and can directly answer `COUNT(*)` with `WHERE status = 'pending'`), query that table DIRECTLY!
+   - NEVER join additional tables (such as `ipa_budget`, `ipa_auditlog`, or master tables) unless the question explicitly asks for attributes from those other tables! Unnecessary joins filter out valid rows and produce 0 results.
    - Only perform JOINs when the requested information is genuinely split across multiple tables.
 9. DYNAMIC MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
    When matching any free-text, entity names, product items, brands, titles, categories, or literal phrases (such as 'cream & IPA', 'red wine', person names, or item codes):
@@ -90,6 +93,25 @@ Rules:
    - When joining between work items and time/activity logs, accommodate both columns:
      `ON (te.work_package_id = wp.id OR (te.entity_type = 'WorkPackage' AND te.entity_id = wp.id))`
    - When the question asks for primary entities (e.g. "Who updated tasks...") with their logged hours, use `LEFT JOIN` for optional time logs and check the direct `project_id` on the logged table (`te.project_id = p.id`).
+13. COLUMN ALIAS RESOLUTION (CRITICAL):
+   - If a "CRITICAL COLUMN ALIAS RESOLUTION" section is provided below, it lists user-defined alternative names (aliases) for database columns.
+   - These alias tokens are COLUMN REFERENCES, NOT filter values. NEVER use an alias token (e.g. 'cape_stage') as a WHERE clause value.
+   - Map the alias to the actual column name and extract the real filter value from the rest of the question.
+   - Example: User says "how many completed in cape_stage column" where 'cape_stage' is an alias for column 'stage'.
+     CORRECT: WHERE stage ILIKE 'completed'
+     WRONG:  WHERE stage = 'cape_stage'
+14. ENTITY NOUNS VS STATUS VALUES (CRITICAL):
+   - In questions like "how many request pending" or "count open tasks", distinguish the entity concept ("request", "task", "budget") from the state/status value ("pending", "open", "active").
+   - The status column values are typically single states like `'pending'`, `'open'`, `'approved'`, `'closed'`, or `'completed'`.
+   - NEVER combine the entity noun with the status value into the filter (e.g. NEVER do `WHERE status = 'request pending'` or `WHERE status = 'task open'`).
+   - Use the exact identified filter from the Structured Schema-Aware Interpretation (e.g., `WHERE status ILIKE 'pending'`).
+15. MANDATORY CASE-INSENSITIVE STRING MATCHING (USE ILIKE WITH WILDCARDS):
+   - In PostgreSQL, `=` is strictly case-sensitive. If the database stores lowercase, mixed case, suffixes, or year prefixes (e.g. 'Completed', 'FY 2026', 'capex'), exact `= '...'` or exact `ILIKE 'word'` will fail and return 0 rows!
+   - You MUST ALWAYS use `ILIKE` for all string/text/varchar value checks, statuses, categories, stages, types, names, codes, financial years, and literal filters.
+   - ALWAYS wrap text/category/status/stage filters and year strings in wildcards (`%<value>%`) to accommodate tense differences (e.g. 'complete' vs 'Completed'), prefix years ('FY 2025-2026' vs '2026'), and whitespace:
+     * CORRECT: WHERE stage ILIKE '%complete%' AND capex_revex ILIKE '%capex%' AND finance_year ILIKE '%2026%'
+     * WRONG:   WHERE stage = 'complete' OR stage ILIKE 'complete' (fails to match 'Completed'!)
+   - For numeric IDs (e.g. `id = 123`) and booleans (`active = TRUE`), use `=`. But for ALL text/character/enum values, use ONLY `ILIKE` with `%...%`.
 """
 
         user_content = f"Schema context:\n{context}\n\nQuestion: {question}"
@@ -137,6 +159,9 @@ Rules:
                 f"- Required Aggregations: {agg_str}\n"
             )
 
+        # Consume column alias mappings and execution strategy
+        execution_strategy = kwargs.get("execution_strategy")
+
         # Consume structured schema-aware interpretation if provided
         schema_interpretation = kwargs.get("schema_interpretation")
         if schema_interpretation:
@@ -149,24 +174,83 @@ Rules:
                     for f in schema_interpretation.filters
                 ]
                 user_content += f"- Identified Filters: {', '.join(filter_descs)}\n"
+            # Only include relationships if user explicitly needs attributes across tables or did not select tables directly
             if hasattr(schema_interpretation, "relationships_required") and schema_interpretation.relationships_required:
-                rel_descs = [f"{r.source_table} <-> {r.target_table} ({r.join_type} JOIN on {r.join_columns})" for r in schema_interpretation.relationships_required]
-                user_content += f"- Required Join Paths: {'; '.join(rel_descs)}\n"
+                if execution_strategy != "union" and len(retrieved_docs) > 1 and not (kwargs.get("selected_tables") and len(kwargs.get("selected_tables")) == 1):
+                    rel_descs = [f"{r.source_table} <-> {r.target_table} ({r.join_type} JOIN on {r.join_columns})" for r in schema_interpretation.relationships_required]
+                    user_content += f"- Available Join Paths (use ONLY if needed across multiple tables): {'; '.join(rel_descs)}\n"
+
+        target_tables = kwargs.get("selected_tables") or [d.get("table_name") for d in retrieved_docs if d.get("table_name")]
+        if execution_strategy == "union":
+            tbl_list_str = ", ".join(f"'{t}'" for t in target_tables if t)
+            user_content += "\n\nCRITICAL MANDATORY INSTRUCTION - UNION ALL REQUIRED:\n"
+            user_content += (
+                f"The user explicitly selected multiple tables and chose the 'UNION' execution strategy.\n"
+                f"Target tables: [{tbl_list_str}].\n"
+                "You MUST generate a single SQL query that uses UNION ALL to combine the results across ALL of these target tables.\n"
+                "DO NOT query only one table! You MUST write a query of the form:\n"
+                "  SELECT 'table_1' AS source_table, COUNT(*) AS count FROM table_1 WHERE <condition>\n"
+                "  UNION ALL\n"
+                "  SELECT 'table_2' AS source_table, COUNT(*) AS count FROM table_2 WHERE <condition>\n"
+                "All branches of the UNION ALL must have identical column names and compatible types.\n"
+                "Failure to include all target tables in the UNION ALL will violate the user's explicit request.\n"
+            )
+
+        column_alias_mappings = kwargs.get("column_alias_mappings")
+        if column_alias_mappings:
+            user_content += "\n\nCRITICAL COLUMN ALIAS RESOLUTION:\n"
+            user_content += (
+                "The following tokens in the user's question are ALTERNATIVE NAMES (aliases) for database columns.\n"
+                "They are NOT filter values. You MUST:\n"
+                "1. Replace each alias with the actual column name in the SQL query.\n"
+                "2. Extract the actual filter/condition value from the OTHER words in the question.\n"
+                "3. NEVER use the alias token as a WHERE clause value.\n\n"
+            )
+            for mapping in column_alias_mappings:
+                alias = mapping.get("alias", "")
+                table = mapping.get("table", "")
+                column = mapping.get("column", "")
+                user_content += (
+                    f"- '{alias}' is an alternative name for column '{column}' in table '{table}'.\n"
+                    f"  In the SQL, use '{table}.{column}' (NOT '{alias}' as a value).\n"
+                    f"  The filter value should come from the rest of the question (e.g., if user says "
+                    f"'how many completed in {alias}', the SQL should be: WHERE {column} ILIKE 'completed').\n"
+                )
+
 
         user_content += "\nSQL:"
 
         chosen_model = model or getattr(settings, "sql_generation_model", "deepseek-ai/DeepSeek-V3")
         client = cls._get_client()
 
-        response = await client.chat.completions.create(
-            model=chosen_model,
-            temperature=0.0,
-            max_tokens=256,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-        )
+        try:
+            response = await client.chat.completions.create(
+                model=chosen_model,
+                temperature=0.0,
+                max_tokens=256,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+            )
+        except Exception as llm_err:
+            fallback_model = getattr(settings, "sql_generation_model_fallback", "meta-llama/Llama-3.3-70B-Instruct-Turbo")
+            if "timeout" in str(llm_err).lower() and fallback_model != chosen_model:
+                logger.warning(
+                    f"[GroundedSQLGenerator] Primary SQL model '{chosen_model}' timed out ({llm_err}). "
+                    f"Failing over to fallback model: '{fallback_model}'..."
+                )
+                response = await client.chat.completions.create(
+                    model=fallback_model,
+                    temperature=0.0,
+                    max_tokens=256,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content},
+                    ],
+                )
+            else:
+                raise
 
         sql = (response.choices[0].message.content or "").strip()
         if sql == "NEED_MORE_SCHEMA":
@@ -227,7 +311,10 @@ Rules:
      `ON (te.work_package_id = wp.id OR (te.entity_type = 'WorkPackage' AND te.entity_id = wp.id))`
    - Also prefer joining `projects` via `te.project_id = p.id` and using `LEFT JOIN` for optional time logs.
 7. Always include LIMIT 50 (or LIMIT 1 for aggregates) at the end.
-8. Return ONLY one single corrected PostgreSQL SELECT query without Markdown code fences, commentary, or multiple statements.
+8. MANDATORY CASE-INSENSITIVE STRING MATCHING (USE ILIKE WITH WILDCARDS):
+   - In PostgreSQL, `=` is strictly case-sensitive. Always use `ILIKE` for all string/text/varchar value checks, statuses, categories, stages, types, names, codes, financial years, and literal filters. NEVER use `=` for string/text values!
+   - ALWAYS wrap text/status/stage and year filters with wildcards (`%...%`) (e.g. `stage ILIKE '%complete%'`, `capex_revex ILIKE '%capex%'`, `finance_year ILIKE '%2026%'`) to handle tense differences ('complete' vs 'Completed') and prefixes ('FY 2025-2026').
+9. Return ONLY one single corrected PostgreSQL SELECT query without Markdown code fences, commentary, or multiple statements.
 """
 
         user_content = (
@@ -263,6 +350,26 @@ Rules:
                 "   - DO NOT filter project names or type names inside `work_packages.subject`! The project name belongs to `projects.name` (or `project_id`), NOT the work package title/subject.\n"
                 "2. When multiple people or entities are mentioned, map each to their respective role and column.\n"
             )
+
+        # Column alias context for repair as well
+        column_alias_mappings = kwargs.get("column_alias_mappings")
+        if column_alias_mappings:
+            user_content += "\n\nCRITICAL COLUMN ALIAS RESOLUTION:\n"
+            user_content += (
+                "The following tokens in the user's question are ALTERNATIVE NAMES (aliases) for database columns.\n"
+                "They are NOT filter values. You MUST:\n"
+                "1. Replace each alias with the actual column name in the SQL query.\n"
+                "2. Extract the actual filter/condition value from the OTHER words in the question.\n"
+                "3. NEVER use the alias token as a WHERE clause value.\n\n"
+            )
+            for mapping in column_alias_mappings:
+                alias = mapping.get("alias", "")
+                table = mapping.get("table", "")
+                column = mapping.get("column", "")
+                user_content += (
+                    f"- '{alias}' is an alternative name for column '{column}' in table '{table}'.\n"
+                    f"  In the SQL, use '{table}.{column}' (NOT '{alias}' as a value).\n"
+                )
 
         user_content += "\nCorrected SQL:"
 

@@ -353,57 +353,79 @@ class URLChunker:
     @staticmethod
     async def chunk(html_content: str, max_chunk_size: int = 2500) -> List[Dict[str, Any]]:
         from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html_content, "html.parser")
+        # Check if the content is Markdown (from web crawler with crawler_enable_md=True)
+        # or standard HTML. If markdown headings are detected, split by markdown headers.
+        is_markdown = bool(re.search(r'^(#{1,6})\s+\S+', html_content, re.MULTILINE))
         
-        # Preprocessing: Remove clutter
-        for element in soup(["script", "style", "nav", "header", "footer", "aside", "form", "iframe"]):
-            element.decompose()
-            
-        for element in soup.find_all(attrs={"class": re.compile(r"ad-|banner|promo|popup", re.I)}):
-            element.decompose()
-        for element in soup.find_all(attrs={"id": re.compile(r"ad-|banner|promo|popup", re.I)}):
-            element.decompose()
-            
-        # Prune DOM to main content container if available to speed up traversal on large sites
-        main_content = None
-        for selector in ["main", "article", "#content", ".content", "#main", ".main", '[role="main"]']:
-            found = soup.select_one(selector)
-            if found:
-                main_content = found
-                break
-                
-        body = main_content if main_content else (soup.body if soup.body else soup)
-        
-        # Traverse DOM and split content by headings
         sections = []
-        current_heading = "Introduction"
-        current_content = []
-        
-        for element in body.find_all(True):
-            if element.name in ["h1", "h2", "h3", "h4"]:
-                # Save previous section
-                content_text = "".join(current_content).strip()
-                if content_text:
-                    sections.append((current_heading, content_text))
-                current_heading = element.get_text().strip()
-                current_content = []
-            elif element.name == "table":
-                markdown_table = html_table_to_markdown(element)
-                if markdown_table:
-                    current_content.append("\n\n" + markdown_table + "\n\n")
-            elif element.name in ["p", "li", "pre", "code"]:
-                has_child_blocks = element.find(["p", "li", "table", "pre", "code"])
-                if not has_child_blocks:
-                    text = element.get_text().strip()
-                    if text:
-                        current_content.append(text + "\n\n")
-                        
-        content_text = "".join(current_content).strip()
-        if content_text:
-            sections.append((current_heading, content_text))
+        if is_markdown:
+            lines = html_content.split('\n')
+            current_heading = "Main Content"
+            current_content = []
+            for line in lines:
+                hm = re.match(r'^(#{1,6})\s+(.*)', line)
+                if hm:
+                    content_text = "\n".join(current_content).strip()
+                    if content_text:
+                        sections.append((current_heading, content_text))
+                    current_heading = hm.group(2).strip()
+                    current_content = []
+                else:
+                    current_content.append(line)
+            content_text = "\n".join(current_content).strip()
+            if content_text:
+                sections.append((current_heading, content_text))
+        else:
+            soup = BeautifulSoup(html_content, "html.parser")
             
+            # Preprocessing: Remove clutter
+            for element in soup(["script", "style", "nav", "header", "footer", "aside", "form", "iframe"]):
+                element.decompose()
+                
+            for element in soup.find_all(attrs={"class": re.compile(r"ad-|banner|promo|popup", re.I)}):
+                element.decompose()
+            for element in soup.find_all(attrs={"id": re.compile(r"ad-|banner|promo|popup", re.I)}):
+                element.decompose()
+                
+            # Prune DOM to main content container if available to speed up traversal on large sites
+            main_content = None
+            for selector in ["main", "article", "#content", ".content", "#main", ".main", '[role="main"]']:
+                found = soup.select_one(selector)
+                if found:
+                    main_content = found
+                    break
+                    
+            body = main_content if main_content else (soup.body if soup.body else soup)
+            
+            # Traverse DOM and split content by headings
+            current_heading = "Introduction"
+            current_content = []
+            
+            for element in body.find_all(True):
+                if element.name in ["h1", "h2", "h3", "h4"]:
+                    # Save previous section
+                    content_text = "".join(current_content).strip()
+                    if content_text:
+                        sections.append((current_heading, content_text))
+                    current_heading = element.get_text().strip()
+                    current_content = []
+                elif element.name == "table":
+                    markdown_table = html_table_to_markdown(element)
+                    if markdown_table:
+                        current_content.append("\n\n" + markdown_table + "\n\n")
+                elif element.name in ["p", "li", "pre", "code"]:
+                    has_child_blocks = element.find(["p", "li", "table", "pre", "code"])
+                    if not has_child_blocks:
+                        text = element.get_text().strip()
+                        if text:
+                            current_content.append(text + "\n\n")
+                            
+            content_text = "".join(current_content).strip()
+            if content_text:
+                sections.append((current_heading, content_text))
+                
         if not sections:
-            clean_text = body.get_text("\n").strip()
+            clean_text = html_content.strip() if is_markdown else body.get_text("\n").strip()
             sections = [("Main Content", clean_text)]
             
         # Detect FAQ page structure

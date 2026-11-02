@@ -36,6 +36,9 @@ from .schemas.api import (
     TableAliasSaveRequest,
     TableAliasResponse,
     TableAliasItem,
+    ColumnAliasItem,
+    ColumnAliasSaveRequest,
+    ColumnAliasResponse,
 )
 from .retrieval.retriever import SchemaRetrievalResult
 from .planning.models import QueryPlanIR
@@ -411,6 +414,8 @@ async def query_database(
             execution_config=exec_config,
             request_id=request_id,
             resolved_entities=payload.resolved_entities,
+            selected_tables=payload.selected_tables,
+            execution_strategy=payload.execution_strategy,
         )
     except DisambiguationRequiredError as e:
         return JSONResponse(
@@ -418,9 +423,13 @@ async def query_database(
             content={
                 "type": "DISAMBIGUATION_REQUIRED",
                 "message": e.message,
-                "options": e.options
+                "options": e.options,
+                "entity_type": getattr(e, "entity_type", "user"),
+                "candidate_tables": getattr(e, "candidate_tables", []),
+                "all_tables": getattr(e, "all_tables", []),
             }
         )
+
 
 
 @router.post(
@@ -459,7 +468,10 @@ async def stream_query_database(
             use_llm=payload.use_llm,
             execution_config=exec_config,
             resolved_entities=payload.resolved_entities,
+            selected_tables=payload.selected_tables,
+            execution_strategy=payload.execution_strategy,
         ),
+
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -785,6 +797,68 @@ async def delete_table_aliases(
         success=result.get("success", True),
         table_aliases=result.get("table_aliases", {}),
         message=f"Removed aliases for table {table_name}",
+    )
+
+
+@router.get(
+    "/{id}/column-aliases",
+    response_model=ColumnAliasResponse,
+    summary="Get Column Aliases",
+    description="Returns all user-configured alternative names / aliases for database columns.",
+)
+async def get_column_aliases(
+    id: uuid.UUID,
+    service: DatabaseKnowledgebaseService = Depends(get_service),
+):
+    aliases = await service.get_column_aliases(kb_id=id)
+    return ColumnAliasResponse(success=True, column_aliases=aliases)
+
+
+@router.post(
+    "/{id}/column-aliases",
+    response_model=ColumnAliasResponse,
+    summary="Save Column Aliases",
+    description="Persists user-configured alternative names (aliases) for columns, enforcing no duplicates.",
+)
+async def save_column_aliases(
+    id: uuid.UUID,
+    payload: ColumnAliasSaveRequest,
+    service: DatabaseKnowledgebaseService = Depends(get_service),
+):
+    try:
+        result = await service.save_column_aliases(
+            kb_id=id,
+            column_aliases_data=payload,
+        )
+        return ColumnAliasResponse(
+            success=result.get("success", True),
+            column_aliases=result.get("column_aliases", {}),
+            message=f"Successfully saved {result.get('saved_count', 0)} column aliases",
+        )
+    except ValueError as val_err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(val_err),
+        )
+
+
+@router.delete(
+    "/{id}/column-aliases/{table_name}/{column_name}",
+    response_model=ColumnAliasResponse,
+    summary="Delete Column Aliases",
+    description="Removes alternative names for a specific column.",
+)
+async def delete_column_aliases(
+    id: uuid.UUID,
+    table_name: str,
+    column_name: str,
+    service: DatabaseKnowledgebaseService = Depends(get_service),
+):
+    result = await service.delete_column_alias(kb_id=id, table_name=table_name, column_name=column_name)
+    return ColumnAliasResponse(
+        success=result.get("success", True),
+        column_aliases=result.get("column_aliases", {}),
+        message=f"Removed aliases for {table_name}.{column_name}",
     )
 
 

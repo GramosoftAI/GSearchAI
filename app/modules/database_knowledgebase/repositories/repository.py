@@ -409,4 +409,90 @@ class DatabaseKnowledgebaseRepository(BaseRepository):
         await self.db.commit()
         return True
 
+    async def get_column_aliases(self, kb_id: uuid.UUID) -> List[Any]:
+        """Fetch all column aliases for a knowledge base."""
+        from ..models.column_alias import KBColumnAlias
+
+        conditions = [KBColumnAlias.db_knowledgebase_id == kb_id]
+        if self.tenant_id:
+            try:
+                t_uuid = uuid.UUID(str(self.tenant_id))
+                conditions.append(KBColumnAlias.tenant_id == t_uuid)
+            except Exception:
+                pass
+
+        stmt = select(KBColumnAlias).where(*conditions)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def save_column_aliases(
+        self,
+        kb_id: uuid.UUID,
+        column_aliases_map: Dict[str, Dict[str, List[str]]],
+    ) -> List[Any]:
+        """Save or update alternative column names for a knowledge base."""
+        from ..models.column_alias import KBColumnAlias
+        from sqlalchemy.dialects.postgresql import insert
+
+        t_uuid = None
+        if self.tenant_id:
+            try:
+                t_uuid = uuid.UUID(str(self.tenant_id))
+            except Exception:
+                pass
+
+        for table_name, cols in column_aliases_map.items():
+            clean_table = str(table_name).strip()
+            if not clean_table or not isinstance(cols, dict):
+                continue
+
+            for col_name, alias_list in cols.items():
+                clean_col = str(col_name).strip()
+                if not clean_col:
+                    continue
+
+                clean_aliases = list(dict.fromkeys([str(a).strip() for a in alias_list if str(a).strip()]))
+
+                insert_stmt = insert(KBColumnAlias).values(
+                    id=uuid.uuid4(),
+                    db_knowledgebase_id=kb_id,
+                    tenant_id=t_uuid,
+                    table_name=clean_table,
+                    column_name=clean_col,
+                    aliases=clean_aliases,
+                )
+                on_conflict_stmt = insert_stmt.on_conflict_do_update(
+                    constraint="uq_k2b_column_aliases_kb_tbl_col",
+                    set_={
+                        "aliases": clean_aliases,
+                        "updated_at": func.now(),
+                    },
+                )
+                await self.db.execute(on_conflict_stmt)
+
+        await self.db.commit()
+        return await self.get_column_aliases(kb_id)
+
+    async def delete_column_alias(self, kb_id: uuid.UUID, table_name: str, column_name: str) -> bool:
+        """Remove aliases for a specific column."""
+        from ..models.column_alias import KBColumnAlias
+        from sqlalchemy import delete
+
+        del_stmt = delete(KBColumnAlias).where(
+            KBColumnAlias.db_knowledgebase_id == kb_id,
+            KBColumnAlias.table_name == table_name,
+            KBColumnAlias.column_name == column_name,
+        )
+        if self.tenant_id:
+            try:
+                t_uuid = uuid.UUID(str(self.tenant_id))
+                del_stmt = del_stmt.where(KBColumnAlias.tenant_id == t_uuid)
+            except Exception:
+                pass
+
+        await self.db.execute(del_stmt)
+        await self.db.commit()
+        return True
+
+
 

@@ -12,6 +12,7 @@ from .schema_doc import (
 )
 from .user_mapping import KBUserMapping
 from .table_alias import KBTableAlias
+from .column_alias import KBColumnAlias
 
 __all__ = [
     "DatabaseKnowledgebase",
@@ -26,5 +27,6 @@ __all__ = [
     "SchemaDocEmbedding",
     "KBUserMapping",
     "KBTableAlias",
+    "KBColumnAlias",
 ]
 
