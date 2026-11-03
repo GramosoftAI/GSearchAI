@@ -30,6 +30,7 @@ import {
   Radio,
   Segmented,
   Checkbox,
+  Switch,
 } from "antd";
 import {
   DatabaseOutlined,
@@ -43,6 +44,8 @@ import {
   EyeOutlined,
   ApartmentOutlined,
   TableOutlined,
+  EditOutlined,
+  CloseOutlined,
   CodeOutlined,
   FieldTimeOutlined,
   SafetyCertificateOutlined,
@@ -796,6 +799,128 @@ export default function DatabaseKnowledgePage() {
   const [multiTableStrategy, setMultiTableStrategy] = useState<"separate" | "union">("separate");
   const [tableSearchFilter, setTableSearchFilter] = useState<string>('');
   const [allDbTablesList, setAllDbTablesList] = useState<string[]>([]);
+
+  // 3-Way Query Rephrasing Studio State
+  interface RephraseOption {
+    id: number;
+    title: string;
+    tag: string;
+    rephrased_query: string;
+    description: string;
+  }
+  const [rephraseOptions, setRephraseOptions] = useState<RephraseOption[]>([]);
+  const [rephraseLoading, setRephraseLoading] = useState<boolean>(false);
+  const [selectedOptionId, setSelectedOptionId] = useState<number | null>(null);
+  const [editableRephrasedQuery, setEditableRephrasedQuery] = useState<string>("");
+  const [rephrasePanelOpen, setRephrasePanelOpen] = useState<boolean>(false);
+  const [isRephraseEnabled, setIsRephraseEnabled] = useState<boolean>(false);
+
+  const handleToggleRephrase = (checked: boolean, targetTables?: string[]) => {
+    setIsRephraseEnabled(checked);
+    if (checked) {
+      toast.success("Activate Rephrasing !!");
+      const q = userQuery.trim() || editableRephrasedQuery.trim();
+      const tables = targetTables || (selectedTablesForExecution.length > 0 ? selectedTablesForExecution : undefined);
+      if (q) {
+        handleFetchRephrasings(tables);
+      } else {
+        setRephrasePanelOpen(true);
+      }
+    } else {
+      toast("Rephrasing deactivated. Direct query execution enabled.", { icon: "⚡" });
+      setRephrasePanelOpen(false);
+      setRephraseOptions([]);
+    }
+  };
+
+  const handleFetchRephrasings = async (overrideTables?: string[]) => {
+    const q = userQuery.trim() || editableRephrasedQuery.trim();
+    if (!q) {
+      toast.error("Please enter a question to generate rephrasings.");
+      return;
+    }
+    if (!selectedKb) {
+      toast.error("Please select a database knowledgebase first.");
+      return;
+    }
+
+    const targetTables =
+      overrideTables !== undefined
+        ? overrideTables
+        : selectedTablesForExecution.length > 0
+        ? selectedTablesForExecution
+        : undefined;
+
+    setIsRephraseEnabled(true);
+    setRephraseLoading(true);
+    setRephrasePanelOpen(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/query/suggest-rephrasings`,
+        {
+          method: "POST",
+          headers: {
+            ...getAuthHeaders(),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            query: q,
+            selected_tables: targetTables,
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `Server responded with ${res.status}`);
+      }
+
+      const data = await res.json();
+      const opts: RephraseOption[] = data.options || [];
+      setRephraseOptions(opts);
+      if (opts.length > 0) {
+        setSelectedOptionId(opts[0].id);
+        setEditableRephrasedQuery(opts[0].rephrased_query);
+      } else {
+        setSelectedOptionId(null);
+        setEditableRephrasedQuery(q);
+      }
+    } catch (err: any) {
+      console.error("Failed to suggest query rephrasings:", err);
+      toast.error(`Failed to generate rephrasings: ${err.message}`);
+    } finally {
+      setRephraseLoading(false);
+    }
+  };
+
+  const handleSelectRephraseOption = (opt: RephraseOption) => {
+    setSelectedOptionId(opt.id);
+    setEditableRephrasedQuery(opt.rephrased_query);
+  };
+
+  const handleExecuteRephrasedQuery = (overrideTables?: string[], overrideStrategy?: "separate" | "union") => {
+    const finalQuery = editableRephrasedQuery.trim() || userQuery.trim();
+    if (!finalQuery) {
+      toast.error("Query cannot be empty.");
+      return;
+    }
+    const targetTables =
+      overrideTables !== undefined
+        ? overrideTables
+        : selectedTablesForExecution.length > 0
+        ? selectedTablesForExecution
+        : undefined;
+    const targetStrategy =
+      overrideStrategy ||
+      (targetTables && targetTables.length > 1 ? multiTableStrategy : undefined);
+
+    setUserQuery(finalQuery);
+    setRephrasePanelOpen(false);
+    setDisambiguationData(null);
+    setSelectedTablesForExecution([]);
+    setTableSearchFilter("");
+    handleRunQuery(finalQuery, undefined, targetTables, targetStrategy);
+  };
 
   // Phase 3B Tabs & Observability State
   const [activeTab, setActiveTab] = useState<string>("query");
@@ -2448,40 +2573,338 @@ export default function DatabaseKnowledgePage() {
                             >
                               Ask Database
                             </Button>
+                            <Button
+                              size="large"
+                              loading={rephraseLoading}
+                              onClick={() => {
+                                if (!isRephraseEnabled) {
+                                  handleToggleRephrase(true);
+                                } else {
+                                  handleFetchRephrasings();
+                                }
+                              }}
+                              style={{
+                                backgroundColor: rephrasePanelOpen ? "#fef3c7" : "#ffffff",
+                                borderColor: rephrasePanelOpen ? "#f59e0b" : "#cbd5e1",
+                                color: rephrasePanelOpen ? "#92400e" : "#334155",
+                                borderRadius: 10,
+                                fontWeight: 600,
+                                fontSize: 13,
+                                height: 42,
+                                paddingLeft: 16,
+                                paddingRight: 16,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
+                                boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                              }}
+                              className="shrink-0 hover:border-amber-400 hover:text-amber-700 transition-all"
+                              title="Generate 3 schema-aligned query interpretations you can choose & edit"
+                            >
+                              <span style={{ fontSize: 16 }}>✨</span> 3 Ways Rephrase
+                            </Button>
                           </div>
 
-                          {/* Quick Suggested Queries / Hint Chips */}
-                          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center gap-2 flex-wrap">
-                            <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                              Suggested:
-                            </span>
-                            {[
-                              "Show top 5 departments by headcount",
-                              "List all active employees and their roles",
-                              "Total payroll expenses by department",
-                            ].map((promptText, pIdx) => (
-                              <button
-                                key={pIdx}
-                                type="button"
-                                onClick={() => setUserQuery(promptText)}
+                          {/* Quick Suggested Queries & Rephrase Toggle Row */}
+                          <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            {/* Left: Suggested queries */}
+                            <div className="flex items-center gap-2 flex-wrap flex-1">
+                              <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                                Suggested:
+                              </span>
+                              {[
+                                "Show top 5 departments by headcount",
+                                "List all active employees and their roles",
+                                "Total payroll expenses by department",
+                              ].map((promptText, pIdx) => (
+                                <button
+                                  key={pIdx}
+                                  type="button"
+                                  onClick={() => setUserQuery(promptText)}
+                                  style={{
+                                    fontSize: 11.5,
+                                    fontWeight: 500,
+                                    color: "#475569",
+                                    backgroundColor: "#f8fafc",
+                                    border: "1px solid #e2e8f0",
+                                    borderRadius: 6,
+                                    padding: "3px 9px",
+                                    cursor: "pointer",
+                                    transition: "all 0.15s ease",
+                                  }}
+                                  className="hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200"
+                                >
+                                  {promptText}
+                                </button>
+                              ))}
+                            </div>
+
+                            {/* Right: Rephrasing Toggle Button (Exact area outlined by user) */}
+                            <div className="shrink-0 flex items-center">
+                              <div
+                                onClick={() => handleToggleRephrase(!isRephraseEnabled)}
                                 style={{
-                                  fontSize: 11.5,
-                                  fontWeight: 500,
-                                  color: "#475569",
-                                  backgroundColor: "#f8fafc",
-                                  border: "1px solid #e2e8f0",
-                                  borderRadius: 6,
-                                  padding: "3px 9px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  padding: "5px 12px",
+                                  borderRadius: 8,
                                   cursor: "pointer",
-                                  transition: "all 0.15s ease",
+                                  backgroundColor: isRephraseEnabled ? "#f0fdfa" : "#f8fafc",
+                                  border: isRephraseEnabled ? "1.5px solid #0d9488" : "1.5px solid #cbd5e1",
+                                  boxShadow: isRephraseEnabled
+                                    ? "0 2px 8px rgba(13, 148, 136, 0.2)"
+                                    : "0 1px 2px rgba(0, 0, 0, 0.04)",
+                                  transition: "all 0.2s ease",
                                 }}
-                                className="hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200"
+                                className="hover:border-teal-500 select-none"
+                                title="Click to toggle AI Query Rephrasing mode"
                               >
-                                {promptText}
-                              </button>
-                            ))}
+                                <Switch
+                                  size="small"
+                                  checked={isRephraseEnabled}
+                                  onChange={(checked, e) => {
+                                    e?.stopPropagation();
+                                    handleToggleRephrase(checked);
+                                  }}
+                                  style={{
+                                    backgroundColor: isRephraseEnabled ? "#0d9488" : undefined,
+                                  }}
+                                />
+                                <div className="flex items-center gap-1.5">
+                                  <span
+                                    style={{
+                                      fontSize: 12,
+                                      fontWeight: 700,
+                                      color: isRephraseEnabled ? "#0f766e" : "#475569",
+                                    }}
+                                  >
+                                    {isRephraseEnabled ? "Activate Rephrasing !!" : "Query Rephrasing"}
+                                  </span>
+                                  <span
+                                    style={{
+                                      fontSize: 10,
+                                      fontWeight: 800,
+                                      padding: "1px 6px",
+                                      borderRadius: 4,
+                                      textTransform: "uppercase",
+                                      letterSpacing: "0.5px",
+                                      backgroundColor: isRephraseEnabled ? "#ccfbf1" : "#e2e8f0",
+                                      color: isRephraseEnabled ? "#0f766e" : "#64748b",
+                                    }}
+                                  >
+                                    {isRephraseEnabled ? "ON" : "OFF"}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
+
+                        {/* Standalone 3-Way Rephrasing Studio under search box when Rephrase is ON */}
+                        {isRephraseEnabled && (rephrasePanelOpen || rephraseOptions.length > 0) && !disambiguationData && !queryLoading && (
+                          <div
+                            style={{
+                              marginTop: 14,
+                              marginBottom: 12,
+                              padding: "16px 18px",
+                              borderRadius: 12,
+                              background: "linear-gradient(145deg, #ffffff 0%, #f0fdfa 100%)",
+                              border: "1.5px solid #5eead4",
+                              boxShadow: "0 4px 16px -2px rgba(13, 110, 101, 0.12)",
+                            }}
+                            className="transition-all animate-fadeIn"
+                          >
+                            <div className="flex items-center justify-between pb-2.5 border-b border-teal-100 mb-3">
+                              <div className="flex items-center gap-2">
+                                <span style={{ fontSize: 18 }}>✨</span>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span style={{ fontSize: 13.5, fontWeight: 700, color: "#0f766e" }}>
+                                      3 Schema-Aligned Query Angles
+                                    </span>
+                                    <Tag color="cyan" style={{ fontSize: 11, fontWeight: 800, borderRadius: 6, margin: 0 }}>
+                                      Activate Rephrasing !!
+                                    </Tag>
+                                  </div>
+                                  <div style={{ fontSize: 11, color: "#64748b" }}>
+                                    Choose the query angle that best matches your intent, customize it, and execute against the database.
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  size="small"
+                                  icon={<SyncOutlined />}
+                                  loading={rephraseLoading}
+                                  onClick={() => handleFetchRephrasings()}
+                                  style={{ fontSize: 11, borderRadius: 6 }}
+                                >
+                                  Regenerate
+                                </Button>
+                                <Button
+                                  size="small"
+                                  type="text"
+                                  icon={<CloseOutlined />}
+                                  onClick={() => setRephrasePanelOpen(false)}
+                                  style={{ fontSize: 11 }}
+                                />
+                              </div>
+                            </div>
+
+                            {rephraseLoading ? (
+                              <div className="py-6 flex flex-col items-center justify-center gap-2.5">
+                                <Spin indicator={<LoadingOutlined style={{ fontSize: 24, color: "#0d6e65" }} spin />} />
+                                <span style={{ fontSize: 12, fontWeight: 500, color: "#0f766e" }}>
+                                  Generating 3 query interpretations...
+                                </span>
+                              </div>
+                            ) : (
+                              <div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3.5">
+                                  {rephraseOptions.map((opt) => {
+                                    const isSelected = selectedOptionId === opt.id;
+                                    return (
+                                      <div
+                                        key={opt.id}
+                                        onClick={() => handleSelectRephraseOption(opt)}
+                                        style={{
+                                          cursor: "pointer",
+                                          padding: "12px 14px",
+                                          borderRadius: 8,
+                                          backgroundColor: isSelected ? "#ffffff" : "rgba(255, 255, 255, 0.75)",
+                                          border: isSelected ? "2px solid #0d6e65" : "1px solid #cbd5e1",
+                                          boxShadow: isSelected
+                                            ? "0 3px 10px rgba(13, 110, 101, 0.15)"
+                                            : "0 1px 2px rgba(0,0,0,0.03)",
+                                          transition: "all 0.15s ease",
+                                          display: "flex",
+                                          flexDirection: "column",
+                                          justifyContent: "space-between",
+                                        }}
+                                        className={`hover:border-teal-500 hover:bg-white hover:shadow-sm ${
+                                          isSelected ? "ring-2 ring-teal-200" : ""
+                                        }`}
+                                      >
+                                        <div>
+                                          <div className="flex items-center justify-between mb-1.5">
+                                            <Tag
+                                              color={
+                                                opt.tag.toLowerCase().includes("aggregat")
+                                                  ? "purple"
+                                                  : opt.tag.toLowerCase().includes("detail")
+                                                  ? "blue"
+                                                  : "cyan"
+                                              }
+                                              style={{ fontSize: 10, fontWeight: 700, borderRadius: 4, margin: 0 }}
+                                            >
+                                              {opt.tag}
+                                            </Tag>
+                                            {isSelected && (
+                                              <span className="flex items-center gap-1" style={{ fontSize: 11, fontWeight: 700, color: "#0d6e65" }}>
+                                                <CheckCircleOutlined /> Selected
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>
+                                            {opt.title}
+                                          </div>
+                                          <div
+                                            style={{
+                                              fontSize: 11.5,
+                                              fontWeight: 600,
+                                              color: "#1e293b",
+                                              backgroundColor: isSelected ? "#f0fdf4" : "#f8fafc",
+                                              padding: "6px 8px",
+                                              borderRadius: 6,
+                                              border: "1px dashed #cbd5e1",
+                                              marginBottom: 6,
+                                              lineHeight: 1.35,
+                                            }}
+                                          >
+                                            "{opt.rephrased_query}"
+                                          </div>
+                                        </div>
+                                        <div style={{ fontSize: 10.5, color: "#64748b", lineHeight: 1.3 }}>
+                                          {opt.description}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+
+                                <div
+                                  style={{
+                                    padding: "12px 14px",
+                                    borderRadius: 8,
+                                    backgroundColor: "#ffffff",
+                                    border: "1.5px solid #94a3b8",
+                                    marginBottom: 12,
+                                  }}
+                                >
+                                  <div className="flex items-center justify-between mb-1.5">
+                                    <div className="flex items-center gap-1.5" style={{ fontSize: 11.5, fontWeight: 700, color: "#334155" }}>
+                                      <EditOutlined style={{ color: "#0d6e65" }} />
+                                      <span>Edit Rephrased Query:</span>
+                                    </div>
+                                    <span style={{ fontSize: 10.5, color: "#94a3b8" }}>
+                                      Editable — tweak columns or filters
+                                    </span>
+                                  </div>
+
+                                  <Input.TextArea
+                                    value={editableRephrasedQuery}
+                                    onChange={(e) => setEditableRephrasedQuery(e.target.value)}
+                                    rows={2}
+                                    style={{
+                                      fontSize: 12.5,
+                                      fontWeight: 500,
+                                      fontFamily: "var(--font-mono, monospace)",
+                                      color: "#0f172a",
+                                      borderRadius: 6,
+                                      borderColor: "#cbd5e1",
+                                    }}
+                                    placeholder="Edit your query here..."
+                                  />
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    type="primary"
+                                    size="middle"
+                                    style={{
+                                      borderRadius: 8,
+                                      fontWeight: 700,
+                                      backgroundColor: "#0d6e65",
+                                      borderColor: "#0d6e65",
+                                    }}
+                                    onClick={() => handleExecuteRephrasedQuery()}
+                                  >
+                                    Execute Rephrased Query
+                                  </Button>
+                                  <Button
+                                    size="middle"
+                                    style={{ borderRadius: 8, fontSize: 12 }}
+                                    onClick={() => {
+                                      setRephrasePanelOpen(false);
+                                      handleRunQuery(userQuery);
+                                    }}
+                                  >
+                                    Execute Original Query ("{userQuery.length > 25 ? userQuery.slice(0, 25) + '...' : userQuery}")
+                                  </Button>
+                                  <Button
+                                    type="text"
+                                    danger
+                                    size="small"
+                                    onClick={() => setRephrasePanelOpen(false)}
+                                  >
+                                    Close
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
 
                         {/* Interactive Disambiguation Prompt / Multi-Select Table Selection */}
                         {disambiguationData && !queryLoading && (
@@ -2495,9 +2918,41 @@ export default function DatabaseKnowledgePage() {
                                   <Text strong style={{ fontSize: 16, color: "var(--app-text)" }}>
                                     {disambiguationData.message}
                                   </Text>
-                                  <Tag color={(disambiguationData.entity_type === "table" || Boolean(disambiguationData.candidate_tables && disambiguationData.candidate_tables.length > 0) || (disambiguationData.options && disambiguationData.options.length > 0 && Boolean(disambiguationData.options[0].table || disambiguationData.options[0].table_name))) ? "cyan" : "orange"} style={{ borderRadius: 8, fontWeight: 700, padding: "2px 10px" }}>
-                                    {(disambiguationData.entity_type === "table" || Boolean(disambiguationData.candidate_tables && disambiguationData.candidate_tables.length > 0) || (disambiguationData.options && disambiguationData.options.length > 0 && Boolean(disambiguationData.options[0].table || disambiguationData.options[0].table_name))) ? "Table Selection Required" : "Action Required"}
-                                  </Tag>
+                                  <div className="flex items-center gap-2">
+                                    {/* Rephrasing Mode Toggle Switch */}
+                                    <div
+                                      onClick={() => handleToggleRephrase(!isRephraseEnabled, selectedTablesForExecution)}
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        padding: "3px 8px",
+                                        borderRadius: 8,
+                                        cursor: "pointer",
+                                        backgroundColor: isRephraseEnabled ? "#ccfbf1" : "#f1f5f9",
+                                        border: isRephraseEnabled ? "1px solid #14b8a6" : "1px solid #cbd5e1",
+                                      }}
+                                      title="Toggle Rephrasing Mode"
+                                    >
+                                      <Switch
+                                        size="small"
+                                        checked={isRephraseEnabled}
+                                        onChange={(checked, e) => {
+                                          e?.stopPropagation();
+                                          handleToggleRephrase(checked, selectedTablesForExecution);
+                                        }}
+                                        style={{
+                                          backgroundColor: isRephraseEnabled ? "#0d9488" : undefined,
+                                        }}
+                                      />
+                                      <span style={{ fontSize: 11, fontWeight: 700, color: isRephraseEnabled ? "#0f766e" : "#475569" }}>
+                                        {isRephraseEnabled ? "Activate Rephrasing !!" : "Rephrasing: OFF"}
+                                      </span>
+                                    </div>
+                                    <Tag color={(disambiguationData.entity_type === "table" || Boolean(disambiguationData.candidate_tables && disambiguationData.candidate_tables.length > 0) || (disambiguationData.options && disambiguationData.options.length > 0 && Boolean(disambiguationData.options[0].table || disambiguationData.options[0].table_name))) ? "cyan" : "orange"} style={{ borderRadius: 8, fontWeight: 700, padding: "2px 10px", margin: 0 }}>
+                                      {(disambiguationData.entity_type === "table" || Boolean(disambiguationData.candidate_tables && disambiguationData.candidate_tables.length > 0) || (disambiguationData.options && disambiguationData.options.length > 0 && Boolean(disambiguationData.options[0].table || disambiguationData.options[0].table_name))) ? "Table Selection Required" : "Action Required"}
+                                    </Tag>
+                                  </div>
                                 </div>
 
                                 {(disambiguationData.entity_type === "table" || Boolean(disambiguationData.candidate_tables && disambiguationData.candidate_tables.length > 0) || (disambiguationData.options && disambiguationData.options.length > 0 && Boolean(disambiguationData.options[0].table || disambiguationData.options[0].table_name))) ? (
@@ -2620,9 +3075,20 @@ export default function DatabaseKnowledgePage() {
                                                 if (e.target.checked) {
                                                   const newSel = Array.from(new Set([...selectedTablesForExecution, ...displayTables.map((t) => t.name)]));
                                                   setSelectedTablesForExecution(newSel);
+                                                  if (isRephraseEnabled && newSel.length > 0) {
+                                                    handleFetchRephrasings(newSel);
+                                                  }
                                                 } else {
                                                   const displayedSet = new Set(displayTables.map((t) => t.name));
-                                                  setSelectedTablesForExecution(selectedTablesForExecution.filter((x) => !displayedSet.has(x)));
+                                                  const nextSel = selectedTablesForExecution.filter((x) => !displayedSet.has(x));
+                                                  setSelectedTablesForExecution(nextSel);
+                                                  if (isRephraseEnabled) {
+                                                    if (nextSel.length > 0) {
+                                                      handleFetchRephrasings(nextSel);
+                                                    } else {
+                                                      setRephraseOptions([]);
+                                                    }
+                                                  }
                                                 }
                                               }}
                                             >
@@ -2644,10 +3110,19 @@ export default function DatabaseKnowledgePage() {
                                                 <div
                                                   key={idx}
                                                   onClick={() => {
+                                                    let nextSel: string[];
                                                     if (isChecked) {
-                                                      setSelectedTablesForExecution(selectedTablesForExecution.filter((t) => t !== item.name));
+                                                      nextSel = selectedTablesForExecution.filter((t) => t !== item.name);
                                                     } else {
-                                                      setSelectedTablesForExecution([...selectedTablesForExecution, item.name]);
+                                                      nextSel = [...selectedTablesForExecution, item.name];
+                                                    }
+                                                    setSelectedTablesForExecution(nextSel);
+                                                    if (isRephraseEnabled) {
+                                                      if (nextSel.length > 0) {
+                                                        handleFetchRephrasings(nextSel);
+                                                      } else {
+                                                        setRephraseOptions([]);
+                                                      }
                                                     }
                                                   }}
                                                   className={`flex items-center justify-between p-2 rounded-lg border text-xs cursor-pointer transition-all ${
@@ -2727,30 +3202,249 @@ export default function DatabaseKnowledgePage() {
                                             </div>
                                           )}
 
-                                          {/* Action Execution Button */}
-                                          <div className="flex items-center gap-2 pt-2 border-t border-teal-200/60 dark:border-teal-900/60">
-                                            <Button
-                                              type="primary"
-                                              size="middle"
-                                              disabled={selectedTablesForExecution.length === 0}
+                                          {/* 3-Way Query Rephrasing Studio After Table Selection - ONLY when Rephrasing is ON */}
+                                          {isRephraseEnabled && selectedTablesForExecution.length > 0 && (
+                                            <div
                                               style={{
-                                                borderRadius: 8,
-                                                fontWeight: 700,
-                                                backgroundColor: selectedTablesForExecution.length > 0 ? "#0d6e65" : undefined,
-                                                borderColor: selectedTablesForExecution.length > 0 ? "#0d6e65" : undefined,
+                                                marginTop: 14,
+                                                marginBottom: 12,
+                                                padding: "16px 18px",
+                                                borderRadius: 12,
+                                                background: "linear-gradient(145deg, #ffffff 0%, #f0fdfa 100%)",
+                                                border: "1.5px solid #5eead4",
+                                                boxShadow: "0 4px 16px -2px rgba(13, 110, 101, 0.12)",
                                               }}
-                                              onClick={() => {
-                                                const sel = [...selectedTablesForExecution];
-                                                const strat = sel.length > 1 ? multiTableStrategy : undefined;
-                                                setDisambiguationData(null);
-                                                setSelectedTablesForExecution([]);
-                                                setTableSearchFilter("");
-                                                handleRunQuery(userQuery, undefined, sel, strat);
-                                              }}
+                                              className="transition-all animate-fadeIn"
                                             >
-                                              Execute on {selectedTablesForExecution.length} Selected Table{selectedTablesForExecution.length === 1 ? "" : "s"}
-                                              {selectedTablesForExecution.length > 1 ? (multiTableStrategy === "separate" ? " (Separate)" : " (Union)") : ""}
-                                            </Button>
+                                              <div className="flex items-center justify-between pb-2.5 border-b border-teal-100 mb-3">
+                                                <div className="flex items-center gap-2">
+                                                  <span style={{ fontSize: 18 }}>✨</span>
+                                                  <div>
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                      <span style={{ fontSize: 13.5, fontWeight: 700, color: "#0f766e" }}>
+                                                        3 Schema-Aligned Query Angles for:{" "}
+                                                        <span className="font-mono text-teal-950 font-bold underline">
+                                                          {selectedTablesForExecution.join(", ")}
+                                                        </span>
+                                                      </span>
+                                                      <Tag color="cyan" style={{ fontSize: 11, fontWeight: 800, borderRadius: 6, margin: 0 }}>
+                                                        Activate Rephrasing !!
+                                                      </Tag>
+                                                    </div>
+                                                    <div style={{ fontSize: 11, color: "#64748b" }}>
+                                                      Choose the exact query phrasing that matches your intent, edit or customize it below, and execute.
+                                                    </div>
+                                                  </div>
+                                                </div>
+                                                <Button
+                                                  size="small"
+                                                  icon={<SyncOutlined />}
+                                                  loading={rephraseLoading}
+                                                  onClick={() => handleFetchRephrasings(selectedTablesForExecution)}
+                                                  style={{ fontSize: 11, borderRadius: 6 }}
+                                                >
+                                                  Regenerate
+                                                </Button>
+                                              </div>
+
+                                              {rephraseLoading ? (
+                                                <div className="py-6 flex flex-col items-center justify-center gap-2.5">
+                                                  <Spin indicator={<LoadingOutlined style={{ fontSize: 24, color: "#0d6e65" }} spin />} />
+                                                  <span style={{ fontSize: 12, fontWeight: 500, color: "#0f766e" }}>
+                                                    Crafting 3 query interpretations for {selectedTablesForExecution.join(", ")}...
+                                                  </span>
+                                                </div>
+                                              ) : rephraseOptions.length === 0 ? (
+                                                <div className="py-3 flex items-center justify-between flex-wrap gap-2">
+                                                  <span className="text-xs text-slate-500">
+                                                    Analyze schema for {selectedTablesForExecution.join(", ")} to generate 3 query angles:
+                                                  </span>
+                                                  <Button
+                                                    type="primary"
+                                                    size="small"
+                                                    onClick={() => handleFetchRephrasings(selectedTablesForExecution)}
+                                                    style={{ backgroundColor: "#0d6e65", borderColor: "#0d6e65", borderRadius: 6, fontSize: 11 }}
+                                                  >
+                                                    ✨ Generate 3 Angles
+                                                  </Button>
+                                                </div>
+                                              ) : (
+                                                <div>
+                                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3.5">
+                                                    {rephraseOptions.map((opt) => {
+                                                      const isSelected = selectedOptionId === opt.id;
+                                                      return (
+                                                        <div
+                                                          key={opt.id}
+                                                          onClick={() => handleSelectRephraseOption(opt)}
+                                                          style={{
+                                                            cursor: "pointer",
+                                                            padding: "12px 14px",
+                                                            borderRadius: 8,
+                                                            backgroundColor: isSelected ? "#ffffff" : "rgba(255, 255, 255, 0.75)",
+                                                            border: isSelected ? "2px solid #0d6e65" : "1px solid #cbd5e1",
+                                                            boxShadow: isSelected
+                                                              ? "0 3px 10px rgba(13, 110, 101, 0.15)"
+                                                              : "0 1px 2px rgba(0,0,0,0.03)",
+                                                            transition: "all 0.15s ease",
+                                                            display: "flex",
+                                                            flexDirection: "column",
+                                                            justifyContent: "space-between",
+                                                          }}
+                                                          className={`hover:border-teal-500 hover:bg-white hover:shadow-sm ${
+                                                            isSelected ? "ring-2 ring-teal-200" : ""
+                                                          }`}
+                                                        >
+                                                          <div>
+                                                            <div className="flex items-center justify-between mb-1.5">
+                                                              <Tag
+                                                                color={
+                                                                  opt.tag.toLowerCase().includes("aggregat")
+                                                                    ? "purple"
+                                                                    : opt.tag.toLowerCase().includes("detail")
+                                                                    ? "blue"
+                                                                    : "cyan"
+                                                                }
+                                                                style={{ fontSize: 10, fontWeight: 700, borderRadius: 4, margin: 0 }}
+                                                              >
+                                                                {opt.tag}
+                                                              </Tag>
+                                                              {isSelected && (
+                                                                <span className="flex items-center gap-1" style={{ fontSize: 11, fontWeight: 700, color: "#0d6e65" }}>
+                                                                  <CheckCircleOutlined /> Selected
+                                                                </span>
+                                                              )}
+                                                            </div>
+                                                            <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>
+                                                              {opt.title}
+                                                            </div>
+                                                            <div
+                                                              style={{
+                                                                fontSize: 11.5,
+                                                                fontWeight: 600,
+                                                                color: "#1e293b",
+                                                                backgroundColor: isSelected ? "#f0fdf4" : "#f8fafc",
+                                                                padding: "6px 8px",
+                                                                borderRadius: 6,
+                                                                border: "1px dashed #cbd5e1",
+                                                                marginBottom: 6,
+                                                                lineHeight: 1.35,
+                                                              }}
+                                                            >
+                                                              "{opt.rephrased_query}"
+                                                            </div>
+                                                          </div>
+                                                          <div style={{ fontSize: 10.5, color: "#64748b", lineHeight: 1.3 }}>
+                                                            {opt.description}
+                                                          </div>
+                                                        </div>
+                                                      );
+                                                    })}
+                                                  </div>
+
+                                                  {/* Editable Query Box */}
+                                                  <div
+                                                    style={{
+                                                      padding: "12px 14px",
+                                                      borderRadius: 8,
+                                                      backgroundColor: "#ffffff",
+                                                      border: "1.5px solid #94a3b8",
+                                                    }}
+                                                  >
+                                                    <div className="flex items-center justify-between mb-1.5">
+                                                      <div className="flex items-center gap-1.5" style={{ fontSize: 11.5, fontWeight: 700, color: "#334155" }}>
+                                                        <EditOutlined style={{ color: "#0d6e65" }} />
+                                                        <span>Edit Rephrased Query (Customize before executing on {selectedTablesForExecution.join(", ")}):</span>
+                                                      </div>
+                                                      <span style={{ fontSize: 10.5, color: "#94a3b8" }}>
+                                                        Editable — tweak columns or filters
+                                                      </span>
+                                                    </div>
+
+                                                    <Input.TextArea
+                                                      value={editableRephrasedQuery}
+                                                      onChange={(e) => setEditableRephrasedQuery(e.target.value)}
+                                                      rows={2}
+                                                      style={{
+                                                        fontSize: 12.5,
+                                                        fontWeight: 500,
+                                                        fontFamily: "var(--font-mono, monospace)",
+                                                        color: "#0f172a",
+                                                        borderRadius: 6,
+                                                        borderColor: "#cbd5e1",
+                                                      }}
+                                                      placeholder="Edit your query here..."
+                                                    />
+                                                  </div>
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+
+                                          {/* Action Execution Buttons */}
+                                          <div className="flex items-center gap-2 pt-2 border-t border-teal-200/60 dark:border-teal-900/60 flex-wrap">
+                                            {isRephraseEnabled ? (
+                                              <>
+                                                <Button
+                                                  type="primary"
+                                                  size="middle"
+                                                  disabled={selectedTablesForExecution.length === 0}
+                                                  style={{
+                                                    borderRadius: 8,
+                                                    fontWeight: 700,
+                                                    backgroundColor: selectedTablesForExecution.length > 0 ? "#0d6e65" : undefined,
+                                                    borderColor: selectedTablesForExecution.length > 0 ? "#0d6e65" : undefined,
+                                                  }}
+                                                  onClick={() => {
+                                                    const sel = [...selectedTablesForExecution];
+                                                    const strat = sel.length > 1 ? multiTableStrategy : undefined;
+                                                    handleExecuteRephrasedQuery(sel, strat);
+                                                  }}
+                                                >
+                                                  Execute Rephrased Query on {selectedTablesForExecution.length} Selected Table{selectedTablesForExecution.length === 1 ? "" : "s"}
+                                                  {selectedTablesForExecution.length > 1 ? (multiTableStrategy === "separate" ? " (Separate)" : " (Union)") : ""}
+                                                </Button>
+
+                                                <Button
+                                                  size="middle"
+                                                  disabled={selectedTablesForExecution.length === 0}
+                                                  style={{ borderRadius: 8, fontSize: 12 }}
+                                                  onClick={() => {
+                                                    const sel = [...selectedTablesForExecution];
+                                                    const strat = sel.length > 1 ? multiTableStrategy : undefined;
+                                                    setDisambiguationData(null);
+                                                    setSelectedTablesForExecution([]);
+                                                    setTableSearchFilter("");
+                                                    handleRunQuery(userQuery, undefined, sel, strat);
+                                                  }}
+                                                >
+                                                  Execute Original Query ("{userQuery.length > 25 ? userQuery.slice(0, 25) + '...' : userQuery}")
+                                                </Button>
+                                              </>
+                                            ) : (
+                                              <Button
+                                                type="primary"
+                                                size="middle"
+                                                disabled={selectedTablesForExecution.length === 0}
+                                                style={{
+                                                  borderRadius: 8,
+                                                  fontWeight: 700,
+                                                  backgroundColor: selectedTablesForExecution.length > 0 ? "#0d6e65" : undefined,
+                                                  borderColor: selectedTablesForExecution.length > 0 ? "#0d6e65" : undefined,
+                                                }}
+                                                onClick={() => {
+                                                  const sel = [...selectedTablesForExecution];
+                                                  const strat = sel.length > 1 ? multiTableStrategy : undefined;
+                                                  setDisambiguationData(null);
+                                                  setSelectedTablesForExecution([]);
+                                                  setTableSearchFilter("");
+                                                  handleRunQuery(userQuery, undefined, sel, strat);
+                                                }}
+                                              >
+                                                Execute on {selectedTablesForExecution.length} Selected Table{selectedTablesForExecution.length === 1 ? "" : "s"}
+                                                {selectedTablesForExecution.length > 1 ? (multiTableStrategy === "separate" ? " (Separate)" : " (Union)") : ""}
+                                              </Button>
+                                            )}
 
                                             <Button
                                               type="text"
