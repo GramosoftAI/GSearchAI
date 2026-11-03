@@ -51,7 +51,14 @@ class GroundedSQLGenerator:
             for d in retrieved_docs
         )
 
-        system_prompt = """You generate accurate PostgreSQL SELECT queries for a database question.
+        dialect = kwargs.get("dialect", "postgres")
+        clean_d = (dialect or "postgres").lower()
+        is_tsql = any(k in clean_d for k in ("sqlserver", "mssql", "tsql"))
+        db_name = "Microsoft SQL Server (T-SQL)" if is_tsql else ("MySQL" if any(k in clean_d for k in ("mysql", "mariadb")) else "PostgreSQL")
+        limit_rule = "6. MANDATORY ROW LIMITING: Microsoft SQL Server (T-SQL) does NOT support LIMIT! You MUST use SELECT TOP (50) at the start of the query (e.g. `SELECT TOP (50) col1, col2 ...`), or `SELECT TOP (1)` for single-row aggregates. NEVER use LIMIT." if is_tsql else "6. MANDATORY LIMIT: Always include a LIMIT clause at the end of the query (e.g. `LIMIT 50` for lists, or `LIMIT 1` for single-row aggregates) to ensure safety."
+        like_op = "LIKE" if is_tsql else "ILIKE"
+
+        system_prompt = f"""You generate accurate {db_name} SELECT queries for a database question.
 Rules:
 1. Use only tables and columns explicitly present in the supplied schema context. NEVER invent or hallucinate table names or columns.
 2. Strictly check the Columns table of each schema document. Always use the exact column names present in the schema.
@@ -59,10 +66,10 @@ Rules:
    - Only join tables along valid foreign key paths and bridge tables present in the schema context. NEVER invent direct joins between unrelated tables (e.g., `types.id = projects.id`) or invent columns like `p.creator_id`. Always join through intermediate fact/transaction tables (e.g. `work_packages`) that contain foreign keys to both tables.
 3. INCLUDE DESCRIPTIVE COLUMNS: When querying records for details, status, or progress, always project meaningful human-readable columns (e.g., name, subject, title, description, status, dates, assignees) alongside IDs so the answer can be clearly understood.
 4. BOOLEAN OPERATOR PRECEDENCE (MANDATORY): When combining OR conditions with AND in a WHERE clause, you MUST wrap all OR conditions in parentheses!
-   Example: WHERE (col1 ILIKE '%term%' OR col2 ILIKE '%term%') AND date_col = '2026-10-16'
+   Example: WHERE (col1 {like_op} '%term%' OR col2 {like_op} '%term%') AND date_col = '2026-10-16'
    Never omit parentheses around the OR group, as AND binds tighter than OR.
-5. DATE HANDLING: If a specific date like 'YYYY-MM-DD' is requested, match with date casting (e.g. `col::date = 'YYYY-MM-DD'`).
-6. MANDATORY LIMIT: Always include a LIMIT clause at the end of the query (e.g. `LIMIT 50` for lists, or `LIMIT 1` for single-row aggregates) to ensure safety.
+5. DATE HANDLING: If a specific date like 'YYYY-MM-DD' is requested, match with date casting or comparisons.
+{limit_rule}
 7. Return only one single SQL query without Markdown code fences, commentary, or multiple statements.
 8. SINGLE TABLE SUFFICIENCY & MINIMAL JOINS (CRITICAL):
    - Check if the requested projection attribute (e.g. COUNT(*), amount, code, status, price) AND an entity/filter column (e.g. status, name, title) both exist directly on one of the candidate tables.
@@ -71,12 +78,12 @@ Rules:
    - Only perform JOINs when the requested information is genuinely split across multiple tables.
 9. DYNAMIC MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
    When matching any free-text, entity names, product items, brands, titles, categories, or literal phrases (such as 'cream & IPA', 'red wine', person names, or item codes):
-   - NEVER fragment a multi-word literal across multiple different columns using AND (e.g. NEVER do `col1 ILIKE '%part1%' AND col2 ILIKE '%part2%' AND col3 ILIKE '%part3%'`).
-   - Match the target string against a single candidate column using ILIKE:
-     * For arbitrary multi-word or separated phrases: `(col ILIKE '%word1%' AND col ILIKE '%word2%')` or `col ILIKE '%word1%word2%'` ON THE SAME COLUMN.
-     * Or test across alternative candidate columns using OR: `(col_a ILIKE '%literal%' OR col_b ILIKE '%literal%')`.
+   - NEVER fragment a multi-word literal across multiple different columns using AND (e.g. NEVER do `col1 {like_op} '%part1%' AND col2 {like_op} '%part2%' AND col3 {like_op} '%part3%'`).
+   - Match the target string against a single candidate column using {like_op}:
+     * For arbitrary multi-word or separated phrases: `(col {like_op} '%word1%' AND col {like_op} '%word2%')` or `col {like_op} '%word1%word2%'` ON THE SAME COLUMN.
+     * Or test across alternative candidate columns using OR: `(col_a {like_op} '%literal%' OR col_b {like_op} '%literal%')`.
    - If matching split name fields (like `firstname` and `lastname`), match against the concatenated whole:
-     `CONCAT_WS(' ', col_first, col_last) ILIKE '%full literal%'` or `(col_first ILIKE '%word1%' AND col_last ILIKE '%word2%')`.
+     `CONCAT(col_first, ' ', col_last) {like_op} '%full literal%'` or `(col_first {like_op} '%word1%' AND col_last {like_op} '%word2%')`.
    - This ensures dynamic and robust matching for any names, products, items, or descriptions regardless of spacing, special characters (&, -), or casing.
 10. "WORKING ON / UNDER" vs "MEMBERS OF" A PROJECT:
    - When the user asks who is "working on", "working under", "doing work on", or "assigned to" a project/entity, join the active tasks/work items table (e.g., `work_packages`, `tasks`, `issues`, `tickets` via `assigned_to_id` or `author_id`) where actual work assignments reside.
@@ -114,7 +121,11 @@ Rules:
    - For numeric IDs (e.g. `id = 123`) and booleans (`active = TRUE`), use `=`. But for ALL text/character/enum values, use ONLY `ILIKE` with `%...%`.
 """
 
-        user_content = f"Schema context:\n{context}\n\nQuestion: {question}"
+        original_q = kwargs.get("original_question")
+        if original_q and original_q.strip() != question.strip():
+            user_content = f"Schema context:\n{context}\n\nOriginal User Question: {original_q}\nEnriched Schema-Grounded Intent: {question}"
+        else:
+            user_content = f"Schema context:\n{context}\n\nQuestion: {question}"
 
         # Consolidate all resolved entities dynamically
         all_resolved: List[Dict[str, Any]] = list(resolved_entities) if resolved_entities else []
@@ -285,8 +296,15 @@ Rules:
             for d in retrieved_docs
         )
 
-        system_prompt = """You are an expert PostgreSQL database engineer repairing a failed SQL query.
-The user asked a question, but the generated SQL query failed when executed against PostgreSQL with a specific error.
+        dialect = kwargs.get("dialect", "postgres")
+        clean_d = (dialect or "postgres").lower()
+        is_tsql = any(k in clean_d for k in ("sqlserver", "mssql", "tsql"))
+        db_name = "Microsoft SQL Server (T-SQL)" if is_tsql else ("MySQL" if any(k in clean_d for k in ("mysql", "mariadb")) else "PostgreSQL")
+        limit_rule = "7. MANDATORY ROW LIMITING: Microsoft SQL Server (T-SQL) does NOT support LIMIT! You MUST use SELECT TOP (50) at the start of the query (e.g. `SELECT TOP (50) col1, col2 ...`), or `SELECT TOP (1)` for single-row aggregates. NEVER use LIMIT." if is_tsql else "7. Always include LIMIT 50 (or LIMIT 1 for aggregates) at the end."
+        like_op = "LIKE" if is_tsql else "ILIKE"
+
+        system_prompt = f"""You are an expert {db_name} database engineer repairing a failed SQL query.
+The user asked a question, but the generated SQL query failed when executed against {db_name} with a specific error.
 Your task is to fix the SQL query so that it successfully executes and accurately answers the question.
 Rules:
 1. Examine the error message carefully. If a column or table does not exist, consult the supplied Schema context and find the actual columns in that table (e.g. check for split name fields like firstname/lastname or alternate column names) or adjust the join/projections. If a table stores names as separate fields (e.g. firstname/lastname), use CONCAT or login/username instead of a non-existent name column.
@@ -294,34 +312,29 @@ Rules:
 3. DYNAMIC MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
    When matching free-text, entity names, products, items, titles, or categories:
    - NEVER split a multi-word entity or literal into conjoined AND conditions across multiple different columns.
-   - Match the target string against a single candidate column with ILIKE: `(column_name ILIKE '%word1%' AND column_name ILIKE '%word2%')` or `column_name ILIKE '%word1%word2%'`.
-   - Or test across alternative candidate columns with OR: `(col_a ILIKE '%term%' OR col_b ILIKE '%term%')`.
-   - If a table has split names, match against `CONCAT_WS(' ', first, last) ILIKE '%full term%'`.
+   - Match the target string against a single candidate column with {like_op}: `(column_name {like_op} '%word1%' AND column_name {like_op} '%word2%')` or `column_name {like_op} '%word1%word2%'`.
+   - Or test across alternative candidate columns with OR: `(col_a {like_op} '%term%' OR col_b {like_op} '%term%')`.
+   - If a table has split names, match against `CONCAT(first, ' ', last) {like_op} '%full term%'`.
 4. SINGLE TABLE SUFFICIENCY:
    - If the requested projection column and the filter column both exist directly on one table, remove unnecessary joins and query that table directly.
 5. "WORKING ON / UNDER" vs "MEMBERS OF" A PROJECT:
    - When the user asks who is "working on", "working under", "doing work on", or "assigned to" a project/entity, join the active tasks/work items table (e.g., `work_packages`, `tasks`, `issues`, `tickets` via `assigned_to_id` or `author_id`) where actual work assignments reside.
    - Use the membership roster table (e.g., `members`) only when the user specifically asks for "members", "membership list", or "team permissions".
-5. POSTGRESQL SELECT DISTINCT & ORDER BY RULE:
-   - In PostgreSQL, when using `SELECT DISTINCT`, every expression in `ORDER BY` MUST appear in the `SELECT` list.
-     For example: `SELECT DISTINCT col::date ... ORDER BY col::date DESC` is valid; `SELECT DISTINCT col::date ... ORDER BY col DESC` will throw a syntax error.
-     If selecting the single latest or earliest record with `LIMIT 1`, use `SELECT col::date ... ORDER BY col DESC LIMIT 1` without `DISTINCT`.
 6. POLYMORPHIC AND DUAL ASSOCIATIONS (`entity_type` / `entity_id`):
    - Tables tracking activities, timesheets, or logs (e.g. `time_entries`, `journals`) frequently store parent object links in `(entity_type = 'WorkPackage' AND entity_id = wp.id)` where direct foreign keys like `work_package_id` can be NULL. Check both columns:
      `ON (te.work_package_id = wp.id OR (te.entity_type = 'WorkPackage' AND te.entity_id = wp.id))`
    - Also prefer joining `projects` via `te.project_id = p.id` and using `LEFT JOIN` for optional time logs.
-7. Always include LIMIT 50 (or LIMIT 1 for aggregates) at the end.
-8. MANDATORY CASE-INSENSITIVE STRING MATCHING (USE ILIKE WITH WILDCARDS):
-   - In PostgreSQL, `=` is strictly case-sensitive. Always use `ILIKE` for all string/text/varchar value checks, statuses, categories, stages, types, names, codes, financial years, and literal filters. NEVER use `=` for string/text values!
-   - ALWAYS wrap text/status/stage and year filters with wildcards (`%...%`) (e.g. `stage ILIKE '%complete%'`, `capex_revex ILIKE '%capex%'`, `finance_year ILIKE '%2026%'`) to handle tense differences ('complete' vs 'Completed') and prefixes ('FY 2025-2026').
-9. Return ONLY one single corrected PostgreSQL SELECT query without Markdown code fences, commentary, or multiple statements.
+{limit_rule}
+8. STRING MATCHING:
+   - Always wrap text/status/stage and year filters with wildcards (`%...%`) (e.g. `stage {like_op} '%complete%'`, `finance_year {like_op} '%2026%'`) to handle variations.
+9. Return ONLY one single corrected {db_name} SELECT query without Markdown code fences, commentary, or multiple statements.
 """
 
         user_content = (
             f"Schema context:\n{context}\n\n"
             f"Question: {question}\n\n"
             f"Failed SQL Query:\n{failed_sql}\n\n"
-            f"PostgreSQL Execution Error:\n{error_message}\n\n"
+            f"{db_name} Execution Error:\n{error_message}\n\n"
         )
 
         all_resolved: List[Dict[str, Any]] = list(resolved_entities) if resolved_entities else []

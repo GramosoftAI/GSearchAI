@@ -97,6 +97,41 @@ async def connect_to_database(
                 detail=f"Database connection error: {safe_msg}",
             ) from e
 
+    if db_config.db_type == DatabaseType.SQLSERVER or getattr(db_config, "port", None) in (1433, "1433"):
+        try:
+            import pymssql
+        except ImportError:
+            raise QueryConnectionError(detail="pymssql driver is not available in Python environment.")
+
+        timeout = int(timeout_seconds or 10)
+        port = int(db_config.port or 1433)
+        try:
+            def _connect_mssql():
+                return pymssql.connect(
+                    server=db_config.host,
+                    port=port,
+                    user=db_config.username,
+                    password=db_config.raw_password,
+                    database=db_config.database_name,
+                    login_timeout=timeout,
+                    timeout=timeout,
+                    as_dict=True,
+                    autocommit=True,
+                )
+            conn = await asyncio.wait_for(asyncio.to_thread(_connect_mssql), timeout=timeout_seconds + 1.0)
+            return conn
+        except asyncio.TimeoutError as e:
+            logger.warning(f"Connection timeout to {db_config.masked_dsn}")
+            raise QueryConnectionError(
+                detail=f"Connection to MS SQL Server timed out after {timeout_seconds}s.",
+            ) from e
+        except Exception as e:
+            safe_msg = sanitize_error_message(e)
+            logger.error(f"MS SQL Server connection failure: {safe_msg}")
+            raise QueryConnectionError(
+                detail=f"Database connection error: {safe_msg}",
+            ) from e
+
     # Default path: PostgreSQL via asyncpg
     ssl_val = resolve_ssl_mode(db_config.ssl_mode)
     

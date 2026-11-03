@@ -361,7 +361,12 @@ class CandidateSQLGenerator:
         if not plan.projections and plan.confidence == 0.0:
             return None
         ast = cls.compile_plan_to_ast(plan)
-        target_dialect = "mysql" if dialect in ("mysql", "mariadb") else "postgres"
+        if dialect in ("tsql", "sqlserver", "mssql"):
+            target_dialect = "tsql"
+        elif dialect in ("mysql", "mariadb"):
+            target_dialect = "mysql"
+        else:
+            target_dialect = "postgres"
         return ast.sql(dialect=target_dialect)
 
     @classmethod

@@ -12,6 +12,8 @@ HR, Healthcare) without hardcoded domain tables.
 
 import re
 import logging
+import asyncio
+import inspect
 from typing import List, Dict, Any, Tuple, Optional, Set
 from dataclasses import dataclass
 from ..execution.executor import ReadOnlyDatabaseExecutor
@@ -128,7 +130,12 @@ class GroundedEntityResolver:
 
         from ..execution.connection_helper import connect_to_database
 
-        sql = f"SELECT {dim.pk_col}, {', '.join(dim.label_cols)} FROM {dim.table_name} LIMIT {limit}"
+        db_type_str = str(getattr(conn_config, "db_type", None) or getattr(conn_config, "database_type", "")).lower()
+        is_tsql = any(k in db_type_str for k in ("sqlserver", "mssql", "tsql"))
+        if is_tsql:
+            sql = f"SELECT TOP ({limit}) {dim.pk_col}, {', '.join(dim.label_cols)} FROM {dim.table_name}"
+        else:
+            sql = f"SELECT {dim.pk_col}, {', '.join(dim.label_cols)} FROM {dim.table_name} LIMIT {limit}"
         conn = None
         try:
             conn = await connect_to_database(
@@ -141,10 +148,25 @@ class GroundedEntityResolver:
                 records = await conn.fetch(sql)
                 rows = [dict(r) for r in records]
             else:
-                async with conn.cursor() as cur:
-                    await cur.execute(sql)
-                    records = await cur.fetchall()
-                    rows = [dict(r) for r in records]
+                cur = conn.cursor()
+                if inspect.iscoroutinefunction(cur.execute) or hasattr(cur, "__aenter__"):
+                    async with conn.cursor() as cur_async:
+                        await cur_async.execute(sql)
+                        records = await cur_async.fetchall()
+                        if records and isinstance(records[0], dict):
+                            rows = list(records)
+                        elif hasattr(cur_async, "description") and cur_async.description:
+                            col_names = [col[0] for col in cur_async.description]
+                            rows = [dict(zip(col_names, r)) for r in records]
+                        else:
+                            rows = [dict(r) for r in records]
+                else:
+                    # Synchronous DB-API connection (like pymssql)
+                    def _run_sync_fetch():
+                        with conn.cursor(as_dict=True) as sync_cur:
+                            sync_cur.execute(sql)
+                            return sync_cur.fetchall() or []
+                    rows = await asyncio.to_thread(_run_sync_fetch)
 
             cls._dimension_cache[cache_key] = rows
             return rows
@@ -157,7 +179,10 @@ class GroundedEntityResolver:
                     if hasattr(conn, "ensure_closed"):
                         await conn.ensure_closed()
                     elif hasattr(conn, "close"):
-                        await conn.close()
+                        if inspect.iscoroutinefunction(conn.close):
+                            await conn.close()
+                        else:
+                            await asyncio.to_thread(conn.close)
                 except Exception:
                     pass
 

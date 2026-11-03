@@ -44,7 +44,7 @@ class GroundedSQLValidator:
     """Validates generated SQL against read-only security invariants using SQLGlot."""
 
     @classmethod
-    def validate_readonly_sql(cls, sql: str) -> str:
+    def validate_readonly_sql(cls, sql: str, dialect: str = "postgres") -> str:
         """
         Validate that SQL is a single, safe, read-only SELECT or CTE query.
         Raises ValueError if invalid or unsafe.
@@ -59,10 +59,24 @@ class GroundedSQLValidator:
         if ";" in cleaned:
             raise ValueError("Multiple SQL statements are not permitted.")
 
+        clean_d = (dialect or "postgres").lower()
+        if clean_d in ("sqlserver", "mssql", "tsql"):
+            read_dialect = "tsql"
+            out_dialect = "tsql"
+        elif clean_d in ("mysql", "mariadb"):
+            read_dialect = "mysql"
+            out_dialect = "mysql"
+        else:
+            read_dialect = "postgres"
+            out_dialect = "postgres"
+
         try:
-            statements = sqlglot.parse(cleaned, read="postgres")
+            statements = sqlglot.parse(cleaned, read=read_dialect)
         except Exception as exc:
-            raise ValueError(f"Could not parse generated SQL safely: {exc}") from exc
+            try:
+                statements = sqlglot.parse(cleaned)
+            except Exception:
+                raise ValueError(f"Could not parse generated SQL safely: {exc}") from exc
 
         if len(statements) != 1 or statements[0] is None:
             raise ValueError("Only one SQL statement is allowed.")
@@ -79,17 +93,18 @@ class GroundedSQLValidator:
             if name in BLOCKED_FUNCTIONS:
                 raise ValueError(f"Database function '{name}' is forbidden for security policy.")
 
-        # Convert all string literal equality checks to case-insensitive ILIKE in PostgreSQL
-        for eq in list(tree.find_all(exp.EQ)):
-            if isinstance(eq.expression, exp.Literal) and eq.expression.is_string:
-                eq.replace(exp.ILike(this=eq.this, expression=eq.expression))
-            elif isinstance(eq.this, exp.Literal) and eq.this.is_string:
-                eq.replace(exp.ILike(this=eq.expression, expression=eq.this))
+        # Convert string literal equality checks to case-insensitive ILIKE only in PostgreSQL
+        if out_dialect in ("postgres", "postgresql"):
+            for eq in list(tree.find_all(exp.EQ)):
+                if isinstance(eq.expression, exp.Literal) and eq.expression.is_string:
+                    eq.replace(exp.ILike(this=eq.this, expression=eq.expression))
+                elif isinstance(eq.this, exp.Literal) and eq.this.is_string:
+                    eq.replace(exp.ILike(this=eq.expression, expression=eq.this))
 
-        for neq in list(tree.find_all(exp.NEQ)):
-            if isinstance(neq.expression, exp.Literal) and neq.expression.is_string:
-                neq.replace(exp.Not(this=exp.ILike(this=neq.this, expression=neq.expression)))
-            elif isinstance(neq.this, exp.Literal) and neq.this.is_string:
-                neq.replace(exp.Not(this=exp.ILike(this=neq.expression, expression=neq.this)))
+            for neq in list(tree.find_all(exp.NEQ)):
+                if isinstance(neq.expression, exp.Literal) and neq.expression.is_string:
+                    neq.replace(exp.Not(this=exp.ILike(this=neq.this, expression=neq.expression)))
+                elif isinstance(neq.this, exp.Literal) and neq.this.is_string:
+                    neq.replace(exp.Not(this=exp.ILike(this=neq.expression, expression=neq.this)))
 
-        return tree.sql(dialect="postgres")
+        return tree.sql(dialect=out_dialect)

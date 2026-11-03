@@ -153,7 +153,12 @@ class ReadOnlyDatabaseExecutor:
 
         query_id = str(uuid.uuid4())
         t0 = time.perf_counter()
-        dialect = "mysql" if db_config.db_type in (DatabaseType.MARIADB, DatabaseType.MYSQL) else "postgres"
+        if db_config.db_type == DatabaseType.SQLSERVER or getattr(db_config, "port", None) in (1433, "1433"):
+            dialect = "tsql"
+        elif db_config.db_type in (DatabaseType.MARIADB, DatabaseType.MYSQL):
+            dialect = "mysql"
+        else:
+            dialect = "postgres"
 
         if self.use_pooling and db_config.db_type == DatabaseType.POSTGRESQL:
             pool_manager = ReadOnlyPoolManager.get_instance_sync()
@@ -197,6 +202,9 @@ class ReadOnlyDatabaseExecutor:
                     if hasattr(conn, "ensure_closed"):
                         await conn.ensure_closed()
                     elif hasattr(conn, "close"):
-                        await conn.close()
+                        if asyncio.iscoroutinefunction(conn.close):
+                            await conn.close()
+                        else:
+                            await asyncio.to_thread(conn.close)
                 except Exception:
                     pass

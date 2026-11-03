@@ -47,6 +47,12 @@ from ..execution import (
     ReadOnlyDatabaseExecutor,
 )
 from ..answering import DatabaseAnswerSynthesisService, GroundedDatabaseAnswer
+from ..answering.models import (
+    AnswerType,
+    EvidenceModel,
+    GroundingStatus,
+    VerificationStatus,
+)
 from ..observability import PipelineTracer, DatabaseKnowledgebaseMetrics, AuditSanitizer
 from ..schemas.audit_api import AuditLogFilterParams, AuditLogListResponse, AuditLogEntryResponse
 from ..schemas.health import DatabaseKnowledgebaseHealth
@@ -1081,6 +1087,24 @@ class DatabaseKnowledgebaseService:
         t_exec_ms = 0.0
         t_syn_ms = 0.0
 
+        db_type_str = str(getattr(entity, "database_type", "") or "postgresql").lower()
+        is_tsql = any(k in db_type_str for k in ("sqlserver", "mssql", "tsql"))
+        effective_dialect = "tsql" if is_tsql else ("mysql" if any(k in db_type_str for k in ("mysql", "mariadb")) else "postgres")
+
+        def _apply_limit_policy(sql_str: str) -> str:
+            clean = sql_str.strip().rstrip(";")
+            default_limit = 1 if "count(" in clean.lower() else 50
+            if is_tsql:
+                # Strip any rogue LIMIT clause from LLM
+                clean = re.sub(r"\s+LIMIT\s+\d+\s*$", "", clean, flags=re.IGNORECASE).strip()
+                if not re.search(r"\bSELECT\s+(?:DISTINCT\s+)?TOP\s*\(?\d+\)?", clean, re.IGNORECASE):
+                    clean = re.sub(r"^(\s*SELECT\s+(?:DISTINCT\s+)?)", rf"\1TOP ({default_limit}) ", clean, flags=re.IGNORECASE)
+                return clean
+            else:
+                if "LIMIT" not in clean.upper():
+                    return f"{clean.rstrip()} LIMIT {default_limit}"
+                return clean
+
         try:
             # 0. Query Acceptance
             if event_sink:
@@ -1176,7 +1200,6 @@ class DatabaseKnowledgebaseService:
                     else:
                         summary_lines.append(f"#### 📊 Table: `{tbl_name}`\nNo matching records or query could not be executed.\n")
 
-                from ..answering.models import EvidenceModel, AnswerType, GroundingStatus, VerificationStatus
 
                 combined_answer_text = "\n".join(summary_lines)
                 combined_sql_str = "\n\n".join(combined_sqls) if combined_sqls else f"-- Multiple queries executed across {len(selected_tables)} tables"
@@ -1232,9 +1255,11 @@ class DatabaseKnowledgebaseService:
                     rows=aggregated_rows if aggregated_rows else [],
                     columns=aggregated_columns if aggregated_columns else ["source_table"],
                     candidate_tables=selected_tables,
+                    rephrased_query=user_query,
                     status="success" if has_any_success else "no_relevant_data",
                     generation_metadata={
                         "execution_strategy": "separate",
+                        "rephrased_query": user_query,
                         "tables": selected_tables,
                         "sql": combined_sql_str,
                     },
@@ -1332,6 +1357,9 @@ class DatabaseKnowledgebaseService:
                         data={
                             "answer_text": final_sep_answer.answer_text,
                             "answer_type": final_sep_answer.answer_type.value if hasattr(final_sep_answer.answer_type, "value") else str(final_sep_answer.answer_type),
+                            "rephrased_query": final_sep_answer.rephrased_query,
+                            "candidate_tables": final_sep_answer.candidate_tables,
+                            "generation_metadata": final_sep_answer.generation_metadata,
                             "row_count": final_sep_answer.row_count,
                             "grounding_status": final_sep_answer.grounding_status.value if hasattr(final_sep_answer.grounding_status, "value") else str(final_sep_answer.grounding_status),
                             "verification_status": final_sep_answer.verification_status.value if hasattr(final_sep_answer.verification_status, "value") else str(final_sep_answer.verification_status),
@@ -1492,11 +1520,32 @@ class DatabaseKnowledgebaseService:
                 explicit_table_found = False
                 matched_alias_tables = set()
 
+                import difflib
+                stripped_q_words = set(q_words)
+                for w in list(q_words):
+                    for sfx in ("_guid", "_id", "_name", "_code", "_key", "_status", "_type", "_date"):
+                        if w.endswith(sfx) and len(w) > len(sfx) + 2:
+                            stripped_q_words.add(w[:-len(sfx)])
+
                 for tbl in all_known_tables:
                     tbl_clean = tbl.lower()
-                    if tbl_clean in q_words or (len(tbl_clean) >= 4 and tbl_clean in q_lower):
+                    if tbl_clean in stripped_q_words or (len(tbl_clean) >= 4 and tbl_clean in q_lower):
                         explicit_table_found = True
+                        matched_alias_tables.add(tbl)
                         break
+
+                # Dynamic Fuzzy match for typos in table names (e.g. 'affliate' -> 'affiliate')
+                if not explicit_table_found:
+                    known_clean_map = {t.lower(): t for t in all_known_tables}
+                    for w in stripped_q_words:
+                        if len(w) >= 4:
+                            close_matches = difflib.get_close_matches(w, list(known_clean_map.keys()), n=1, cutoff=0.82)
+                            if close_matches:
+                                matched_tbl = known_clean_map[close_matches[0]]
+                                explicit_table_found = True
+                                matched_alias_tables.add(matched_tbl)
+                                logger.info(f"[FUZZY_TABLE_MATCH] Query token '{w}' fuzzy-matched table '{matched_tbl}'")
+                                break
 
                 if not explicit_table_found and db_table_aliases:
                     for tbl, aliases in db_table_aliases.items():
@@ -1954,15 +2003,25 @@ class DatabaseKnowledgebaseService:
             from ..sql_generator.grounded_generator import GroundedSQLGenerator
 
             docs_for_sql = schema_docs
-            if execution_strategy == "union" and selected_tables:
-                # Restrict context docs directly to the selected target tables to prevent LLM from being confused by unselected FK tables
+            if selected_tables:
+                # Restrict context docs directly to the selected target tables to prevent LLM from hallucinating unselected tables
                 sel_set = {t.lower().strip() for t in selected_tables}
                 filtered_docs = [d for d in schema_docs if d.get("table_name", "").lower() in sel_set]
                 if filtered_docs:
                     docs_for_sql = filtered_docs
 
+            # Dynamic Schema-Aware Query Enrichment (Rewrites ambiguous/informal questions using actual schema)
+            from ..sql_generator.query_enricher import DynamicQueryEnricher
+            enriched_user_query = await DynamicQueryEnricher.enrich_query(
+                user_query=user_query,
+                schema_docs=docs_for_sql,
+                selected_tables=selected_tables,
+                resolved_entities=resolved_dimension_entities,
+            )
+
             candidate_sql_raw = await GroundedSQLGenerator.generate_sql(
-                question=user_query,
+                question=enriched_user_query,
+                original_question=user_query,
                 retrieved_docs=docs_for_sql,
                 resolved_entities=resolved_dimension_entities,
                 intent_analysis=intent_analysis,
@@ -1970,6 +2029,7 @@ class DatabaseKnowledgebaseService:
                 column_alias_mappings=resolved_column_alias_mappings if resolved_column_alias_mappings else None,
                 execution_strategy=execution_strategy,
                 selected_tables=selected_tables,
+                dialect=effective_dialect,
             )
             t_sql_ms = (time.perf_counter() - t_sql_start) * 1000.0
 
@@ -1997,15 +2057,83 @@ class DatabaseKnowledgebaseService:
                     status="started",
                 )
 
+            # If the LLM returned a natural language explanation instead of executable SQL (e.g. schema mismatch / missing table)
+            cleaned_sql_for_check = re.sub(r"--.*?\n", "", candidate_sql_raw, flags=re.MULTILINE).strip()
+            is_valid_sql_start = bool(re.match(r"^(SELECT\b|WITH\b)", cleaned_sql_for_check, re.IGNORECASE))
+            if not is_valid_sql_start:
+                logger.warning(f"[GROUNDED_PIPELINE] LLM returned schema explanation instead of SQL: {candidate_sql_raw[:250]}")
+                safe_explanation = candidate_sql_raw.strip()
+                evidence = EvidenceModel(
+                    query_id=query_id,
+                    database_knowledgebase_id=kb_id,
+                    schema_version=entity.schema_version or "grounded_docs",
+                    columns=[],
+                    rows=[],
+                    row_count=0,
+                    execution_time_ms=0.0,
+                )
+                final_answer = GroundedDatabaseAnswer(
+                    query_id=query_id,
+                    database_knowledgebase_id=kb_id,
+                    schema_version=entity.schema_version or "grounded_docs",
+                    answer_text=safe_explanation,
+                    answer_type=AnswerType.NARRATIVE,
+                    evidence=evidence,
+                    source_columns=[],
+                    row_count=0,
+                    truncated=False,
+                    grounding_status=GroundingStatus.FAILED,
+                    verification_status=VerificationStatus.PASSED,
+                    warnings=["Target columns or tables were not found in the current schema context. Please select target table(s) if known."],
+                    rows=[],
+                    columns=[],
+                    raw_result=None,
+                    status="no_relevant_data",
+                    candidate_tables=table_names,
+                    rephrased_query=enriched_user_query,
+                    generation_metadata={
+                        "pipeline_mode": "grounded_docs",
+                        "rephrased_query": enriched_user_query,
+                        "schema_mismatch": True,
+                    },
+                    pipeline_trace=tracer.finalize(),
+                )
+                if event_sink:
+                    await event_sink.emit(
+                        DatabaseStreamEventType.ANSWER_COMPLETED,
+                        stage="ANSWER",
+                        status="completed",
+                        data={
+                            "answer_text": final_answer.answer_text,
+                            "answer_type": "NARRATIVE",
+                            "rephrased_query": final_answer.rephrased_query,
+                            "candidate_tables": final_answer.candidate_tables,
+                            "generation_metadata": final_answer.generation_metadata,
+                            "row_count": 0,
+                            "grounding_status": "FAILED",
+                            "verification_status": "PASSED",
+                            "rows": [],
+                            "columns": [],
+                            "source_columns": [],
+                            "truncated": False,
+                            "warnings": final_answer.warnings,
+                        },
+                    )
+                    await event_sink.emit(
+                        DatabaseStreamEventType.STREAM_COMPLETED,
+                        stage="STREAM",
+                        status="completed",
+                        data={"total_duration_ms": event_sink.get_total_elapsed_ms(), "final_status": "SUCCESS", "events_emitted": event_sink._seq},
+                    )
+                return final_answer
+
             from ..sql_security.grounded_validator import GroundedSQLValidator
             try:
-                candidate_sql_clean = GroundedSQLValidator.validate_readonly_sql(candidate_sql_raw)
+                candidate_sql_clean = GroundedSQLValidator.validate_readonly_sql(candidate_sql_raw, dialect=effective_dialect)
             except ValueError as val_err:
                 raise SQLValidationError(f"Security policy rejection: {val_err}")
 
-            if "LIMIT" not in candidate_sql_clean.upper():
-                default_limit = 1 if "count(" in candidate_sql_clean.lower() else 50
-                candidate_sql_clean = f"{candidate_sql_clean.rstrip()} LIMIT {default_limit}"
+            candidate_sql_clean = _apply_limit_policy(candidate_sql_clean)
 
             logger.info(f"[GROUNDED_PIPELINE] Generated SQL: {candidate_sql_clean}")
             print(f"[GROUNDED_PIPELINE] Generated SQL: {candidate_sql_clean}")
@@ -2048,8 +2176,8 @@ class DatabaseKnowledgebaseService:
             from ..planning.models import QueryPlanIR, IntentType, TablePlan
             from ..sql_generator.repair import ValidatedCandidateSQL
 
-            parsed_ast = SQLASTParser.parse_sql(candidate_sql_clean, dialect="postgres")
-            parameterized = SQLParameterizer.parameterize(parsed_ast)
+            parsed_ast = SQLASTParser.parse_sql(candidate_sql_clean, dialect=effective_dialect)
+            parameterized = SQLParameterizer.parameterize(parsed_ast, dialect=effective_dialect)
 
             active_schema_version = entity.schema_version or (snapshot.schema_version if snapshot else "grounded_docs")
             cand_sql = ValidatedCandidateSQL(
@@ -2103,16 +2231,14 @@ class DatabaseKnowledgebaseService:
                 # Try executing fast hint repair if available
                 if repaired_sql:
                     try:
-                        repaired_sql_clean = GroundedSQLValidator.validate_readonly_sql(repaired_sql)
-                        if "LIMIT" not in repaired_sql_clean.upper():
-                            default_limit = 1 if "count(" in repaired_sql_clean.lower() else 50
-                            repaired_sql_clean = f"{repaired_sql_clean.rstrip()} LIMIT {default_limit}"
+                        repaired_sql_clean = GroundedSQLValidator.validate_readonly_sql(repaired_sql, dialect=effective_dialect)
+                        repaired_sql_clean = _apply_limit_policy(repaired_sql_clean)
 
-                        parsed_repaired = SQLASTParser.parse_sql(repaired_sql_clean, dialect="postgres")
+                        parsed_repaired = SQLASTParser.parse_sql(repaired_sql_clean, dialect=effective_dialect)
                         cand_sql = ValidatedCandidateSQL(
                             raw_sql=repaired_sql_clean,
                             sanitized_sql=repaired_sql_clean,
-                            parameterized=SQLParameterizer.parameterize(parsed_repaired),
+                            parameterized=SQLParameterizer.parameterize(parsed_repaired, dialect=effective_dialect),
                             plan=cand_sql.plan,
                             validation_report=ValidationResult(is_valid=True, errors=[], warnings=[]),
                             repair_attempts=1,
@@ -2183,13 +2309,14 @@ class DatabaseKnowledgebaseService:
                         try:
                             logger.info(f"[GROUNDED_AUTO_REPAIR] Invoking universal LLM repair loop (attempt {repair_attempt}/2) for error: {current_err_msg}")
                             repaired_sql = await GroundedSQLGenerator.repair_sql(
-                                question=user_query,
+                                question=enriched_user_query,
                                 failed_sql=current_failed_sql,
                                 error_message=current_err_msg,
                                 retrieved_docs=schema_docs,
                                 resolved_entities=resolved_dimension_entities,
                                 intent_analysis=intent_analysis,
                                 column_alias_mappings=resolved_column_alias_mappings if resolved_column_alias_mappings else None,
+                                dialect=effective_dialect,
                             )
                             repair_mode = "grounded_llm_repaired"
                         except Exception as repair_exc:
@@ -2200,20 +2327,18 @@ class DatabaseKnowledgebaseService:
                             break
 
                         try:
-                            repaired_sql_clean = GroundedSQLValidator.validate_readonly_sql(repaired_sql)
+                            repaired_sql_clean = GroundedSQLValidator.validate_readonly_sql(repaired_sql, dialect=effective_dialect)
                         except ValueError as val_err:
                             logger.error(f"[GROUNDED_AUTO_REPAIR] Repaired SQL failed security validation: {val_err}")
                             raise exec_err
 
-                        if "LIMIT" not in repaired_sql_clean.upper():
-                            default_limit = 1 if "count(" in repaired_sql_clean.lower() else 50
-                            repaired_sql_clean = f"{repaired_sql_clean.rstrip()} LIMIT {default_limit}"
+                        repaired_sql_clean = _apply_limit_policy(repaired_sql_clean)
 
-                        parsed_repaired = SQLASTParser.parse_sql(repaired_sql_clean, dialect="postgres")
+                        parsed_repaired = SQLASTParser.parse_sql(repaired_sql_clean, dialect=effective_dialect)
                         cand_sql = ValidatedCandidateSQL(
                             raw_sql=repaired_sql_clean,
                             sanitized_sql=repaired_sql_clean,
-                            parameterized=SQLParameterizer.parameterize(parsed_repaired),
+                            parameterized=SQLParameterizer.parameterize(parsed_repaired, dialect=effective_dialect),
                             plan=cand_sql.plan,
                             validation_report=ValidationResult(is_valid=True, errors=[], warnings=[]),
                             repair_attempts=repair_attempt,
@@ -2277,17 +2402,15 @@ class DatabaseKnowledgebaseService:
                         # We must NEVER drop all filters to avoid dumping random unrelated database records.
                         if pruned_where is not None:
                             where_node.set("this", pruned_where)
-                            relaxed_sql = parsed_for_relax.sql(dialect="postgres")
+                            relaxed_sql = parsed_for_relax.sql(dialect=effective_dialect)
 
-                            relaxed_sql_clean = GroundedSQLValidator.validate_readonly_sql(relaxed_sql)
-                            if "LIMIT" not in relaxed_sql_clean.upper():
-                                default_limit = 1 if "count(" in relaxed_sql_clean.lower() else 50
-                                relaxed_sql_clean = f"{relaxed_sql_clean.rstrip()} LIMIT {default_limit}"
-                            parsed_relaxed = SQLASTParser.parse_sql(relaxed_sql_clean, dialect="postgres")
+                            relaxed_sql_clean = GroundedSQLValidator.validate_readonly_sql(relaxed_sql, dialect=effective_dialect)
+                            relaxed_sql_clean = _apply_limit_policy(relaxed_sql_clean)
+                            parsed_relaxed = SQLASTParser.parse_sql(relaxed_sql_clean, dialect=effective_dialect)
                             cand_relaxed = ValidatedCandidateSQL(
                                 raw_sql=relaxed_sql_clean,
                                 sanitized_sql=relaxed_sql_clean,
-                                parameterized=SQLParameterizer.parameterize(parsed_relaxed),
+                                parameterized=SQLParameterizer.parameterize(parsed_relaxed, dialect=effective_dialect),
                                 plan=cand_sql.plan,
                                 validation_report=ValidationResult(is_valid=True, errors=[], warnings=[]),
                                 repair_attempts=1,
@@ -2357,12 +2480,6 @@ class DatabaseKnowledgebaseService:
 
             t_syn_start = time.perf_counter()
             from ..answering.grounded_synthesizer import GroundedAnswerSynthesizer
-            from ..answering.models import (
-                AnswerType,
-                EvidenceModel,
-                GroundingStatus,
-                VerificationStatus,
-            )
 
             answer_text = await GroundedAnswerSynthesizer.synthesize_answer(
                 question=user_query,
@@ -2450,8 +2567,10 @@ class DatabaseKnowledgebaseService:
                 raw_result=canonical_result,
                 status="success",
                 candidate_tables=table_names,
+                rephrased_query=enriched_user_query,
                 generation_metadata={
                     "pipeline_mode": "grounded_docs",
+                    "rephrased_query": enriched_user_query,
                     "sql": cand_sql.sanitized_sql,
                     "latency_ms": round(t_total_ms, 2),
                     "stage_timings_ms": {
@@ -2473,6 +2592,9 @@ class DatabaseKnowledgebaseService:
                     data={
                         "answer_text": final_answer.answer_text,
                         "answer_type": final_answer.answer_type.value if hasattr(final_answer.answer_type, "value") else str(final_answer.answer_type),
+                        "rephrased_query": final_answer.rephrased_query,
+                        "candidate_tables": final_answer.candidate_tables,
+                        "generation_metadata": final_answer.generation_metadata,
                         "row_count": final_answer.row_count,
                         "grounding_status": final_answer.grounding_status.value if hasattr(final_answer.grounding_status, "value") else str(final_answer.grounding_status),
                         "verification_status": final_answer.verification_status.value if hasattr(final_answer.verification_status, "value") else str(final_answer.verification_status),
@@ -3099,12 +3221,6 @@ class DatabaseKnowledgebaseService:
                     f"[INSUFFICIENT_SCHEMA_GUARD] Triggered for query '{user_query[:50]}...': "
                     f"{decision_reason}. Skipping SQL generation and execution."
                 )
-                from ..answering.models import (
-                    AnswerType,
-                    EvidenceModel,
-                    GroundingStatus,
-                    VerificationStatus,
-                )
 
                 empty_evidence = EvidenceModel(
                     query_id=query_id,
@@ -3699,6 +3815,9 @@ class DatabaseKnowledgebaseService:
                     data={
                         "answer_text": answer.answer_text,
                         "answer_type": answer.answer_type.value if hasattr(answer.answer_type, "value") else str(answer.answer_type),
+                        "rephrased_query": getattr(answer, "rephrased_query", None),
+                        "candidate_tables": getattr(answer, "candidate_tables", None),
+                        "generation_metadata": getattr(answer, "generation_metadata", {}),
                         "row_count": answer.row_count,
                         "grounding_status": answer.grounding_status.value if hasattr(answer.grounding_status, "value") else str(answer.grounding_status),
                         "verification_status": answer.verification_status.value if hasattr(answer.verification_status, "value") else str(answer.verification_status),
@@ -4230,6 +4349,62 @@ class DatabaseKnowledgebaseService:
             "deleted_table": table_name,
             "deleted_column": column_name,
         }
+
+    async def suggest_query_rephrasings(
+        self,
+        kb_id: uuid.UUID,
+        user_query: str,
+        selected_tables: Optional[List[str]] = None,
+        resolved_entities: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Generates 3 schema-grounded rephrasing options for user query.
+        """
+        entity = await self.repo.get_by_id(kb_id)
+        if not entity:
+            raise DatabaseKnowledgebaseNotFoundError(f"Knowledgebase {kb_id} not found")
+
+        schema_docs = []
+        canonical_schema = None
+        try:
+            canonical_schema = await self.get_canonical_schema(kb_id)
+        except Exception:
+            pass
+
+        if selected_tables and canonical_schema:
+            from ..schema.markdown_doc_generator import SchemaMarkdownGenerator
+            for t_name in selected_tables:
+                t_obj = canonical_schema.get_table(t_name) or canonical_schema.get_table(t_name.split(".")[-1])
+                if t_obj:
+                    doc_text = SchemaMarkdownGenerator.generate_table_markdown(t_obj)
+                    schema_docs.append({
+                        "source": f"{t_name}.md",
+                        "title": f"Table: {t_name}",
+                        "text": doc_text,
+                        "score": 1.0,
+                        "table_name": t_obj.table_name,
+                        "schema_name": t_obj.schema_name or "public",
+                        "column_names": [c.name for c in t_obj.columns.values()],
+                    })
+
+        if not schema_docs:
+            from ..retrieval.schema_doc_retriever import SchemaDocRetriever
+            schema_docs = await SchemaDocRetriever.retrieve_schema_docs(
+                session=self.db,
+                tenant_id=self.tenant_id,
+                kb_id=kb_id,
+                user_query=user_query,
+                top_k=8,
+                canonical_schema=canonical_schema,
+            )
+
+        from ..sql_generator.query_enricher import DynamicQueryEnricher
+        return await DynamicQueryEnricher.generate_3_rephrasings(
+            user_query=user_query,
+            schema_docs=schema_docs,
+            selected_tables=selected_tables,
+            resolved_entities=resolved_entities,
+        )
 
 
 

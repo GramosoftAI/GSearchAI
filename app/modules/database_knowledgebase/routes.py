@@ -481,6 +481,33 @@ async def stream_query_database(
     )
 
 
+@router.post(
+    "/{id}/query/suggest-rephrasings",
+    summary="Suggest 3 Schema-Aligned Query Rephrasings",
+    description="Generates 3 distinct schema-grounded interpretations of user query for interactive selection and customization.",
+)
+async def suggest_query_rephrasings(
+    id: uuid.UUID,
+    payload: DatabaseQueryApiRequest,
+    service: DatabaseKnowledgebaseService = Depends(get_service),
+):
+    entity = await service.repo.get_by_id(id)
+    if not entity:
+        raise TenantMismatchError(detail=f"Database knowledgebase '{id}' not found.")
+
+    options = await service.suggest_query_rephrasings(
+        kb_id=id,
+        user_query=payload.query,
+        selected_tables=payload.selected_tables,
+        resolved_entities=payload.resolved_entities,
+    )
+    return {
+        "original_query": payload.query,
+        "selected_tables": payload.selected_tables or [],
+        "options": options,
+    }
+
+
 @router.get(
     "/{id}/metrics",
     summary="Get Database Knowledgebase Operational Metrics",

@@ -58,8 +58,25 @@ PG_TYPE_MAP: Dict[str, ColumnDataType] = {
     "json": ColumnDataType.JSON,
     "jsonb": ColumnDataType.JSONB,
     "uuid": ColumnDataType.UUID,
+    "uniqueidentifier": ColumnDataType.UUID,
     "bytea": ColumnDataType.BYTEA,
+    "varbinary": ColumnDataType.BYTEA,
+    "image": ColumnDataType.BYTEA,
+    "binary": ColumnDataType.BYTEA,
+    "rowversion": ColumnDataType.BYTEA,
     "array": ColumnDataType.ARRAY,
+    # MS SQL Server (T-SQL) types
+    "nvarchar": ColumnDataType.VARCHAR,
+    "nchar": ColumnDataType.CHAR,
+    "ntext": ColumnDataType.TEXT,
+    "tinyint": ColumnDataType.SMALLINT,
+    "bit": ColumnDataType.BOOLEAN,
+    "smallmoney": ColumnDataType.DECIMAL,
+    "datetime": ColumnDataType.TIMESTAMP,
+    "datetime2": ColumnDataType.TIMESTAMP,
+    "smalldatetime": ColumnDataType.TIMESTAMP,
+    "datetimeoffset": ColumnDataType.TIMESTAMPTZ,
+    "xml": ColumnDataType.TEXT,
 }
 
 
