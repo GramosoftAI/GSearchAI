@@ -34,8 +34,6 @@ export default function ChannelsSection() {
 
     const sendGoogleData = async () => {
       const token = getCookie("AUTH_TOKEN");
-      const client = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-      const secret = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_SECRET;
       try {
         const response = await fetch(
           `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/${agentkbres}/google-drive/register`,
@@ -47,10 +45,7 @@ export default function ChannelsSection() {
             },
             body: JSON.stringify({
               credentials: {
-                client_id: client,
-                client_secret: secret,
                 refresh_token: session?.refreshToken,
-                token_uri: "https://oauth2.googleapis.com/token",
                 primary_admin_email: session?.user?.email,
               },
               folder_urls: [],
