@@ -47,6 +47,13 @@ class DynamicQueryEnricher:
         if not user_query or not user_query.strip():
             return []
 
+        # If specific tables were selected, isolate schema_docs strictly to those tables
+        if selected_tables:
+            sel_lower = {t.split(".")[-1].lower() for t in selected_tables}
+            matched = [d for d in schema_docs if d.get("table_name", "").lower() in sel_lower]
+            if matched:
+                schema_docs = matched
+
         # Extract available tables and columns dynamically
         table_summaries = []
         for d in schema_docs:
@@ -64,7 +71,11 @@ class DynamicQueryEnricher:
         selected_notice = ""
         if selected_tables:
             sel_str = ", ".join(f"`{t}`" for t in selected_tables)
-            selected_notice = f"\nCRITICAL: The user has explicitly selected target table(s): {sel_str}. Every option MUST strictly target these selected table(s) and their exact columns.\n"
+            selected_notice = (
+                f"\nCRITICAL: The user has explicitly selected target table(s): {sel_str}. "
+                f"Every option MUST strictly and exclusively target these selected table(s) and their exact columns. "
+                f"If the original user question references any other table or old query context, completely ignore that other table and rephrase the query intent specifically for {sel_str}.\n"
+            )
 
         prompt = f"""You are a dynamic database query architect.
 Given an informal user question and relational database schema, generate exactly 3 DISTINCT, practical ways to rephrase and execute the question against the actual database schema:
@@ -162,6 +173,13 @@ Respond with ONLY the JSON array (no markdown code blocks, no explanations):"""
         if not user_query or not user_query.strip():
             return user_query
 
+        # If specific tables were selected, isolate schema_docs strictly to those tables
+        if selected_tables:
+            sel_lower = {t.split(".")[-1].lower() for t in selected_tables}
+            matched = [d for d in schema_docs if d.get("table_name", "").lower() in sel_lower]
+            if matched:
+                schema_docs = matched
+
         # Extract available tables and columns dynamically
         table_summaries = []
         for d in schema_docs:
@@ -182,7 +200,11 @@ Respond with ONLY the JSON array (no markdown code blocks, no explanations):"""
         selected_notice = ""
         if selected_tables:
             sel_str = ", ".join(f"`{t}`" for t in selected_tables)
-            selected_notice = f"\nCRITICAL: The user has explicitly selected target table(s): {sel_str}. You MUST rewrite the query specifically targeting these selected table(s) and their exact columns.\n"
+            selected_notice = (
+                f"\nCRITICAL: The user has explicitly selected target table(s): {sel_str}. "
+                f"You MUST rewrite the query specifically targeting these selected table(s) and their exact columns. "
+                f"If the question references any other table name, replace it with {sel_str}.\n"
+            )
 
         prompt = f"""You are a dynamic schema-grounded query enricher for relational databases.
 Users often ask vague, informal, or conversational questions (e.g., "list all duplicate name", "show pending items", "best recent customers").

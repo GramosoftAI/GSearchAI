@@ -131,6 +131,40 @@ class TransactionManager:
                         str_args = [str(a) if not isinstance(a, (bytes,)) else a for a in args]
                         records = await conn.fetch(sql, *str_args, timeout=timeout_seconds)
                         return records
+                    except (asyncpg.IndeterminateDatatypeError, asyncpg.PostgresError) as pg_err:
+                        err_msg = str(pg_err).lower()
+                        if "could not determine data type of parameter" in err_msg or isinstance(pg_err, asyncpg.IndeterminateDatatypeError):
+                            logger.warning(f"Indeterminate parameter data type in asyncpg ({pg_err}). Dynamically adapting SQL parameters...")
+                            # 1. Attempt casting parameters: $1 -> CAST($1 AS TEXT)
+                            curr_sql = sql
+                            matches = re.findall(r"\$(\d+)\b", curr_sql)
+                            for param_num in set(matches):
+                                curr_sql = re.sub(
+                                    rf"(?<!CAST\()(?<!::)\${param_num}\b",
+                                    f"CAST(${param_num} AS TEXT)",
+                                    curr_sql,
+                                )
+                            try:
+                                records = await conn.fetch(curr_sql, *args, timeout=timeout_seconds)
+                                return records
+                            except Exception as cast_err:
+                                logger.warning(f"Parameter cast retry failed ({cast_err}). Inlining parameters safely for read-only execution...")
+                                # 2. Safe inlining fallback for validated read-only execution
+                                inlined_sql = sql
+                                for idx, arg_val in enumerate(args, start=1):
+                                    if arg_val is None:
+                                        rep_val = "NULL"
+                                    elif isinstance(arg_val, (int, float)):
+                                        rep_val = str(arg_val)
+                                    elif isinstance(arg_val, bool):
+                                        rep_val = "TRUE" if arg_val else "FALSE"
+                                    else:
+                                        escaped = str(arg_val).replace("'", "''")
+                                        rep_val = f"'{escaped}'"
+                                    inlined_sql = re.sub(rf"(?<![a-zA-Z0-9_])\${idx}\b", rep_val, inlined_sql)
+                                records = await conn.fetch(inlined_sql, timeout=timeout_seconds)
+                                return records
+                        raise
             elif dialect in ("sqlserver", "mssql", "tsql"):
                 # Safety net: T-SQL does not support NULLS FIRST/LAST or LIMIT
                 clean_tsql = sql.strip().rstrip(";")

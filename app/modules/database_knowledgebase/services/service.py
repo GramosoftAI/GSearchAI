@@ -4350,6 +4350,16 @@ class DatabaseKnowledgebaseService:
             "deleted_column": column_name,
         }
 
+    async def get_canonical_schema(self, kb_id: uuid.UUID) -> Optional[DatabaseSchema]:
+        """Loads the latest introspected canonical database schema snapshot."""
+        try:
+            snapshot = await self.repo.get_latest_schema_snapshot(kb_id)
+            if snapshot and snapshot.schema_data:
+                return DatabaseSchema(**snapshot.schema_data)
+        except Exception as e:
+            logger.warning(f"Failed to load canonical schema snapshot for KB {kb_id}: {e}")
+        return None
+
     async def suggest_query_rephrasings(
         self,
         kb_id: uuid.UUID,
@@ -4365,21 +4375,24 @@ class DatabaseKnowledgebaseService:
             raise DatabaseKnowledgebaseNotFoundError(f"Knowledgebase {kb_id} not found")
 
         schema_docs = []
-        canonical_schema = None
-        try:
-            canonical_schema = await self.get_canonical_schema(kb_id)
-        except Exception:
-            pass
+        canonical_schema = await self.get_canonical_schema(kb_id)
 
         if selected_tables and canonical_schema:
             from ..schema.markdown_doc_generator import SchemaMarkdownGenerator
+            table_lookup = {}
+            for t in canonical_schema.all_tables:
+                table_lookup[t.table_name.lower()] = t
+                table_lookup[f"{t.schema_name.lower()}.{t.table_name.lower()}"] = t
+
             for t_name in selected_tables:
-                t_obj = canonical_schema.get_table(t_name) or canonical_schema.get_table(t_name.split(".")[-1])
+                clean_t = t_name.strip().lower()
+                clean_t_simple = clean_t.split(".")[-1]
+                t_obj = table_lookup.get(clean_t) or table_lookup.get(clean_t_simple)
                 if t_obj:
                     doc_text = SchemaMarkdownGenerator.generate_table_markdown(t_obj)
                     schema_docs.append({
-                        "source": f"{t_name}.md",
-                        "title": f"Table: {t_name}",
+                        "source": f"{t_obj.table_name}.md",
+                        "title": f"Table: {t_obj.table_name}",
                         "text": doc_text,
                         "score": 1.0,
                         "table_name": t_obj.table_name,
@@ -4387,7 +4400,39 @@ class DatabaseKnowledgebaseService:
                         "column_names": [c.name for c in t_obj.columns.values()],
                     })
 
-        if not schema_docs:
+        # If user explicitly selected tables but some docs are missing, query embeddings table directly
+        if selected_tables and len(schema_docs) < len(selected_tables):
+            from ..models.embeddings import DatabaseSchemaEmbedding
+            from sqlalchemy import select, or_
+            found_names = {d.get("table_name", "").lower() for d in schema_docs}
+            missing_tables = [t for t in selected_tables if t.split(".")[-1].lower() not in found_names]
+            for mt in missing_tables:
+                clean_mt = mt.split(".")[-1].lower()
+                stmt = select(DatabaseSchemaEmbedding).where(
+                    DatabaseSchemaEmbedding.tenant_id == self.tenant_id,
+                    DatabaseSchemaEmbedding.db_knowledgebase_id == kb_id,
+                    DatabaseSchemaEmbedding.entity_type == "table_doc",
+                    or_(
+                        DatabaseSchemaEmbedding.entity_key.ilike(f"%{clean_mt}%"),
+                        DatabaseSchemaEmbedding.document_text.ilike(f"%# Table: {clean_mt}%"),
+                    ),
+                ).limit(1)
+                res = await self.db.execute(stmt)
+                emb_row = res.scalar_one_or_none()
+                if emb_row:
+                    meta = emb_row.metadata_json or {}
+                    schema_docs.append({
+                        "source": meta.get("source", f"{clean_mt}.md"),
+                        "title": meta.get("title", f"Table: {clean_mt}"),
+                        "text": emb_row.document_text,
+                        "score": 1.0,
+                        "table_name": meta.get("table_name", clean_mt),
+                        "schema_name": meta.get("schema_name", "public"),
+                        "column_names": meta.get("column_names", []),
+                    })
+
+        # Only fall back to general vector search if no explicit table was selected
+        if not schema_docs and not selected_tables:
             from ..retrieval.schema_doc_retriever import SchemaDocRetriever
             schema_docs = await SchemaDocRetriever.retrieve_schema_docs(
                 session=self.db,
