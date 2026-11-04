@@ -2216,6 +2216,8 @@ async def google_drive_login(kb_id: str):
         f"&prompt=consent"
         f"&state={state}"
     )
+    logger.info("GOOGLE DRIVE OAUTH URL: %s", auth_url)
+    logger.info("GOOGLE DRIVE OAUTH SCOPES: %s", DRIVE_OAUTH_SCOPES)
     return RedirectResponse(auth_url)
 
 
