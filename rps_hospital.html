@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RPS Hospital - Best Multispeciality Hospital In Chennai, 24/7</title>
+  <meta name="description"
+    content="RPS Hospital - Best Multispeciality Hospital In Chennai, 24/7. Advanced healthcare, state-of-the-art ICUs, emergency trauma center, and expert doctors.">
+
+  <!-- Modern Google Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Outfit:wght@400;600;700;800&display=swap"
+    rel="stylesheet">
+
+  <style>
+    :root {
+      --primary: #0077b6;
+      --primary-dark: #023e8a;
+      --primary-light: #e0f2fe;
+      --accent: #00b4d8;
+      --emergency: #e63946;
+      --emergency-bg: #fee2e2;
+      --success: #10b981;
+      --bg-dark: #0a192f;
+      --bg-card: #ffffff;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --border-color: #e2e8f0;
+      --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+      --shadow-md: 0 4px 20px -2px rgba(0, 119, 182, 0.12);
+      --shadow-lg: 0 20px 35px -5px rgba(2, 62, 138, 0.15);
+      --radius-sm: 8px;
+      --radius-md: 14px;
+      --radius-lg: 24px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #f8fafc;
+      color: var(--text-main);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Top Emergency Alert Bar */
+    .top-bar {
+      background: var(--bg-dark);
+      color: #94a3b8;
+      font-size: 0.85rem;
+      padding: 8px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .top-bar-left,
+    .top-bar-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .top-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(230, 57, 70, 0.2);
+      color: #fca5a5;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 0.75rem;
+    }
+
+    .top-badge .dot {
+      width: 6px;
+      height: 6px;
+      background: #ef4444;
+      border-radius: 50%;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.4;
+        transform: scale(1.3);
+      }
+    }
+
+    .emergency-hotline {
+      color: #fff;
+      font-weight: 700;
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: color 0.2s;
+    }
+
+    .emergency-hotline:hover {
+      color: var(--accent);
+    }
+
+    /* Header & Navigation */
+    header {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      border-bottom: 1px solid var(--border-color);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+    }
+
+    .nav-container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: var(--text-main);
+    }
+
+    .logo-icon {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 1.5rem;
+      font-weight: 800;
+      box-shadow: 0 4px 14px rgba(0, 180, 216, 0.35);
+    }
+
+    .brand-text h1 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.35rem;
+      font-weight: 800;
+      color: var(--primary-dark);
+      letter-spacing: -0.5px;
+      line-height: 1.1;
+    }
+
+    .brand-text span {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      text-decoration: none;
+      color: #334155;
+      font-weight: 600;
+      font-size: 0.95rem;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover {
+      color: var(--primary);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 11px 22px;
+      border-radius: var(--radius-md);
+      font-weight: 700;
+      font-size: 0.95rem;
+      text-decoration: none;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      cursor: pointer;
+      border: none;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+      color: white;
+      box-shadow: 0 4px 16px rgba(0, 119, 182, 0.3);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0, 119, 182, 0.4);
+    }
+
+    .btn-emergency {
+      background: var(--emergency);
+      color: white;
+      box-shadow: 0 4px 16px rgba(230, 57, 70, 0.3);
+    }
+
+    .btn-emergency:hover {
+      background: #dc2626;
+      transform: translateY(-2px);
+    }
+
+    .btn-outline {
+      background: transparent;
+      color: var(--primary);
+      border: 1.5px solid var(--primary);
+    }
+
+    .btn-outline:hover {
+      background: var(--primary-light);
+    }
+
+    /* Hero Section */
+    .hero {
+      position: relative;
+      background: radial-gradient(circle at 80% 20%, rgba(0, 180, 216, 0.12) 0%, transparent 60%),
+        radial-gradient(circle at 10% 80%, rgba(2, 62, 138, 0.08) 0%, transparent 50%),
+        #ffffff;
+      padding: 80px 24px 100px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .hero-container {
+      max-width: 1280px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 50px;
+      align-items: center;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--primary-light);
+      color: var(--primary-dark);
+      padding: 6px 16px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 0.85rem;
+      margin-bottom: 20px;
+      border: 1px solid rgba(0, 119, 182, 0.2);
+    }
+
+    .hero-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 3.2rem;
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -1.2px;
+      color: var(--bg-dark);
+      margin-bottom: 22px;
+    }
+
+    .hero-title .gradient-text {
+      background: linear-gradient(135deg, var(--primary) 0%, #0096c7 50%, #48cae4 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero-desc {
+      font-size: 1.15rem;
+      color: var(--text-muted);
+      margin-bottom: 36px;
+      max-width: 620px;
+      line-height: 1.7;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 44px;
+    }
+
+    .trust-badges {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .trust-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .trust-item svg {
+      width: 22px;
+      height: 22px;
+      color: var(--success);
+      flex-shrink: 0;
+    }
+
+    .trust-item-text {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #334155;
+    }
+
+    /* Hero Card Display */
+    .hero-card {
+      background: linear-gradient(145deg, #ffffff, #f0fdf4);
+      border-radius: var(--radius-lg);
+      padding: 36px;
+      box-shadow: var(--shadow-lg);
+      border: 1px solid rgba(0, 180, 216, 0.2);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-card::before {
+      content: '';
+      position: absolute;
+      top: -60px;
+      right: -60px;
+      width: 140px;
+      height: 140px;
+      background: radial-gradient(circle, rgba(0, 180, 216, 0.25) 0%, transparent 70%);
+      border-radius: 50%;
+    }
+
+    .card-header-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--emergency-bg);
+      color: var(--emergency);
+      font-weight: 700;
+      font-size: 0.8rem;
+      padding: 4px 12px;
+      border-radius: 999px;
+      margin-bottom: 20px;
+    }
+
+    .card-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: var(--bg-dark);
+      margin-bottom: 12px;
+    }
+
+    .service-list {
+      list-style: none;
+      margin: 24px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .service-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #334155;
+    }
+
+    .service-check {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--success);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      font-weight: 800;
+      flex-shrink: 0;
+    }
+
+    /* Key Metrics Section */
+    .metrics-section {
+      max-width: 1280px;
+      margin: -40px auto 70px;
+      padding: 0 24px;
+      position: relative;
+      z-index: 10;
+    }
+
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+      background: white;
+      border-radius: var(--radius-md);
+      padding: 30px;
+      box-shadow: var(--shadow-md);
+      border: 1px solid var(--border-color);
+    }
+
+    .metric-card {
+      text-align: center;
+      padding: 10px;
+      border-right: 1px solid var(--border-color);
+    }
+
+    .metric-card:last-child {
+      border-right: none;
+    }
+
+    .metric-number {
+      font-family: 'Outfit', sans-serif;
+      font-size: 2.3rem;
+      font-weight: 800;
+      color: var(--primary);
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+
+    .metric-label {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    /* Features / Specialties Section */
+    .section-container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 60px 24px;
+    }
+
+    .section-header {
+      text-align: center;
+      max-width: 700px;
+      margin: 0 auto 50px;
+    }
+
+    .section-subtitle {
+      color: var(--primary);
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 0.85rem;
+      letter-spacing: 1.5px;
+      margin-bottom: 8px;
+    }
+
+    .section-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 2.2rem;
+      font-weight: 800;
+      color: var(--bg-dark);
+      letter-spacing: -0.5px;
+    }
+
+    .specialties-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 24px;
+    }
+
+    .specialty-card {
+      background: white;
+      border-radius: var(--radius-md);
+      padding: 28px;
+      border: 1px solid var(--border-color);
+      box-shadow: var(--shadow-sm);
+      transition: all 0.3s ease;
+    }
+
+    .specialty-card:hover {
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-md);
+      border-color: rgba(0, 180, 216, 0.4);
+    }
+
+    .specialty-icon {
+      width: 50px;
+      height: 50px;
+      border-radius: 12px;
+      background: var(--primary-light);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      margin-bottom: 20px;
+      color: var(--primary);
+    }
+
+    .specialty-card h3 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 10px;
+      color: var(--bg-dark);
+    }
+
+    .specialty-card p {
+      font-size: 0.92rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* AI Live Chat Showcase */
+    .assistant-banner {
+      background: linear-gradient(135deg, #0a192f 0%, #0c2d48 100%);
+      border-radius: var(--radius-lg);
+      padding: 48px;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 32px;
+      flex-wrap: wrap;
+      box-shadow: var(--shadow-lg);
+      margin-top: 40px;
+    }
+
+    .assistant-info h3 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.8rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .assistant-info p {
+      color: #cbd5e1;
+      max-width: 600px;
+      font-size: 1rem;
+    }
+
+    .chat-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0, 180, 216, 0.2);
+      border: 1px solid rgba(0, 180, 216, 0.5);
+      padding: 8px 18px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 0.88rem;
+      color: #7dd3fc;
+    }
+
+    /* Footer */
+    footer {
+      background: #020c1b;
+      color: #94a3b8;
+      padding: 60px 24px 30px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .footer-container {
+      max-width: 1280px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr;
+      gap: 40px;
+      padding-bottom: 40px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .footer-col h4 {
+      color: white;
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.1rem;
+      margin-bottom: 18px;
+    }
+
+    .footer-col p {
+      font-size: 0.9rem;
+      line-height: 1.7;
+    }
+
+    .footer-bottom {
+      max-width: 1280px;
+      margin: 24px auto 0;
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.85rem;
+      color: #64748b;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 992px) {
+      .hero-container {
+        grid-template-columns: 1fr;
+        text-align: center;
+      }
+
+      .hero-desc {
+        margin: 0 auto 32px;
+      }
+
+      .hero-actions {
+        justify-content: center;
+      }
+
+      .trust-badges {
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+
+      .metrics-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .metric-card:nth-child(2) {
+        border-right: none;
+      }
+
+      .metric-card {
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 16px;
+      }
+
+      .nav-links {
+        display: none;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .hero-title {
+        font-size: 2.2rem;
+      }
+
+      .metrics-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .metric-card {
+        border-right: none;
+      }
+
+      .footer-container {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Top Emergency Bar -->
+  <div class="top-bar">
+    <div class="top-bar-left">
+      <div class="top-badge">
+        <span class="dot"></span> 24/7 EMERGENCY & TRAUMA OPEN
+      </div>
+      <span>📍 Chennai Central, Tamil Nadu, India</span>
+    </div>
+    <div class="top-bar-right">
+      <span>Ambulance Hotline:</span>
+      <a href="tel:+914420000000" class="emergency-hotline">
+        📞 +91 44 2000 0000 / 108
+      </a>
+    </div>
+  </div>
+
+  <!-- Header -->
+  <header>
+    <div class="nav-container">
+      <a href="#" class="brand-logo">
+        <div class="logo-icon">+</div>
+        <div class="brand-text">
+          <h1>RPS HOSPITAL</h1>
+          <span>Multispeciality • Chennai</span>
+        </div>
+      </a>
+
+      <ul class="nav-links">
+        <li><a href="#departments">Departments</a></li>
+        <li><a href="#specialties">Specialties</a></li>
+        <li><a href="#about">About Us</a></li>
+        <li><a href="#contact">Emergency 24/7</a></li>
+      </ul>
+
+      <div style="display: flex; gap: 12px; align-items: center;">
+        <a href="tel:+914420000000" class="btn btn-emergency">Emergency 24/7</a>
+        <a href="#appointment" class="btn btn-primary">Book Consultation</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="hero-container">
+      <div>
+        <div class="hero-badge">
+          🏥 Trusted Healthcare Partner in Chennai
+        </div>
+
+        <!-- The user's exact required title -->
+        <h2 class="hero-title">
+          RPS Hospital Best Multispeciality Hospital In Chennai, <span class="gradient-text">24/7!</span>
+        </h2>
+
+        <p class="hero-desc">
+          Delivering compassionate, clinical excellence and cutting-edge medical technologies.
+          From world-class ICUs, emergency trauma interventions, and advanced robotic surgeries to
+          preventive wellness — our board-certified specialists are at your service around the clock.
+        </p>
+
+        <div class="hero-actions">
+          <a href="#appointment" class="btn btn-primary" style="padding: 14px 28px; font-size: 1rem;">
+            Book Doctor Consultation
+          </a>
+          <a href="tel:+914420000000" class="btn btn-outline" style="padding: 14px 26px; font-size: 1rem;">
+            📞 24/7 Casualty Support
+          </a>
+        </div>
+
+        <div class="trust-badges">
+          <div class="trust-item">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path>
+            </svg>
+            <span class="trust-item-text">NABH & NABL Accredited</span>
+          </div>
+          <div class="trust-item">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path>
+            </svg>
+            <span class="trust-item-text">Zero Waiting Emergency Care</span>
+          </div>
+          <div class="trust-item">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path>
+            </svg>
+            <span class="trust-item-text">All Cashless Insurances Accepted</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Action Care Card -->
+      <div class="hero-card">
+        <div class="card-header-badge">🚨 Immediate Patient Care</div>
+        <h3 class="card-title">Comprehensive 24/7 Critical Support</h3>
+        <p style="color: var(--text-muted); font-size: 0.95rem;">
+          Staffed by senior intensivists, triage nurses, and modern diagnostic labs available without appointment.
+        </p>
+
+        <ul class="service-list">
+          <li class="service-item">
+            <div class="service-check">✓</div>
+            <span>24/7 Level-1 Trauma & Emergency Wing</span>
+          </li>
+          <li class="service-item">
+            <div class="service-check">✓</div>
+            <span>Cardiology & Rapid Catheterization Lab</span>
+          </li>
+          <li class="service-item">
+            <div class="service-check">✓</div>
+            <span>Neonatal & Paediatric Intensive Care (NICU/PICU)</span>
+          </li>
+          <li class="service-item">
+            <div class="service-check">✓</div>
+            <span>Advanced MRI, 128-Slice CT & Digital X-Ray</span>
+          </li>
+        </ul>
+
+        <div
+          style="background: white; border-radius: 12px; padding: 14px 18px; border: 1px dashed var(--border-color); display: flex; align-items: center; justify-content: space-between;">
+          <div>
+            <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">
+              Direct Casualty Desk</div>
+            <div style="font-size: 1.1rem; font-weight: 800; color: var(--emergency);">044 - 2470 9999</div>
+          </div>
+          <a href="tel:+914424709999" class="btn btn-emergency" style="padding: 8px 16px; font-size: 0.85rem;">Call
+            Now</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Metrics Section -->
+  <div class="metrics-section">
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-number">500+</div>
+        <div class="metric-label">Hospital Beds & Suites</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-number">45+</div>
+        <div class="metric-label">Super Specialties</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-number">120+</div>
+        <div class="metric-label">Distinguished Specialists</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-number">24/7</div>
+        <div class="metric-label">Immediate Response Service</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Specialties Section -->
+  <section class="section-container" id="departments">
+    <div class="section-header">
+      <div class="section-subtitle">Excellence in Healthcare</div>
+      <h2 class="section-title">Centres of Clinical Excellence</h2>
+      <p style="color: var(--text-muted); margin-top: 12px;">
+        Providing personalized, evidence-based clinical treatments with high surgical success rates.
+      </p>
+    </div>
+
+    <div class="specialties-grid">
+      <div class="specialty-card">
+        <div class="specialty-icon">❤️</div>
+        <h3>Cardiology & Heart Care</h3>
+        <p>Comprehensive cardiac health checks, primary angioplasty, bypass surgery, and round-the-clock cardiac
+          telemetry.</p>
+      </div>
+
+      <div class="specialty-card">
+        <div class="specialty-icon">🧠</div>
+        <h3>Neurology & Neurosurgery</h3>
+        <p>Comprehensive stroke unit with instant thrombolysis protocol, minimally invasive neurosurgery, and spine
+          care.</p>
+      </div>
+
+      <div class="specialty-card">
+        <div class="specialty-icon">🦴</div>
+        <h3>Orthopaedics & Joint Care</h3>
+        <p>Computer-assisted joint replacement, sports medicine, complex fracture management, and dedicated
+          physiotherapy.</p>
+      </div>
+
+      <div class="specialty-card">
+        <div class="specialty-icon">🩺</div>
+        <h3>General & Laparoscopic Surgery</h3>
+        <p>Day-care laparoscopic procedures, hernia repair, gallbladder surgeries with rapid post-operative recovery.
+        </p>
+      </div>
+
+      <div class="specialty-card">
+        <div class="specialty-icon">👶</div>
+        <h3>Obstetrics & Paediatrics</h3>
+        <p>Modern birthing suites, high-risk pregnancy care, painless deliveries, and advanced neonatal intensive care.
+        </p>
+      </div>
+
+      <div class="specialty-card">
+        <div class="specialty-icon">🔬</div>
+        <h3>Oncology & Cancer Care</h3>
+        <p>Multidisciplinary tumor boards, medical, surgical, and precision targeted radiation oncology.</p>
+      </div>
+    </div>
+
+    <!-- Live AI Assistant Banner -->
+    <div class="assistant-banner">
+      <div class="assistant-info">
+        <div class="chat-pill">⚡ Powered by GsearchAI Instant Assistant</div>
+        <h3 style="margin-top: 14px;">Need instant medical guidance or doctor schedules?</h3>
+        <p>
+          Our 24/7 hospital AI assistant is embedded right here to answer questions regarding specialty doctors,
+          appointment availability, insurance cashless approvals, and OPD timings.
+        </p>
+      </div>
+      <div>
+        <span style="font-size: 0.9rem; color: #94a3b8; display: block; margin-bottom: 8px;">Click the widget at the
+          bottom-right 👇</span>
+        <button class="btn btn-primary"
+          onclick="alert('Click the GsearchAI chat widget on the bottom right corner of your screen to start a conversation with RPS Hospital Assistant!')">
+          Open Hospital Chat
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-container">
+      <div class="footer-col">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px;">
+          <div class="logo-icon" style="width: 36px; height: 36px; font-size: 1.2rem;">+</div>
+          <h4 style="margin: 0; font-size: 1.25rem;">RPS HOSPITAL</h4>
+        </div>
+        <p>
+          RPS Hospital is Chennai's premier multispeciality medical facility dedicated to high quality,
+          transparent, and patient-centric healthcare 24 hours a day, 7 days a week.
+        </p>
+      </div>
+      <div class="footer-col">
+        <h4>Key Departments</h4>
+        <p>Emergency & Critical Care</p>
+        <p>Interventional Cardiology</p>
+        <p>Neurology & Spine Care</p>
+        <p>Orthopaedics & Trauma</p>
+      </div>
+      <div class="footer-col">
+        <h4>Contact & Location</h4>
+        <p>📍 100 Feet Road, Chennai, Tamil Nadu</p>
+        <p>📞 Emergency: +91 44 2000 0000</p>
+        <p>✉️ info@rpshospitalchennai.com</p>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026 RPS Hospital. All Rights Reserved.</span>
+      <span>Best Multispeciality Hospital in Chennai | 24/7 Emergency Care</span>
+    </div>
+  </footer>
+
+  <!-- Embedded Chatbot Widget Snippet -->
+  <script src='https://gsearchai.com/chat.js'
+    data-agent-id="6be2c318-05f6-4dbb-9421-efe71fa45a23"
+    data-tenant-id="e12884c0-11b9-4c6f-9b74-7ee0fc52bfb6"
+  >
+  </script>
+
+</body>
+
+</html>
