@@ -216,6 +216,34 @@ class SlackClient:
                 raise ValueError(f"Slack updateMessage failed: {error_msg}")
             return data
 
+    async def publish_view(
+        self,
+        bot_token: str,
+        user_id: str,
+        view: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Publish a view to the Slack App Home tab.
+        POST https://slack.com/api/views.publish
+        """
+        headers = {"Authorization": f"Bearer {bot_token}"}
+        payload = {
+            "user_id": user_id,
+            "view": view,
+        }
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(
+                f"{SLACK_API_BASE}/views.publish",
+                headers=headers,
+                json=payload,
+            )
+            data = resp.json()
+            if not data.get("ok"):
+                logger.error("Slack views.publish failed for user %s: %s", user_id, data)
+            else:
+                logger.info("Slack views.publish succeeded for user %s: %s", user_id, data)
+            return data
+
     async def revoke_token(self, bot_token: str) -> bool:
         """
         Revoke an OAuth token on disconnect.

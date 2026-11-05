@@ -21,7 +21,7 @@ from app.core.database import AsyncSessionLocal
 from app.core.config import get_settings
 from app.utils.formatters import format_success, format_error
 from .service import SlackService
-from .security import verify_slack_signature
+from .security import verify_slack_signature, decrypt_token
 from .events import clean_slack_text, is_bot_event
 from .worker import process_slack_event_task
 from .schemas import (
@@ -252,6 +252,48 @@ async def slack_events_webhook(
             # Ignore bot messages matching this bot's user ID to prevent recursive loops
             if is_bot_event(event, bot_user_id=conn.bot_user_id):
                 return {"status": "ignored_bot_event"}
+
+            # Handle App Home Opened
+            if event_type == "app_home_opened":
+                logger.info("Processing app_home_opened event for user %s, team %s", user_id, team_id)
+                bot_token = decrypt_token(conn.bot_access_token_encrypted)
+                home_view = {
+                    "type": "home",
+                    "blocks": [
+                        {
+                            "type": "header",
+                            "text": {
+                                "type": "plain_text",
+                                "text": "Welcome to GSearchAI! 🚀",
+                                "emoji": True
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": "Hello <@" + str(user_id) + ">! I am your AI assistant connected to your organization's Knowledge Graph.\n\n*How to interact with me:*\n• Mention me in any public or private channel with `@GSearchAI <your query>`\n• Send me a Direct Message right here\n• Ask questions about your indexed documents, drives, and knowledge bases!"
+                            }
+                        },
+                        {"type": "divider"},
+                        {
+                            "type": "context",
+                            "elements": [
+                                {
+                                    "type": "mrkdwn",
+                                    "text": "📚 Powered by GSearchAI Multi-Tenant Enterprise RAG"
+                                }
+                            ]
+                        }
+                    ]
+                }
+                publish_res = await service.client.publish_view(
+                    bot_token=bot_token,
+                    user_id=user_id,
+                    view=home_view
+                )
+                logger.info("views.publish response for user %s: %s", user_id, publish_res)
+                return {"status": "home_tab_published", "ok": publish_res.get("ok", False)}
 
             # Prevent double-triggering: If Slack sent both `message` and `app_mention` for a mention,
             # ignore the `message` event and let `app_mention` handle it.
