@@ -49,6 +49,7 @@ export default function ChannelsSection() {
               credentials: {
                 client_id: client,
                 client_secret: secret,
+                access_token: session?.accessToken,
                 refresh_token: session?.refreshToken,
                 token_uri: "https://oauth2.googleapis.com/token",
                 primary_admin_email: session?.user?.email,
