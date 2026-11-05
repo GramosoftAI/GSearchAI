@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # ============= DATABASE ARCHITECTURE TOGGLE =============
     old_database: bool = False  # If True, use old 7-stage profiling pipeline. If False, use new fast Grounded Docs architecture.
 
+    # ============= CONNECTOR FEATURE FLAGS =============
+    enable_gmail_connector: bool = False  # Feature flag: Enable Gmail connector. Default False for Google OAuth verification.
+
     # ============= EXPERIMENTAL FEATURES =============
     chunking_v2_enabled: bool = False
     chunking_v2_kb_ids: str = ""  # Comma separated list of KB IDs

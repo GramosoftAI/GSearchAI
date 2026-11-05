@@ -3274,65 +3274,44 @@ class KnowledgeBaseService:
                     
 
                     # 2. Textual Documents (PDF, Docx, Plaintext)
-
                     else:
-
                         text = ""
-
                         try:
+                            # 2.1 PDF Parsing (Using primary Gdocz / PDFExtractor with fallback)
+                            if mime_type == "application/pdf" or filename.lower().endswith(".pdf"):
+                                from app.core.pdf_extractor import PDFExtractor
+                                try:
+                                    logger.info(f"Extracting PDF via PDFExtractor (Gdocz) for Google Drive file: {filename}")
+                                    text = await PDFExtractor.extract(
+                                        pdf_bytes=file_bytes,
+                                        filename=filename,
+                                        tenant_id=str(self.tenant_id),
+                                    )
+                                except Exception as pdf_err:
+                                    logger.warning(f"PDFExtractor (Gdocz) failed for {filename}: {pdf_err}. Falling back to PyPDF2.")
+                                    import io
+                                    from PyPDF2 import PdfReader
+                                    reader = PdfReader(io.BytesIO(file_bytes))
+                                    pages_text = [page.extract_text() or "" for page in reader.pages]
+                                    text = "\n".join(pages_text)
 
-                            # 2.1 PDF Parsing
-
-                            if mime_type == "application/pdf" or filename.endswith(".pdf"):
-
-                                import io
-
-                                from PyPDF2 import PdfReader
-
-                                reader = PdfReader(io.BytesIO(file_bytes))
-
-                                pages_text = []
-
-                                for page in reader.pages:
-
-                                    pages_text.append(page.extract_text() or "")
-
-                                text = "\n".join(pages_text)
-
-                            
-
-                            # 2.2 Word / Docx Parsing (Zip XML structure)
-
-                            elif filename.endswith(".docx"):
-
-                                import zipfile
-
-                                import io
-
-                                import xml.etree.ElementTree as ET
-
-                                with zipfile.ZipFile(io.BytesIO(file_bytes)) as docx:
-
-                                    xml_content = docx.read('word/document.xml')
-
-                                    tree = ET.fromstring(xml_content)
-
-                                    paragraphs = []
-
-                                    for elem in tree.iter():
-
-                                        if elem.tag.endswith('t'):
-
-                                            paragraphs.append(elem.text or "")
-
-                                    text = "".join(paragraphs)
-
-                                    
+                            # 2.2 Word / Docx Parsing (Native DocxExtractor)
+                            elif filename.lower().endswith(".docx"):
+                                from app.core.docx_extractor import DocxExtractor
+                                try:
+                                    logger.info(f"Extracting DOCX via native DocxExtractor for Google Drive file: {filename}")
+                                    text = DocxExtractor.extract(file_bytes, filename)
+                                except Exception as docx_err:
+                                    logger.warning(f"DocxExtractor failed for {filename}: {docx_err}. Falling back to XML extraction.")
+                                    import zipfile, io, xml.etree.ElementTree as ET
+                                    with zipfile.ZipFile(io.BytesIO(file_bytes)) as docx_zip:
+                                        xml_content = docx_zip.read('word/document.xml')
+                                        tree = ET.fromstring(xml_content)
+                                        paragraphs = [elem.text or "" for elem in tree.iter() if elem.tag.endswith('t')]
+                                        text = "".join(paragraphs)
 
                             # 2.3 Plaintext Fallback
-
                             else:
-
                                 text = file_bytes.decode("utf-8", errors="ignore")
 
                         except Exception as parse_err:
