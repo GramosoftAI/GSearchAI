@@ -75,13 +75,29 @@ class GoogleAuthManager:
             )
         else:
             self.is_service_account = False
-            logger.info(f"Initializing Google User OAuth2 credentials with scopes: {effective_scopes}")
+            import os
+            server_client_id = os.getenv("GOOGLE_CLIENT_ID")
+            server_client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+            
+            client_id = credentials.get("client_id") or server_client_id
+            client_secret = credentials.get("client_secret") or server_client_secret
+            refresh_token = credentials.get("refresh_token")
+            access_token = credentials.get("access_token")
+            token_uri = credentials.get("token_uri") or "https://oauth2.googleapis.com/token"
+
+            logger.info(
+                f"Initializing Google User OAuth2 credentials: "
+                f"has_access_token={bool(access_token)}, has_refresh_token={bool(refresh_token)}, "
+                f"has_client_id={bool(client_id)}, has_client_secret={bool(client_secret)}, "
+                f"scopes={effective_scopes}"
+            )
+
             self.creds = google_credentials.Credentials(
-                token=credentials.get("access_token"),
-                refresh_token=credentials.get("refresh_token"),
-                client_id=credentials.get("client_id"),
-                client_secret=credentials.get("client_secret"),
-                token_uri="https://oauth2.googleapis.com/token",
+                token=access_token,
+                refresh_token=refresh_token,
+                client_id=client_id,
+                client_secret=client_secret,
+                token_uri=token_uri,
                 scopes=effective_scopes,
             )
 

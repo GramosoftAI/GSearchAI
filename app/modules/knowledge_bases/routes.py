@@ -1506,36 +1506,41 @@ async def register_google_drive(
 
 
 
+            incoming_creds = dict(gd_request.credentials or {})
+
+            # Secure server fallback: If client_id or client_secret are missing from request payload,
+            # use the server's configured environment variables.
+            server_client_id = os.getenv("GOOGLE_CLIENT_ID")
+            server_client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+            if not incoming_creds.get("client_id") and server_client_id:
+                incoming_creds["client_id"] = server_client_id
+            if not incoming_creds.get("client_secret") and server_client_secret:
+                incoming_creds["client_secret"] = server_client_secret
+
+            # If an existing connection already had credentials, preserve valid refresh_token or access_token
+            if db_conn and db_conn.connection_params:
+                old_creds = db_conn.connection_params.get("credentials") or db_conn.connection_params
+                if isinstance(old_creds, dict):
+                    if not incoming_creds.get("refresh_token") and old_creds.get("refresh_token"):
+                        incoming_creds["refresh_token"] = old_creds.get("refresh_token")
+                    if not incoming_creds.get("access_token") and old_creds.get("access_token"):
+                        incoming_creds["access_token"] = old_creds.get("access_token")
+
             connection_params = {
-
-                "credentials": gd_request.credentials,
-
+                "credentials": incoming_creds,
                 "folder_urls": gd_request.folder_urls or []
-
             }
 
-
-
             if db_conn:
-
                 db_conn.db_type = "google_drive"
-
                 db_conn.connection_params = connection_params
-
             else:
-
                 db_conn = DatabaseConnection(
-
                     tenant_id=uuid.UUID(tenant_id),
-
                     kb_id=uuid.UUID(kb_id),
-
                     db_type="google_drive",
-
                     connection_params=connection_params
-
                 )
-
                 db.add(db_conn)
 
             from .models import KnowledgeBase
