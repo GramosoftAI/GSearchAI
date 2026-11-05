@@ -2928,6 +2928,96 @@ class KnowledgeBaseService:
             folders_synced = 0
             synced_filenames = []
             partial_failures = []
+            synced_kb_ids = []
+
+            # Retrieve owning agent_id and user_id from the initial KB
+            root_kb = await self.repository.get_by_id(kb_id)
+            owning_agent_id = str(root_kb.agent_id) if root_kb and root_kb.agent_id else None
+            owning_user_id = str(root_kb.user_id) if root_kb and root_kb.user_id else None
+
+            # Helper to get or create a separate Knowledge Base for each file under the same agent
+            async def get_or_create_kb_for_file(filename: str, file_hash: str) -> str:
+                # If this is the very first file, claim the existing root_kb
+                if files_synced == 0:
+                    try:
+                        first_kb = await self.repository.get_by_id(kb_id)
+                        if first_kb:
+                            first_kb.name = f"{filename} (google drive)"
+                            first_kb.file_hash = file_hash
+                            first_kb.source = f"google_drive({effective_email})"
+                            self.db.add(first_kb)
+                            await self.db.commit()
+                            await self.neo4j_repo.execute_write(
+                                """
+                                MATCH (kb:KnowledgeBase {id: $kb_id, tenant_id: $tenant_id})
+                                SET kb.name = $name, kb.source = $source
+                                """,
+                                {
+                                    "kb_id": kb_id,
+                                    "tenant_id": str(self.tenant_id),
+                                    "name": f"{filename} (google drive)",
+                                    "source": f"google_drive({effective_email})"
+                                }
+                            )
+                    except Exception as first_kb_err:
+                        logger.warning(f"Failed to rename first KB: {first_kb_err}")
+                    return kb_id
+
+                # For 2nd, 3rd, ... files: create a dedicated KnowledgeBase for this specific file under the same agent
+                logger.info(f"Creating separate KnowledgeBase for Google Drive file: '{filename}' under agent {owning_agent_id}")
+                new_pg_kb = await self.repository.create(
+                    name=f"{filename} (google drive)",
+                    agent_id=owning_agent_id,
+                    user_id=owning_user_id,
+                    source=f"google_drive({effective_email})",
+                    file_hash=file_hash
+                )
+                target_kb_id_str = str(new_pg_kb.id)
+
+                # Create Neo4j KnowledgeBase node and link to the same agent
+                neo4j_create_q = """
+                CREATE (kb:KnowledgeBase {
+                    id: $kb_id,
+                    tenant_id: $tenant_id,
+                    agent_id: $agent_id,
+                    name: $name,
+                    source: $source,
+                    created_at: timestamp()
+                })
+                WITH kb
+                MATCH (a:Agent {tenant_id: $tenant_id, id: $agent_id})
+                CREATE (a)-[:OWNS_KB]->(kb)
+                RETURN kb
+                """
+                try:
+                    await self.neo4j_repo.execute_write(
+                        neo4j_create_q,
+                        {
+                            "kb_id": target_kb_id_str,
+                            "tenant_id": str(self.tenant_id),
+                            "agent_id": owning_agent_id,
+                            "name": f"{filename} (google drive)",
+                            "source": f"google_drive({effective_email})"
+                        }
+                    )
+                except Exception as neo_err:
+                    logger.warning(f"Failed to create Neo4j node for file KB {target_kb_id_str}: {neo_err}")
+
+                # Copy DatabaseConnection registration so this new KB is also connected to Google Drive
+                try:
+                    from .models import DatabaseConnection
+                    copy_conn = DatabaseConnection(
+                        tenant_id=self.tenant_id,
+                        kb_id=new_pg_kb.id,
+                        db_type="google_drive",
+                        connection_params=credentials_dict
+                    )
+                    self.db.add(copy_conn)
+                    await self.db.commit()
+                except Exception as conn_err:
+                    logger.warning(f"Failed to register DatabaseConnection for {target_kb_id_str}: {conn_err}")
+
+                return target_kb_id_str
 
             
 
@@ -3154,8 +3244,11 @@ class KnowledgeBaseService:
 
                     # 1. CSV / Excel
 
+                    # Allocate or retrieve dedicated KB for this file
+                    file_kb_id = await get_or_create_kb_for_file(filename, file_hash)
+
                     if mime_type == "text/csv" or "spreadsheet" in mime_type or filename.endswith((".csv", ".xlsx", ".xls")):
-                        logger.info(f"Piping Google Drive tabular file '{filename}' to Parquet/DuckDB ingestion service")
+                        logger.info(f"Piping Google Drive tabular file '{filename}' to Parquet/DuckDB ingestion service for KB {file_kb_id}")
                         import tempfile, os, hashlib
                         from app.core.parquet_ingester import ParquetIngester
 
@@ -3182,7 +3275,7 @@ class KnowledgeBaseService:
                             from app.modules.knowledge_bases.models import KnowledgeBase
                             await self.db.execute(
                                 update(KnowledgeBase)
-                                .where(KnowledgeBase.id == uuid.UUID(kb_id))
+                                .where(KnowledgeBase.id == uuid.UUID(file_kb_id))
                                 .values(
                                     name=f"{filename} (google drive)",
                                     file_hash=file_hash,
@@ -3204,7 +3297,7 @@ class KnowledgeBaseService:
                                         SET kb.parsed_path = $parsed_path, kb.document_category = 'dataset'
                                         """,
                                         {
-                                            "kb_id": kb_id,
+                                            "kb_id": file_kb_id,
                                             "tenant_id": str(self.tenant_id),
                                             "parsed_path": dataset_name
                                         }
@@ -3243,12 +3336,12 @@ class KnowledgeBaseService:
                                 if chunks_text_list:
                                     combined_text = "\n\n---\n\n".join(chunks_text_list)
                                     await self.ingest_document(
-                                        kb_id=kb_id,
+                                        kb_id=file_kb_id,
                                         document_text=combined_text,
                                         source=f"{filename} (google drive)",
                                         parsed_path=output_path
                                     )
-                                    logger.info(f"Dual-Ingestion successfully generated {len(chunks_text_list)} text chunks for KB {kb_id}.")
+                                    logger.info(f"Dual-Ingestion successfully generated {len(chunks_text_list)} text chunks for KB {file_kb_id}.")
                             except Exception as dual_err:
                                 logger.warning(f"[DUAL_INGESTION_FAILED] Dual-Ingestion text chunking failed for {filename}: {dual_err}")
                                 partial_failures.append({
@@ -3260,6 +3353,7 @@ class KnowledgeBaseService:
 
                             files_synced += 1
                             synced_filenames.append(filename)
+                            synced_kb_ids.append(file_kb_id)
                         except Exception as tab_err:
                             logger.warning(f"Failed to ingest tabular file '{filename}' from Google Drive: {tab_err}")
                             partial_failures.append({
@@ -3324,11 +3418,11 @@ class KnowledgeBaseService:
 
                         if text.strip():
 
-                            logger.info(f"Piping extracted text of {filename} to standard RAG pipeline")
+                            logger.info(f"Piping extracted text of {filename} to standard RAG pipeline for KB {file_kb_id}")
 
                             ingest_res = await self.ingest_document(
 
-                                kb_id=kb_id,
+                                kb_id=file_kb_id,
 
                                 document_text=text,
 
@@ -3340,12 +3434,13 @@ class KnowledgeBaseService:
 
                                 files_synced += 1
                                 synced_filenames.append(filename)
+                                synced_kb_ids.append(file_kb_id)
 
                                 # Persist file_hash on KnowledgeBase for future deduplication
                                 from sqlalchemy import update
                                 await self.db.execute(
                                     update(KnowledgeBase)
-                                    .where(KnowledgeBase.id == uuid.UUID(kb_id))
+                                    .where(KnowledgeBase.id == uuid.UUID(file_kb_id))
                                     .values(
                                         name=f"{filename} (google drive)",
                                         file_hash=file_hash
@@ -3391,32 +3486,30 @@ class KnowledgeBaseService:
 
                             "tenant_id": str(self.tenant_id),
 
-                            "kb_id": kb_id,
+                            "kb_id": file_kb_id,
 
                             "sync_start_time": sync_start_timestamp
 
                         })
 
-            if synced_filenames:
-                final_kb_name = f"{synced_filenames[0]} (google drive)" if len(synced_filenames) == 1 else f"{synced_filenames[0]} + {len(synced_filenames) - 1} files (google drive)"
-            else:
-                final_kb_name = "Google Drive Knowledge"
-
-            try:
-                pg_kb_final = await self.repository.get_by_id(kb_id)
-                if pg_kb_final:
-                    pg_kb_final.name = final_kb_name
-                    self.db.add(pg_kb_final)
-                    await self.db.commit()
-                await self.neo4j_repo.execute_write(
-                    """
-                    MATCH (kb:KnowledgeBase {id: $kb_id, tenant_id: $tenant_id})
-                    SET kb.name = $new_name
-                    """,
-                    {"kb_id": kb_id, "tenant_id": str(self.tenant_id), "new_name": final_kb_name}
-                )
-            except Exception as final_name_err:
-                logger.warning(f"Failed to update final KB name: {final_name_err}")
+            # Ensure initial root_kb has its clean final name if only 1 file or if named
+            if synced_filenames and len(synced_filenames) == 1:
+                final_kb_name = f"{synced_filenames[0]} (google drive)"
+                try:
+                    pg_kb_final = await self.repository.get_by_id(kb_id)
+                    if pg_kb_final and pg_kb_final.name != final_kb_name:
+                        pg_kb_final.name = final_kb_name
+                        self.db.add(pg_kb_final)
+                        await self.db.commit()
+                        await self.neo4j_repo.execute_write(
+                            """
+                            MATCH (kb:KnowledgeBase {id: $kb_id, tenant_id: $tenant_id})
+                            SET kb.name = $new_name
+                            """,
+                            {"kb_id": kb_id, "tenant_id": str(self.tenant_id), "new_name": final_kb_name}
+                        )
+                except Exception as final_name_err:
+                    logger.warning(f"Failed to update final KB name: {final_name_err}")
 
             if files_synced == 0 and any(pf.get("status") == "duplicate_skipped" for pf in partial_failures):
                 dup_files = [pf["file"] for pf in partial_failures if pf.get("status") == "duplicate_skipped"]
@@ -3442,6 +3535,7 @@ class KnowledgeBaseService:
                     "success": True,
 
                     "kb_id": kb_id,
+                    "synced_kb_ids": synced_kb_ids,
 
                     "files_synced": files_synced,
 

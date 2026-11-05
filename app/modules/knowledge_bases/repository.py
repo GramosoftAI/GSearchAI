@@ -134,9 +134,9 @@ class KnowledgeBaseRepository(BaseRepository):
 
             tenant_id=self.tenant_id,
 
-            user_id=uuid.UUID(user_id),
+            user_id=uuid.UUID(str(user_id)) if user_id else None,
 
-            agent_id=uuid.UUID(agent_id),
+            agent_id=uuid.UUID(str(agent_id)) if agent_id else None,
 
             name=name,
 
