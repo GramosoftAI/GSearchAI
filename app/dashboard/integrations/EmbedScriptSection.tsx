@@ -638,11 +638,25 @@ export default function EmbedScriptSection() {
   };
 
   const handleFileUpload = async (file: File, target: "headerLogo" | "botAvatar" | "buttonIcon") => {
+    const MAX_IMAGE_SIZE_BYTES = 2 * 1024 * 1024; // 2MB
+    if (file.size > MAX_IMAGE_SIZE_BYTES) {
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+      notification.error({
+        message: "File Size Exceeded",
+        description: `File size exceeds 2MB limit (selected: ${sizeMB} MB). Please choose an image up to 2MB.`,
+        placement: "topRight",
+      });
+      return;
+    }
     const allowedExtensions = ["png", "jpg", "jpeg", "svg", "webp"];
     const fileExtension = file.name.split(".").pop()?.toLowerCase();
     
     if (!fileExtension || !allowedExtensions.includes(fileExtension)) {
-      message.error("Only PNG, JPG, JPEG, SVG, and WEBP image formats are allowed.");
+      notification.error({
+        message: "Invalid File Type",
+        description: "Only PNG, JPG, JPEG, SVG, and WEBP image formats are allowed.",
+        placement: "topRight",
+      });
       return;
     }
 
@@ -694,17 +708,26 @@ export default function EmbedScriptSection() {
         placement: "topRight",
       });
     } catch (err: any) {
-      console.warn("Backend upload endpoint offline or error, creating object URL fallback for preview:", err);
-      const fallbackUrl = URL.createObjectURL(file);
-      if (target === "headerLogo") setDraftHeaderLogo(fallbackUrl);
-      if (target === "botAvatar") setDraftBotAvatar(fallbackUrl);
-      if (target === "buttonIcon") setDraftButtonIcon(fallbackUrl);
+      console.warn("Backend upload endpoint error:", err);
+      const backendError = err.response?.data?.error || err.response?.data?.detail || err.message;
+      if (err.response?.status === 400 && backendError) {
+        notification.error({
+          message: "Upload Failed",
+          description: typeof backendError === "string" ? backendError : "Image upload validation failed.",
+          placement: "topRight",
+        });
+      } else {
+        const fallbackUrl = URL.createObjectURL(file);
+        if (target === "headerLogo") setDraftHeaderLogo(fallbackUrl);
+        if (target === "botAvatar") setDraftBotAvatar(fallbackUrl);
+        if (target === "buttonIcon") setDraftButtonIcon(fallbackUrl);
 
-      notification.info({
-        message: "Image Selected",
-        description: "",
-        placement: "topRight",
-      });
+        notification.info({
+          message: "Image Selected (Local Preview)",
+          description: "Could not upload to cloud storage; showing local preview.",
+          placement: "topRight",
+        });
+      }
     } finally {
       if (target === "headerLogo") setUploadingHeaderLogo(false);
       if (target === "botAvatar") setUploadingBotAvatar(false);
@@ -921,6 +944,7 @@ export default function EmbedScriptSection() {
         }}
         width={1180}
         centered
+        zIndex={1000}
         className="custom-widget-modal"
       >
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 py-4 items-start">
@@ -970,6 +994,7 @@ export default function EmbedScriptSection() {
                               onChange={(e) => {
                                 const file = e.target.files?.[0];
                                 if (file) handleFileUpload(file, "buttonIcon");
+                                e.target.value = "";
                               }}
                             />
                           </label>
@@ -1062,6 +1087,7 @@ export default function EmbedScriptSection() {
                               onChange={(e) => {
                                 const file = e.target.files?.[0];
                                 if (file) handleFileUpload(file, "botAvatar");
+                                e.target.value = "";
                               }}
                             />
                           </label>
@@ -1624,6 +1650,7 @@ export default function EmbedScriptSection() {
                               onChange={(e) => {
                                 const file = e.target.files?.[0];
                                 if (file) handleFileUpload(file, "headerLogo");
+                                e.target.value = "";
                               }}
                             />
                           </label>
@@ -2233,6 +2260,14 @@ export default function EmbedScriptSection() {
           background-size: 300% 100% !important;
           animation: borderShift 4s linear infinite !important;
           box-shadow: 0 4px 20px ${draftThemeColor}50 !important;
+        }
+        :global(.ant-notification),
+        :global(.ant-notification-topRight) {
+          z-index: 10100 !important;
+        }
+        :global(.ant-notification-notice) {
+          border-radius: 20px !important;
+          overflow: hidden !important;
         }
         .custom-widget-modal .ant-modal-content {
           border-radius: 28px !important;
