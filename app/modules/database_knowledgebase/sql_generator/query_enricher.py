@@ -20,6 +20,60 @@ class DynamicQueryEnricher:
     """Enriches natural language user questions dynamically using retrieved schema context and selected tables."""
 
     @classmethod
+    def sanitize_enriched_query(cls, query_text: str, alias_words: Optional[List[str]] = None) -> str:
+        """
+        Strips hallucinated column filters where a table alias was treated as a column value,
+        and repairs hallucinated booleans for status/stage terms and numeric quantities.
+        """
+        if not query_text:
+            return query_text
+
+        # 1. Clean up hallucinated status booleans: 'where the approved is true' -> 'where the stage is 'approved''
+        query_text = re.sub(
+            r"(?i)\bwhere\s+(?:the\s+)?(approved|pending|rejected|completed|submitted|closed|draft)\s+is\s+(?:true|TRUE)\b",
+            r"where the stage is '\1'",
+            query_text
+        )
+        query_text = re.sub(
+            r"(?i)\band\s+(?:the\s+)?(approved|pending|rejected|completed|submitted|closed|draft)\s+is\s+(?:true|TRUE)\b",
+            r"and the stage is '\1'",
+            query_text
+        )
+        query_text = re.sub(
+            r"(?i),\s*(?:the\s+)?(approved|pending|rejected|completed|submitted|closed|draft)\s+is\s+(?:true|TRUE)\b",
+            r", the stage is '\1'",
+            query_text
+        )
+        # 2. Clean up numeric zero turned into boolean FALSE: 'budgeted is false' -> 'budgeted is 0'
+        query_text = re.sub(
+            r"(?i)\b(budgeted|budget|amount|balance)\s+is\s+(?:false|FALSE)\b",
+            r"\1 is 0",
+            query_text
+        )
+
+        for a in (alias_words or []):
+            a_clean = a.strip().lower()
+            if not a_clean:
+                continue
+            escaped_a = re.escape(a_clean)
+            pattern1 = rf"(?i)\bwhere\s+(?:the\s+)?`?[a-zA-Z0-9_]+`?(?:\s*\([^)]*\))?\s*(?:is|=|ILIKE|LIKE)\s*['\"`]{escaped_a}['\"`]\s*,\s*"
+            query_text = re.sub(pattern1, 'where ', query_text)
+
+            pattern2 = rf"(?i)\bwhere\s+(?:the\s+)?`?[a-zA-Z0-9_]+`?(?:\s*\([^)]*\))?\s*(?:is|=|ILIKE|LIKE)\s*['\"`]{escaped_a}['\"`]\s+and\s+"
+            query_text = re.sub(pattern2, 'where ', query_text)
+
+            pattern3 = rf"(?i)\s+and\s+(?:the\s+)?`?[a-zA-Z0-9_]+`?(?:\s*\([^)]*\))?\s*(?:is|=|ILIKE|LIKE)\s*['\"`]{escaped_a}['\"`]"
+            query_text = re.sub(pattern3, '', query_text)
+
+            pattern4 = rf"(?i),\s*(?:the\s+)?`?[a-zA-Z0-9_]+`?(?:\s*\([^)]*\))?\s*(?:is|=|ILIKE|LIKE)\s*['\"`]{escaped_a}['\"`]"
+            query_text = re.sub(pattern4, '', query_text)
+
+            pattern5 = rf"(?i)\bwhere\s+(?:the\s+)?`?[a-zA-Z0-9_]+`?(?:\s*\([^)]*\))?\s*(?:is|=|ILIKE|LIKE)\s*['\"`]{escaped_a}['\"`]\.?"
+            query_text = re.sub(pattern5, '.', query_text)
+
+        return query_text
+
+    @classmethod
     def _get_client(cls, timeout: Optional[float] = None) -> AsyncOpenAI:
         req_timeout = timeout or getattr(settings, "sql_llm_timeout_seconds", 30.0)
         return AsyncOpenAI(
@@ -36,6 +90,7 @@ class DynamicQueryEnricher:
         schema_docs: List[Dict[str, Any]],
         selected_tables: Optional[List[str]] = None,
         resolved_entities: Optional[List[Dict[str, Any]]] = None,
+        table_alias_mappings: Optional[List[Dict[str, str]]] = None,
         model: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
@@ -77,6 +132,28 @@ class DynamicQueryEnricher:
                 f"If the original user question references any other table or old query context, completely ignore that other table and rephrase the query intent specifically for {sel_str}.\n"
             )
 
+        alias_notice = ""
+        alias_words: List[str] = []
+        if table_alias_mappings:
+            alias_lines = []
+            for m in table_alias_mappings:
+                if isinstance(m, dict):
+                    a_name = m.get("alias", "")
+                    t_name = m.get("table", "")
+                    if a_name and t_name:
+                        alias_words.append(a_name)
+                        alias_lines.append(f"- '{a_name}' is an alternative name (alias) for table `{t_name}`")
+            if alias_lines:
+                alias_notice = (
+                    "\nCRITICAL TABLE ALIAS INSTRUCTION:\n"
+                    "The following words/phrases in the user question are ALTERNATIVE NAMES (aliases) for tables:\n"
+                    + "\n".join(alias_lines) + "\n"
+                    "Rules for table aliases:\n"
+                    "1. These alias tokens refer SOLELY to the database TABLE, NOT to any column value or filter.\n"
+                    "2. NEVER interpret or rephrase a table alias token as a column filter (e.g. NEVER write 'where lob is ...', 'where name is ...', etc. for these alias words).\n"
+                    "3. The user simply used the alias word to indicate which table to query.\n"
+                )
+
         prompt = f"""You are a dynamic database query architect.
 Given an informal user question and relational database schema, generate exactly 3 DISTINCT, practical ways to rephrase and execute the question against the actual database schema:
 
@@ -94,6 +171,7 @@ Rules:
    - "description": 1 short sentence explaining what data this option retrieves
 
 {selected_notice}
+{alias_notice}
 Available Database Schema:
 {schema_context}
 
@@ -123,6 +201,12 @@ Respond with ONLY the JSON array (no markdown code blocks, no explanations):"""
 
             parsed = json.loads(raw_text)
             if isinstance(parsed, list) and len(parsed) > 0:
+                for opt in parsed:
+                    if isinstance(opt, dict):
+                        if "rephrased_query" in opt:
+                            opt["rephrased_query"] = cls.sanitize_enriched_query(opt["rephrased_query"], alias_words)
+                        if "description" in opt:
+                            opt["description"] = cls.sanitize_enriched_query(opt["description"], alias_words)
                 logger.info(f"[QUERY_ENRICHER] Successfully generated {len(parsed)} rephrasing options for '{user_query}'")
                 return parsed[:3]
         except Exception as exc:
@@ -164,6 +248,7 @@ Respond with ONLY the JSON array (no markdown code blocks, no explanations):"""
         schema_docs: List[Dict[str, Any]],
         selected_tables: Optional[List[str]] = None,
         resolved_entities: Optional[List[Dict[str, Any]]] = None,
+        table_alias_mappings: Optional[List[Dict[str, str]]] = None,
         model: Optional[str] = None,
     ) -> str:
         """
@@ -206,6 +291,28 @@ Respond with ONLY the JSON array (no markdown code blocks, no explanations):"""
                 f"If the question references any other table name, replace it with {sel_str}.\n"
             )
 
+        alias_notice = ""
+        alias_words: List[str] = []
+        if table_alias_mappings:
+            alias_lines = []
+            for m in table_alias_mappings:
+                if isinstance(m, dict):
+                    a_name = m.get("alias", "")
+                    t_name = m.get("table", "")
+                    if a_name and t_name:
+                        alias_words.append(a_name)
+                        alias_lines.append(f"- '{a_name}' is an alternative name (alias) for table `{t_name}`")
+            if alias_lines:
+                alias_notice = (
+                    "\nCRITICAL TABLE ALIAS INSTRUCTION:\n"
+                    "The following words/phrases in the user question are ALTERNATIVE NAMES (aliases) for tables:\n"
+                    + "\n".join(alias_lines) + "\n"
+                    "Rules for table aliases:\n"
+                    "1. These alias tokens refer SOLELY to the database TABLE, NOT to any column value or filter.\n"
+                    "2. NEVER interpret or rephrase a table alias token as a column filter (e.g. NEVER write 'where lob is ...', 'where name is ...', etc. for these alias words).\n"
+                    "3. The user simply used the alias word to indicate which table to query.\n"
+                )
+
         prompt = f"""You are a dynamic schema-grounded query enricher for relational databases.
 Users often ask vague, informal, or conversational questions (e.g., "list all duplicate name", "show pending items", "best recent customers").
 Your task is to enrich and clarify the user's question into an explicit, unambiguous natural language instruction that maps directly to the actual database schema.
@@ -215,12 +322,14 @@ Rules:
 2. DISAMBIGUATE TERMS:
    - "duplicate" -> identify the specific column (e.g. name, code, email) and specify grouping by that column with COUNT(*) > 1.
    - "recent / latest" -> order by the relevant date/timestamp or primary key descending.
-   - "pending / active / failed" -> filter by the actual status/state column present in the schema.
+   - "approved / pending / rejected / submitted / completed / closed / draft" -> filter by the actual status/stage column present in the schema (e.g. `stage`, `status`, `state`, `phase`). NEVER write "where approved is TRUE" or invent boolean columns for workflow status terms! Write "where the `stage` is 'approved'".
+   - "budget available in 0 / budget is 0 / count = 0 / zero amount" -> filter using numeric comparison on the amount/budget column (e.g. "where the `budget` is 0" or "where `balance` is 0"). NEVER write "where budgeted is false"!
    - "list all duplicate name" -> select the name column and count, grouped by the name column having count > 1 (do NOT ask for a single aggregate count if user asked to "list all").
 3. PRESERVE INTENT: Do not change what the user wants to know; only make it crystal clear, referencing the exact table and column names.
 4. Keep the enriched query concise (1-3 sentences). Return ONLY the enriched question without explanations or code fences.
 
 {selected_notice}
+{alias_notice}
 Available Database Schema:
 {schema_context}
 
@@ -246,6 +355,7 @@ Enriched Schema-Grounded Question:"""
             if enriched.startswith('"') and enriched.endswith('"'):
                 enriched = enriched[1:-1].strip()
             if enriched:
+                enriched = cls.sanitize_enriched_query(enriched, alias_words)
                 logger.info(f"[QUERY_ENRICHER] Original: '{user_query}' -> Enriched: '{enriched}'")
                 return enriched
             return user_query

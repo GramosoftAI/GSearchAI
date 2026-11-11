@@ -46,8 +46,9 @@ STRICT CONSTRAINTS:
     - User dates written in DD/MM/YYYY format MUST be parsed as DD/MM/YYYY and converted to standard ISO 'YYYY-MM-DD'.
     - Use standard PostgreSQL date expressions like `CURRENT_DATE`, `CURRENT_DATE - INTERVAL '1 DAY'`, etc., or time bounds provided in <grounded_context>.
 15. TYPE CASTING: Never use string operators (LIKE, ILIKE) on numeric or ID columns without explicitly casting them to TEXT (e.g. CAST(column AS TEXT) ILIKE '%value%').
-16. USER TABLE ALIASES & CONVERSATIONAL TERMS:
-    - When the sub-schema XML contains <active_table_aliases>, the user's conversational terms MUST be treated as direct references to those canonical tables.
+16. USER TABLE ALIASES & CONVERSATIONAL TERMS (CRITICAL):
+    - When the sub-schema XML contains <active_table_aliases>, the user's conversational terms (e.g. mapping user_phrase="cream" to table="cm_budget_requests") MUST be treated STRICTLY AND EXCLUSIVELY as direct references to those canonical tables (in the FROM or JOIN clause).
+    - NEVER generate a WHERE filter, ILIKE, or comparison using the table alias word itself (e.g. NEVER generate `lob ILIKE '%cream%'` or `name ILIKE '%cream%'` or `WHERE ... = 'cream'`). A user-defined table alias names the table entity to query, NOT a column value!
 17. CRITICAL RESOLVED ENTITY BINDINGS:
     - When <grounded_context> or <query_plan> contains a resolved entity with an ID/primary key (e.g. resolved_pk="113" or table.id = 113):
       You MUST filter using that exact numeric ID (e.g. WHERE users.id = 113 or WHERE work_packages.assigned_to_id = 113).
@@ -64,6 +65,13 @@ STRICT CONSTRAINTS:
     - In PostgreSQL, `=` is strictly case-sensitive. Always use `ILIKE` for all string/text/varchar value checks, statuses, categories, stages, types, names, codes, financial years, and literal filters. NEVER use `=` for string/text values!
     - ALWAYS wrap text/category/status/stage filters and year strings in wildcards (`%<value>%`) (e.g. `stage ILIKE '%complete%'` or `stage ILIKE '%submitted%'`, `finance_year ILIKE '%2026%'`, `capex_revex ILIKE '%capex%'`). This accommodates variations in casing, tense/suffix (e.g., 'complete' matching 'Completed'), year prefixes (e.g., 'FY 2025-2026'), and leading/trailing whitespace.
 21. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text outside the SQL block.
+22. WORKFLOW STAGES & STATUSES ARE VALUES, NEVER BOOLEAN COLUMNS (CRITICAL):
+    - Words indicating a lifecycle, state, or approval (e.g. 'approved', 'pending', 'rejected', 'completed', 'submitted', 'draft', 'closed', 'cancelled') represent string values stored in status/stage/state columns (such as `stage`, `status`, `approval_status`, `state`).
+    - NEVER hallucinate these words as boolean column names (e.g. NEVER write `WHERE approved = TRUE` or `WHERE pending = TRUE`).
+    - ALWAYS query the table's status/stage column: e.g. `stage ILIKE '%approved%'` or `status ILIKE '%approved%'`.
+23. NUMERIC ZERO ("0") IS A NUMBER, NEVER BOOLEAN FALSE (CRITICAL):
+    - When a user query mentions a numeric quantity or budget balance of zero ("0" or "available in 0"), it means comparing a numeric column to 0 (e.g. `budgeted = 0` or `balance = 0` or `available_amount = 0`).
+    - NEVER hallucinate or convert a numeric column condition into a boolean flag (e.g. NEVER write `budgeted = FALSE` or `budget = FALSE`).
 """
 
     @classmethod

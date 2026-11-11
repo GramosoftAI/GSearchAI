@@ -370,6 +370,49 @@ class CandidateSQLGenerator:
         return ast.sql(dialect=target_dialect)
 
     @classmethod
+    def sanitize_sql_table_aliases(cls, sql_text: str, retrieval_result: Optional[SchemaRetrievalResult]) -> str:
+        """Strip hallucinated WHERE predicates that match user table aliases (e.g. lob ILIKE '%cream%')."""
+        if not sql_text or not retrieval_result:
+            return sql_text
+        retrieval_xml = getattr(retrieval_result, "untrusted_boundary_text", "") or ""
+        if not retrieval_xml:
+            return sql_text
+
+        for phrase in re.findall(r'user_phrase=["\']([^"\']+)["\']', retrieval_xml, re.IGNORECASE):
+            clean_phrase = phrase.strip()
+            if clean_phrase:
+                # 1. Match trailing AND/OR: col ILIKE '%phrase%' AND
+                sql_text = re.sub(
+                    rf"(?:[a-zA-Z0-9_\.]+\s*(?:ILIKE|LIKE|=|!=)\s*['\"]%?{re.escape(clean_phrase)}%?['\"])\s*(?:AND|OR)\s*",
+                    "",
+                    sql_text,
+                    flags=re.IGNORECASE,
+                )
+                # 2. Match leading AND/OR: AND col ILIKE '%phrase%'
+                sql_text = re.sub(
+                    rf"\s*(?:AND|OR)\s*(?:[a-zA-Z0-9_\.]+\s*(?:ILIKE|LIKE|=|!=)\s*['\"]%?{re.escape(clean_phrase)}%?['\"])",
+                    "",
+                    sql_text,
+                    flags=re.IGNORECASE,
+                )
+                # 3. Match lone predicate: WHERE col ILIKE '%phrase%'
+                sql_text = re.sub(
+                    rf"\bWHERE\s+(?:[a-zA-Z0-9_\.]+\s*(?:ILIKE|LIKE|=|!=)\s*['\"]%?{re.escape(clean_phrase)}%?['\"])",
+                    "WHERE 1=1",
+                    sql_text,
+                    flags=re.IGNORECASE,
+                )
+                # Clean up any leftover artifacts
+                sql_text = re.sub(r"\bWHERE\s+(?:1=1\s+AND\s+)+", "WHERE ", sql_text, flags=re.IGNORECASE)
+                sql_text = re.sub(r"\bWHERE\s+1=1\s*(ORDER|GROUP|LIMIT|;|\Z)", r"\1", sql_text, flags=re.IGNORECASE)
+                sql_text = re.sub(r"\bWHERE\s+AND\b", "WHERE", sql_text, flags=re.IGNORECASE)
+                sql_text = re.sub(r"\bWHERE\s+ORDER\b", "ORDER", sql_text, flags=re.IGNORECASE)
+                sql_text = re.sub(r"\bWHERE\s+LIMIT\b", "LIMIT", sql_text, flags=re.IGNORECASE)
+                sql_text = re.sub(r"\bWHERE\s+GROUP\b", "GROUP", sql_text, flags=re.IGNORECASE)
+                sql_text = re.sub(r"\bWHERE\s*$", "", sql_text, flags=re.IGNORECASE)
+        return sql_text
+
+    @classmethod
     def _extract_sql_from_response(cls, text: str) -> str:
         """Extract clean SQL string from LLM markdown response."""
         # 1. Match ```sql ... ```
@@ -456,6 +499,9 @@ class CandidateSQLGenerator:
                                             sql_candidate,
                                             flags=re.IGNORECASE,
                                         )
+
+                        # Strip hallucinated WHERE filters matching configured table aliases (e.g. lob ILIKE '%cream%')
+                        sql_candidate = cls.sanitize_sql_table_aliases(sql_candidate, retrieval_result)
                         return sql_candidate
             except Exception as e:
                 logger.warning(f"LLM candidate SQL generation failed, falling back to deterministic compiler: {e}")

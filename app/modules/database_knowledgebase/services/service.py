@@ -1439,8 +1439,9 @@ class DatabaseKnowledgebaseService:
             )
             t_ret_ms = (time.perf_counter() - t_ret_start) * 1000.0
 
-            # Track resolved column alias mappings: alias_token -> {table, column, alias}
+            # Track resolved column and table alias mappings
             resolved_column_alias_mappings: List[Dict[str, str]] = []
+            resolved_table_alias_mappings: List[Dict[str, str]] = []
 
             # If user explicitly selected tables from interactive prompt
             if selected_tables:
@@ -1547,24 +1548,28 @@ class DatabaseKnowledgebaseService:
                                 logger.info(f"[FUZZY_TABLE_MATCH] Query token '{w}' fuzzy-matched table '{matched_tbl}'")
                                 break
 
-                if not explicit_table_found and db_table_aliases:
+                if db_table_aliases:
                     for tbl, aliases in db_table_aliases.items():
                         for alias in aliases:
                             alias_clean = alias.strip().lower()
                             if not alias_clean:
                                 continue
+                            alias_matched = False
                             if " " in alias_clean:
                                 if alias_clean in q_lower:
-                                    explicit_table_found = True
-                                    matched_alias_tables.add(tbl)
-                                    break
+                                    alias_matched = True
                             else:
                                 if alias_clean in q_words or (len(alias_clean) >= 4 and alias_clean in q_lower):
-                                    explicit_table_found = True
-                                    matched_alias_tables.add(tbl)
-                                    break
-                        if explicit_table_found:
-                            break
+                                    alias_matched = True
+                            if alias_matched:
+                                explicit_table_found = True
+                                matched_alias_tables.add(tbl)
+                                if not any(m.get("alias", "").lower() == alias_clean and m.get("table") == tbl for m in resolved_table_alias_mappings):
+                                    resolved_table_alias_mappings.append({
+                                        "alias": alias.strip(),
+                                        "table": tbl,
+                                    })
+                                    logger.info(f"[TABLE_ALIAS_MATCH] Query matched table alias '{alias}' -> table '{tbl}'")
 
                 # Also check column aliases: if user mentions a column alias, it uniquely identifies the intended table
                 # AND we must track the mapping so the SQL generator knows it's a column reference, NOT a filter value
@@ -2010,6 +2015,18 @@ class DatabaseKnowledgebaseService:
                 if filtered_docs:
                     docs_for_sql = filtered_docs
 
+            # Extract available column names across target docs for dynamic validation and predicate rewriting
+            target_column_names = []
+            for doc in docs_for_sql:
+                cols = doc.get("column_names") or []
+                if not cols and doc.get("text"):
+                    parsed_cols = re.findall(r"^\|\s*([a-zA-Z0-9_]+)\s*\|", doc.get("text", ""), re.MULTILINE)
+                    cols = [c for c in parsed_cols if c.lower() not in ("column", "column_name", "name", "---")]
+                for c in cols:
+                    c_clean = str(c).strip().lower()
+                    if c_clean and c_clean not in target_column_names:
+                        target_column_names.append(c_clean)
+
             # Dynamic Schema-Aware Query Enrichment (Rewrites ambiguous/informal questions using actual schema)
             from ..sql_generator.query_enricher import DynamicQueryEnricher
             enriched_user_query = await DynamicQueryEnricher.enrich_query(
@@ -2017,6 +2034,7 @@ class DatabaseKnowledgebaseService:
                 schema_docs=docs_for_sql,
                 selected_tables=selected_tables,
                 resolved_entities=resolved_dimension_entities,
+                table_alias_mappings=resolved_table_alias_mappings if resolved_table_alias_mappings else None,
             )
 
             candidate_sql_raw = await GroundedSQLGenerator.generate_sql(
@@ -2027,9 +2045,11 @@ class DatabaseKnowledgebaseService:
                 intent_analysis=intent_analysis,
                 schema_interpretation=schema_interpretation,
                 column_alias_mappings=resolved_column_alias_mappings if resolved_column_alias_mappings else None,
+                table_alias_mappings=resolved_table_alias_mappings if resolved_table_alias_mappings else None,
                 execution_strategy=execution_strategy,
                 selected_tables=selected_tables,
                 dialect=effective_dialect,
+                available_columns=target_column_names if target_column_names else None,
             )
             t_sql_ms = (time.perf_counter() - t_sql_start) * 1000.0
 
@@ -2128,12 +2148,24 @@ class DatabaseKnowledgebaseService:
                 return final_answer
 
             from ..sql_security.grounded_validator import GroundedSQLValidator
+            alias_words_for_strip = [m["alias"] for m in resolved_table_alias_mappings if m.get("alias")]
             try:
-                candidate_sql_clean = GroundedSQLValidator.validate_readonly_sql(candidate_sql_raw, dialect=effective_dialect)
+                candidate_sql_clean = GroundedSQLValidator.validate_readonly_sql(
+                    candidate_sql_raw,
+                    dialect=effective_dialect,
+                    table_alias_words=alias_words_for_strip if alias_words_for_strip else None,
+                    available_columns=target_column_names if target_column_names else None,
+                )
             except ValueError as val_err:
                 raise SQLValidationError(f"Security policy rejection: {val_err}")
 
             candidate_sql_clean = _apply_limit_policy(candidate_sql_clean)
+            if alias_words_for_strip:
+                candidate_sql_clean = GroundedSQLValidator.strip_table_alias_predicates(
+                    candidate_sql_clean,
+                    alias_words_for_strip,
+                    dialect=effective_dialect,
+                )
 
             logger.info(f"[GROUNDED_PIPELINE] Generated SQL: {candidate_sql_clean}")
             print(f"[GROUNDED_PIPELINE] Generated SQL: {candidate_sql_clean}")
@@ -2231,7 +2263,11 @@ class DatabaseKnowledgebaseService:
                 # Try executing fast hint repair if available
                 if repaired_sql:
                     try:
-                        repaired_sql_clean = GroundedSQLValidator.validate_readonly_sql(repaired_sql, dialect=effective_dialect)
+                        repaired_sql_clean = GroundedSQLValidator.validate_readonly_sql(
+                            repaired_sql,
+                            dialect=effective_dialect,
+                            available_columns=target_column_names if target_column_names else None,
+                        )
                         repaired_sql_clean = _apply_limit_policy(repaired_sql_clean)
 
                         parsed_repaired = SQLASTParser.parse_sql(repaired_sql_clean, dialect=effective_dialect)
@@ -2316,7 +2352,9 @@ class DatabaseKnowledgebaseService:
                                 resolved_entities=resolved_dimension_entities,
                                 intent_analysis=intent_analysis,
                                 column_alias_mappings=resolved_column_alias_mappings if resolved_column_alias_mappings else None,
+                                table_alias_mappings=resolved_table_alias_mappings if resolved_table_alias_mappings else None,
                                 dialect=effective_dialect,
+                                available_columns=target_column_names if target_column_names else None,
                             )
                             repair_mode = "grounded_llm_repaired"
                         except Exception as repair_exc:
@@ -2327,12 +2365,23 @@ class DatabaseKnowledgebaseService:
                             break
 
                         try:
-                            repaired_sql_clean = GroundedSQLValidator.validate_readonly_sql(repaired_sql, dialect=effective_dialect)
+                            repaired_sql_clean = GroundedSQLValidator.validate_readonly_sql(
+                                repaired_sql,
+                                dialect=effective_dialect,
+                                table_alias_words=alias_words_for_strip if alias_words_for_strip else None,
+                                available_columns=target_column_names if target_column_names else None,
+                            )
                         except ValueError as val_err:
                             logger.error(f"[GROUNDED_AUTO_REPAIR] Repaired SQL failed security validation: {val_err}")
                             raise exec_err
 
                         repaired_sql_clean = _apply_limit_policy(repaired_sql_clean)
+                        if alias_words_for_strip:
+                            repaired_sql_clean = GroundedSQLValidator.strip_table_alias_predicates(
+                                repaired_sql_clean,
+                                alias_words_for_strip,
+                                dialect=effective_dialect,
+                            )
 
                         parsed_repaired = SQLASTParser.parse_sql(repaired_sql_clean, dialect=effective_dialect)
                         cand_sql = ValidatedCandidateSQL(
@@ -2404,7 +2453,11 @@ class DatabaseKnowledgebaseService:
                             where_node.set("this", pruned_where)
                             relaxed_sql = parsed_for_relax.sql(dialect=effective_dialect)
 
-                            relaxed_sql_clean = GroundedSQLValidator.validate_readonly_sql(relaxed_sql, dialect=effective_dialect)
+                            relaxed_sql_clean = GroundedSQLValidator.validate_readonly_sql(
+                                relaxed_sql,
+                                dialect=effective_dialect,
+                                available_columns=target_column_names if target_column_names else None,
+                            )
                             relaxed_sql_clean = _apply_limit_policy(relaxed_sql_clean)
                             parsed_relaxed = SQLASTParser.parse_sql(relaxed_sql_clean, dialect=effective_dialect)
                             cand_relaxed = ValidatedCandidateSQL(
@@ -4443,12 +4496,24 @@ class DatabaseKnowledgebaseService:
                 canonical_schema=canonical_schema,
             )
 
+        table_alias_mappings = []
+        try:
+            db_aliases = await self.get_table_aliases(kb_id=kb_id)
+            if db_aliases:
+                for tbl, aliases in db_aliases.items():
+                    for a in aliases:
+                        if a and a.strip():
+                            table_alias_mappings.append({"alias": a.strip(), "table": tbl})
+        except Exception:
+            pass
+
         from ..sql_generator.query_enricher import DynamicQueryEnricher
         return await DynamicQueryEnricher.generate_3_rephrasings(
             user_query=user_query,
             schema_docs=schema_docs,
             selected_tables=selected_tables,
             resolved_entities=resolved_entities,
+            table_alias_mappings=table_alias_mappings if table_alias_mappings else None,
         )
 
 

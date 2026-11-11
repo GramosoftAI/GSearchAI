@@ -119,6 +119,15 @@ Rules:
      * CORRECT: WHERE stage ILIKE '%complete%' AND capex_revex ILIKE '%capex%' AND finance_year ILIKE '%2026%'
      * WRONG:   WHERE stage = 'complete' OR stage ILIKE 'complete' (fails to match 'Completed'!)
    - For numeric IDs (e.g. `id = 123`) and booleans (`active = TRUE`), use `=`. But for ALL text/character/enum values, use ONLY `ILIKE` with `%...%`.
+16. WORKFLOW STAGES & STATUSES ARE VALUES, NEVER BOOLEAN COLUMNS (CRITICAL):
+   - Status, stage, or lifecycle state words (such as 'approved', 'pending', 'rejected', 'completed', 'submitted', 'closed', 'draft', 'cancelled') are STRING VALUES stored in status/stage columns (e.g. `stage`, `status`, `state`, `workflow_state`, `phase`).
+   - You MUST NEVER generate boolean column checks for status words (e.g. NEVER write `WHERE approved = TRUE`, `WHERE pending = TRUE`, `WHERE completed = TRUE`, etc.).
+   - Check the table's schema: if the table has a `stage` column, query `stage ILIKE '%approved%'`! If the table has a `status` column, query `status ILIKE '%approved%'`.
+   - Only use `= TRUE` or `= FALSE` for genuine boolean flags (like `active = TRUE`, `deleted = FALSE`) when the user asks for active/deleted records.
+17. NUMERIC ZERO ("0") IS A NUMBER, NEVER BOOLEAN FALSE (CRITICAL):
+   - When the user query specifies a number or zero (e.g. 'budget available in 0', 'count is 0', 'balance = 0'), match with numeric comparisons (`= 0`, `<= 0`, `> 0`) on numeric amount/budget/balance columns (e.g. `budget = 0` or `balance = 0` or `COALESCE(budget, 0) = 0`).
+   - NEVER convert a number or zero into a boolean flag like `budgeted = FALSE` or `col = FALSE`!
+   - If the user did not say "true" or "false", do NOT generate a boolean condition!
 """
 
         original_q = kwargs.get("original_question")
@@ -228,6 +237,23 @@ Rules:
                     f"'how many completed in {alias}', the SQL should be: WHERE {column} ILIKE 'completed').\n"
                 )
 
+        table_alias_mappings = kwargs.get("table_alias_mappings")
+        if table_alias_mappings:
+            user_content += "\n\nCRITICAL TABLE ALIAS RESOLUTION:\n"
+            user_content += (
+                "The following tokens in the user's question are ALTERNATIVE NAMES (aliases) for database tables.\n"
+                "They are TABLE REFERENCES, NOT column filter values. You MUST:\n"
+                "1. Query the corresponding target table in the FROM clause.\n"
+                "2. NEVER use any table alias token as a WHERE clause filter value on any column (e.g. NEVER filter `lob ILIKE '%alias%'` or `name ILIKE '%alias%'` using the alias token).\n"
+                "3. Extract filter values ONLY from the other words in the question.\n\n"
+            )
+            for mapping in table_alias_mappings:
+                alias = mapping.get("alias", "")
+                table = mapping.get("table", "")
+                user_content += (
+                    f"- '{alias}' is an alternative name for table '{table}'.\n"
+                    f"  Query table '{table}', but NEVER use '{alias}' as a filter value in WHERE conditions.\n"
+                )
 
         user_content += "\nSQL:"
 
@@ -271,6 +297,15 @@ Rules:
         if sql.startswith("```"):
             sql = re.sub(r"^```(?:sql|postgresql)?\s*", "", sql, flags=re.IGNORECASE)
             sql = re.sub(r"\s*```$", "", sql).strip()
+
+        available_cols = kwargs.get("available_columns") or [c for d in retrieved_docs for c in d.get("column_names", [])]
+        from ..sql_security.grounded_validator import GroundedSQLValidator
+        if available_cols:
+            sql = GroundedSQLValidator.fix_hallucinated_boolean_predicates(sql, available_cols, dialect=clean_d)
+
+        alias_words = [m.get("alias", "") for m in (table_alias_mappings or []) if isinstance(m, dict) and m.get("alias")]
+        if alias_words:
+            sql = GroundedSQLValidator.strip_table_alias_predicates(sql, alias_words, dialect=clean_d)
 
         logger.info(f"[GroundedSQLGenerator] Generated SQL: {sql}")
         return sql
@@ -384,6 +419,24 @@ Rules:
                     f"  In the SQL, use '{table}.{column}' (NOT '{alias}' as a value).\n"
                 )
 
+        table_alias_mappings = kwargs.get("table_alias_mappings")
+        if table_alias_mappings:
+            user_content += "\n\nCRITICAL TABLE ALIAS RESOLUTION:\n"
+            user_content += (
+                "The following tokens in the user's question are ALTERNATIVE NAMES (aliases) for database tables.\n"
+                "They are TABLE REFERENCES, NOT column filter values. You MUST:\n"
+                "1. Query the corresponding target table in the FROM clause.\n"
+                "2. NEVER use any table alias token as a WHERE clause filter value on any column.\n"
+                "3. Extract filter values ONLY from the other words in the question.\n\n"
+            )
+            for mapping in table_alias_mappings:
+                alias = mapping.get("alias", "")
+                table = mapping.get("table", "")
+                user_content += (
+                    f"- '{alias}' is an alternative name for table '{table}'.\n"
+                    f"  Query table '{table}', but NEVER use '{alias}' as a filter value in WHERE conditions.\n"
+                )
+
         user_content += "\nCorrected SQL:"
 
         chosen_model = model or getattr(settings, "sql_generation_model", "deepseek-ai/DeepSeek-V3")
@@ -403,6 +456,15 @@ Rules:
         if repaired_sql.startswith("```"):
             repaired_sql = re.sub(r"^```(?:sql|postgresql)?\s*", "", repaired_sql, flags=re.IGNORECASE)
             repaired_sql = re.sub(r"\s*```$", "", repaired_sql).strip()
+
+        available_cols = kwargs.get("available_columns") or [c for d in retrieved_docs for c in d.get("column_names", [])]
+        from ..sql_security.grounded_validator import GroundedSQLValidator
+        if available_cols:
+            repaired_sql = GroundedSQLValidator.fix_hallucinated_boolean_predicates(repaired_sql, available_cols, dialect=clean_d)
+
+        alias_words = [m.get("alias", "") for m in (table_alias_mappings or []) if isinstance(m, dict) and m.get("alias")]
+        if alias_words:
+            repaired_sql = GroundedSQLValidator.strip_table_alias_predicates(repaired_sql, alias_words, dialect=clean_d)
 
         logger.info(f"[GroundedSQLGenerator] Repaired SQL: {repaired_sql}")
         return repaired_sql
