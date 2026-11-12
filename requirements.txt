@@ -193,6 +193,7 @@ pyflakes==3.1.0
 Pygments==2.20.0
 PyJWT==2.12.1
 PyMySQL==1.2.3
+pymssql>=2.3.0
 PyPDF2==3.0.1
 pypdfium2>=4.30.0,<5.0.0
 pyperclip==1.11.0

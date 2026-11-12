@@ -369,6 +369,17 @@ class QueryPlanner:
         q_lower = user_query.lower()
         q_tokens = set(re.findall(r"\b[a-zA-Z0-9_]+\b", q_lower))
 
+        # Extract active table aliases (alternative words) from retrieval result XML to prevent treating them as column literal filters
+        configured_table_alias_words: Set[str] = set()
+        retrieval_xml = getattr(retrieval_result, "untrusted_boundary_text", "") or ""
+        if retrieval_xml:
+            for phrase in re.findall(r'user_phrase=["\']([^"\']+)["\']', retrieval_xml, re.IGNORECASE):
+                clean_phrase = phrase.strip().lower()
+                if clean_phrase:
+                    configured_table_alias_words.add(clean_phrase)
+                    for w in clean_phrase.split():
+                        configured_table_alias_words.add(w)
+
         # 1.1 Enterprise Semantic Entity to Table Resolution (Phase 6.5 & Schema-Grounded)
         matched_entity_tables: Dict[str, str] = {}
         used_for_entity: Set[str] = set()
@@ -693,6 +704,8 @@ class QueryPlanner:
         # Check if query contains an entity literal mention (e.g. "details of Kannan", "What is Girinath phone number?")
         from .entity_value_resolver import EntityValueResolver
         literals = EntityValueResolver.extract_literal_candidates(user_query, canonical_schema=canonical_schema)
+        if literals and configured_table_alias_words:
+            literals = [lit for lit in literals if lit.lower() not in configured_table_alias_words]
         anchor_alias = None
 
         # 1. First, check if disambiguation already identified a specific person table and user ID(s)
@@ -2617,6 +2630,8 @@ class QueryPlanner:
 
             from .entity_value_resolver import EntityValueResolver
             literals = EntityValueResolver.extract_literal_candidates(user_query, canonical_schema=canonical_schema)
+            if literals and configured_table_alias_words:
+                literals = [lit for lit in literals if lit.lower() not in configured_table_alias_words]
             if literals:
                 for lit in literals:
                     # If this literal was already resolved by disambiguation to IDs, skip literal fallback
@@ -3067,6 +3082,14 @@ class QueryPlanner:
         seen_pred = set()
         dedup_predicates = []
         for p in predicates:
+            # Filter out any predicate where value equals or contains a configured table alias word
+            if configured_table_alias_words and p.value is not None:
+                val_clean = str(p.value).strip("%'\" ").lower()
+                if val_clean in configured_table_alias_words:
+                    logger.info(
+                        f"[PLANNER] Stripped predicate {p.table_alias}.{p.column_name} {p.operator} '{p.value}' because '{val_clean}' is a configured table alias"
+                    )
+                    continue
             key = (p.table_alias, p.column_name, p.operator, str(p.value))
             if key not in seen_pred:
                 seen_pred.add(key)

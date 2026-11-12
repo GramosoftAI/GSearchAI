@@ -51,7 +51,14 @@ class GroundedSQLGenerator:
             for d in retrieved_docs
         )
 
-        system_prompt = """You generate accurate PostgreSQL SELECT queries for a database question.
+        dialect = kwargs.get("dialect", "postgres")
+        clean_d = (dialect or "postgres").lower()
+        is_tsql = any(k in clean_d for k in ("sqlserver", "mssql", "tsql"))
+        db_name = "Microsoft SQL Server (T-SQL)" if is_tsql else ("MySQL" if any(k in clean_d for k in ("mysql", "mariadb")) else "PostgreSQL")
+        limit_rule = "6. MANDATORY ROW LIMITING: Microsoft SQL Server (T-SQL) does NOT support LIMIT! You MUST use SELECT TOP (50) at the start of the query (e.g. `SELECT TOP (50) col1, col2 ...`), or `SELECT TOP (1)` for single-row aggregates. NEVER use LIMIT." if is_tsql else "6. MANDATORY LIMIT: Always include a LIMIT clause at the end of the query (e.g. `LIMIT 50` for lists, or `LIMIT 1` for single-row aggregates) to ensure safety."
+        like_op = "LIKE" if is_tsql else "ILIKE"
+
+        system_prompt = f"""You generate accurate {db_name} SELECT queries for a database question.
 Rules:
 1. Use only tables and columns explicitly present in the supplied schema context. NEVER invent or hallucinate table names or columns.
 2. Strictly check the Columns table of each schema document. Always use the exact column names present in the schema.
@@ -59,24 +66,30 @@ Rules:
    - Only join tables along valid foreign key paths and bridge tables present in the schema context. NEVER invent direct joins between unrelated tables (e.g., `types.id = projects.id`) or invent columns like `p.creator_id`. Always join through intermediate fact/transaction tables (e.g. `work_packages`) that contain foreign keys to both tables.
 3. INCLUDE DESCRIPTIVE COLUMNS: When querying records for details, status, or progress, always project meaningful human-readable columns (e.g., name, subject, title, description, status, dates, assignees) alongside IDs so the answer can be clearly understood.
 4. BOOLEAN OPERATOR PRECEDENCE (MANDATORY): When combining OR conditions with AND in a WHERE clause, you MUST wrap all OR conditions in parentheses!
-   Example: WHERE (col1 ILIKE '%term%' OR col2 ILIKE '%term%') AND date_col = '2026-10-16'
+   Example: WHERE (col1 {like_op} '%term%' OR col2 {like_op} '%term%') AND date_col = '2026-10-16'
    Never omit parentheses around the OR group, as AND binds tighter than OR.
-5. DATE HANDLING: If a specific date like 'YYYY-MM-DD' is requested, match with date casting (e.g. `col::date = 'YYYY-MM-DD'`).
-6. MANDATORY LIMIT: Always include a LIMIT clause at the end of the query (e.g. `LIMIT 50` for lists, or `LIMIT 1` for single-row aggregates) to ensure safety.
+5. DATE HANDLING: If a specific date like 'YYYY-MM-DD' is requested, match with date casting or comparisons.
+{limit_rule}
 7. Return only one single SQL query without Markdown code fences, commentary, or multiple statements.
-8. SINGLE TABLE SUFFICIENCY & MINIMAL JOINS (CRITICAL):
-   - Check if the requested projection attribute (e.g. COUNT(*), amount, code, status, price) AND an entity/filter column (e.g. status, name, title) both exist directly on one of the candidate tables.
-   - If a candidate table already has the required columns (e.g. table `ipa_budget_clarification` has `status` and can directly answer `COUNT(*)` with `WHERE status = 'pending'`), query that table DIRECTLY!
-   - NEVER join additional tables (such as `ipa_budget`, `ipa_auditlog`, or master tables) unless the question explicitly asks for attributes from those other tables! Unnecessary joins filter out valid rows and produce 0 results.
-   - Only perform JOINs when the requested information is genuinely split across multiple tables.
+8. SINGLE TABLE SUFFICIENCY vs MANDATORY FOREIGN KEY JOINS (CRITICAL):
+   - Single table sufficiency applies ONLY when all requested attributes and filters natively belong to the same table (e.g. stage, amount, request date).
+   - FOREIGN KEYS ARE SURROGATE INTEGER IDs, NOT BUSINESS CODES OR NAMES:
+     Columns ending in `_id` (e.g., `budget_id`, `project_id`, `user_id`, `customer_id`) store internal database integer IDs (1, 2, 3...), NEVER business codes or display names.
+   - When a user query mentions a business code, number, name, or title of a referenced entity (e.g., 'budgetcode "5010172804"', 'project "Alpha"', 'vendor "TechCorp"'):
+     * You MUST JOIN the referenced table along the documented FOREIGN KEY:
+       `FROM cm_budget_requests br JOIN cm_budgets b ON br.budget_id = b.id`
+     * And filter on the referenced table's actual code/name column:
+       `WHERE b.code {like_op} '%5010172804%'` (or `b.code = '5010172804'`)
+     * NEVER filter the foreign key ID column directly with external business codes (e.g. NEVER write `WHERE budget_id = 5010172804` or `WHERE budget_id = '5010172804'`).
+   - Only avoid JOINs when all requested attributes exist on one table and no foreign entity codes or attributes are referenced.
 9. DYNAMIC MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
    When matching any free-text, entity names, product items, brands, titles, categories, or literal phrases (such as 'cream & IPA', 'red wine', person names, or item codes):
-   - NEVER fragment a multi-word literal across multiple different columns using AND (e.g. NEVER do `col1 ILIKE '%part1%' AND col2 ILIKE '%part2%' AND col3 ILIKE '%part3%'`).
-   - Match the target string against a single candidate column using ILIKE:
-     * For arbitrary multi-word or separated phrases: `(col ILIKE '%word1%' AND col ILIKE '%word2%')` or `col ILIKE '%word1%word2%'` ON THE SAME COLUMN.
-     * Or test across alternative candidate columns using OR: `(col_a ILIKE '%literal%' OR col_b ILIKE '%literal%')`.
+   - NEVER fragment a multi-word literal across multiple different columns using AND (e.g. NEVER do `col1 {like_op} '%part1%' AND col2 {like_op} '%part2%' AND col3 {like_op} '%part3%'`).
+   - Match the target string against a single candidate column using {like_op}:
+     * For arbitrary multi-word or separated phrases: `(col {like_op} '%word1%' AND col {like_op} '%word2%')` or `col {like_op} '%word1%word2%'` ON THE SAME COLUMN.
+     * Or test across alternative candidate columns using OR: `(col_a {like_op} '%literal%' OR col_b {like_op} '%literal%')`.
    - If matching split name fields (like `firstname` and `lastname`), match against the concatenated whole:
-     `CONCAT_WS(' ', col_first, col_last) ILIKE '%full literal%'` or `(col_first ILIKE '%word1%' AND col_last ILIKE '%word2%')`.
+     `CONCAT(col_first, ' ', col_last) {like_op} '%full literal%'` or `(col_first {like_op} '%word1%' AND col_last {like_op} '%word2%')`.
    - This ensures dynamic and robust matching for any names, products, items, or descriptions regardless of spacing, special characters (&, -), or casing.
 10. "WORKING ON / UNDER" vs "MEMBERS OF" A PROJECT:
    - When the user asks who is "working on", "working under", "doing work on", or "assigned to" a project/entity, join the active tasks/work items table (e.g., `work_packages`, `tasks`, `issues`, `tickets` via `assigned_to_id` or `author_id`) where actual work assignments reside.
@@ -112,9 +125,22 @@ Rules:
      * CORRECT: WHERE stage ILIKE '%complete%' AND capex_revex ILIKE '%capex%' AND finance_year ILIKE '%2026%'
      * WRONG:   WHERE stage = 'complete' OR stage ILIKE 'complete' (fails to match 'Completed'!)
    - For numeric IDs (e.g. `id = 123`) and booleans (`active = TRUE`), use `=`. But for ALL text/character/enum values, use ONLY `ILIKE` with `%...%`.
+16. STRICT BOOLEAN & STATUS POLICY (CRITICAL):
+   - Status, stage, or lifecycle state words (such as 'approved', 'pending', 'rejected', 'completed', 'submitted', 'closed', 'draft', 'cancelled') are STRING VALUES stored in status/stage columns (e.g. `stage`, `status`, `state`, `workflow_state`, `phase`).
+   - You MUST NEVER generate boolean column checks for status words (e.g. NEVER write `WHERE approved = TRUE`, `WHERE pending = TRUE`, `WHERE completed = TRUE`, etc.). Check the table's schema: if the table has a `stage` column, query `stage ILIKE '%approved%'`! If the table has a `status` column, query `status ILIKE '%approved%'`.
+   - NEVER automatically add boolean filters like `deleted = FALSE`, `active = TRUE`, or `is_active = TRUE` unless the user question EXPLICITLY asks for active, inactive, deleted, or non-deleted records!
+   - If the user did not explicitly mention "active", "activated", "deleted", or "trash", you MUST NOT filter on `deleted` or `active` columns at all!
+17. NUMERIC ZERO ("0") IS A NUMBER, NEVER BOOLEAN FALSE (CRITICAL):
+   - When the user query specifies a number or zero (e.g. 'budget available in 0', 'count is 0', 'balance = 0'), match with numeric comparisons (`= 0`, `<= 0`, `> 0`) on numeric amount/budget/balance columns (e.g. `budget = 0` or `balance = 0` or `COALESCE(budget, 0) = 0`).
+   - NEVER convert a number or zero into a boolean flag like `budgeted = FALSE` or `col = FALSE`!
+   - If the user did not say "true" or "false", do NOT generate a boolean condition!
 """
 
-        user_content = f"Schema context:\n{context}\n\nQuestion: {question}"
+        original_q = kwargs.get("original_question")
+        if original_q and original_q.strip() != question.strip():
+            user_content = f"Schema context:\n{context}\n\nOriginal User Question: {original_q}\nEnriched Schema-Grounded Intent: {question}"
+        else:
+            user_content = f"Schema context:\n{context}\n\nQuestion: {question}"
 
         # Consolidate all resolved entities dynamically
         all_resolved: List[Dict[str, Any]] = list(resolved_entities) if resolved_entities else []
@@ -217,6 +243,23 @@ Rules:
                     f"'how many completed in {alias}', the SQL should be: WHERE {column} ILIKE 'completed').\n"
                 )
 
+        table_alias_mappings = kwargs.get("table_alias_mappings")
+        if table_alias_mappings:
+            user_content += "\n\nCRITICAL TABLE ALIAS RESOLUTION:\n"
+            user_content += (
+                "The following tokens in the user's question are ALTERNATIVE NAMES (aliases) for database tables.\n"
+                "They are TABLE REFERENCES, NOT column filter values. You MUST:\n"
+                "1. Query the corresponding target table in the FROM clause.\n"
+                "2. NEVER use any table alias token as a WHERE clause filter value on any column (e.g. NEVER filter `lob ILIKE '%alias%'` or `name ILIKE '%alias%'` using the alias token).\n"
+                "3. Extract filter values ONLY from the other words in the question.\n\n"
+            )
+            for mapping in table_alias_mappings:
+                alias = mapping.get("alias", "")
+                table = mapping.get("table", "")
+                user_content += (
+                    f"- '{alias}' is an alternative name for table '{table}'.\n"
+                    f"  Query table '{table}', but NEVER use '{alias}' as a filter value in WHERE conditions.\n"
+                )
 
         user_content += "\nSQL:"
 
@@ -261,6 +304,15 @@ Rules:
             sql = re.sub(r"^```(?:sql|postgresql)?\s*", "", sql, flags=re.IGNORECASE)
             sql = re.sub(r"\s*```$", "", sql).strip()
 
+        available_cols = kwargs.get("available_columns") or [c for d in retrieved_docs for c in d.get("column_names", [])]
+        from ..sql_security.grounded_validator import GroundedSQLValidator
+        if available_cols:
+            sql = GroundedSQLValidator.fix_hallucinated_boolean_predicates(sql, available_cols, dialect=clean_d)
+
+        alias_words = [m.get("alias", "") for m in (table_alias_mappings or []) if isinstance(m, dict) and m.get("alias")]
+        if alias_words:
+            sql = GroundedSQLValidator.strip_table_alias_predicates(sql, alias_words, dialect=clean_d)
+
         logger.info(f"[GroundedSQLGenerator] Generated SQL: {sql}")
         return sql
 
@@ -285,8 +337,15 @@ Rules:
             for d in retrieved_docs
         )
 
-        system_prompt = """You are an expert PostgreSQL database engineer repairing a failed SQL query.
-The user asked a question, but the generated SQL query failed when executed against PostgreSQL with a specific error.
+        dialect = kwargs.get("dialect", "postgres")
+        clean_d = (dialect or "postgres").lower()
+        is_tsql = any(k in clean_d for k in ("sqlserver", "mssql", "tsql"))
+        db_name = "Microsoft SQL Server (T-SQL)" if is_tsql else ("MySQL" if any(k in clean_d for k in ("mysql", "mariadb")) else "PostgreSQL")
+        limit_rule = "7. MANDATORY ROW LIMITING: Microsoft SQL Server (T-SQL) does NOT support LIMIT! You MUST use SELECT TOP (50) at the start of the query (e.g. `SELECT TOP (50) col1, col2 ...`), or `SELECT TOP (1)` for single-row aggregates. NEVER use LIMIT." if is_tsql else "7. Always include LIMIT 50 (or LIMIT 1 for aggregates) at the end."
+        like_op = "LIKE" if is_tsql else "ILIKE"
+
+        system_prompt = f"""You are an expert {db_name} database engineer repairing a failed SQL query.
+The user asked a question, but the generated SQL query failed when executed against {db_name} with a specific error.
 Your task is to fix the SQL query so that it successfully executes and accurately answers the question.
 Rules:
 1. Examine the error message carefully. If a column or table does not exist, consult the supplied Schema context and find the actual columns in that table (e.g. check for split name fields like firstname/lastname or alternate column names) or adjust the join/projections. If a table stores names as separate fields (e.g. firstname/lastname), use CONCAT or login/username instead of a non-existent name column.
@@ -294,34 +353,30 @@ Rules:
 3. DYNAMIC MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
    When matching free-text, entity names, products, items, titles, or categories:
    - NEVER split a multi-word entity or literal into conjoined AND conditions across multiple different columns.
-   - Match the target string against a single candidate column with ILIKE: `(column_name ILIKE '%word1%' AND column_name ILIKE '%word2%')` or `column_name ILIKE '%word1%word2%'`.
-   - Or test across alternative candidate columns with OR: `(col_a ILIKE '%term%' OR col_b ILIKE '%term%')`.
-   - If a table has split names, match against `CONCAT_WS(' ', first, last) ILIKE '%full term%'`.
-4. SINGLE TABLE SUFFICIENCY:
-   - If the requested projection column and the filter column both exist directly on one table, remove unnecessary joins and query that table directly.
+   - Match the target string against a single candidate column with {like_op}: `(column_name {like_op} '%word1%' AND column_name {like_op} '%word2%')` or `column_name {like_op} '%word1%word2%'`.
+   - Or test across alternative candidate columns with OR: `(col_a {like_op} '%term%' OR col_b {like_op} '%term%')`.
+   - If a table has split names, match against `CONCAT(first, ' ', last) {like_op} '%full term%'`.
+4. SINGLE TABLE SUFFICIENCY vs FOREIGN KEY JOINS:
+   - If the requested projection column and filter both exist directly on one table, avoid unnecessary joins.
+   - BUT if the user question references a code, number, or name of a related foreign entity (e.g. 'budgetcode 5010172804', 'project Alpha'), do NOT filter foreign key `_id` columns directly with business codes! You MUST JOIN the parent table on the foreign key (`br.budget_id = b.id`) and filter on the parent table's code column (`b.code ILIKE '%5010172804%'`).
 5. "WORKING ON / UNDER" vs "MEMBERS OF" A PROJECT:
    - When the user asks who is "working on", "working under", "doing work on", or "assigned to" a project/entity, join the active tasks/work items table (e.g., `work_packages`, `tasks`, `issues`, `tickets` via `assigned_to_id` or `author_id`) where actual work assignments reside.
    - Use the membership roster table (e.g., `members`) only when the user specifically asks for "members", "membership list", or "team permissions".
-5. POSTGRESQL SELECT DISTINCT & ORDER BY RULE:
-   - In PostgreSQL, when using `SELECT DISTINCT`, every expression in `ORDER BY` MUST appear in the `SELECT` list.
-     For example: `SELECT DISTINCT col::date ... ORDER BY col::date DESC` is valid; `SELECT DISTINCT col::date ... ORDER BY col DESC` will throw a syntax error.
-     If selecting the single latest or earliest record with `LIMIT 1`, use `SELECT col::date ... ORDER BY col DESC LIMIT 1` without `DISTINCT`.
 6. POLYMORPHIC AND DUAL ASSOCIATIONS (`entity_type` / `entity_id`):
    - Tables tracking activities, timesheets, or logs (e.g. `time_entries`, `journals`) frequently store parent object links in `(entity_type = 'WorkPackage' AND entity_id = wp.id)` where direct foreign keys like `work_package_id` can be NULL. Check both columns:
      `ON (te.work_package_id = wp.id OR (te.entity_type = 'WorkPackage' AND te.entity_id = wp.id))`
    - Also prefer joining `projects` via `te.project_id = p.id` and using `LEFT JOIN` for optional time logs.
-7. Always include LIMIT 50 (or LIMIT 1 for aggregates) at the end.
-8. MANDATORY CASE-INSENSITIVE STRING MATCHING (USE ILIKE WITH WILDCARDS):
-   - In PostgreSQL, `=` is strictly case-sensitive. Always use `ILIKE` for all string/text/varchar value checks, statuses, categories, stages, types, names, codes, financial years, and literal filters. NEVER use `=` for string/text values!
-   - ALWAYS wrap text/status/stage and year filters with wildcards (`%...%`) (e.g. `stage ILIKE '%complete%'`, `capex_revex ILIKE '%capex%'`, `finance_year ILIKE '%2026%'`) to handle tense differences ('complete' vs 'Completed') and prefixes ('FY 2025-2026').
-9. Return ONLY one single corrected PostgreSQL SELECT query without Markdown code fences, commentary, or multiple statements.
+{limit_rule}
+8. STRING MATCHING:
+   - Always wrap text/status/stage and year filters with wildcards (`%...%`) (e.g. `stage {like_op} '%complete%'`, `finance_year {like_op} '%2026%'`) to handle variations.
+9. Return ONLY one single corrected {db_name} SELECT query without Markdown code fences, commentary, or multiple statements.
 """
 
         user_content = (
             f"Schema context:\n{context}\n\n"
             f"Question: {question}\n\n"
             f"Failed SQL Query:\n{failed_sql}\n\n"
-            f"PostgreSQL Execution Error:\n{error_message}\n\n"
+            f"{db_name} Execution Error:\n{error_message}\n\n"
         )
 
         all_resolved: List[Dict[str, Any]] = list(resolved_entities) if resolved_entities else []
@@ -371,6 +426,24 @@ Rules:
                     f"  In the SQL, use '{table}.{column}' (NOT '{alias}' as a value).\n"
                 )
 
+        table_alias_mappings = kwargs.get("table_alias_mappings")
+        if table_alias_mappings:
+            user_content += "\n\nCRITICAL TABLE ALIAS RESOLUTION:\n"
+            user_content += (
+                "The following tokens in the user's question are ALTERNATIVE NAMES (aliases) for database tables.\n"
+                "They are TABLE REFERENCES, NOT column filter values. You MUST:\n"
+                "1. Query the corresponding target table in the FROM clause.\n"
+                "2. NEVER use any table alias token as a WHERE clause filter value on any column.\n"
+                "3. Extract filter values ONLY from the other words in the question.\n\n"
+            )
+            for mapping in table_alias_mappings:
+                alias = mapping.get("alias", "")
+                table = mapping.get("table", "")
+                user_content += (
+                    f"- '{alias}' is an alternative name for table '{table}'.\n"
+                    f"  Query table '{table}', but NEVER use '{alias}' as a filter value in WHERE conditions.\n"
+                )
+
         user_content += "\nCorrected SQL:"
 
         chosen_model = model or getattr(settings, "sql_generation_model", "deepseek-ai/DeepSeek-V3")
@@ -390,6 +463,15 @@ Rules:
         if repaired_sql.startswith("```"):
             repaired_sql = re.sub(r"^```(?:sql|postgresql)?\s*", "", repaired_sql, flags=re.IGNORECASE)
             repaired_sql = re.sub(r"\s*```$", "", repaired_sql).strip()
+
+        available_cols = kwargs.get("available_columns") or [c for d in retrieved_docs for c in d.get("column_names", [])]
+        from ..sql_security.grounded_validator import GroundedSQLValidator
+        if available_cols:
+            repaired_sql = GroundedSQLValidator.fix_hallucinated_boolean_predicates(repaired_sql, available_cols, dialect=clean_d)
+
+        alias_words = [m.get("alias", "") for m in (table_alias_mappings or []) if isinstance(m, dict) and m.get("alias")]
+        if alias_words:
+            repaired_sql = GroundedSQLValidator.strip_table_alias_predicates(repaired_sql, alias_words, dialect=clean_d)
 
         logger.info(f"[GroundedSQLGenerator] Repaired SQL: {repaired_sql}")
         return repaired_sql

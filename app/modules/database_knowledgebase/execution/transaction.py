@@ -69,7 +69,7 @@ class TransactionManager:
         sql_working = parameterized_sql
 
         # If any parameter is a time object/string, ensure comparisons against columns are cast to time (PostgreSQL only)
-        if dialect not in ("mysql", "mariadb"):
+        if dialect not in ("mysql", "mariadb", "sqlserver", "mssql", "tsql"):
             for key, raw_val in parameters.items():
                 coerced_check = cls._coerce_param_value(raw_val)
                 if isinstance(coerced_check, datetime.time):
@@ -90,7 +90,7 @@ class TransactionManager:
             coerced_val = cls._coerce_param_value(raw_val)
             pos_args.append(coerced_val)
             param_keys_ordered.append(key)
-            if dialect in ("mysql", "mariadb"):
+            if dialect in ("mysql", "mariadb", "sqlserver", "mssql", "tsql"):
                 return "%s"
             return f"${len(pos_args)}"
 
@@ -109,7 +109,7 @@ class TransactionManager:
     ) -> List[Any]:
         """
         Execute query inside a read-only transaction/execution context.
-        Supports both asyncpg (PostgreSQL) and asyncmy (MariaDB/MySQL).
+        Supports asyncpg (PostgreSQL), pymssql (MS SQL Server), and asyncmy (MariaDB/MySQL).
         """
         try:
             if isinstance(conn, asyncpg.Connection):
@@ -131,6 +131,59 @@ class TransactionManager:
                         str_args = [str(a) if not isinstance(a, (bytes,)) else a for a in args]
                         records = await conn.fetch(sql, *str_args, timeout=timeout_seconds)
                         return records
+                    except (asyncpg.IndeterminateDatatypeError, asyncpg.PostgresError) as pg_err:
+                        err_msg = str(pg_err).lower()
+                        if "could not determine data type of parameter" in err_msg or isinstance(pg_err, asyncpg.IndeterminateDatatypeError):
+                            logger.warning(f"Indeterminate parameter data type in asyncpg ({pg_err}). Dynamically adapting SQL parameters...")
+                            # 1. Attempt casting parameters: $1 -> CAST($1 AS TEXT)
+                            curr_sql = sql
+                            matches = re.findall(r"\$(\d+)\b", curr_sql)
+                            for param_num in set(matches):
+                                curr_sql = re.sub(
+                                    rf"(?<!CAST\()(?<!::)\${param_num}\b",
+                                    f"CAST(${param_num} AS TEXT)",
+                                    curr_sql,
+                                )
+                            try:
+                                records = await conn.fetch(curr_sql, *args, timeout=timeout_seconds)
+                                return records
+                            except Exception as cast_err:
+                                logger.warning(f"Parameter cast retry failed ({cast_err}). Inlining parameters safely for read-only execution...")
+                                # 2. Safe inlining fallback for validated read-only execution
+                                inlined_sql = sql
+                                for idx, arg_val in enumerate(args, start=1):
+                                    if arg_val is None:
+                                        rep_val = "NULL"
+                                    elif isinstance(arg_val, (int, float)):
+                                        rep_val = str(arg_val)
+                                    elif isinstance(arg_val, bool):
+                                        rep_val = "TRUE" if arg_val else "FALSE"
+                                    else:
+                                        escaped = str(arg_val).replace("'", "''")
+                                        rep_val = f"'{escaped}'"
+                                    inlined_sql = re.sub(rf"(?<![a-zA-Z0-9_])\${idx}\b", rep_val, inlined_sql)
+                                records = await conn.fetch(inlined_sql, timeout=timeout_seconds)
+                                return records
+                        raise
+            elif dialect in ("sqlserver", "mssql", "tsql"):
+                # Safety net: T-SQL does not support NULLS FIRST/LAST or LIMIT
+                clean_tsql = sql.strip().rstrip(";")
+                clean_tsql = re.sub(r"\s+NULLS\s+(?:FIRST|LAST)\b", "", clean_tsql, flags=re.IGNORECASE)
+                limit_match = re.search(r"\s+LIMIT\s+(\d+)\s*$", clean_tsql, re.IGNORECASE)
+                if limit_match:
+                    lim_val = limit_match.group(1)
+                    clean_tsql = clean_tsql[:limit_match.start()].strip()
+                    if not re.search(r"\bSELECT\s+(?:DISTINCT\s+)?TOP\s*\(?\d+\)?", clean_tsql, re.IGNORECASE):
+                        clean_tsql = re.sub(r"^(\s*SELECT\s+(?:DISTINCT\s+)?)", rf"\1TOP ({lim_val}) ", clean_tsql, flags=re.IGNORECASE)
+                sql_to_run = clean_tsql
+
+                def _run_mssql():
+                    with conn.cursor(as_dict=True) as cursor:
+                        cursor.execute("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+                        cursor.execute(sql_to_run, tuple(args))
+                        return cursor.fetchall() or []
+                records = await asyncio.wait_for(asyncio.to_thread(_run_mssql), timeout=timeout_seconds)
+                return records
             else:
                 # asyncmy / MySQL connection
                 async with conn.cursor() as cursor:

@@ -10,7 +10,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-from .schemas import DBConnectionConfig, CanonicalSchema, TableInfo, ColumnInfo, ForeignKeyInfo
+from .schemas import DBConnectionConfig, DatabaseType, CanonicalSchema, TableInfo, ColumnInfo, ForeignKeyInfo
 from .connection import DatabaseConnector
 
 logger = logging.getLogger(__name__)
@@ -25,8 +25,123 @@ class SchemaIntrospector:
     """Extracts clean canonical schema metadata from target databases."""
 
     @classmethod
+    async def _introspect_via_connector(cls, config: DBConnectionConfig) -> CanonicalSchema:
+        """Introspect metadata using ConnectorFactory for MS SQL Server and MariaDB/MySQL."""
+        from app.modules.database_knowledgebase.schemas.connection import (
+            DatabaseConnectionConfig as CoreDBConfig,
+            DatabaseType as CoreDBType,
+        )
+        from app.modules.database_knowledgebase.connectors.factory import ConnectorFactory
+        from pydantic import SecretStr
+
+        schemas_filter = config.schemas or (["dbo"] if config.db_type == DatabaseType.SQLSERVER else ["public"])
+        core_config = CoreDBConfig(
+            db_type=CoreDBType(config.db_type.value),
+            host=config.host,
+            port=config.port,
+            database_name=config.database_name,
+            username=config.username,
+            password=SecretStr(config.password),
+            schema_filter=schemas_filter,
+        )
+        connector = ConnectorFactory.create_connector(core_config)
+        try:
+            raw_metadata = await connector.introspect_raw_metadata(schemas=schemas_filter)
+        finally:
+            await connector.close()
+
+        table_rows = raw_metadata.get("tables", [])
+        col_rows = raw_metadata.get("columns", [])
+        pk_rows = raw_metadata.get("primary_keys", [])
+        fk_rows = raw_metadata.get("foreign_keys", [])
+
+        # Group PKs by (schema, table)
+        pks_by_table: Dict[str, List[str]] = {}
+        for r in pk_rows:
+            key = f"{r['table_schema']}.{r['table_name']}"
+            pks_by_table.setdefault(key, []).append(r['column_name'])
+
+        # Group FKs by (schema, table)
+        fks_by_table: Dict[str, List[ForeignKeyInfo]] = {}
+        for r in fk_rows:
+            key = f"{r['source_schema']}.{r['source_table']}"
+            fks_by_table.setdefault(key, []).append(
+                ForeignKeyInfo(
+                    column_name=r['source_column'],
+                    target_schema=r['target_schema'],
+                    target_table=r['target_table'],
+                    target_column=r['target_column'],
+                )
+            )
+
+        # Group columns by (schema, table)
+        cols_by_table: Dict[str, List[ColumnInfo]] = {}
+        for r in col_rows:
+            key = f"{r['table_schema']}.{r['table_name']}"
+            is_pk = r['column_name'] in pks_by_table.get(key, [])
+            is_fk = any(fk.column_name == r['column_name'] for fk in fks_by_table.get(key, []))
+
+            cols_by_table.setdefault(key, []).append(
+                ColumnInfo(
+                    name=r['column_name'],
+                    data_type=r['data_type'],
+                    is_nullable=(str(r.get('is_nullable', 'YES')).upper() == "YES"),
+                    is_primary_key=is_pk,
+                    is_foreign_key=is_fk,
+                    default_value=str(r['column_default']) if r.get('column_default') else None,
+                    description=r.get('column_comment'),
+                )
+            )
+
+        tables_list: List[TableInfo] = []
+        fingerprint_builder = []
+
+        for tr in table_rows:
+            t_schema = tr['table_schema']
+            t_name = tr['table_name']
+            key = f"{t_schema}.{t_name}"
+
+            tbl_cols = cols_by_table.get(key, [])
+            tbl_pks = pks_by_table.get(key, [])
+            tbl_fks = fks_by_table.get(key, [])
+
+            if not tbl_pks:
+                for col in tbl_cols:
+                    if col.name.lower() in ("id", "uuid", f"{t_name.lower()}_id", f"{t_name.lower()}id"):
+                        tbl_pks.append(col.name)
+                        col.is_primary_key = True
+                        break
+
+            table_info = TableInfo(
+                schema_name=t_schema,
+                table_name=t_name,
+                is_view=(tr.get('table_type') == "VIEW"),
+                columns=tbl_cols,
+                primary_keys=tbl_pks,
+                foreign_keys=tbl_fks,
+            )
+            tables_list.append(table_info)
+
+            col_sig = ",".join(f"{c.name}:{c.data_type}" for c in tbl_cols)
+            fingerprint_builder.append(f"{t_schema}.{t_name}|{col_sig}")
+
+        raw_fp = ";".join(fingerprint_builder)
+        fingerprint = hashlib.sha256(raw_fp.encode("utf-8")).hexdigest()
+
+        return CanonicalSchema(
+            database_name=config.database_name,
+            database_type=config.db_type.value,
+            fingerprint=fingerprint,
+            introspected_at=datetime.utcnow(),
+            tables=tables_list,
+        )
+
+    @classmethod
     async def introspect(cls, config: DBConnectionConfig) -> CanonicalSchema:
-        """Introspect tables, columns, PKs, and FKs from target PostgreSQL database."""
+        """Introspect tables, columns, PKs, and FKs from target database."""
+        if config.db_type == DatabaseType.SQLSERVER or getattr(config, "port", None) in (1433, "1433", 3306, 3307, "3306", "3307"):
+            return await cls._introspect_via_connector(config)
+
         conn = await DatabaseConnector.get_asyncpg_connection(config)
         try:
             schemas_filter = config.schemas or ["public"]

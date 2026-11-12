@@ -75,10 +75,13 @@ class ExecutionPolicyEngine:
                     error_code="STACKED_STATEMENT_DETECTED",
                 )
 
-        # 4. Mandatory LIMIT check
-        if "LIMIT" not in raw_sql.upper():
+        # 4. Mandatory LIMIT / TOP / FETCH row-limiting check
+        has_limit = "LIMIT" in raw_sql.upper()
+        has_top = bool(re.search(r"\bSELECT\s+(?:DISTINCT\s+)?TOP\s*\(?\d+\)?", raw_sql, re.IGNORECASE))
+        has_fetch = "FETCH NEXT" in raw_sql.upper()
+        if not (has_limit or has_top or has_fetch):
             raise ExecutionPolicyViolation(
-                detail="Execution rejected: Query lacks a mandatory LIMIT clause.",
+                detail="Execution rejected: Query lacks a mandatory LIMIT or TOP clause.",
                 error_code="MISSING_MANDATORY_LIMIT",
             )
 

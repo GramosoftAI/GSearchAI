@@ -8,6 +8,11 @@ from sqlalchemy import select
 logger = logging.getLogger(__name__)
 
 async def gmail_sync_job(ctx: Dict[Any, Any], kb_id: str, tenant_id: str, user_email: str, label_ids: List[str] = None, credentials: Dict[str, Any] = None):
+    from app.core.config import get_settings
+    if not getattr(get_settings(), "enable_gmail_connector", False):
+        logger.info(f"Gmail connector disabled by feature flag (enable_gmail_connector=False). Skipping gmail_sync_job for {user_email}")
+        return {"status": "disabled", "reason": "enable_gmail_connector is False"}
+
     logger.info(f"Starting gmail_sync_job for {user_email}")
     redis = ctx.get('redis')
     

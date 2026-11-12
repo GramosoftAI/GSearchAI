@@ -307,7 +307,7 @@ class SQLRepairEngine:
                     if response_text:
                         repaired_candidate = CandidateSQLGenerator._extract_sql_from_response(response_text)
                         if repaired_candidate:
-                            current_sql = repaired_candidate
+                            current_sql = CandidateSQLGenerator.sanitize_sql_table_aliases(repaired_candidate, retrieval_result)
                 except Exception as e:
                     logger.warning(f"LLM repair attempt {repair_count} failed: {e}")
                     # Fallback to deterministic plan compilation

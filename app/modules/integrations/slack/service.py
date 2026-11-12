@@ -36,6 +36,7 @@ SLACK_BOT_SCOPES = [
     "channels:read",
     "channels:join",
     "chat:write",
+    "commands",
     "groups:history",
     "groups:read",
     "im:history",

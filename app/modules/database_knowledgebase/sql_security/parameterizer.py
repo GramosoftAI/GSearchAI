@@ -41,11 +41,11 @@ class SQLParameterizer:
         return False
 
     @classmethod
-    def parameterize(cls, root: exp.Expression) -> ParameterizedSQL:
+    def parameterize(cls, root: exp.Expression, dialect: str = "postgres") -> ParameterizedSQL:
         """
         Extract literal numbers and strings from AST into a parameter map.
         """
-        raw_sql = SQLASTParser.to_sql(root)
+        raw_sql = SQLASTParser.to_sql(root, dialect=dialect)
         param_ast = root.copy()
         parameters: Dict[str, Any] = {}
         param_counter = 1
@@ -67,6 +67,17 @@ class SQLParameterizer:
                 if cls._is_select_projection(literal):
                     continue
 
+                # Do not parameterize literals inside string concatenation functions (e.g. CONCAT, CONCAT_WS)
+                # or date truncation/extraction where PostgreSQL cannot infer parameter types without explicit casts
+                if literal.find_ancestor(exp.Concat, exp.ConcatWs, exp.DateTrunc):
+                    continue
+
+                parent_func = literal.find_ancestor(exp.Func)
+                if parent_func:
+                    fname = getattr(parent_func, "sql_name", lambda: getattr(parent_func, "name", ""))() or getattr(parent_func, "name", "") or ""
+                    if fname.lower() in ("concat", "concat_ws", "date_trunc", "date_part", "to_char", "coalesce", "nullif"):
+                        continue
+
                 param_name = f"p{param_counter}"
                 param_counter += 1
 
@@ -83,7 +94,7 @@ class SQLParameterizer:
                 var_expr = exp.var(f":{param_name}")
                 literal.replace(var_expr)
 
-        param_sql = SQLASTParser.to_sql(param_ast)
+        param_sql = SQLASTParser.to_sql(param_ast, dialect=dialect)
 
         return ParameterizedSQL(
             parameterized_sql=param_sql,

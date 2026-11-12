@@ -14,7 +14,7 @@ from typing import Optional, Dict, Any, List, Tuple
 from cryptography.fernet import Fernet
 
 from app.core.config import get_settings
-from .schemas import DBConnectionConfig, ConnectionTestResult
+from .schemas import DBConnectionConfig, DatabaseType, ConnectionTestResult
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -103,6 +103,45 @@ class DatabaseConnector:
         Execute SQL query in strict READ ONLY transaction mode.
         Returns: (rows, column_names, execution_time_ms, is_truncated)
         """
+        if config.db_type == DatabaseType.SQLSERVER or getattr(config, "port", None) in (1433, "1433"):
+            import pymssql
+            import asyncio
+
+            start_time = time.perf_counter()
+            timeout = int(timeout_seconds)
+            port = int(config.port or 1433)
+
+            def _run_mssql():
+                with pymssql.connect(
+                    server=config.host,
+                    port=port,
+                    user=config.username,
+                    password=config.password,
+                    database=config.database_name,
+                    login_timeout=timeout,
+                    timeout=timeout,
+                    as_dict=True,
+                    autocommit=True,
+                ) as conn:
+                    with conn.cursor(as_dict=True) as cursor:
+                        cursor.execute("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+                        cursor.execute(sql)
+                        return cursor.fetchmany(max_rows + 1)
+
+            records = await asyncio.wait_for(asyncio.to_thread(_run_mssql), timeout=timeout_seconds + 2.0)
+            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+            is_truncated = len(records) > max_rows
+            capped_records = records[:max_rows]
+
+            rows: List[Dict[str, Any]] = []
+            columns: List[str] = []
+            if capped_records:
+                columns = list(capped_records[0].keys())
+                for rec in capped_records:
+                    rows.append({k: (str(v) if not isinstance(v, (int, float, bool, type(None))) else v) for k, v in dict(rec).items()})
+
+            return rows, columns, round(elapsed_ms, 2), is_truncated
+
         conn = await cls.get_asyncpg_connection(config)
         start_time = time.perf_counter()
         try:

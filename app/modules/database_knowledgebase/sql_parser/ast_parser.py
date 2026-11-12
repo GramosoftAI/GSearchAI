@@ -34,7 +34,12 @@ class SQLASTParser:
         if clean_sql.endswith(";"):
             clean_sql = clean_sql[:-1].strip()
 
-        read_dialect = "mysql" if dialect in ("mysql", "mariadb") else "postgres"
+        if dialect in ("tsql", "sqlserver", "mssql"):
+            read_dialect = "tsql"
+        elif dialect in ("mysql", "mariadb"):
+            read_dialect = "mysql"
+        else:
+            read_dialect = "postgres"
         try:
             expressions = sqlglot.parse(clean_sql, read=read_dialect)
         except (ParseError, TokenError, Exception):
@@ -56,5 +61,10 @@ class SQLASTParser:
     @classmethod
     def to_sql(cls, expression: exp.Expression, pretty: bool = False, dialect: str = "postgres") -> str:
         """Transpile or format an AST back to target dialect SQL string."""
-        target_dialect = "mysql" if dialect in ("mysql", "mariadb") else "postgres"
+        if dialect in ("tsql", "sqlserver", "mssql"):
+            target_dialect = "tsql"
+        elif dialect in ("mysql", "mariadb"):
+            target_dialect = "mysql"
+        else:
+            target_dialect = "postgres"
         return expression.sql(dialect=target_dialect, pretty=pretty)

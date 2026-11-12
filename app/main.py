@@ -150,6 +150,19 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"[STARTUP] Multi-tenancy: ENABLED (RLS ENFORCED)")
 
+    # Startup validation and log for Google OAuth scopes
+    from app.modules.connectors.google.auth import DRIVE_OAUTH_SCOPES
+    logger.info(f"[STARTUP] Google Drive active OAuth scopes: {DRIVE_OAUTH_SCOPES}")
+    gmail_enabled = getattr(settings, "enable_gmail_connector", False)
+    logger.info(f"[STARTUP] Gmail Connector feature flag: {'ENABLED' if gmail_enabled else 'DISABLED (Default)'}")
+
+    # Safety assertion: Drive scopes must NEVER include any Gmail scope
+    assert not any("gmail" in s.lower() for s in DRIVE_OAUTH_SCOPES), (
+        "CRITICAL SECURITY / COMPLIANCE VIOLATION: Gmail scopes found in Google Drive OAuth scopes!"
+    )
+    if not gmail_enabled:
+        logger.info("[STARTUP] Gmail Connector is OFF. Verification scope safety guaranteed.")
+
     logger.info("=" * 80)
 
 

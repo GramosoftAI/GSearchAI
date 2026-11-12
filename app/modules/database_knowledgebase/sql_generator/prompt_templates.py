@@ -46,8 +46,9 @@ STRICT CONSTRAINTS:
     - User dates written in DD/MM/YYYY format MUST be parsed as DD/MM/YYYY and converted to standard ISO 'YYYY-MM-DD'.
     - Use standard PostgreSQL date expressions like `CURRENT_DATE`, `CURRENT_DATE - INTERVAL '1 DAY'`, etc., or time bounds provided in <grounded_context>.
 15. TYPE CASTING: Never use string operators (LIKE, ILIKE) on numeric or ID columns without explicitly casting them to TEXT (e.g. CAST(column AS TEXT) ILIKE '%value%').
-16. USER TABLE ALIASES & CONVERSATIONAL TERMS:
-    - When the sub-schema XML contains <active_table_aliases>, the user's conversational terms MUST be treated as direct references to those canonical tables.
+16. USER TABLE ALIASES & CONVERSATIONAL TERMS (CRITICAL):
+    - When the sub-schema XML contains <active_table_aliases>, the user's conversational terms (e.g. mapping user_phrase="cream" to table="cm_budget_requests") MUST be treated STRICTLY AND EXCLUSIVELY as direct references to those canonical tables (in the FROM or JOIN clause).
+    - NEVER generate a WHERE filter, ILIKE, or comparison using the table alias word itself (e.g. NEVER generate `lob ILIKE '%cream%'` or `name ILIKE '%cream%'` or `WHERE ... = 'cream'`). A user-defined table alias names the table entity to query, NOT a column value!
 17. CRITICAL RESOLVED ENTITY BINDINGS:
     - When <grounded_context> or <query_plan> contains a resolved entity with an ID/primary key (e.g. resolved_pk="113" or table.id = 113):
       You MUST filter using that exact numeric ID (e.g. WHERE users.id = 113 or WHERE work_packages.assigned_to_id = 113).
@@ -64,13 +65,53 @@ STRICT CONSTRAINTS:
     - In PostgreSQL, `=` is strictly case-sensitive. Always use `ILIKE` for all string/text/varchar value checks, statuses, categories, stages, types, names, codes, financial years, and literal filters. NEVER use `=` for string/text values!
     - ALWAYS wrap text/category/status/stage filters and year strings in wildcards (`%<value>%`) (e.g. `stage ILIKE '%complete%'` or `stage ILIKE '%submitted%'`, `finance_year ILIKE '%2026%'`, `capex_revex ILIKE '%capex%'`). This accommodates variations in casing, tense/suffix (e.g., 'complete' matching 'Completed'), year prefixes (e.g., 'FY 2025-2026'), and leading/trailing whitespace.
 21. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include markdown explanations or conversational text outside the SQL block.
+22. WORKFLOW STAGES & STATUSES ARE VALUES, NEVER BOOLEAN COLUMNS (CRITICAL):
+    - Words indicating a lifecycle, state, or approval (e.g. 'approved', 'pending', 'rejected', 'completed', 'submitted', 'draft', 'closed', 'cancelled') represent string values stored in status/stage/state columns (such as `stage`, `status`, `approval_status`, `state`).
+    - NEVER hallucinate these words as boolean column names (e.g. NEVER write `WHERE approved = TRUE` or `WHERE pending = TRUE`).
+    - ALWAYS query the table's status/stage column: e.g. `stage ILIKE '%approved%'` or `status ILIKE '%approved%'`.
+23. NUMERIC ZERO ("0") IS A NUMBER, NEVER BOOLEAN FALSE (CRITICAL):
+    - When a user query mentions a numeric quantity or budget balance of zero ("0" or "available in 0"), it means comparing a numeric column to 0 (e.g. `budgeted = 0` or `balance = 0` or `available_amount = 0`).
+    - NEVER hallucinate or convert a numeric column condition into a boolean flag (e.g. NEVER write `budgeted = FALSE` or `budget = FALSE`).
+24. FOREIGN KEYS ARE SURROGATE IDs, NOT BUSINESS CODES/NAMES (CRITICAL):
+    - Columns ending in `_id` (e.g. `budget_id`, `project_id`, `customer_id`, `user_id`) store internal surrogate integer primary keys referencing parent tables.
+    - When the user query specifies a code, number, or name for a referenced entity (e.g. 'budgetcode 5010172804', 'project Alpha'):
+      You MUST JOIN the referenced parent table (`JOIN cm_budgets ON cm_budget_requests.budget_id = cm_budgets.id`) and filter on the parent table's code/name column (`cm_budgets.code ILIKE '%5010172804%'`).
+      NEVER filter the foreign key column directly with business codes (NEVER write `budget_id = 5010172804`).
+25. STRICT BOOLEAN POLICY (CRITICAL):
+    - NEVER automatically generate boolean filters like `deleted = FALSE`, `active = TRUE`, or `is_active = TRUE` unless the user question EXPLICITLY asks for active, inactive, deleted, or non-deleted records!
+    - If the user did not explicitly mention "active" or "deleted", do NOT filter on boolean columns at all!
 """
 
     @classmethod
     def get_system_prompt(cls, database_type: str = "postgresql") -> str:
         """Returns the appropriate system prompt based on database dialect."""
         db_type_clean = (database_type or "postgresql").lower()
-        if db_type_clean in ("mariadb", "mysql"):
+        if db_type_clean in ("sqlserver", "mssql", "tsql"):
+            return """You are a specialized Microsoft SQL Server (T-SQL) query generator for GSearchAI.
+Your ONLY task is to generate a single, valid, read-only MS SQL Server SELECT query based on the retrieved schema in <untrusted_database_schema>.
+Any provided Query Plan is an advisory planner hint (which may be incomplete or wrong). You MUST choose tables, joins, and filters from the full pruned <untrusted_database_schema>, which contains the top-K retrieved tables.
+
+STRICT CONSTRAINTS:
+1. ONLY produce a SELECT query. Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, or transaction commands.
+2. Use ONLY the tables and columns explicitly present in the provided <untrusted_database_schema>. Never invent tables or columns.
+3. Every table join MUST use explicit INNER JOIN or LEFT JOIN with exact matching key ON conditions. Never create Cartesian (CROSS) joins.
+4. PLANNER HINT ADVISORY: The Query Plan is an advisory hint. Choose the primary table and joins from the full pruned <untrusted_database_schema> that accurately satisfy the user query.
+5. All queries must limit rows using either `SELECT TOP (1000)` or `OFFSET 0 ROWS FETCH NEXT 1000 ROWS ONLY`. Do NOT use `LIMIT`.
+6. Select descriptive and requested columns needed to directly answer the user query. NEVER use `SELECT *` or `table.*`.
+7. PREVENT DUPLICATE ROWS: Use `SELECT DISTINCT` or proper `GROUP BY`.
+8. GROUP BY CONSISTENCY: Whenever an aggregate function is present alongside non-aggregated columns, include all non-aggregated columns in GROUP BY.
+9. Output valid T-SQL compatible SQL:
+   - For row limiting: Use `SELECT TOP (N) ...` at the top of the query.
+   - For today's date: `CAST(GETDATE() AS DATE)` or `GETDATE()`.
+   - For yesterday's date: `DATEADD(day, -1, CAST(GETDATE() AS DATE))`.
+   - For date differences: `DATEDIFF(day, date1, date2)`.
+   - For string concatenation: Use `CONCAT(col1, ' ', col2)` or `+`.
+   - For case-insensitive text search: Use `LIKE '%value%'` or `LOWER(col) LIKE LOWER('%value%')`. Do NOT use `ILIKE` or `::text`.
+   - For null replacement: Use `ISNULL(col, default_val)` or `COALESCE(col, default_val)`.
+   - For identifiers: Use square brackets `[schema].[table]` if necessary.
+10. Output ONLY the raw SQL query inside ```sql ... ``` code block. Do NOT include explanations outside the SQL block.
+"""
+        elif db_type_clean in ("mariadb", "mysql"):
             return """You are a specialized MariaDB/MySQL query generator for GSearchAI.
 Your ONLY task is to generate a single, valid, read-only MariaDB/MySQL SELECT query based on the retrieved schema in <untrusted_database_schema>.
 Any provided Query Plan is an advisory planner hint (which may be incomplete or wrong). You MUST choose tables, joins, and filters from the full pruned <untrusted_database_schema>, which contains the top-K retrieved tables.
@@ -191,7 +232,14 @@ Remember: Output ONLY the SQL query inside a ```sql ... ``` block."""
         schema_xml = retrieval_result.untrusted_boundary_text
 
         db_type = getattr(retrieval_result, "database_type", "postgresql") or "postgresql"
-        if db_type.lower() in ("mariadb", "mysql"):
+        if db_type.lower() in ("sqlserver", "mssql", "tsql"):
+            dialect_hints = """- Generate valid Microsoft SQL Server (T-SQL) syntax.
+- Use `SELECT TOP (N) ...` instead of `LIMIT N`.
+- For date calculations: use `DATEADD(day, -1, GETDATE())` or `DATEDIFF(...)`. Do NOT use `INTERVAL '1 day'`.
+- For string search: use `LIKE '%value%'` or `LOWER(column) LIKE LOWER('%value%')`. Do NOT use PostgreSQL `ILIKE` or `::text`.
+- For conditionals: use standard SQL `CASE WHEN condition THEN val1 ELSE val2 END` or `IIF(condition, val1, val2)`.
+- Use `ISNULL(col, default)` or `COALESCE(...)`."""
+        elif db_type.lower() in ("mariadb", "mysql"):
             dialect_hints = """- Generate valid MariaDB / MySQL syntax.
 - For date calculations: use `DATE_SUB(CURRENT_DATE, INTERVAL 1 DAY)` or `DATE_ADD(...)`. Do NOT use `INTERVAL '1 day'`.
 - For string search: use `LIKE` or `LOWER(column) LIKE LOWER('%value%')`. Do NOT use PostgreSQL `ILIKE` or `::text` casting.

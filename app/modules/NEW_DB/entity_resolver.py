@@ -8,7 +8,7 @@ import re
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 
-from .schemas import DBConnectionConfig
+from .schemas import DBConnectionConfig, DatabaseType
 from .connection import DatabaseConnector
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,8 @@ class EntityResolver:
     @classmethod
     async def get_all_users(cls, config: DBConnectionConfig) -> List[Dict[str, Any]]:
         """Fetch all users from target database if a users table exists."""
+        if getattr(config, "db_type", None) == DatabaseType.SQLSERVER or getattr(config, "port", None) in (1433, "1433"):
+            return []
         cache_key = f"{config.host}:{config.port}:{config.database_name}"
         import time
         now = time.time()

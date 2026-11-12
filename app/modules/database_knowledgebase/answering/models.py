@@ -127,3 +127,7 @@ class GroundedDatabaseAnswer(BaseModel):
         default_factory=list,
         description="Candidate tables considered during schema retrieval and relevance evaluation",
     )
+    rephrased_query: Optional[str] = Field(
+        default=None,
+        description="Schema-enriched rephrased user query aligned with tables, columns, and relationships",
+    )

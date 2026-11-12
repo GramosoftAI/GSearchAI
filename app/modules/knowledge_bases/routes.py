@@ -5,7 +5,7 @@ import os
 import httpx
 import urllib.parse
 
-from fastapi import APIRouter, Request, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Request, HTTPException, status, BackgroundTasks, Depends
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +20,7 @@ from .service import KnowledgeBaseService
 
 from . import schemas
 
+from ...core.config import get_settings
 from ...core.database import AsyncSessionLocal
 
 from ...utils.formatters import format_error, format_success
@@ -88,6 +89,19 @@ def get_tenant_and_user(request: Request) -> tuple[str, str]:
 
 
     return str(tenant_id), str(user_id)
+
+
+def require_gmail_enabled():
+    """
+    Dependency ensuring Gmail connector is explicitly enabled via feature flag.
+    Returns 404 with generic message if disabled.
+    """
+    if not getattr(get_settings(), "enable_gmail_connector", False):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Gmail connector is not available"
+        )
+
 
 
 
@@ -1201,6 +1215,8 @@ async def disconnect_agent_integration(request: Request, agent_id: str, integrat
         valid_integrations = ["google_drive", "sharepoint", "gmail", "outlook"]
         if integration_type not in valid_integrations:
             raise HTTPException(status_code=400, detail=f"Invalid integration type. Must be one of {valid_integrations}")
+        if integration_type == "gmail":
+            require_gmail_enabled()
 
         async with AsyncSessionLocal() as db:
             service = KnowledgeBaseService(db, tenant_id)
@@ -1490,36 +1506,41 @@ async def register_google_drive(
 
 
 
+            incoming_creds = dict(gd_request.credentials or {})
+
+            # Secure server fallback: If client_id or client_secret are missing from request payload,
+            # use the server's configured environment variables.
+            server_client_id = os.getenv("GOOGLE_CLIENT_ID")
+            server_client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+            if not incoming_creds.get("client_id") and server_client_id:
+                incoming_creds["client_id"] = server_client_id
+            if not incoming_creds.get("client_secret") and server_client_secret:
+                incoming_creds["client_secret"] = server_client_secret
+
+            # If an existing connection already had credentials, preserve valid refresh_token or access_token
+            if db_conn and db_conn.connection_params:
+                old_creds = db_conn.connection_params.get("credentials") or db_conn.connection_params
+                if isinstance(old_creds, dict):
+                    if not incoming_creds.get("refresh_token") and old_creds.get("refresh_token"):
+                        incoming_creds["refresh_token"] = old_creds.get("refresh_token")
+                    if not incoming_creds.get("access_token") and old_creds.get("access_token"):
+                        incoming_creds["access_token"] = old_creds.get("access_token")
+
             connection_params = {
-
-                "credentials": gd_request.credentials,
-
+                "credentials": incoming_creds,
                 "folder_urls": gd_request.folder_urls or []
-
             }
 
-
-
             if db_conn:
-
                 db_conn.db_type = "google_drive"
-
                 db_conn.connection_params = connection_params
-
             else:
-
                 db_conn = DatabaseConnection(
-
                     tenant_id=uuid.UUID(tenant_id),
-
                     kb_id=uuid.UUID(kb_id),
-
                     db_type="google_drive",
-
                     connection_params=connection_params
-
                 )
-
                 db.add(db_conn)
 
             from .models import KnowledgeBase
@@ -1894,7 +1915,8 @@ async def sync_sharepoint_to_graph(request: Request, kb_id: str, sync_req: Optio
     response_model=dict,
     status_code=status.HTTP_200_OK,
     summary="Register Gmail Connection",
-    description="Register Gmail credentials for this KB"
+    description="Register Gmail credentials for this KB",
+    dependencies=[Depends(require_gmail_enabled)]
 )
 async def register_gmail(
     request: Request,
@@ -1946,7 +1968,8 @@ async def register_gmail(
     response_model=dict,
     status_code=status.HTTP_200_OK,
     summary="Synchronize Gmail to Graph",
-    description="Crawl Gmail, fetch messages, generate embeddings, and load them into Neo4j graph"
+    description="Crawl Gmail, fetch messages, generate embeddings, and load them into Neo4j graph",
+    dependencies=[Depends(require_gmail_enabled)]
 )
 async def sync_gmail_to_graph(request: Request, kb_id: str, sync_req: schemas.GmailSyncRequest) -> dict:
     try:
@@ -2216,6 +2239,8 @@ async def google_drive_login(kb_id: str):
         f"&prompt=consent"
         f"&state={state}"
     )
+    logger.info("GOOGLE DRIVE OAUTH URL: %s", auth_url)
+    logger.info("GOOGLE DRIVE OAUTH SCOPES: %s", DRIVE_OAUTH_SCOPES)
     return RedirectResponse(auth_url)
 
 
@@ -2301,7 +2326,7 @@ async def google_drive_callback(code: str, state: str):
     )
 
 
-@router.get("/{kb_id}/gmail/login")
+@router.get("/{kb_id}/gmail/login", dependencies=[Depends(require_gmail_enabled)])
 async def gmail_login(kb_id: str):
     client_id = os.getenv("GOOGLE_CLIENT_ID")
     redirect_uri = os.getenv("GMAIL_REDIRECT_URI") or os.getenv("GOOGLE_REDIRECT_URI") or "http://localhost:4915/api/v1/knowledge-bases/gmail/callback"
@@ -2320,7 +2345,7 @@ async def gmail_login(kb_id: str):
     return RedirectResponse(auth_url)
 
 
-@router.get("/gmail/callback")
+@router.get("/gmail/callback", dependencies=[Depends(require_gmail_enabled)])
 async def gmail_callback(code: str, state: str):
     kb_id = state
     client_id = os.getenv("GOOGLE_CLIENT_ID")

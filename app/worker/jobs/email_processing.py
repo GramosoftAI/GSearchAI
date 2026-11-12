@@ -98,6 +98,11 @@ async def fetch_single_message(client, user_email: str, msg_id: str) -> Dict[str
         return None
 
 async def email_processing_job(ctx: Dict[Any, Any], kb_id: str, tenant_id: str, user_email: str, message_ids: List[str], batch_index: int, credentials: Dict[str, Any] = None):
+    from app.core.config import get_settings
+    if not getattr(get_settings(), "enable_gmail_connector", False):
+        logger.info(f"Gmail connector disabled by feature flag (enable_gmail_connector=False). Skipping email_processing_job for {user_email}")
+        return {"status": "disabled", "reason": "enable_gmail_connector is False"}
+
     logger.info(f"Starting email_processing_job for batch {batch_index} ({len(message_ids)} messages)")
     redis = ctx.get('redis')
     

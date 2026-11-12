@@ -353,6 +353,8 @@ class GCrawlClient:
             "geo": "IN",
             "auto_scroll": True,
             "scroll_delay": 200,
+            "timeout": 30,
+            "wait_for_timeout": 1,
             "markdown": {
                 "enabled": True,
                 "clean": True
