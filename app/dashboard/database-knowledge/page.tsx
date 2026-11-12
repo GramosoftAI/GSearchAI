@@ -11,6 +11,7 @@ import {
   InputNumber,
   Select,
   Modal,
+  Popover,
   Tag,
   Space,
   Table,
@@ -789,6 +790,9 @@ export default function DatabaseKnowledgePage() {
   const [tableFilter, setTableFilter] = useState("");
   const [answerViewMode, setAnswerViewMode] = useState<"formatted" | "raw">("formatted");
   const [copiedAnswer, setCopiedAnswer] = useState(false);
+  const [provenanceModalOpen, setProvenanceModalOpen] = useState(false);
+  const [detailModalData, setDetailModalData] = useState<{ title: string; content: string } | null>(null);
+  const [expandedCellKeys, setExpandedCellKeys] = useState<Record<string, boolean>>({});
   const [observabilityOpen, setObservabilityOpen] = useState(false);
   const [streamEvents, setStreamEvents] = useState<DatabaseStreamEvent[]>([]);
   const [streamError, setStreamError] = useState<string | null>(null);
@@ -1662,20 +1666,21 @@ export default function DatabaseKnowledgePage() {
       } else if (colLower.includes("phone") || colLower.includes("mobile")) {
         colWidth = 135;
       } else if (colLower.includes("address") || colLower.includes("location") || colLower.includes("description") || colLower.includes("notes") || colLower.includes("comment") || colLower.includes("reason")) {
-        colWidth = 230;
+        colWidth = 450;
       } else if (colLower.includes("name") || colLower.includes("title") || colLower.includes("department") || colLower.includes("city")) {
         colWidth = 160;
       }
 
       const fallbackKey = `${colLower.replace(/\s+/g, "_")}_${idx}`;
       const directKey = col;
+      const isLongTextCol = colLower.includes("description") || colLower.includes("notes") || colLower.includes("comment") || colLower.includes("reason") || colLower.includes("address") || colLower.includes("body");
 
       return {
         title: displayTitle,
         key: `${col}_${idx}`,
         width: colWidth,
         align,
-        ellipsis: true,
+        ellipsis: !isLongTextCol,
         sorter: (a: any, b: any) => {
           const valA = a[fallbackKey] !== undefined ? a[fallbackKey] : (a[directKey] !== undefined ? a[directKey] : "");
           const valB = b[fallbackKey] !== undefined ? b[fallbackKey] : (b[directKey] !== undefined ? b[directKey] : "");
@@ -1707,10 +1712,78 @@ export default function DatabaseKnowledgePage() {
               </Tooltip>
             );
           }
+
+          const cellKey = `${record.key ?? idx}_${col}`;
+          const isExpanded = !!expandedCellKeys[cellKey];
+          const isLongContent = strVal.length > 45 || strVal.includes("\n");
+
+          if (isLongTextCol || isLongContent) {
+            return (
+              <div className="text-xs font-sans leading-relaxed text-[var(--app-text)] py-1 group/cell">
+                <div
+                  className="custom-scrollbar"
+                  style={{
+                    display: isExpanded ? "block" : "-webkit-box",
+                    WebkitLineClamp: isExpanded ? "unset" : (isLongTextCol ? 3 : 2),
+                    WebkitBoxOrient: "vertical",
+                    overflowY: isExpanded ? "auto" : "hidden",
+                    textOverflow: isExpanded ? "unset" : "ellipsis",
+                    whiteSpace: isExpanded ? "pre-wrap" : "normal",
+                    wordBreak: "break-word",
+                    lineHeight: "1.55",
+                    maxHeight: isExpanded ? "260px" : (isLongTextCol ? "4.6em" : "3.2em"),
+                  }}
+                >
+                  {strVal}
+                </div>
+                {isLongContent && (
+                  <div className="flex items-center gap-2 mt-1.5 pt-1 border-t border-[var(--app-border)]/40">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedCellKeys((prev) => ({ ...prev, [cellKey]: !prev[cellKey] }));
+                      }}
+                      className="text-[11px] font-medium text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      {isExpanded ? "Show Less" : "Expand"}
+                    </button>
+                    <span className="text-[10px] text-gray-400">•</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDetailModalData({
+                          title: `${displayTitle}: ${record.subject || record.title || record.name || ""}`,
+                          content: strVal,
+                        });
+                      }}
+                      className="text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <EyeOutlined style={{ fontSize: 10 }} />
+                      Full Modal
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          }
+
           return (
-            <Tooltip title={strVal.length > 25 ? strVal : undefined}>
-              <span className="text-xs font-sans truncate block">{strVal}</span>
-            </Tooltip>
+            <span
+              className="text-xs font-sans truncate block cursor-pointer hover:text-teal-500"
+              onClick={() => {
+                if (strVal.length > 25) {
+                  setDetailModalData({
+                    title: `${displayTitle}: ${record.subject || record.title || record.name || ""}`,
+                    content: strVal,
+                  });
+                }
+              }}
+              title={strVal.length > 25 ? "Click to view full text" : undefined}
+            >
+              {strVal}
+            </span>
           );
         },
       };
@@ -1726,22 +1799,35 @@ export default function DatabaseKnowledgePage() {
     );
   }, [effectiveRows, tableFilter]);
 
-  const parsedMarkdownHtml = React.useMemo(() => {
-    if (!groundedAnswer || !groundedAnswer.answer_text) return "";
-    try {
-      const markedObj = marked as any;
-      return typeof markedObj === "function"
-        ? markedObj(groundedAnswer.answer_text)
-        : markedObj.parse(groundedAnswer.answer_text);
-    } catch (e) {
-      console.error("Failed to parse markdown:", e);
-      return groundedAnswer.answer_text;
+  const { parsedCleanHtml, parsedProvHtml, parsedRawProv } = React.useMemo(() => {
+    if (!groundedAnswer || !groundedAnswer.answer_text) return { parsedCleanHtml: "", parsedProvHtml: "", parsedRawProv: "" };
+    const markedObj = marked as any;
+    const render = (t: string) => {
+      try {
+        return typeof markedObj === "function" ? markedObj(t) : markedObj.parse(t);
+      } catch (e) {
+        return t;
+      }
+    };
+    let txt = groundedAnswer.answer_text;
+    const provMarkerRegex = /(?:###?\s*📋?\s*Data Source & Provenance|📋\s*Data Source & Provenance)/i;
+    const match = txt.match(provMarkerRegex);
+    let prov = "";
+    if (match && match.index !== undefined) {
+      prov = txt.slice(match.index).trim();
+      txt = txt.slice(0, match.index).trim();
     }
+    return {
+      parsedCleanHtml: render(txt),
+      parsedProvHtml: render(prov),
+      parsedRawProv: prov,
+    };
   }, [groundedAnswer?.answer_text]);
 
-  const { introMarkdownHtml, summaryMarkdownHtml } = React.useMemo(() => {
+  // Separate core narrative answer from technical Data Source & Provenance
+  const { cleanIntroHtml, provenanceHtml, rawProvenanceText, summaryMarkdownHtml } = React.useMemo(() => {
     if (!groundedAnswer || !groundedAnswer.answer_text) {
-      return { introMarkdownHtml: "", summaryMarkdownHtml: "" };
+      return { cleanIntroHtml: "", provenanceHtml: "", rawProvenanceText: "", summaryMarkdownHtml: "" };
     }
     const markedObj = marked as any;
     const renderMd = (txt: string) => {
@@ -1753,7 +1839,8 @@ export default function DatabaseKnowledgePage() {
       }
     };
 
-    const lines = groundedAnswer.answer_text.split("\n");
+    let text = groundedAnswer.answer_text;
+    const lines = text.split("\n");
     let tableStart = -1;
     let tableEnd = -1;
 
@@ -1765,18 +1852,23 @@ export default function DatabaseKnowledgePage() {
       }
     }
 
-    if (tableStart === -1) {
-      return {
-        introMarkdownHtml: renderMd(groundedAnswer.answer_text.trim()),
-        summaryMarkdownHtml: "",
-      };
+    let intro = tableStart === -1 ? text.trim() : lines.slice(0, tableStart).join("\n").trim();
+    const summary = tableStart === -1 ? "" : lines.slice(tableEnd + 1).join("\n").trim();
+
+    // Check for Data Source & Provenance block inside intro or text
+    let provText = "";
+    const provMarkerRegex = /(?:###?\s*📋?\s*Data Source & Provenance|📋\s*Data Source & Provenance)/i;
+    const match = intro.match(provMarkerRegex);
+
+    if (match && match.index !== undefined) {
+      provText = intro.slice(match.index).trim();
+      intro = intro.slice(0, match.index).trim();
     }
 
-    const intro = lines.slice(0, tableStart).join("\n").trim();
-    const summary = lines.slice(tableEnd + 1).join("\n").trim();
-
     return {
-      introMarkdownHtml: renderMd(intro),
+      cleanIntroHtml: renderMd(intro),
+      provenanceHtml: renderMd(provText),
+      rawProvenanceText: provText,
       summaryMarkdownHtml: renderMd(summary),
     };
   }, [groundedAnswer?.answer_text]);
@@ -3652,11 +3744,63 @@ export default function DatabaseKnowledgePage() {
 
                                 {answerViewMode === "formatted" ? (
                                   <div className="space-y-4">
-                                    {introMarkdownHtml && (
-                                      <div
-                                        className="grounded-markdown-container text-sm text-[var(--app-text)] mb-3"
-                                        dangerouslySetInnerHTML={{ __html: introMarkdownHtml }}
-                                      />
+                                    {cleanIntroHtml && (
+                                      <div className="relative mb-3">
+                                        <div
+                                          className="grounded-markdown-container text-sm text-[var(--app-text)] inline"
+                                          dangerouslySetInnerHTML={{ __html: cleanIntroHtml }}
+                                        />
+                                        {rawProvenanceText && (
+                                          <Popover
+                                            trigger="click"
+                                            placement="bottomLeft"
+                                            overlayClassName="source-provenance-popover"
+                                            content={
+                                              <div style={{ maxWidth: 460, maxHeight: 360, overflowY: "auto" }} className="p-1">
+                                                <div className="flex items-center justify-between pb-2 mb-2 border-b border-gray-200 dark:border-gray-700">
+                                                  <span className="font-semibold text-xs text-teal-600 dark:text-teal-400 flex items-center gap-1.5">
+                                                    <DatabaseOutlined /> Data Source & Provenance
+                                                  </span>
+                                                </div>
+                                                <div
+                                                  className="grounded-markdown-container text-xs text-[var(--app-text)] font-sans leading-relaxed"
+                                                  dangerouslySetInnerHTML={{ __html: provenanceHtml }}
+                                                />
+                                              </div>
+                                            }
+                                          >
+                                            <button
+                                              type="button"
+                                              className="inline-flex items-center gap-1.5 px-2.5 py-0.5 ml-2 rounded-full border text-xs font-medium cursor-pointer transition-all shadow-sm align-middle"
+                                              style={{
+                                                backgroundColor: "var(--app-surface-muted, #f1f5f9)",
+                                                borderColor: "var(--app-border, #cbd5e1)",
+                                                color: "var(--app-text, #334155)",
+                                              }}
+                                              title="Click to view Data Source & Provenance"
+                                            >
+                                              <span
+                                                style={{
+                                                  width: 14,
+                                                  height: 14,
+                                                  borderRadius: "50%",
+                                                  backgroundColor: "#0d9488",
+                                                  color: "#ffffff",
+                                                  display: "inline-flex",
+                                                  alignItems: "center",
+                                                  justifyContent: "center",
+                                                  fontSize: 8,
+                                                  fontWeight: 700,
+                                                }}
+                                              >
+                                                <DatabaseOutlined style={{ fontSize: 7 }} />
+                                              </span>
+                                              <span>Source</span>
+                                              <DownOutlined style={{ fontSize: 9, opacity: 0.7 }} />
+                                            </button>
+                                          </Popover>
+                                        )}
+                                      </div>
                                     )}
                                     <div className="w-full overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)]">
                                       <Table
@@ -3677,6 +3821,33 @@ export default function DatabaseKnowledgePage() {
                                         }}
                                       />
                                     </div>
+
+                                    {/* Full Cell Detail Modal */}
+                                    <Modal
+                                      open={!!detailModalData}
+                                      onCancel={() => setDetailModalData(null)}
+                                      footer={[
+                                        <Button key="close" type="primary" onClick={() => setDetailModalData(null)}>
+                                          Close
+                                        </Button>
+                                      ]}
+                                      title={
+                                        <div className="flex items-center gap-2">
+                                          <FileTextOutlined className="text-teal-500" />
+                                          <span className="text-sm font-semibold text-[var(--app-text)]">
+                                            {detailModalData?.title || "Field Content"}
+                                          </span>
+                                        </div>
+                                      }
+                                      width={680}
+                                      centered
+                                    >
+                                      <div
+                                        className="max-h-[60vh] overflow-y-auto p-4 rounded-xl bg-[var(--app-surface-muted)] border border-[var(--app-border)] font-sans text-xs leading-relaxed text-[var(--app-text)] whitespace-pre-wrap select-text custom-scrollbar mt-3"
+                                      >
+                                        {detailModalData?.content}
+                                      </div>
+                                    </Modal>
                                     {summaryMarkdownHtml && (
                                       <div className="p-4 rounded-xl bg-[var(--app-surface-muted)] border border-[var(--app-border)] text-sm text-[var(--app-text)] mt-3">
                                         <div
@@ -3695,9 +3866,59 @@ export default function DatabaseKnowledgePage() {
                             ) : (
                               <div className="mt-4 p-5 rounded-xl bg-[var(--app-surface-muted)] border border-[var(--app-border)] overflow-x-auto max-w-full custom-scrollbar">
                                 <div
-                                  className="grounded-markdown-container max-w-full"
-                                  dangerouslySetInnerHTML={{ __html: parsedMarkdownHtml }}
+                                  className="grounded-markdown-container max-w-full inline"
+                                  dangerouslySetInnerHTML={{ __html: parsedCleanHtml }}
                                 />
+                                {parsedRawProv && (
+                                  <Popover
+                                    trigger="click"
+                                    placement="bottomLeft"
+                                    overlayClassName="source-provenance-popover"
+                                    content={
+                                      <div style={{ maxWidth: 460, maxHeight: 360, overflowY: "auto" }} className="p-1">
+                                        <div className="flex items-center justify-between pb-2 mb-2 border-b border-gray-200 dark:border-gray-700">
+                                          <span className="font-semibold text-xs text-teal-600 dark:text-teal-400 flex items-center gap-1.5">
+                                            <DatabaseOutlined /> Data Source & Provenance
+                                          </span>
+                                        </div>
+                                        <div
+                                          className="grounded-markdown-container text-xs text-[var(--app-text)] font-sans leading-relaxed"
+                                          dangerouslySetInnerHTML={{ __html: parsedProvHtml }}
+                                        />
+                                      </div>
+                                    }
+                                  >
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center gap-1.5 px-2.5 py-0.5 ml-2 rounded-full border text-xs font-medium cursor-pointer transition-all shadow-sm align-middle"
+                                      style={{
+                                        backgroundColor: "var(--app-surface, #ffffff)",
+                                        borderColor: "var(--app-border, #cbd5e1)",
+                                        color: "var(--app-text, #334155)",
+                                      }}
+                                      title="Click to view Data Source & Provenance"
+                                    >
+                                      <span
+                                        style={{
+                                          width: 14,
+                                          height: 14,
+                                          borderRadius: "50%",
+                                          backgroundColor: "#0d9488",
+                                          color: "#ffffff",
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          justifyContent: "center",
+                                          fontSize: 8,
+                                          fontWeight: 700,
+                                        }}
+                                      >
+                                        <DatabaseOutlined style={{ fontSize: 7 }} />
+                                      </span>
+                                      <span>Source</span>
+                                      <DownOutlined style={{ fontSize: 9, opacity: 0.7 }} />
+                                    </button>
+                                  </Popover>
+                                )}
                               </div>
                             )}
                           </Card>
