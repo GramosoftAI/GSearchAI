@@ -2008,10 +2008,48 @@ class DatabaseKnowledgebaseService:
             from ..sql_generator.grounded_generator import GroundedSQLGenerator
 
             docs_for_sql = schema_docs
+            effective_selected_tables = list(selected_tables) if selected_tables else None
             if selected_tables:
-                # Restrict context docs directly to the selected target tables to prevent LLM from hallucinating unselected tables
+                # Restrict context docs directly to the selected target tables
                 sel_set = {t.lower().strip() for t in selected_tables}
                 filtered_docs = [d for d in schema_docs if d.get("table_name", "").lower() in sel_set]
+
+                # Dynamically discover 1-hop FK related tables that the query references
+                # (e.g. cm_budget_requests.budget_id -> cm_budgets.id, and query asks about "budgetcode 5010172804")
+                related_fk_tables = set()
+                for doc in filtered_docs:
+                    fk_refs = re.findall(
+                        r'FOREIGN KEY\s*\([^)]+\)\s*REFERENCES\s*(?:[`"\w]+\.)?`?([a-zA-Z0-9_]+)`?',
+                        doc.get("text", ""),
+                        re.IGNORECASE,
+                    )
+                    for ref_t in fk_refs:
+                        related_fk_tables.add(ref_t.lower())
+
+                if canonical_schema and hasattr(canonical_schema, "all_tables"):
+                    for t in canonical_schema.all_tables:
+                        t_clean = t.table_name.split(".")[-1].lower()
+                        if t_clean in sel_set:
+                            for fk in getattr(t, "foreign_keys", []):
+                                if getattr(fk, "referred_table", None):
+                                    related_fk_tables.add(fk.referred_table.split(".")[-1].lower())
+
+                # If query mentions keywords or codes matching any 1-hop FK related table or its attributes, retain it!
+                q_lower = user_query.lower()
+                for d in schema_docs:
+                    d_tbl = d.get("table_name", "").lower()
+                    if d_tbl in related_fk_tables and d_tbl not in sel_set:
+                        tbl_root = d_tbl.replace("cm_", "").replace("ep_", "").replace("_table", "").rstrip("s")
+                        tokens = [tok for tok in tbl_root.split("_") if len(tok) > 2]
+                        matches_tok = any(tok in q_lower for tok in tokens)
+                        matches_col = any(c.lower() in q_lower for c in d.get("column_names", []) if len(c) > 3)
+                        matches_fk_name = any(f"{tok}_id" in [c.lower() for c in doc.get("column_names", [])] for doc in filtered_docs for tok in tokens)
+                        if matches_tok or matches_col or matches_fk_name:
+                            filtered_docs.append(d)
+                            if effective_selected_tables is not None and d.get("table_name") not in effective_selected_tables:
+                                effective_selected_tables.append(d.get("table_name"))
+                            logger.info(f"[GROUNDED_PIPELINE] Dynamically retained 1-hop FK related table '{d_tbl}' for multi-table join context")
+
                 if filtered_docs:
                     docs_for_sql = filtered_docs
 
@@ -2032,7 +2070,7 @@ class DatabaseKnowledgebaseService:
             enriched_user_query = await DynamicQueryEnricher.enrich_query(
                 user_query=user_query,
                 schema_docs=docs_for_sql,
-                selected_tables=selected_tables,
+                selected_tables=effective_selected_tables,
                 resolved_entities=resolved_dimension_entities,
                 table_alias_mappings=resolved_table_alias_mappings if resolved_table_alias_mappings else None,
             )
@@ -2047,7 +2085,7 @@ class DatabaseKnowledgebaseService:
                 column_alias_mappings=resolved_column_alias_mappings if resolved_column_alias_mappings else None,
                 table_alias_mappings=resolved_table_alias_mappings if resolved_table_alias_mappings else None,
                 execution_strategy=execution_strategy,
-                selected_tables=selected_tables,
+                selected_tables=effective_selected_tables,
                 dialect=effective_dialect,
                 available_columns=target_column_names if target_column_names else None,
             )
@@ -2155,6 +2193,7 @@ class DatabaseKnowledgebaseService:
                     dialect=effective_dialect,
                     table_alias_words=alias_words_for_strip if alias_words_for_strip else None,
                     available_columns=target_column_names if target_column_names else None,
+                    user_query=user_query,
                 )
             except ValueError as val_err:
                 raise SQLValidationError(f"Security policy rejection: {val_err}")
@@ -2267,6 +2306,7 @@ class DatabaseKnowledgebaseService:
                             repaired_sql,
                             dialect=effective_dialect,
                             available_columns=target_column_names if target_column_names else None,
+                            user_query=user_query,
                         )
                         repaired_sql_clean = _apply_limit_policy(repaired_sql_clean)
 
@@ -2370,6 +2410,7 @@ class DatabaseKnowledgebaseService:
                                 dialect=effective_dialect,
                                 table_alias_words=alias_words_for_strip if alias_words_for_strip else None,
                                 available_columns=target_column_names if target_column_names else None,
+                                user_query=user_query,
                             )
                         except ValueError as val_err:
                             logger.error(f"[GROUNDED_AUTO_REPAIR] Repaired SQL failed security validation: {val_err}")
@@ -2457,6 +2498,7 @@ class DatabaseKnowledgebaseService:
                                 relaxed_sql,
                                 dialect=effective_dialect,
                                 available_columns=target_column_names if target_column_names else None,
+                                user_query=user_query,
                             )
                             relaxed_sql_clean = _apply_limit_policy(relaxed_sql_clean)
                             parsed_relaxed = SQLASTParser.parse_sql(relaxed_sql_clean, dialect=effective_dialect)

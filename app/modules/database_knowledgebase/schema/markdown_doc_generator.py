@@ -94,7 +94,7 @@ class SchemaMarkdownGenerator:
                 desc = f"PRIMARY KEY. {desc}".strip()
             elif col.is_foreign_key:
                 desc = f"FOREIGN KEY. {desc}".strip()
-
+ 
             lines.append(f"| {idx} | `{col.name}` | {dtype} | {nullable} | {default} | {desc} |")
 
         lines.extend(["", "## Constraints and Relationships", ""])

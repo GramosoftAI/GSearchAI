@@ -50,6 +50,22 @@ class DynamicQueryEnricher:
             r"\1 is 0",
             query_text
         )
+        # 3. Clean up foreign key ID equated to business code: 'where budget_id is "5010172804"' -> 'where budget code is '5010172804''
+        query_text = re.sub(
+            r"(?i)\bwhere\s+(?:the\s+)?([a-zA-Z0-9_]+)_id\s+(?:is|=|matches)\s+['\"]?([A-Za-z0-9_-]{4,})['\"]?",
+            r"where \1 code is '\2'",
+            query_text
+        )
+        query_text = re.sub(
+            r"(?i)\band\s+(?:the\s+)?([a-zA-Z0-9_]+)_id\s+(?:is|=|matches)\s+['\"]?([A-Za-z0-9_-]{4,})['\"]?",
+            r"and \1 code is '\2'",
+            query_text
+        )
+        query_text = re.sub(
+            r"(?i),\s*(?:the\s+)?([a-zA-Z0-9_]+)_id\s+(?:is|=|matches)\s+['\"]?([A-Za-z0-9_-]{4,})['\"]?",
+            r", \1 code is '\2'",
+            query_text
+        )
 
         for a in (alias_words or []):
             a_clean = a.strip().lower()
@@ -116,11 +132,15 @@ class DynamicQueryEnricher:
             if not tbl:
                 continue
             cols = d.get("column_names") or []
+            fk_lines = re.findall(r'-\s*FOREIGN KEY\s*\(([^)]+)\)\s*REFERENCES\s*(?:[`"\w]+\.)?`?([a-zA-Z0-9_]+)`?\s*\(([^)]+)\)', d.get("text", ""), re.IGNORECASE)
+            rel_str = ""
+            if fk_lines:
+                rel_str = "\n  Foreign Keys: " + ", ".join(f"`{tbl}.{src.strip('`')}` -> `{tgt_t.strip('`')}.{tgt_c.strip('`')}`" for src, tgt_t, tgt_c in fk_lines)
             if cols:
                 col_list = ", ".join(cols[:40])
-                table_summaries.append(f"- Table: `{tbl}`\n  Columns: {col_list}")
+                table_summaries.append(f"- Table: `{tbl}`\n  Columns: {col_list}{rel_str}")
             else:
-                table_summaries.append(f"- Table: `{tbl}`")
+                table_summaries.append(f"- Table: `{tbl}`{rel_str}")
 
         schema_context = "\n".join(table_summaries) if table_summaries else "No schema docs available."
         selected_notice = ""
@@ -272,11 +292,15 @@ Respond with ONLY the JSON array (no markdown code blocks, no explanations):"""
             if not tbl:
                 continue
             cols = d.get("column_names") or []
+            fk_lines = re.findall(r'-\s*FOREIGN KEY\s*\(([^)]+)\)\s*REFERENCES\s*(?:[`"\w]+\.)?`?([a-zA-Z0-9_]+)`?\s*\(([^)]+)\)', d.get("text", ""), re.IGNORECASE)
+            rel_str = ""
+            if fk_lines:
+                rel_str = "\n  Foreign Keys: " + ", ".join(f"`{tbl}.{src.strip('`')}` -> `{tgt_t.strip('`')}.{tgt_c.strip('`')}`" for src, tgt_t, tgt_c in fk_lines)
             if cols:
                 col_list = ", ".join(cols[:40])
-                table_summaries.append(f"- Table: `{tbl}`\n  Columns: {col_list}")
+                table_summaries.append(f"- Table: `{tbl}`\n  Columns: {col_list}{rel_str}")
             else:
-                table_summaries.append(f"- Table: `{tbl}`")
+                table_summaries.append(f"- Table: `{tbl}`{rel_str}")
 
         if not table_summaries:
             return user_query
@@ -324,6 +348,7 @@ Rules:
    - "recent / latest" -> order by the relevant date/timestamp or primary key descending.
    - "approved / pending / rejected / submitted / completed / closed / draft" -> filter by the actual status/stage column present in the schema (e.g. `stage`, `status`, `state`, `phase`). NEVER write "where approved is TRUE" or invent boolean columns for workflow status terms! Write "where the `stage` is 'approved'".
    - "budget available in 0 / budget is 0 / count = 0 / zero amount" -> filter using numeric comparison on the amount/budget column (e.g. "where the `budget` is 0" or "where `balance` is 0"). NEVER write "where budgeted is false"!
+   - "budgetcode / project code / category name / foreign entity code or name" -> Columns ending in `_id` (e.g. `budget_id`, `project_id`) are foreign keys referencing parent table `id`s, NOT business codes! When the user specifies a code or name for a referenced entity (e.g. "budgetcode 5010172804"), specify joining the child table to the parent table on the foreign key (`cm_budget_requests.budget_id = cm_budgets.id`) and filtering on the parent table's `code` column (`cm_budgets.code` is "5010172804"). NEVER write "where budget_id is '5010172804'"!
    - "list all duplicate name" -> select the name column and count, grouped by the name column having count > 1 (do NOT ask for a single aggregate count if user asked to "list all").
 3. PRESERVE INTENT: Do not change what the user wants to know; only make it crystal clear, referencing the exact table and column names.
 4. Keep the enriched query concise (1-3 sentences). Return ONLY the enriched question without explanations or code fences.

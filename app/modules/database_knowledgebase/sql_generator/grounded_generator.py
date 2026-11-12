@@ -71,11 +71,17 @@ Rules:
 5. DATE HANDLING: If a specific date like 'YYYY-MM-DD' is requested, match with date casting or comparisons.
 {limit_rule}
 7. Return only one single SQL query without Markdown code fences, commentary, or multiple statements.
-8. SINGLE TABLE SUFFICIENCY & MINIMAL JOINS (CRITICAL):
-   - Check if the requested projection attribute (e.g. COUNT(*), amount, code, status, price) AND an entity/filter column (e.g. status, name, title) both exist directly on one of the candidate tables.
-   - If a candidate table already has the required columns (e.g. table `ipa_budget_clarification` has `status` and can directly answer `COUNT(*)` with `WHERE status = 'pending'`), query that table DIRECTLY!
-   - NEVER join additional tables (such as `ipa_budget`, `ipa_auditlog`, or master tables) unless the question explicitly asks for attributes from those other tables! Unnecessary joins filter out valid rows and produce 0 results.
-   - Only perform JOINs when the requested information is genuinely split across multiple tables.
+8. SINGLE TABLE SUFFICIENCY vs MANDATORY FOREIGN KEY JOINS (CRITICAL):
+   - Single table sufficiency applies ONLY when all requested attributes and filters natively belong to the same table (e.g. stage, amount, request date).
+   - FOREIGN KEYS ARE SURROGATE INTEGER IDs, NOT BUSINESS CODES OR NAMES:
+     Columns ending in `_id` (e.g., `budget_id`, `project_id`, `user_id`, `customer_id`) store internal database integer IDs (1, 2, 3...), NEVER business codes or display names.
+   - When a user query mentions a business code, number, name, or title of a referenced entity (e.g., 'budgetcode "5010172804"', 'project "Alpha"', 'vendor "TechCorp"'):
+     * You MUST JOIN the referenced table along the documented FOREIGN KEY:
+       `FROM cm_budget_requests br JOIN cm_budgets b ON br.budget_id = b.id`
+     * And filter on the referenced table's actual code/name column:
+       `WHERE b.code {like_op} '%5010172804%'` (or `b.code = '5010172804'`)
+     * NEVER filter the foreign key ID column directly with external business codes (e.g. NEVER write `WHERE budget_id = 5010172804` or `WHERE budget_id = '5010172804'`).
+   - Only avoid JOINs when all requested attributes exist on one table and no foreign entity codes or attributes are referenced.
 9. DYNAMIC MULTI-WORD & SEPARATOR-AGNOSTIC STRING MATCHING:
    When matching any free-text, entity names, product items, brands, titles, categories, or literal phrases (such as 'cream & IPA', 'red wine', person names, or item codes):
    - NEVER fragment a multi-word literal across multiple different columns using AND (e.g. NEVER do `col1 {like_op} '%part1%' AND col2 {like_op} '%part2%' AND col3 {like_op} '%part3%'`).
@@ -119,11 +125,11 @@ Rules:
      * CORRECT: WHERE stage ILIKE '%complete%' AND capex_revex ILIKE '%capex%' AND finance_year ILIKE '%2026%'
      * WRONG:   WHERE stage = 'complete' OR stage ILIKE 'complete' (fails to match 'Completed'!)
    - For numeric IDs (e.g. `id = 123`) and booleans (`active = TRUE`), use `=`. But for ALL text/character/enum values, use ONLY `ILIKE` with `%...%`.
-16. WORKFLOW STAGES & STATUSES ARE VALUES, NEVER BOOLEAN COLUMNS (CRITICAL):
+16. STRICT BOOLEAN & STATUS POLICY (CRITICAL):
    - Status, stage, or lifecycle state words (such as 'approved', 'pending', 'rejected', 'completed', 'submitted', 'closed', 'draft', 'cancelled') are STRING VALUES stored in status/stage columns (e.g. `stage`, `status`, `state`, `workflow_state`, `phase`).
-   - You MUST NEVER generate boolean column checks for status words (e.g. NEVER write `WHERE approved = TRUE`, `WHERE pending = TRUE`, `WHERE completed = TRUE`, etc.).
-   - Check the table's schema: if the table has a `stage` column, query `stage ILIKE '%approved%'`! If the table has a `status` column, query `status ILIKE '%approved%'`.
-   - Only use `= TRUE` or `= FALSE` for genuine boolean flags (like `active = TRUE`, `deleted = FALSE`) when the user asks for active/deleted records.
+   - You MUST NEVER generate boolean column checks for status words (e.g. NEVER write `WHERE approved = TRUE`, `WHERE pending = TRUE`, `WHERE completed = TRUE`, etc.). Check the table's schema: if the table has a `stage` column, query `stage ILIKE '%approved%'`! If the table has a `status` column, query `status ILIKE '%approved%'`.
+   - NEVER automatically add boolean filters like `deleted = FALSE`, `active = TRUE`, or `is_active = TRUE` unless the user question EXPLICITLY asks for active, inactive, deleted, or non-deleted records!
+   - If the user did not explicitly mention "active", "activated", "deleted", or "trash", you MUST NOT filter on `deleted` or `active` columns at all!
 17. NUMERIC ZERO ("0") IS A NUMBER, NEVER BOOLEAN FALSE (CRITICAL):
    - When the user query specifies a number or zero (e.g. 'budget available in 0', 'count is 0', 'balance = 0'), match with numeric comparisons (`= 0`, `<= 0`, `> 0`) on numeric amount/budget/balance columns (e.g. `budget = 0` or `balance = 0` or `COALESCE(budget, 0) = 0`).
    - NEVER convert a number or zero into a boolean flag like `budgeted = FALSE` or `col = FALSE`!
@@ -350,8 +356,9 @@ Rules:
    - Match the target string against a single candidate column with {like_op}: `(column_name {like_op} '%word1%' AND column_name {like_op} '%word2%')` or `column_name {like_op} '%word1%word2%'`.
    - Or test across alternative candidate columns with OR: `(col_a {like_op} '%term%' OR col_b {like_op} '%term%')`.
    - If a table has split names, match against `CONCAT(first, ' ', last) {like_op} '%full term%'`.
-4. SINGLE TABLE SUFFICIENCY:
-   - If the requested projection column and the filter column both exist directly on one table, remove unnecessary joins and query that table directly.
+4. SINGLE TABLE SUFFICIENCY vs FOREIGN KEY JOINS:
+   - If the requested projection column and filter both exist directly on one table, avoid unnecessary joins.
+   - BUT if the user question references a code, number, or name of a related foreign entity (e.g. 'budgetcode 5010172804', 'project Alpha'), do NOT filter foreign key `_id` columns directly with business codes! You MUST JOIN the parent table on the foreign key (`br.budget_id = b.id`) and filter on the parent table's code column (`b.code ILIKE '%5010172804%'`).
 5. "WORKING ON / UNDER" vs "MEMBERS OF" A PROJECT:
    - When the user asks who is "working on", "working under", "doing work on", or "assigned to" a project/entity, join the active tasks/work items table (e.g., `work_packages`, `tasks`, `issues`, `tickets` via `assigned_to_id` or `author_id`) where actual work assignments reside.
    - Use the membership roster table (e.g., `members`) only when the user specifically asks for "members", "membership list", or "team permissions".

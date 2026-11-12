@@ -72,6 +72,14 @@ STRICT CONSTRAINTS:
 23. NUMERIC ZERO ("0") IS A NUMBER, NEVER BOOLEAN FALSE (CRITICAL):
     - When a user query mentions a numeric quantity or budget balance of zero ("0" or "available in 0"), it means comparing a numeric column to 0 (e.g. `budgeted = 0` or `balance = 0` or `available_amount = 0`).
     - NEVER hallucinate or convert a numeric column condition into a boolean flag (e.g. NEVER write `budgeted = FALSE` or `budget = FALSE`).
+24. FOREIGN KEYS ARE SURROGATE IDs, NOT BUSINESS CODES/NAMES (CRITICAL):
+    - Columns ending in `_id` (e.g. `budget_id`, `project_id`, `customer_id`, `user_id`) store internal surrogate integer primary keys referencing parent tables.
+    - When the user query specifies a code, number, or name for a referenced entity (e.g. 'budgetcode 5010172804', 'project Alpha'):
+      You MUST JOIN the referenced parent table (`JOIN cm_budgets ON cm_budget_requests.budget_id = cm_budgets.id`) and filter on the parent table's code/name column (`cm_budgets.code ILIKE '%5010172804%'`).
+      NEVER filter the foreign key column directly with business codes (NEVER write `budget_id = 5010172804`).
+25. STRICT BOOLEAN POLICY (CRITICAL):
+    - NEVER automatically generate boolean filters like `deleted = FALSE`, `active = TRUE`, or `is_active = TRUE` unless the user question EXPLICITLY asks for active, inactive, deleted, or non-deleted records!
+    - If the user did not explicitly mention "active" or "deleted", do NOT filter on boolean columns at all!
 """
 
     @classmethod

@@ -133,6 +133,47 @@ class GroundedSQLValidator:
                     modified = True
                     logger.info(f"[GroundedSQLValidator] Repaired numeric boolean true '{c_name} = TRUE' -> '{c_name} > 0'")
 
+            # Case 5: Foreign key equated directly to a business code (e.g. budget_id = 5010172804 or budget_id = '5010172804')
+            elif c_name.endswith("_id") and c_name not in ("id", "tenant_id", "pk", "parent_id"):
+                val_raw = str(getattr(val_node, "this", ""))
+                is_long_code = (isinstance(val_node, exp.Literal) and val_node.is_string and len(val_raw) >= 3) or (
+                    isinstance(val_node, exp.Literal) and val_node.is_number and len(val_raw) >= 6
+                )
+                if is_long_code:
+                    existing_tables = {t.name.lower() for t in tree.find_all(exp.Table) if t.name}
+                    col_tbl = col_node.table.lower() if col_node.table else ""
+                    fk_entity = c_name[:-3]
+                    parent_candidate = next((t for t in existing_tables if (t.endswith(f"{fk_entity}s") or t == f"{fk_entity}s") and t != col_tbl), None)
+                    if parent_candidate:
+                        t_alias = None
+                        for t in tree.find_all(exp.Table):
+                            if t.name.lower() == parent_candidate:
+                                t_alias = t.alias if t.alias else t.name
+                                break
+                        target_table_ref = t_alias or parent_candidate
+                        new_pred = exp.ILike(
+                            this=exp.Column(this=exp.to_identifier("code"), table=exp.to_identifier(target_table_ref)),
+                            expression=exp.Literal.string(f"%{val_raw}%")
+                        )
+                        eq.replace(new_pred)
+                        modified = True
+                        logger.info(f"[GroundedSQLValidator] Repaired foreign key code filter '{c_name} = {val_raw}' -> '{target_table_ref}.code ILIKE %{val_raw}%'")
+                    else:
+                        tbl_prefix = ""
+                        for t_name in existing_tables:
+                            if "_" in t_name:
+                                tbl_prefix = t_name.split("_")[0] + "_"
+                                break
+                        parent_table_inferred = f"{tbl_prefix}{fk_entity}s" if tbl_prefix else f"{fk_entity}s"
+                        subq_sql = f"{col_node.sql(dialect=d_name)} IN (SELECT id FROM {parent_table_inferred} WHERE code ILIKE '%{val_raw}%')"
+                        try:
+                            subq_node = sqlglot.parse_one(subq_sql, read=d_name)
+                            eq.replace(subq_node)
+                            modified = True
+                            logger.info(f"[GroundedSQLValidator] Repaired foreign key code filter with subquery: '{subq_sql}'")
+                        except Exception as e:
+                            logger.warning(f"[GroundedSQLValidator] Could not parse FK subquery '{subq_sql}': {e}")
+
         if modified:
             return tree.sql(dialect=d_name)
         return sql
@@ -191,12 +232,80 @@ class GroundedSQLValidator:
             return sql
 
     @classmethod
+    def strip_unrequested_boolean_predicates(
+        cls,
+        sql: str,
+        user_query: Optional[str] = None,
+        dialect: str = "postgres",
+    ) -> str:
+        """
+        Strips automatic boolean predicates like `deleted = FALSE` or `active = TRUE`
+        UNLESS the user explicitly mentioned active/deleted status in their question.
+        """
+        if not sql or not user_query:
+            return sql
+
+        q_lower = user_query.lower()
+        user_asked_active = any(w in q_lower for w in ("active", "activate", "activated", "enabled", "inactive", "disabled"))
+        user_asked_deleted = any(w in q_lower for w in ("delete", "deleted", "trash", "soft-delete", "soft_delete"))
+
+        # If user explicitly asked for both, nothing to strip
+        if user_asked_active and user_asked_deleted:
+            return sql
+
+        clean_d = (dialect or "postgres").lower()
+        d_name = "tsql" if any(k in clean_d for k in ("sqlserver", "mssql", "tsql")) else ("mysql" if any(k in clean_d for k in ("mysql", "mariadb")) else "postgres")
+
+        try:
+            tree = sqlglot.parse_one(sql, read=d_name)
+        except Exception:
+            try:
+                tree = sqlglot.parse_one(sql)
+            except Exception:
+                return sql
+
+        matched_any = False
+        for eq in list(tree.find_all(exp.EQ)):
+            col_node = eq.this if isinstance(eq.this, exp.Column) else (eq.expression if isinstance(eq.expression, exp.Column) else None)
+            val_node = eq.expression if col_node == eq.this else eq.this
+            if not col_node or not val_node:
+                continue
+            c_name = col_node.name.lower()
+
+            if c_name in ("active", "is_active", "enabled") and isinstance(val_node, exp.Boolean):
+                if not user_asked_active:
+                    eq.replace(exp.true())
+                    matched_any = True
+                    logger.info(f"[GroundedSQLValidator] Stripped unrequested active filter '{c_name} = {val_node.this}'")
+
+            elif c_name in ("deleted", "is_deleted") and isinstance(val_node, exp.Boolean):
+                if not user_asked_deleted:
+                    eq.replace(exp.true())
+                    matched_any = True
+                    logger.info(f"[GroundedSQLValidator] Stripped unrequested deleted filter '{c_name} = {val_node.this}'")
+
+        if not matched_any:
+            return sql
+
+        try:
+            from sqlglot.optimizer.simplify import simplify
+            simp = simplify(tree)
+            where = simp.find(exp.Where)
+            if where and isinstance(where.this, exp.Boolean) and where.this.this is True:
+                where.pop()
+            return simp.sql(dialect=d_name)
+        except Exception as simp_err:
+            logger.debug(f"[GroundedSQLValidator] Simplify failed: {simp_err}")
+            return sql
+
+    @classmethod
     def validate_readonly_sql(
         cls,
         sql: str,
         dialect: str = "postgres",
         table_alias_words: Optional[list] = None,
         available_columns: Optional[list] = None,
+        user_query: Optional[str] = None,
     ) -> str:
         """
         Validate that SQL is a single, safe, read-only SELECT or CTE query.
@@ -265,4 +374,6 @@ class GroundedSQLValidator:
             validated_sql = cls.fix_hallucinated_boolean_predicates(validated_sql, available_columns, dialect=out_dialect)
         if table_alias_words:
             validated_sql = cls.strip_table_alias_predicates(validated_sql, table_alias_words, dialect=out_dialect)
+        if user_query:
+            validated_sql = cls.strip_unrequested_boolean_predicates(validated_sql, user_query, dialect=out_dialect)
         return validated_sql
