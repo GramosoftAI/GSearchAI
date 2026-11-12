@@ -65,6 +65,8 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
             or request.url.path.startswith("/api/v1/analytics/internal")
             or "/sharepoint/login" in request.url.path
             or "/sharepoint/callback" in request.url.path
+            or "/outlook/login" in request.url.path
+            or "/outlook/callback" in request.url.path
             or request.url.path == "/api/v1/slack/events"
             or request.url.path == "/api/v1/slack/callback"
         ):

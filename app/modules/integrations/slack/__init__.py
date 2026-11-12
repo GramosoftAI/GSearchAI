@@ -1,9 +1,12 @@
-"""Slack Multi-Tenant Integration Module"""
+"""Backward-compatible re-export shim; canonical module is `app.modules.connectors.slack`."""
 
-from .routes import router
-from .service import SlackService
-from .models import SlackConnection, SlackEvent
-from .client import SlackClient
+from app.modules.connectors.slack import (  # noqa: F401
+    SlackClient,
+    SlackConnection,
+    SlackEvent,
+    SlackService,
+    router,
+)
 
 __all__ = [
     "router",
