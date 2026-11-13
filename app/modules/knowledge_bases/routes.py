@@ -1212,7 +1212,7 @@ async def disconnect_agent_integration(request: Request, agent_id: str, integrat
     try:
         tenant_id, user_id = get_tenant_and_user(request)
         
-        valid_integrations = ["google_drive", "sharepoint", "gmail", "outlook"]
+        valid_integrations = ["google_drive", "sharepoint", "gmail", "outlook", "onedrive"]
         if integration_type not in valid_integrations:
             raise HTTPException(status_code=400, detail=f"Invalid integration type. Must be one of {valid_integrations}")
         if integration_type == "gmail":
@@ -1907,6 +1907,203 @@ async def sync_sharepoint_to_graph(request: Request, kb_id: str, sync_req: Optio
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 # ============================================================================
+# ONEDRIVE CONNECTOR ENDPOINTS
+# ============================================================================
+
+@router.post(
+    "/{kb_id}/onedrive/register",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    summary="Register OneDrive Connection",
+    description="Register OneDrive credentials for this KB"
+)
+async def register_onedrive(
+    request: Request,
+    kb_id: str,
+    od_request: schemas.OneDriveRegister
+) -> dict:
+    try:
+        tenant_id, _ = get_tenant_and_user(request)
+
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select
+            from .models import DatabaseConnection
+            import uuid
+
+            query = select(DatabaseConnection).where(
+                DatabaseConnection.kb_id == uuid.UUID(kb_id),
+                DatabaseConnection.tenant_id == uuid.UUID(tenant_id),
+                DatabaseConnection.db_type == "onedrive"
+            )
+            res = await db.execute(query)
+            db_conn = res.scalar_one_or_none()
+
+            server_client_id = os.getenv("MS_CLIENT_ID") or os.getenv("AZURE_CLIENT_ID")
+            server_client_secret = os.getenv("MS_CLIENT_SECRET") or os.getenv("AZURE_CLIENT_SECRET")
+            server_tenant_id = os.getenv("MS_TENANT_ID") or os.getenv("AZURE_TENANT_ID") or "common"
+
+            merged_credentials = od_request.credentials.copy()
+            if server_client_id and not merged_credentials.get("client_id"):
+                merged_credentials["client_id"] = server_client_id
+            if server_client_secret and not merged_credentials.get("client_secret"):
+                merged_credentials["client_secret"] = server_client_secret
+            if not merged_credentials.get("tenant_id"):
+                merged_credentials["tenant_id"] = server_tenant_id
+
+            if not db_conn:
+                db_conn = DatabaseConnection(
+                    tenant_id=uuid.UUID(tenant_id),
+                    kb_id=uuid.UUID(kb_id),
+                    db_type="onedrive",
+                    connection_params={
+                        "credentials": merged_credentials,
+                        "folder_ids": od_request.folder_ids or []
+                    }
+                )
+                db.add(db_conn)
+            else:
+                db_conn.db_type = "onedrive"
+                db_conn.connection_params = {
+                    "credentials": merged_credentials,
+                    "folder_ids": od_request.folder_ids or []
+                }
+
+            await db.commit()
+
+            service = KnowledgeBaseService(db, tenant_id)
+            kb_obj = await service.repository.get_by_id(kb_id)
+            if kb_obj:
+                if not kb_obj.name or "(onedrive)" not in kb_obj.name.lower():
+                    kb_obj.name = "OneDrive Knowledge"
+                    await db.commit()
+
+            try:
+                await service.neo4j_repo.execute_write(
+                    """
+                    MATCH (kb:KnowledgeBase {id: $kb_id, tenant_id: $tenant_id})
+                    SET kb.name = 'OneDrive Knowledge'
+                    """,
+                    {"kb_id": kb_id, "tenant_id": str(tenant_id)}
+                )
+            except Exception as neo_err:
+                logger.warning(f"Failed to update Neo4j KB name during onedrive register: {neo_err}")
+
+            return format_success(
+                {"kb_id": kb_id, "db_type": "onedrive"},
+                meta={"message": "OneDrive connection registered successfully"}
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in register_onedrive: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.get(
+    "/{kb_id}/onedrive/files",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    summary="List OneDrive Files",
+    description="List files and folders from the connected OneDrive for selective ingestion."
+)
+async def list_onedrive_files(request: Request, kb_id: str, parent_id: Optional[str] = None) -> dict:
+    try:
+        tenant_id, _ = get_tenant_and_user(request)
+        async with AsyncSessionLocal() as db:
+            service = KnowledgeBaseService(db, tenant_id)
+            return await service.list_onedrive_directory(kb_id=kb_id, parent_id=parent_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in list_onedrive_files: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post(
+    "/{kb_id}/onedrive/sync",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    summary="Synchronize OneDrive to Graph",
+    description="Crawl OneDrive, download files, generate embeddings, and load them into Neo4j graph"
+)
+async def sync_onedrive_to_graph(request: Request, kb_id: str, sync_req: Optional[schemas.OneDriveSyncRequest] = None) -> dict:
+    try:
+        tenant_id, _ = get_tenant_and_user(request)
+
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select
+            from .models import DatabaseConnection
+            from datetime import datetime
+            import uuid
+
+            query = select(DatabaseConnection).where(
+                DatabaseConnection.kb_id == uuid.UUID(kb_id),
+                DatabaseConnection.tenant_id == uuid.UUID(tenant_id),
+                DatabaseConnection.db_type == "onedrive"
+            )
+            res = await db.execute(query)
+            db_conn = res.scalar_one_or_none()
+            if not db_conn:
+                raise HTTPException(status_code=404, detail="No registered OneDrive connection found for this KB")
+
+            connection_params = db_conn.connection_params
+            credentials = connection_params.get("credentials", {})
+            if not credentials:
+                credentials = {
+                    "access_token": connection_params.get("access_token"),
+                    "refresh_token": connection_params.get("refresh_token")
+                }
+
+            service = KnowledgeBaseService(db, tenant_id)
+            file_ids = sync_req.file_ids if sync_req else None
+            folder_ids = sync_req.folder_ids if sync_req else None
+
+            try:
+                from app.worker.queue import get_redis_pool
+                redis_pool = await get_redis_pool()
+                job = await redis_pool.enqueue_job(
+                    "onedrive_sync_job",
+                    kb_id=kb_id,
+                    tenant_id=tenant_id,
+                    credentials=credentials,
+                    file_ids=file_ids,
+                    folder_ids=folder_ids,
+                )
+                db_conn.last_synced_at = datetime.now()
+                await db.commit()
+                return format_success(
+                    {
+                        "job_id": job.job_id,
+                        "kb_id": kb_id,
+                        "status": "queued",
+                        "files_queued": len(file_ids) if file_ids else 0,
+                        "folders_queued": len(folder_ids) if folder_ids else 0,
+                    },
+                    meta={"message": "OneDrive sync queued to Redis background worker successfully"}
+                )
+            except Exception as queue_err:
+                logger.warning(f"Redis queue unavailable ({queue_err}), running inline sync for OneDrive.")
+                result = await service.sync_onedrive_source(
+                    kb_id=kb_id,
+                    credentials_dict=credentials,
+                    file_ids=file_ids,
+                    folder_ids=folder_ids
+                )
+
+                if not result.get("success"):
+                    raise HTTPException(status_code=400, detail=result.get("error"))
+
+                db_conn.last_synced_at = datetime.now()
+                await db.commit()
+
+                return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in sync_onedrive_to_graph: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+# ============================================================================
 # GMAIL CONNECTOR ENDPOINTS
 # ============================================================================
 
@@ -2216,6 +2413,129 @@ async def sharepoint_callback(code: str, state: str):
     from fastapi.responses import HTMLResponse
     return HTMLResponse(
         content="<script>window.close();</script><h2>Successfully connected SharePoint! You can close this window.</h2>"
+    )
+
+
+# ============================================================================
+# ONEDRIVE OAUTH ROUTES (1-CLICK FLOW)
+# ============================================================================
+
+@router.get("/{kb_id}/onedrive/login")
+async def onedrive_login(kb_id: str):
+    """Step 1: Redirect user to Microsoft Login for OneDrive access"""
+    tenant_id = os.getenv("MS_TENANT_ID") or os.getenv("AZURE_TENANT_ID") or "common"
+    client_id = os.getenv("MS_CLIENT_ID") or os.getenv("AZURE_CLIENT_ID")
+    redirect_uri = os.getenv("ONEDRIVE_REDIRECT_URI") or "http://localhost:4915/api/v1/knowledge-bases/onedrive/callback"
+    scopes = "openid profile email offline_access Files.Read Files.Read.All User.Read"
+
+    auth_url = (
+        f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
+        f"?client_id={client_id}"
+        f"&response_type=code"
+        f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
+        f"&response_mode=query"
+        f"&scope={urllib.parse.quote(scopes)}"
+        f"&state={kb_id}"
+        f"&prompt=select_account"
+    )
+    logger.info(f"OneDrive OAuth auth_url generated for KB {kb_id}")
+    return RedirectResponse(auth_url)
+
+
+@router.get("/onedrive/callback")
+async def onedrive_callback(code: str, state: str):
+    """Step 2: Microsoft redirects here with the auth code. Exchange for tokens and store."""
+    kb_id = state
+    tenant_id = os.getenv("MS_TENANT_ID") or os.getenv("AZURE_TENANT_ID") or "common"
+    client_id = os.getenv("MS_CLIENT_ID") or os.getenv("AZURE_CLIENT_ID")
+    client_secret = os.getenv("MS_CLIENT_SECRET") or os.getenv("AZURE_CLIENT_SECRET")
+    redirect_uri = os.getenv("ONEDRIVE_REDIRECT_URI") or "http://localhost:4915/api/v1/knowledge-bases/onedrive/callback"
+    scopes = "openid profile email offline_access Files.Read Files.Read.All User.Read"
+
+    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+
+    data = {
+        "client_id": client_id,
+        "scope": scopes,
+        "code": code,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code",
+        "client_secret": client_secret,
+    }
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(token_url, data=data)
+        token_data = resp.json()
+
+        if "error" in token_data:
+            logger.error(f"OneDrive token exchange error: {token_data}")
+            raise HTTPException(status_code=400, detail=token_data.get("error_description"))
+
+        access_token = token_data.get("access_token")
+        refresh_token = token_data.get("refresh_token")
+
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        from .models import DatabaseConnection, KnowledgeBase
+        import uuid
+
+        query = select(DatabaseConnection).where(
+            DatabaseConnection.kb_id == uuid.UUID(kb_id),
+            DatabaseConnection.db_type == "onedrive"
+        )
+        res = await db.execute(query)
+        db_conn = res.scalar_one_or_none()
+
+        kb_query = select(KnowledgeBase).where(KnowledgeBase.id == uuid.UUID(kb_id))
+        kb_res = await db.execute(kb_query)
+        kb_record = kb_res.scalar_one_or_none()
+        resolved_tenant_id = kb_record.tenant_id if kb_record else uuid.UUID("506a8be1-fa85-4441-99c7-5e3c1408e15e")
+
+        if not db_conn:
+            db_conn = DatabaseConnection(
+                tenant_id=resolved_tenant_id,
+                kb_id=uuid.UUID(kb_id),
+                db_type="onedrive",
+                connection_params={}
+            )
+            db.add(db_conn)
+
+        current_params = db_conn.connection_params or {}
+        if "credentials" not in current_params:
+            current_params["credentials"] = {}
+
+        current_params["credentials"]["access_token"] = access_token
+        current_params["credentials"]["refresh_token"] = refresh_token
+
+        headers = {"Authorization": f"Bearer {access_token}"}
+        async with httpx.AsyncClient() as client:
+            me_res = await client.get("https://graph.microsoft.com/v1.0/me", headers=headers)
+            if me_res.status_code == 200:
+                me_data = me_res.json()
+                current_params["credentials"]["microsoft_user_id"] = me_data.get("id")
+                current_params["credentials"]["microsoft_email"] = me_data.get("userPrincipalName") or me_data.get("mail")
+
+        current_params["access_token"] = access_token
+        current_params["refresh_token"] = refresh_token
+
+        from sqlalchemy.orm.attributes import flag_modified
+        db_conn.connection_params = current_params
+        flag_modified(db_conn, "connection_params")
+
+        if kb_record:
+            if not kb_record.name or "(onedrive)" not in kb_record.name.lower():
+                kb_record.name = "OneDrive Knowledge"
+
+        await db.commit()
+
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(
+        content="""<script>
+            if (window.opener) {
+                window.opener.postMessage({ type: 'ONEDRIVE_AUTH_SUCCESS', kb_id: '""" + kb_id + """' }, '*');
+            }
+            window.close();
+        </script><h2>Successfully connected OneDrive! You can close this window.</h2>"""
     )
 
 

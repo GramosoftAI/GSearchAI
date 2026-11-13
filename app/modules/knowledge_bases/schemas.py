@@ -365,6 +365,57 @@ class SharePointSyncRequest(BaseModel):
         }
 
 
+class OneDriveRegister(BaseModel):
+    """
+    Schema to register/associate a OneDrive connection with an Agent KB.
+    """
+    credentials: dict = Field(..., description="Credentials for Microsoft Graph (client_id, client_secret, tenant_id)")
+    folder_ids: Optional[list[str]] = Field(None, description="Optional OneDrive Folder IDs to isolate indexing")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "credentials": {
+                    "client_id": "00000000-0000-0000-0000-000000000000",
+                    "client_secret": "supersecret",
+                    "tenant_id": "common"
+                },
+                "folder_ids": []
+            }
+        }
+
+
+class OneDriveItem(BaseModel):
+    """Schema representing a single file or folder from OneDrive."""
+    id: str
+    name: str
+    mime_type: str
+    is_folder: bool
+    web_url: Optional[str] = None
+    size: Optional[int] = 0
+
+
+class OneDriveListResponse(BaseModel):
+    """Schema for returning a directory listing from OneDrive."""
+    items: list[OneDriveItem] = []
+
+
+class OneDriveSyncRequest(BaseModel):
+    """
+    Schema for selectively syncing files or folders from OneDrive.
+    """
+    file_ids: Optional[list[str]] = Field(default_factory=list, description="Specific file IDs to ingest")
+    folder_ids: Optional[list[str]] = Field(default_factory=list, description="Specific folder IDs to ingest (recursive)")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "file_ids": ["01ABCDEF..."],
+                "folder_ids": ["01XYZ123..."]
+            }
+        }
+
+
 class GmailRegister(BaseModel):
     """Schema to register Gmail connection."""
     credentials: dict = Field(..., description="Service Account JSON payload or OAuth token data")

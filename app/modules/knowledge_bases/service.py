@@ -3930,6 +3930,344 @@ class KnowledgeBaseService:
             logger.error(f" SharePoint synchronization failed: {e}", exc_info=True)
             return format_error(f"Failed to synchronize SharePoint: {str(e)}")
 
+    async def list_onedrive_directory(self, kb_id: str, parent_id: Optional[str] = None) -> dict:
+        try:
+            from sqlalchemy import select
+            from .models import DatabaseConnection
+            import uuid
+
+            query = select(DatabaseConnection).where(
+                DatabaseConnection.kb_id == uuid.UUID(kb_id),
+                DatabaseConnection.tenant_id == self.tenant_id,
+                DatabaseConnection.db_type == "onedrive"
+            )
+            res = await self.db.execute(query)
+            db_conn = res.scalar_one_or_none()
+            if not db_conn:
+                return format_error("No registered OneDrive connection found for this KB", meta={"status_code": 404})
+
+            credentials = db_conn.connection_params.get("credentials", {})
+            if not credentials:
+                credentials = {
+                    "access_token": db_conn.connection_params.get("access_token"),
+                    "refresh_token": db_conn.connection_params.get("refresh_token")
+                }
+
+            from app.modules.connectors.onedrive.crawler import OneDriveConnector
+            connector = OneDriveConnector()
+            connector.load_credentials(credentials)
+
+            raw_items = await connector.list_directory(parent_id or "root")
+            items = []
+            for item in raw_items:
+                items.append({
+                    "id": item.get("id"),
+                    "name": item.get("name"),
+                    "mime_type": item.get("mimeType"),
+                    "is_folder": item.get("is_folder", False),
+                    "web_url": item.get("webUrl"),
+                    "size": item.get("size", 0)
+                })
+
+            return format_success(
+                {"items": items},
+                meta={"message": "OneDrive directory listing fetched successfully"}
+            )
+        except Exception as e:
+            logger.error(f"Failed to list OneDrive directory: {e}", exc_info=True)
+            return format_error(f"Failed to list OneDrive directory: {str(e)}")
+
+    async def sync_onedrive_source(
+        self,
+        kb_id: str,
+        credentials_dict: dict,
+        file_ids: Optional[List[str]] = None,
+        folder_ids: Optional[List[str]] = None,
+    ) -> dict:
+        """
+        Synchronize OneDrive files and folders with the Knowledge Graph & Document Store.
+        Crawls files/folders, downloads binary streams, extracts text,
+        pipes them to the existing chunk pipelines, and maps folder relationships.
+        """
+        import time
+        from app.core.connectors import HierarchyNode, SlimDocument
+
+        sync_start_time = time.time()
+        sync_start_timestamp = int(sync_start_time * 1000)
+
+        try:
+            from app.modules.connectors.onedrive.crawler import OneDriveConnector
+            connector = OneDriveConnector(folder_ids=folder_ids)
+            connector.load_credentials(credentials_dict)
+
+            files_synced = 0
+            folders_synced = 0
+            synced_filenames = []
+            partial_failures = []
+
+            if file_ids or folder_ids:
+                async def selective_generator():
+                    all_file_ids = set(file_ids or [])
+                    folders_to_process = list(folder_ids or [])
+                    processed_folders = set()
+
+                    while folders_to_process:
+                        current_fid = folders_to_process.pop(0)
+                        if current_fid in processed_folders:
+                            continue
+                        processed_folders.add(current_fid)
+
+                        try:
+                            f_meta = await connector.get_files_metadata([current_fid])
+                            if f_meta:
+                                yield HierarchyNode(
+                                    raw_node_id=current_fid,
+                                    raw_parent_id=f_meta[0].get("parents", [None])[0],
+                                    name=f_meta[0].get("name", "Unknown Folder")
+                                )
+                            children = await connector.list_directory(current_fid)
+                            for child in children:
+                                if child.get("is_folder"):
+                                    folders_to_process.append(child["id"])
+                                else:
+                                    all_file_ids.add(child["id"])
+                        except Exception as list_err:
+                            logger.error(f"Error expanding OneDrive folder {current_fid}: {list_err}")
+
+                    if all_file_ids:
+                        metas = await connector.get_files_metadata(list(all_file_ids))
+                        for meta in metas:
+                            yield SlimDocument(
+                                id=meta["id"],
+                                source="onedrive",
+                                permalink=meta.get("webViewLink", ""),
+                                metadata={
+                                    "filename": meta.get("name"),
+                                    "mime_type": meta.get("mimeType"),
+                                    "parents": meta.get("parents", [])
+                                }
+                            )
+
+                pipeline_stream = selective_generator()
+            else:
+                async def full_drive_generator():
+                    folders_to_process = ["root"]
+                    processed_folders = set()
+                    while folders_to_process:
+                        curr = folders_to_process.pop(0)
+                        if curr in processed_folders:
+                            continue
+                        processed_folders.add(curr)
+                        children = await connector.list_directory(curr)
+                        for ch in children:
+                            if ch.get("is_folder"):
+                                folders_to_process.append(ch["id"])
+                                yield HierarchyNode(
+                                    raw_node_id=ch["id"],
+                                    raw_parent_id=curr,
+                                    name=ch.get("name", "Folder")
+                                )
+                            else:
+                                yield SlimDocument(
+                                    id=ch["id"],
+                                    source="onedrive",
+                                    permalink=ch.get("webUrl", ""),
+                                    metadata={
+                                        "filename": ch.get("name"),
+                                        "mime_type": ch.get("mimeType"),
+                                        "parents": [curr]
+                                    }
+                                )
+                pipeline_stream = full_drive_generator()
+
+            async for item in pipeline_stream:
+                if isinstance(item, HierarchyNode):
+                    folders_synced += 1
+                    folder_query = """
+                    MERGE (f:Folder {id: $folder_id, tenant_id: $tenant_id})
+                    ON CREATE SET f.name = $name, f.source = 'onedrive', f.created_at = datetime()
+                    ON MATCH SET f.name = $name
+                    """
+                    await self.neo4j_repo.execute_write(folder_query, {
+                        "folder_id": item.raw_node_id,
+                        "tenant_id": str(self.tenant_id),
+                        "name": item.name
+                    })
+
+                    if item.raw_parent_id:
+                        parent_query = """
+                        MERGE (p:Folder {id: $parent_id, tenant_id: $tenant_id})
+                        MERGE (f:Folder {id: $folder_id, tenant_id: $tenant_id})
+                        MERGE (p)-[:PARENT_OF]->(f)
+                        """
+                        await self.neo4j_repo.execute_write(parent_query, {
+                            "parent_id": item.raw_parent_id,
+                            "folder_id": item.raw_node_id,
+                            "tenant_id": str(self.tenant_id)
+                        })
+
+                elif isinstance(item, SlimDocument):
+                    file_id = item.id
+                    filename = item.metadata.get("filename", "unnamed")
+                    mime_type = item.metadata.get("mime_type", "")
+                    parents = item.metadata.get("parents", [])
+
+                    logger.info(f"Syncing OneDrive file: {filename} ({mime_type})")
+
+                    try:
+                        file_bytes = await connector.download_file_bytes(file_id)
+                    except Exception as download_err:
+                        logger.error(f"Failed to download bytes for file {filename}: {download_err}")
+                        continue
+
+                    import hashlib
+                    file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+                    from sqlalchemy import select, or_, and_
+                    from app.modules.knowledge_bases.models import KnowledgeBase
+                    import uuid
+
+                    dup_stmt = select(KnowledgeBase).where(
+                        KnowledgeBase.tenant_id == self.tenant_id,
+                        KnowledgeBase.is_active == True,
+                        KnowledgeBase.id != uuid.UUID(kb_id),
+                        or_(
+                            KnowledgeBase.file_hash == file_hash,
+                            and_(
+                                KnowledgeBase.file_hash.is_(None),
+                                or_(
+                                    KnowledgeBase.name == f"{filename} (onedrive)",
+                                    KnowledgeBase.name == filename,
+                                    KnowledgeBase.parsed_path == filename
+                                )
+                            )
+                        )
+                    )
+                    dup_res = await self.db.execute(dup_stmt)
+                    existing_kb = dup_res.scalar_one_or_none()
+
+                    if existing_kb:
+                        logger.warning(f"File {filename} is duplicate of KB {existing_kb.id}")
+                        partial_failures.append({
+                            "file": filename,
+                            "status": "duplicate_skipped",
+                            "existing_kb_id": str(existing_kb.id)
+                        })
+                        continue
+
+                    try:
+                        if filename.lower().endswith(".pdf"):
+                            try:
+                                from app.core.pdf_extractor import PDFExtractor
+                                text = await PDFExtractor.extract_pdf(file_bytes, filename)
+                            except Exception as pdf_ext_err:
+                                logger.warning(f"PDFExtractor failed, falling back to pdfplumber: {pdf_ext_err}")
+                                import pdfplumber
+                                import io
+                                with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+                                    pages_text = [p.extract_text() or "" for p in pdf.pages]
+                                text = "\n".join(pages_text)
+                        elif filename.lower().endswith(".docx"):
+                            import zipfile
+                            import io
+                            import xml.etree.ElementTree as ET
+                            with zipfile.ZipFile(io.BytesIO(file_bytes)) as docx:
+                                xml_content = docx.read('word/document.xml')
+                                tree = ET.fromstring(xml_content)
+                                paragraphs = [elem.text or "" for elem in tree.iter() if elem.tag.endswith('t')]
+                                text = "".join(paragraphs)
+                        elif filename.endswith(".pptx"):
+                            import zipfile
+                            import io
+                            import xml.etree.ElementTree as ET
+                            with zipfile.ZipFile(io.BytesIO(file_bytes)) as pptx:
+                                text_elements = []
+                                for file in pptx.namelist():
+                                    if file.startswith("ppt/slides/slide") and file.endswith(".xml"):
+                                        slide_xml = pptx.read(file)
+                                        tree = ET.fromstring(slide_xml)
+                                        for elem in tree.iter():
+                                            if elem.tag.endswith('}t'):
+                                                text_elements.append(elem.text or "")
+                                        text = "\n".join(text_elements)
+                        else:
+                            text = file_bytes.decode("utf-8", errors="ignore")
+                    except Exception as parse_err:
+                        logger.error(f"Failed to parse text content from file {filename}: {parse_err}")
+                        continue
+
+                    if text.strip():
+                        logger.info(f"Piping extracted text of {filename} to standard RAG pipeline")
+                        ingest_res = await self.ingest_document(
+                            kb_id=kb_id,
+                            document_text=text,
+                            source=f"{filename} (onedrive)"
+                        )
+                        if ingest_res.get("success"):
+                            files_synced += 1
+                            synced_filenames.append(filename)
+
+                            from sqlalchemy import update
+                            await self.db.execute(
+                                update(KnowledgeBase)
+                                .where(KnowledgeBase.id == uuid.UUID(kb_id))
+                                .values(
+                                    name=f"{filename} (onedrive)",
+                                    file_hash=file_hash
+                                )
+                            )
+                            await self.db.commit()
+
+                            for pid in parents:
+                                link_query = """
+                                MERGE (f:Folder {id: $parent_id, tenant_id: $tenant_id})
+                                MERGE (d:Document {id: $file_id, tenant_id: $tenant_id})
+                                ON CREATE SET d.name = $filename, d.source = 'onedrive'
+                                MERGE (f)-[:CONTAINS]->(d)
+                                """
+                                await self.neo4j_repo.execute_write(link_query, {
+                                    "parent_id": pid,
+                                    "file_id": file_id,
+                                    "tenant_id": str(self.tenant_id),
+                                    "filename": filename
+                                })
+
+            if synced_filenames:
+                final_kb_name = f"{synced_filenames[0]} (onedrive)" if len(synced_filenames) == 1 else f"{synced_filenames[0]} + {len(synced_filenames) - 1} files (onedrive)"
+            else:
+                final_kb_name = "OneDrive Knowledge"
+
+            try:
+                pg_kb_final = await self.repository.get_by_id(kb_id)
+                if pg_kb_final:
+                    pg_kb_final.name = final_kb_name
+                    self.db.add(pg_kb_final)
+                    await self.db.commit()
+                await self.neo4j_repo.execute_write(
+                    """
+                    MATCH (kb:KnowledgeBase {id: $kb_id, tenant_id: $tenant_id})
+                    SET kb.name = $new_name
+                    """,
+                    {"kb_id": kb_id, "tenant_id": str(self.tenant_id), "new_name": final_kb_name}
+                )
+            except Exception as final_name_err:
+                logger.warning(f"Failed to update final KB name for OneDrive: {final_name_err}")
+
+            return format_success(
+                {
+                    "success": True,
+                    "kb_id": kb_id,
+                    "files_synced": files_synced,
+                    "folders_synced": folders_synced,
+                    "sync_duration_seconds": time.time() - sync_start_time
+                },
+                meta={"message": "OneDrive synchronized with Knowledge Graph successfully"}
+            )
+        except Exception as e:
+            logger.error(f"OneDrive synchronization failed: {e}", exc_info=True)
+            return format_error(f"Failed to synchronize OneDrive: {str(e)}")
+
+
 
     async def sync_gmail_source(self, kb_id: str, sync_req: dict) -> dict:
         from app.utils.formatters import format_success, format_error

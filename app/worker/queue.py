@@ -39,6 +39,7 @@ from .jobs.email_processing import email_processing_job
 from .jobs.embedding import embedding_job
 from .jobs.graph_update import graph_update_job
 from .jobs.google_drive_sync import google_drive_sync_job
+from .jobs.onedrive_sync import onedrive_sync_job
 from app.modules.integrations.slack.worker import slack_event_job
 from app.modules.database_knowledgebase.knowledge.jobs import run_phase2_pipeline
 
@@ -49,6 +50,7 @@ class WorkerSettings:
         embedding_job,
         graph_update_job,
         google_drive_sync_job,
+        onedrive_sync_job,
         slack_event_job,
         run_phase2_pipeline,
     ]
