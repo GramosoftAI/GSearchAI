@@ -62,7 +62,7 @@ class GCrawlConfig:
     LINK_DISCOVERY_TIMEOUT: int = 180
     SCRAPE_TIMEOUT: int = 1200
     POLL_INTERVAL: int = 2
-    MAX_PAGES: int = 100
+    MAX_PAGES: Optional[int] = None
     RETRY_COUNT: int = 6
     BACKOFF_FACTOR: int = 2
 
@@ -211,11 +211,11 @@ def filter_links(
     urls: List[str],
     root_url: str,
     crawl_type: str = "all",
-    max_pages: int = 100
+    max_pages: Optional[int] = None
 ) -> List[str]:
     """
     Applies business filtering rules: domain matching, deduplication, URL normalization,
-    and page count limits.
+    and page count limits (unrestricted if max_pages is None or <= 0).
     """
     canon_root = canonicalize_url(root_url) or root_url.rstrip("/")
     parsed_root = urlparse(canon_root)
@@ -245,7 +245,7 @@ def filter_links(
 
         selected.append(canon_u)
         seen.add(canon_u)
-        if len(selected) >= max_pages:
+        if max_pages is not None and max_pages > 0 and len(selected) >= max_pages:
             break
 
     return selected
@@ -654,10 +654,11 @@ class ScraperService:
             return []
 
     @staticmethod
-    async def discover_site_links(url: str, max_pages: int = 100) -> Dict[str, Any]:
+    async def discover_site_links(url: str, max_pages: Optional[int] = None) -> Dict[str, Any]:
         """
         Discover and filter all valid internal URLs from a website for UI presentation.
         Returns {'root_url': url, 'total_discovered': len(urls), 'urls': urls}
+        If max_pages is None or <= 0, returns all discovered links without restrictions.
         """
         validated_url = validate_url(url)
         client = GCrawlClient()

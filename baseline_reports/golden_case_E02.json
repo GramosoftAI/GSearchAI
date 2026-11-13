@@ -1,0 +1,71 @@
+{
+  "case_id": "E02",
+  "category": "E_joins",
+  "question": "Show products purchased by each customer.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 10056.421600049362,
+  "llm_call_count": 2,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "products"
+  ],
+  "join_path": [
+    "c.id = o.customer_id",
+    "o.id = oi.order_id",
+    "oi.product_id = p.id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT DISTINCT c.name AS customer_name, p.name AS product_name FROM public.customers AS c INNER JOIN public.orders AS o ON c.id = o.customer_id INNER JOIN public.order_items AS oi ON o.id = oi.order_id INNER JOIN public.products AS p ON oi.product_id = p.id LIMIT 1000",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 11,
+  "result_rows_preview": [
+    {
+      "customer_name": "Alice Johnson",
+      "product_name": "Ergonomic Mechanical Keyboard"
+    },
+    {
+      "customer_name": "Alice Johnson",
+      "product_name": "Wireless Noise-Cancelling Headphones"
+    },
+    {
+      "customer_name": "Charlie Davis",
+      "product_name": "Ultra-HD 27-inch Monitor"
+    },
+    {
+      "customer_name": "john doe",
+      "product_name": "Budget USB Mouse"
+    },
+    {
+      "customer_name": "Diana Prince",
+      "product_name": "Standing Desk Mat"
+    }
+  ],
+  "final_answer": "Here are the products purchased by each customer:\n* Alice Johnson: \n  + Ergonomic Mechanical Keyboard\n  + Wireless Noise-Cancelling Headphones\n  + Standing Desk Mat\n* Bob Smith: \n  + Wireless Noise-Cancelling Headphones\n* Charlie Davis: \n  + Ultra-HD 27-inch Monitor\n* Diana Prince: \n  + Standing Desk Mat\n  + Adjustable Lumbar Support Chair\n* Evan Wright: \n  + Ergonomic Mechanical Keyboard\n* John Doe (note: there are multiple entries for \"john doe\" and \"John Doe\", which may represent the same individual due to case differences):\n  + Budget USB Mouse\n  + Wireless Noise-Cancelling Headphones\n  + Ergonomic Mechanical Keyboard",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": true,
+    "filters": null,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

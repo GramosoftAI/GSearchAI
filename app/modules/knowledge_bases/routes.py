@@ -1769,7 +1769,7 @@ async def register_sharepoint(
             backend_credentials = {
                 "client_id": os.getenv("MS_CLIENT_ID"),
                 "client_secret": os.getenv("MS_CLIENT_SECRET"),
-                "tenant_id": "common"
+                "tenant_id": os.getenv("MS_TENANT_ID") or "common",
             }
             
             connection_params = {
@@ -2274,6 +2274,13 @@ async def register_outlook(
 async def sync_outlook_to_graph(request: Request, kb_id: str, sync_req: schemas.OutlookSyncRequest) -> dict:
     try:
         tenant_id, _ = get_tenant_and_user(request)
+        actual_email = sync_req.user_email or sync_req.email
+        if not actual_email:
+            raise HTTPException(status_code=400, detail="user_email or email is required for Outlook sync")
+        sync_req.user_email = actual_email
+        if sync_req.folder_ids and not sync_req.folder_id:
+            sync_req.folder_id = sync_req.folder_ids[0]
+
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select
             from .models import DatabaseConnection
@@ -2312,9 +2319,9 @@ async def sync_outlook_to_graph(request: Request, kb_id: str, sync_req: schemas.
 @router.get("/{kb_id}/sharepoint/login")
 async def sharepoint_login(kb_id: str):
     """Step 1: Redirect user to Microsoft Login"""
-    tenant_id = "common"
+    tenant_id = os.getenv("MS_TENANT_ID") or "common"
     client_id = os.getenv("MS_CLIENT_ID")
-    redirect_uri = "http://localhost:4915/api/v1/knowledge-bases/sharepoint/callback"
+    redirect_uri = os.getenv("MS_SHAREPOINT_REDIRECT_URI") or "http://localhost:4915/api/v1/knowledge-bases/sharepoint/callback"
     
     # We pass the kb_id in the state parameter so we know which KB to save the token to
     state = kb_id 
@@ -2326,18 +2333,19 @@ async def sharepoint_login(kb_id: str):
         f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
         f"&response_mode=query"
         f"&scope=openid profile email offline_access Files.Read.All Sites.Read.All"
-        f"&state={kb_id}"
+        f"&state={state}"
         f"&prompt=select_account"
     )
     return RedirectResponse(auth_url)
+
 @router.get("/sharepoint/callback")
 async def sharepoint_callback(code: str, state: str):
     """Step 2: Microsoft redirects here with the auth code. Exchange for tokens."""
     kb_id = state
-    tenant_id = "common"
+    tenant_id = os.getenv("MS_TENANT_ID") or "common"
     client_id = os.getenv("MS_CLIENT_ID")
     client_secret = os.getenv("MS_CLIENT_SECRET")
-    redirect_uri = "http://localhost:4915/api/v1/knowledge-bases/sharepoint/callback"
+    redirect_uri = os.getenv("MS_SHAREPOINT_REDIRECT_URI") or "http://localhost:4915/api/v1/knowledge-bases/sharepoint/callback"
     
     token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
     
@@ -2359,19 +2367,26 @@ async def sharepoint_callback(code: str, state: str):
             
         access_token = token_data.get("access_token")
         refresh_token = token_data.get("refresh_token")
+        expires_in = token_data.get("expires_in", 3600)
         
     # Save tokens to DatabaseConnection
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select
+        from .models import KnowledgeBase
+        import time as _time
         import uuid
         
         query = select(DatabaseConnection).where(DatabaseConnection.kb_id == uuid.UUID(kb_id))
         res = await db.execute(query)
         db_conn = res.scalar_one_or_none()
+
+        kb_res = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == uuid.UUID(kb_id)))
+        kb_obj = kb_res.scalar_one_or_none()
+        resolved_tenant_id = kb_obj.tenant_id if kb_obj else uuid.UUID("506a8be1-fa85-4441-99c7-5e3c1408e15e")
         
         if not db_conn:
             db_conn = DatabaseConnection(
-                tenant_id=uuid.UUID("506a8be1-fa85-4441-99c7-5e3c1408e15e"),  # Replace with actual user tenant mapping if needed
+                tenant_id=resolved_tenant_id,
                 kb_id=uuid.UUID(kb_id),
                 db_type="sharepoint",
                 connection_params={}
@@ -2379,17 +2394,18 @@ async def sharepoint_callback(code: str, state: str):
             db.add(db_conn)
             
         # Update with new OAuth tokens while preserving existing config
-        current_params = db_conn.connection_params or {}
-        
-        # If 'credentials' doesn't exist, create it
-        if "credentials" not in current_params:
-            current_params["credentials"] = {}
-            
-        current_params["credentials"]["access_token"] = access_token
-        current_params["credentials"]["refresh_token"] = refresh_token
+        current_params = dict(db_conn.connection_params or {})
+        creds = dict(current_params.get("credentials") or {})
+        creds["client_id"] = client_id
+        creds["client_secret"] = client_secret
+        creds["tenant_id"] = tenant_id
+        creds["access_token"] = access_token
+        if refresh_token:
+            creds["refresh_token"] = refresh_token
+        creds["expires_at"] = _time.time() + float(expires_in)
+        current_params["credentials"] = creds
         
         # Fetch Microsoft User Info
-        import httpx
         headers = {"Authorization": f"Bearer {access_token}"}
         async with httpx.AsyncClient() as client:
             me_res = await client.get("https://graph.microsoft.com/v1.0/me", headers=headers)
@@ -2400,7 +2416,8 @@ async def sharepoint_callback(code: str, state: str):
                 
         # In case the service layer looks for it at the root too
         current_params["access_token"] = access_token
-        current_params["refresh_token"] = refresh_token
+        if refresh_token:
+            current_params["refresh_token"] = refresh_token
         
         # Reassign to trigger SQLAlchemy JSONB update
         from sqlalchemy.orm.attributes import flag_modified
@@ -2410,7 +2427,6 @@ async def sharepoint_callback(code: str, state: str):
         await db.commit()
 
         
-    from fastapi.responses import HTMLResponse
     return HTMLResponse(
         content="<script>window.close();</script><h2>Successfully connected SharePoint! You can close this window.</h2>"
     )
@@ -2747,11 +2763,10 @@ async def gmail_callback(code: str, state: str):
 
 @router.get("/{kb_id}/outlook/login")
 async def outlook_login(kb_id: str):
-    import os, urllib.parse
-    tenant_id = os.getenv("MS_TENANT_ID")
+    tenant_id = os.getenv("MS_TENANT_ID") or "common"
     client_id = os.getenv("MS_CLIENT_ID")
-    redirect_uri = "http://localhost:4915/api/v1/knowledge-bases/outlook/callback"
-    state = kb_id 
+    redirect_uri = os.getenv("MS_OUTLOOK_REDIRECT_URI") or "http://localhost:4915/api/v1/knowledge-bases/outlook/callback"
+    state = kb_id
     auth_url = (
         f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
         f"?client_id={client_id}"
@@ -2765,12 +2780,12 @@ async def outlook_login(kb_id: str):
 
 @router.get("/outlook/callback")
 async def outlook_callback(code: str, state: str):
-    import os, httpx, uuid
+    import time as _time
     kb_id = state
-    tenant_id = os.getenv("MS_TENANT_ID")
+    tenant_id = os.getenv("MS_TENANT_ID") or "common"
     client_id = os.getenv("MS_CLIENT_ID")
     client_secret = os.getenv("MS_CLIENT_SECRET")
-    redirect_uri = "http://localhost:4915/api/v1/knowledge-bases/outlook/callback"
+    redirect_uri = os.getenv("MS_OUTLOOK_REDIRECT_URI") or "http://localhost:4915/api/v1/knowledge-bases/outlook/callback"
     token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
     data = {
         "client_id": client_id,
@@ -2787,96 +2802,66 @@ async def outlook_callback(code: str, state: str):
             raise HTTPException(status_code=400, detail=token_data.get("error_description"))
         access_token = token_data.get("access_token")
         refresh_token = token_data.get("refresh_token")
+        expires_in = token_data.get("expires_in", 3600)
+
+    user_email = None
+    try:
+        async with httpx.AsyncClient() as client:
+            me_res = await client.get(
+                "https://graph.microsoft.com/v1.0/me",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if me_res.status_code == 200:
+                me_data = me_res.json()
+                user_email = me_data.get("mail") or me_data.get("userPrincipalName")
+    except Exception as me_err:
+        logger.warning(f"Failed to fetch Outlook /me profile: {me_err}")
+
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select
+        from .models import KnowledgeBase
         query = select(DatabaseConnection).where(DatabaseConnection.kb_id == uuid.UUID(kb_id))
         res = await db.execute(query)
         db_conn = res.scalar_one_or_none()
+
+        kb_res = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == uuid.UUID(kb_id)))
+        kb_obj = kb_res.scalar_one_or_none()
+        resolved_tenant_id = kb_obj.tenant_id if kb_obj else uuid.UUID("506a8be1-fa85-4441-99c7-5e3c1408e15e")
+
         if not db_conn:
             db_conn = DatabaseConnection(
-                tenant_id=uuid.UUID("506a8be1-fa85-4441-99c7-5e3c1408e15e"),
+                tenant_id=resolved_tenant_id,
                 kb_id=uuid.UUID(kb_id),
                 db_type="outlook",
                 connection_params={}
             )
             db.add(db_conn)
+        db_conn.db_type = "outlook"
         db_conn.connection_params = {
             "access_token": access_token,
             "refresh_token": refresh_token,
             "client_id": client_id,
             "client_secret": client_secret,
-            "tenant_id": tenant_id
+            "tenant_id": tenant_id,
+            "expires_at": _time.time() + float(expires_in),
+            "primary_admin_email": user_email,
         }
         await db.commit()
-    return {"message": "Successfully connected Outlook! You can now close this window."}
+    return HTMLResponse(
+        content="<script>window.close();</script><h2>Successfully connected Outlook! You can close this window.</h2>"
+    )
 
-
-
-
-@router.post("/{kb_id}/outlook/register", status_code=200)
-async def register_outlook(request: Request, kb_id: str, payload: schemas.OutlookRegister):
-    try:
-        tenant_id, _ = get_tenant_and_user(request)
-        async with AsyncSessionLocal() as db:
-            from sqlalchemy import select
-            import uuid
-            query = select(DatabaseConnection).where(DatabaseConnection.kb_id == uuid.UUID(kb_id))
-            res = await db.execute(query)
-            db_conn = res.scalar_one_or_none()
-            if not db_conn:
-                db_conn = DatabaseConnection(
-                    tenant_id=uuid.UUID(tenant_id),
-                    kb_id=uuid.UUID(kb_id),
-                    db_type="outlook",
-                    connection_params={"credentials": payload.credentials}
-                )
-                db.add(db_conn)
-            else:
-                db_conn.db_type = "outlook"
-                db_conn.connection_params = {"credentials": payload.credentials}
-            await db.commit()
-            return {"success": True, "message": "Outlook credentials registered."}
-    except Exception as e:
-        logger.error(f"Error in register_outlook: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{kb_id}/outlook/folders", status_code=200)
 async def list_outlook_folders(request: Request, kb_id: str):
     try:
         tenant_id, _ = get_tenant_and_user(request)
-        from app.utils.formatters import format_success
-        return format_success({"items": [
-            {"id": "inbox", "name": "Inbox", "is_folder": True},
-            {"id": "sentitems", "name": "Sent Items", "is_folder": True},
-            {"id": "archive", "name": "Archive", "is_folder": True}
-        ]})
+        async with AsyncSessionLocal() as db:
+            service = KnowledgeBaseService(db, tenant_id)
+            return await service.list_outlook_folders(kb_id)
     except Exception as e:
         logger.error(f"Error in list_outlook_folders: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/{kb_id}/outlook/sync", status_code=200)
-async def sync_outlook_api(request: Request, kb_id: str, payload: schemas.OutlookSyncRequest):
-    try:
-        tenant_id, _ = get_tenant_and_user(request)
-
-        actual_email = payload.user_email or payload.email
-        if not actual_email:
-            return {"success": False, "message": "User Email is required"}
-            
-        if payload.folder_ids:
-            payload.folder_id = payload.folder_ids[0]
-            
-        payload.user_email = actual_email
-
-        async with AsyncSessionLocal() as db:
-            from app.modules.knowledge_bases.service import KnowledgeBaseService
-            service = KnowledgeBaseService(db, tenant_id)
-            result = await service.sync_outlook_source(kb_id, payload.model_dump())
-            return result
-    except Exception as e:
-        logger.error(f"Error in sync_outlook: {e}")
-        from app.utils.formatters import format_error
-        return format_error(f"Internal server error: {e}")
 
 
 @router.post("/admin/graph-cleanup", status_code=status.HTTP_202_ACCEPTED)

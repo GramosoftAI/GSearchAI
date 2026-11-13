@@ -1,0 +1,53 @@
+{
+  "case_id": "I01",
+  "category": "I_comparative",
+  "question": "Which product has the highest sales?",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 6279.175299918279,
+  "llm_call_count": 2,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "order_items",
+    "orders",
+    "products"
+  ],
+  "join_path": [
+    "p.id = oi.product_id",
+    "oi.order_id = o.id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT p.name, SUM(oi.quantity * oi.unit_price) AS total_sales FROM products AS p INNER JOIN order_items AS oi ON p.id = oi.product_id GROUP BY p.name ORDER BY total_sales DESC LIMIT 1",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 1,
+  "result_rows_preview": [
+    {
+      "name": "Wireless Noise-Cancelling Headphones",
+      "total_sales": "1198.00"
+    }
+  ],
+  "final_answer": "The product with the highest sales is the Wireless Noise-Cancelling Headphones, with total sales of $1198.00.",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": null,
+    "aggregations": true,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

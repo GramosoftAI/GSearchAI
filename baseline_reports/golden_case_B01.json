@@ -1,0 +1,50 @@
+{
+  "case_id": "B01",
+  "category": "B_filter",
+  "question": "Show customers from Chennai.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 2326.3344999868423,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "orders"
+  ],
+  "planned_tables": [
+    "customers"
+  ],
+  "join_path": [],
+  "planner_confidence": null,
+  "generated_sql": "SELECT c.id, c.name, c.city FROM public.customers AS c WHERE CAST(c.city AS TEXT) ILIKE :p1 LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 2,
+  "result_rows_preview": [
+    {
+      "id": 3,
+      "name": "Charlie Davis",
+      "city": "Chennai"
+    },
+    {
+      "id": 4,
+      "name": "Diana Prince",
+      "city": "Chennai"
+    }
+  ],
+  "final_answer": "Here are the customers from Chennai:\n* Charlie Davis (#3)\n* Diana Prince (#4)",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": true,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

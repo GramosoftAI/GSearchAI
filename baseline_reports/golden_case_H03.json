@@ -1,0 +1,56 @@
+{
+  "case_id": "H03",
+  "category": "H_temporal",
+  "question": "Show orders created this week.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 7107.176700024866,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "orders"
+  ],
+  "join_path": [],
+  "planner_confidence": null,
+  "generated_sql": "SELECT o.id, o.order_date, o.status, o.total_amount FROM public.orders AS o WHERE o.order_date >= DATE_TRUNC('WEEK', CURRENT_DATE) LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 2,
+  "result_rows_preview": [
+    {
+      "id": 9,
+      "order_date": "2026-10-22T14:00:00+00:00",
+      "status": "COMPLETED",
+      "total_amount": "45.00"
+    },
+    {
+      "id": 10,
+      "order_date": "2026-10-23T08:00:00+00:00",
+      "status": "COMPLETED",
+      "total_amount": "12.50"
+    }
+  ],
+  "final_answer": "| Id | Order Date | Status | Total Amount |\n| --- | --- | --- | --- |\n| 9 | 2026-10-22T14:00:00+00:00 | COMPLETED | $45.00 |\n| 10 | 2026-10-23T08:00:00+00:00 | COMPLETED | $12.50 |\n\n**Summary:** Total Total Amount: $57.50",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": null,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

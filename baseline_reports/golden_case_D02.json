@@ -1,0 +1,65 @@
+{
+  "case_id": "D02",
+  "category": "D_grouping",
+  "question": "Show revenue by month.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 3021.891799988225,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "orders"
+  ],
+  "join_path": [
+    "orders.id -> payments.order_id",
+    "orders.customer_id -> customers.id",
+    "orders.id -> order_items.order_id",
+    "order_items.product_id -> products.id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT SUM(o.total_amount) AS sum_total_amount, DATE_TRUNC('MONTH', o.order_date) AS month_bucket FROM public.orders AS o GROUP BY DATE_TRUNC('MONTH', o.order_date) ORDER BY DATE_TRUNC('MONTH', o.order_date) ASC LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 4,
+  "result_rows_preview": [
+    {
+      "sum_total_amount": "350.00",
+      "month_bucket": "2025-11-01T00:00:00+00:00"
+    },
+    {
+      "sum_total_amount": "1692.98",
+      "month_bucket": "2026-02-01T00:00:00+00:00"
+    },
+    {
+      "sum_total_amount": "449.49",
+      "month_bucket": "2026-09-01T00:00:00+00:00"
+    },
+    {
+      "sum_total_amount": "756.00",
+      "month_bucket": "2026-10-01T00:00:00+00:00"
+    }
+  ],
+  "final_answer": "The revenue by month is as follows:\n* November 2025: $350.00\n* February 2026: $1,692.98\n* September 2026: $449.49\n* October 2026: $756.00",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": null,
+    "aggregations": true,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

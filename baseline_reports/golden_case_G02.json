@@ -1,0 +1,46 @@
+{
+  "case_id": "G02",
+  "category": "G_entity",
+  "question": "Show orders created by John Doe.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 8697.016400052235,
+  "llm_call_count": null,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "customers",
+    "orders"
+  ],
+  "join_path": [
+    "c.id = o.customer_id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT o.id, o.order_date, o.status, o.total_amount, c.id, c.name, c.created_at FROM public.customers AS c INNER JOIN public.orders AS o ON c.id = o.customer_id WHERE c.name = :p1 AND CAST(c.name AS TEXT) ILIKE :p2 LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 2,
+  "result_rows_preview": [],
+  "final_answer": "| Id | Order Date | Status | Total Amount | Id | Name | Created At |\n| --- | --- | --- | --- | --- | --- | --- |\n| 6 | 2026-09-15T10:00:00+00:00 | COMPLETED | $449.49 | 6 | John Doe | 2026-03-01T08:00:00+00:00 |\n| 7 | 2026-10-01T11:00:00+00:00 | COMPLETED | $299.50 | 7 | John Doe | 2026-03-02T08:00:00+00:00 |\n\n**Summary:** Total Total Amount: $748.99",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": null,
+    "columns": null,
+    "joins": null,
+    "filters": null,
+    "aggregations": null,
+    "result": true,
+    "answer": null,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

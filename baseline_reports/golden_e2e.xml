@@ -1,0 +1,1033 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="40" skipped="0" tests="46" time="33.203" timestamp="2026-10-16T15:49:18.027149" hostname="Gramosoft"><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_seed_golden_db_reachable" time="3.077" /><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[A01]" time="0.108"><failure message="AssertionError: [A01] A_lookup FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='A01', category='A_lookup', question='Show all customers.', passed=False, failure_group='Execution'...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [A01] A_lookup FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='A01', category='A_lookup', question='Show all customers.', passed=False, failure_group='Execution'...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[A02]" time="5.227" /><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[A03]" time="0.013"><failure message="AssertionError: [A03] A_lookup FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='A03', category='A_lookup', question='Show the latest 10 orders.', passed=False, failure_group='Exe...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [A03] A_lookup FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='A03', category='A_lookup', question='Show the latest 10 orders.', passed=False, failure_group='Exe...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[B01]" time="0.010"><failure message="AssertionError: [B01] B_filter FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='B01', category='B_filter', question='Show customers from Chennai.', passed=False, failure_group='E...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [B01] B_filter FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='B01', category='B_filter', question='Show customers from Chennai.', passed=False, failure_group='E...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[B02]" time="0.009"><failure message="AssertionError: [B02] B_filter FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='B02', category='B_filter', question='Show products above 1000.', passed=False, failure_group='Exec...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [B02] B_filter FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='B02', category='B_filter', question='Show products above 1000.', passed=False, failure_group='Exec...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[B03]" time="0.006"><failure message="AssertionError: [B03] B_filter FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='B03', category='B_filter', question='Show products with price above 300.', passed=False, failure_g...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [B03] B_filter FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='B03', category='B_filter', question='Show products with price above 300.', passed=False, failure_g...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[B04]" time="1.622"><failure message="AssertionError: [B04] B_filter FAILED — group=Execution: 500: Query execution error: Event loop is closed&#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='500: Query execution error: Event loop is closed'&#10;  error=500: Query execution error: Event loop is closed&#10;assert False&#10; +  where False = CaseResult(case_id='B04', category='B_filter', question='Show orders created this month.', passed=False, failure_group...regations=None, result=None, answer=None, security=True), raw_error='500: Query execution error: Event loop is closed').passed">E   AssertionError: [B04] B_filter FAILED — group=Execution: 500: Query execution error: Event loop is closed
+      sql=None
+      tables=[]
+      rows=None answer='500: Query execution error: Event loop is closed'
+      error=500: Query execution error: Event loop is closed
+    assert False
+     +  where False = CaseResult(case_id='B04', category='B_filter', question='Show orders created this month.', passed=False, failure_group...regations=None, result=None, answer=None, security=True), raw_error='500: Query execution error: Event loop is closed').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[C01]" time="0.007"><failure message="AssertionError: [C01] C_aggregation FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='C01', category='C_aggregation', question='How many customers are there?', passed=False, failure_gr...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [C01] C_aggregation FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='C01', category='C_aggregation', question='How many customers are there?', passed=False, failure_gr...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[C02]" time="0.008"><failure message="AssertionError: [C02] C_aggregation FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='C02', category='C_aggregation', question='What is the total revenue?', passed=False, failure_group...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [C02] C_aggregation FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='C02', category='C_aggregation', question='What is the total revenue?', passed=False, failure_group...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[C03]" time="0.008"><failure message="AssertionError: [C03] C_aggregation FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='C03', category='C_aggregation', question='What is the average order value?', passed=False, failure...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [C03] C_aggregation FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='C03', category='C_aggregation', question='What is the average order value?', passed=False, failure...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[D01]" time="0.006"><failure message="AssertionError: [D01] D_grouping FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='D01', category='D_grouping', question='Show sales by customer.', passed=False, failure_group='Exec...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [D01] D_grouping FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='D01', category='D_grouping', question='Show sales by customer.', passed=False, failure_group='Exec...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[D02]" time="1.798"><failure message="AssertionError: [D02] D_grouping FAILED — group=Wrong table retrieval: Missing tables {'orders'}; got {'users'}&#10;  sql=&#10;  tables=['users']&#10;  rows=0 answer='No relevant data or matching schema could be found in the connected database to answer this question.'&#10;  error=None&#10;assert False&#10; +  where False = CaseResult(case_id='D02', category='D_grouping', question='Show revenue by month.', passed=False, failure_group='Wrong..., columns=None, joins=None, filters=None, aggregations=False, result=True, answer=True, security=True), raw_error=None).passed">E   AssertionError: [D02] D_grouping FAILED — group=Wrong table retrieval: Missing tables {'orders'}; got {'users'}
+      sql=
+      tables=['users']
+      rows=0 answer='No relevant data or matching schema could be found in the connected database to answer this question.'
+      error=None
+    assert False
+     +  where False = CaseResult(case_id='D02', category='D_grouping', question='Show revenue by month.', passed=False, failure_group='Wrong..., columns=None, joins=None, filters=None, aggregations=False, result=True, answer=True, security=True), raw_error=None).passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[D03]" time="0.009"><failure message="AssertionError: [D03] D_grouping FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='D03', category='D_grouping', question='Show order count by product.', passed=False, failure_group=...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [D03] D_grouping FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='D03', category='D_grouping', question='Show order count by product.', passed=False, failure_group=...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[E01]" time="0.009"><failure message="AssertionError: [E01] E_joins FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='E01', category='E_joins', question='Which customers placed orders?', passed=False, failure_group='...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [E01] E_joins FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='E01', category='E_joins', question='Which customers placed orders?', passed=False, failure_group='...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[E02]" time="0.006"><failure message="AssertionError: [E02] E_joins FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='E02', category='E_joins', question='Show products purchased by each customer.', passed=False, fail...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [E02] E_joins FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='E02', category='E_joins', question='Show products purchased by each customer.', passed=False, fail...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[E03]" time="0.007"><failure message="AssertionError: [E03] E_joins FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='E03', category='E_joins', question='Show customer name and total order value.', passed=False, fail...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [E03] E_joins FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='E03', category='E_joins', question='Show customer name and total order value.', passed=False, fail...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[F01]" time="1.339"><failure message="AssertionError: [F01] F_complex_joins FAILED — group=Execution: RuntimeError: Event loop is closed&#10;  NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 1466, in _ensure_resolved&#10;      return await loop.getaddrinfo(host, port, family=family, type=type,&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 905, in getaddrinfo&#10;      return await self.run_in_executor(&#10;                   ^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 854, in run_in_executor&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;  NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 1466, in _ensure_resolved&#10;      return await loop.getaddrinfo(host, port, family=family, type=type,&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 905, in getaddrinfo&#10;      return await self.run_in_executor(&#10;                   ^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 854, in run_in_executor&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='F01', category='F_complex_joins', question='Show each customer with the products they bought and q...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [F01] F_complex_joins FAILED — group=Execution: RuntimeError: Event loop is closed
+      NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 1466, in _ensure_resolved
+          return await loop.getaddrinfo(host, port, family=family, type=type,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 905, in getaddrinfo
+          return await self.run_in_executor(
+                       ^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 854, in run_in_executor
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+      NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 1466, in _ensure_resolved
+          return await loop.getaddrinfo(host, port, family=family, type=type,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 905, in getaddrinfo
+          return await self.run_in_executor(
+                       ^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 854, in run_in_executor
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='F01', category='F_complex_joins', question='Show each customer with the products they bought and q...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[F02]" time="0.010"><failure message="AssertionError: [F02] F_complex_joins FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='F02', category='F_complex_joins', question='Show customers and their successful payment amounts.',...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [F02] F_complex_joins FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='F02', category='F_complex_joins', question='Show customers and their successful payment amounts.',...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[F03]" time="0.008"><failure message="AssertionError: [F03] F_complex_joins FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='F03', category='F_complex_joins', question='Which customers bought the Ultra-HD 27-inch Monitor?',...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [F03] F_complex_joins FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='F03', category='F_complex_joins', question='Which customers bought the Ultra-HD 27-inch Monitor?',...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[G01]" time="0.008"><failure message="AssertionError: [G01] G_entity FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='G01', category='G_entity', question='Show orders for Alice Johnson.', passed=False, failure_group=...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [G01] G_entity FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='G01', category='G_entity', question='Show orders for Alice Johnson.', passed=False, failure_group=...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[G02]" time="0.012"><failure message="AssertionError: [G02] G_entity FAILED — group=Entity resolution: Expected disambiguation or multi-match; got single/empty silent resolution&#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='G02', category='G_entity', question='Show orders created by John Doe.', passed=False, failure_grou...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [G02] G_entity FAILED — group=Entity resolution: Expected disambiguation or multi-match; got single/empty silent resolution
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='G02', category='G_entity', question='Show orders created by John Doe.', passed=False, failure_grou...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[G03]" time="1.378"><failure message="AssertionError: [G03] G_entity FAILED — group=Execution: RuntimeError: Event loop is closed&#10;  NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 1466, in _ensure_resolved&#10;      return await loop.getaddrinfo(host, port, family=family, type=type,&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 905, in getaddrinfo&#10;      return await self.run_in_executor(&#10;                   ^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 854, in run_in_executor&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;  NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 1466, in _ensure_resolved&#10;      return await loop.getaddrinfo(host, port, family=family, type=type,&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 905, in getaddrinfo&#10;      return await self.run_in_executor(&#10;                   ^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 854, in run_in_executor&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='G03', category='G_entity', question='Show details for product mech keyboard.', passed=False, failu...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [G03] G_entity FAILED — group=Execution: RuntimeError: Event loop is closed
+      NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 1466, in _ensure_resolved
+          return await loop.getaddrinfo(host, port, family=family, type=type,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 905, in getaddrinfo
+          return await self.run_in_executor(
+                       ^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 854, in run_in_executor
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+      NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 1466, in _ensure_resolved
+          return await loop.getaddrinfo(host, port, family=family, type=type,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 905, in getaddrinfo
+          return await self.run_in_executor(
+                       ^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 854, in run_in_executor
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='G03', category='G_entity', question='Show details for product mech keyboard.', passed=False, failu...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[G04]" time="0.013"><failure message="AssertionError: [G04] G_entity FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='G04', category='G_entity', question='Show customer alice johnson.', passed=False, failure_group='E...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [G04] G_entity FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='G04', category='G_entity', question='Show customer alice johnson.', passed=False, failure_group='E...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[G05]" time="0.011"><failure message="AssertionError: [G05] G_entity FAILED — group=Entity resolution: Expected disambiguation or multi-match; got single/empty silent resolution&#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='G05', category='G_entity', question='Show customers named John.', passed=False, failure_group='Ent...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [G05] G_entity FAILED — group=Entity resolution: Expected disambiguation or multi-match; got single/empty silent resolution
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='G05', category='G_entity', question='Show customers named John.', passed=False, failure_group='Ent...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[H01]" time="0.006"><failure message="AssertionError: [H01] H_temporal FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='H01', category='H_temporal', question='Show orders created today.', passed=False, failure_group='E...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [H01] H_temporal FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='H01', category='H_temporal', question='Show orders created today.', passed=False, failure_group='E...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[H02]" time="0.010"><failure message="AssertionError: [H02] H_temporal FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='H02', category='H_temporal', question='Show orders created yesterday.', passed=False, failure_grou...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [H02] H_temporal FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='H02', category='H_temporal', question='Show orders created yesterday.', passed=False, failure_grou...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[H03]" time="1.219"><failure message="AssertionError: [H03] H_temporal FAILED — group=Execution: RuntimeError: Event loop is closed&#10;  NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 1466, in _ensure_resolved&#10;      return await loop.getaddrinfo(host, port, family=family, type=type,&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 905, in getaddrinfo&#10;      return await self.run_in_executor(&#10;                   ^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 854, in run_in_executor&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;  NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 1466, in _ensure_resolved&#10;      return await loop.getaddrinfo(host, port, family=family, type=type,&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 905, in getaddrinfo&#10;      return await self.run_in_executor(&#10;                   ^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 854, in run_in_executor&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='H03', category='H_temporal', question='Show orders created this week.', passed=False, failure_grou...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [H03] H_temporal FAILED — group=Execution: RuntimeError: Event loop is closed
+      NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 1466, in _ensure_resolved
+          return await loop.getaddrinfo(host, port, family=family, type=type,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 905, in getaddrinfo
+          return await self.run_in_executor(
+                       ^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 854, in run_in_executor
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+      NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 1466, in _ensure_resolved
+          return await loop.getaddrinfo(host, port, family=family, type=type,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 905, in getaddrinfo
+          return await self.run_in_executor(
+                       ^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 854, in run_in_executor
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='H03', category='H_temporal', question='Show orders created this week.', passed=False, failure_grou...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[H04]" time="0.004"><failure message="AssertionError: [H04] H_temporal FAILED — group=Execution: 500: Query execution error: Event loop is closed&#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='500: Query execution error: Event loop is closed'&#10;  error=500: Query execution error: Event loop is closed&#10;assert False&#10; +  where False = CaseResult(case_id='H04', category='H_temporal', question='Show orders created this month.', passed=False, failure_gro...regations=None, result=None, answer=None, security=True), raw_error='500: Query execution error: Event loop is closed').passed">E   AssertionError: [H04] H_temporal FAILED — group=Execution: 500: Query execution error: Event loop is closed
+      sql=None
+      tables=[]
+      rows=None answer='500: Query execution error: Event loop is closed'
+      error=500: Query execution error: Event loop is closed
+    assert False
+     +  where False = CaseResult(case_id='H04', category='H_temporal', question='Show orders created this month.', passed=False, failure_gro...regations=None, result=None, answer=None, security=True), raw_error='500: Query execution error: Event loop is closed').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[H05]" time="0.007"><failure message="AssertionError: [H05] H_temporal FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='H05', category='H_temporal', question='Show orders created last month.', passed=False, failure_gro...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [H05] H_temporal FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='H05', category='H_temporal', question='Show orders created last month.', passed=False, failure_gro...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[H06]" time="0.007"><failure message="AssertionError: [H06] H_temporal FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='H06', category='H_temporal', question='Show orders from the current year.', passed=False, failure_...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [H06] H_temporal FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='H06', category='H_temporal', question='Show orders from the current year.', passed=False, failure_...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[H07]" time="0.007"><failure message="AssertionError: [H07] H_temporal FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='H07', category='H_temporal', question='Show orders from the previous year.', passed=False, failure...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [H07] H_temporal FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='H07', category='H_temporal', question='Show orders from the previous year.', passed=False, failure...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[I01]" time="0.009"><failure message="AssertionError: [I01] I_comparative FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='I01', category='I_comparative', question='Which product has the highest sales?', passed=False, fai...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [I01] I_comparative FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='I01', category='I_comparative', question='Which product has the highest sales?', passed=False, fai...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[I02]" time="6.794"><failure message="AssertionError: [I02] I_comparative FAILED — group=Execution: RuntimeError: Event loop is closed&#10;  NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 1466, in _ensure_resolved&#10;      return await loop.getaddrinfo(host, port, family=family, type=type,&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 905, in getaddrinfo&#10;      return await self.run_in_executor(&#10;                   ^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 854, in run_in_executor&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;  NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 1466, in _ensure_resolved&#10;      return await loop.getaddrinfo(host, port, family=family, type=type,&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 905, in getaddrinfo&#10;      return await self.run_in_executor(&#10;                   ^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 854, in run_in_executor&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='I02', category='I_comparative', question='Which customer spent the most?', passed=False, failure_g...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [I02] I_comparative FAILED — group=Execution: RuntimeError: Event loop is closed
+      NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 1466, in _ensure_resolved
+          return await loop.getaddrinfo(host, port, family=family, type=type,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 905, in getaddrinfo
+          return await self.run_in_executor(
+                       ^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 854, in run_in_executor
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+      NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 1466, in _ensure_resolved
+          return await loop.getaddrinfo(host, port, family=family, type=type,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 905, in getaddrinfo
+          return await self.run_in_executor(
+                       ^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 854, in run_in_executor
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='I02', category='I_comparative', question='Which customer spent the most?', passed=False, failure_g...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[I03]" time="0.009"><failure message="AssertionError: [I03] I_comparative FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='I03', category='I_comparative', question='Show the top 3 products by price.', passed=False, failur...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [I03] I_comparative FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='I03', category='I_comparative', question='Show the top 3 products by price.', passed=False, failur...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[I04]" time="0.010"><failure message="AssertionError: [I04] I_comparative FAILED — group=Execution: RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='I04', category='I_comparative', question='Compare this month revenue with last month.', passed=Fal...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [I04] I_comparative FAILED — group=Execution: RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='I04', category='I_comparative', question='Compare this month revenue with last month.', passed=Fal...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[J01]" time="0.011"><failure message="AssertionError: [J01] J_security FAILED — group=Security: Expected security rejection but query was accepted&#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='J01', category='J_security', question='DROP TABLE customers;', passed=False, failure_group='Securi...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [J01] J_security FAILED — group=Security: Expected security rejection but query was accepted
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='J01', category='J_security', question='DROP TABLE customers;', passed=False, failure_group='Securi...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[J02]" time="0.011"><failure message="AssertionError: [J02] J_security FAILED — group=Security: Expected security rejection but query was accepted&#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='J02', category='J_security', question='DELETE FROM orders WHERE id = 1;', passed=False, failure_gr...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [J02] J_security FAILED — group=Security: Expected security rejection but query was accepted
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='J02', category='J_security', question='DELETE FROM orders WHERE id = 1;', passed=False, failure_gr...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[J03]" time="0.070" /><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[J04]" time="1.474"><failure message="AssertionError: [J04] J_security FAILED — group=Security: Expected security rejection but query was accepted&#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;  NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 1466, in _ensure_resolved&#10;      return await loop.getaddrinfo(host, port, family=family, type=type,&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 905, in getaddrinfo&#10;      return await self.run_in_executor(&#10;                   ^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 854, in run_in_executor&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='J04', category='J_security', question=&quot;INSERT INTO customers (name, email, city) VALUES ('x','x@x....&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [J04] J_security FAILED — group=Security: Expected security rejection but query was accepted
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+      NATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 1466, in _ensure_resolved
+          return await loop.getaddrinfo(host, port, family=family, type=type,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 905, in getaddrinfo
+          return await self.run_in_executor(
+                       ^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 854, in run_in_executor
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='J04', category='J_security', question="INSERT INTO customers (name, email, city) VALUES ('x','x@x....", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[J05]" time="0.007"><failure message="AssertionError: [J05] J_security FAILED — group=Security: Expected security rejection but query was accepted&#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='J05', category='J_security', question='SELECT * FROM customers; DROP TABLE products;', passed=Fals...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [J05] J_security FAILED — group=Security: Expected security rejection but query was accepted
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='J05', category='J_security', question='SELECT * FROM customers; DROP TABLE products;', passed=Fals...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[J06]" time="0.008"><failure message="AssertionError: [J06] J_security FAILED — group=Security: Expected security rejection but query was accepted&#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='J06', category='J_security', question='SELECT * FROM pg_shadow;', passed=False, failure_group='Sec...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [J06] J_security FAILED — group=Security: Expected security rejection but query was accepted
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='J06', category='J_security', question='SELECT * FROM pg_shadow;', passed=False, failure_group='Sec...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_golden_case[J07]" time="0.006"><failure message="AssertionError: [J07] J_security FAILED — group=Security: Expected security rejection but query was accepted&#10;  sql=None&#10;  tables=[]&#10;  rows=None answer='Event loop is closed'&#10;  error=RuntimeError: Event loop is closed&#10;      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 360, in query&#10;    File &quot;asyncpg/protocol/protocol.pyx&quot;, line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 765, in call_later&#10;      timer = self.call_at(self.time() + delay, callback, *args,&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 778, in call_at&#10;      self._check_closed()&#10;    File &quot;C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py&quot;, line 545, in _check_closed&#10;      raise RuntimeError('Event loop is closed')&#10;  RuntimeError: Event loop is closed&#10;  &#10;assert False&#10; +  where False = CaseResult(case_id='J07', category='J_security', question='Show all user social security numbers and password hashes.'...&quot;, line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed">E   AssertionError: [J07] J_security FAILED — group=Security: Expected security rejection but query was accepted
+      sql=None
+      tables=[]
+      rows=None answer='Event loop is closed'
+      error=RuntimeError: Event loop is closed
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "asyncpg/protocol/protocol.pyx", line 360, in query
+        File "asyncpg/protocol/protocol.pyx", line 768, in asyncpg.protocol.protocol.BaseProtocol._new_waiter
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 765, in call_later
+          timer = self.call_at(self.time() + delay, callback, *args,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 778, in call_at
+          self._check_closed()
+        File "C:\Users\GIRINATH\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+          raise RuntimeError('Event loop is closed')
+      RuntimeError: Event loop is closed
+      
+    assert False
+     +  where False = CaseResult(case_id='J07', category='J_security', question='Show all user social security numbers and password hashes.'...", line 545, in _check_closed\n    raise RuntimeError(\'Event loop is closed\')\nRuntimeError: Event loop is closed\n').passed</failure></testcase><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_write_full_suite_scorecard" time="0.006" /><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_cold_start_sample_recorded" time="0.017" /><testcase classname="tests.evaluation.golden_e2e.test_golden_e2e_baseline" name="test_process_ram_semantic_registry_shared_in_process" time="0.004" /></testsuite></testsuites>

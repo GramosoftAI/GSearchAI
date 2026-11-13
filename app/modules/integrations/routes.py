@@ -1,7 +1,8 @@
-"""Aggregated Integrations Router for Dynamic Router Loader."""
+"""Aggregated Integrations Router for Dynamic Router Loader.
+
+Note: Slack connector routes are registered via `app.modules.connectors.routes`.
+"""
 
 from fastapi import APIRouter
-from .slack.routes import router as slack_router
 
 router = APIRouter()
-router.include_router(slack_router)

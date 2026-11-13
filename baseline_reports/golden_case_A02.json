@@ -1,0 +1,60 @@
+{
+  "case_id": "A02",
+  "category": "A_lookup",
+  "question": "List all products.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 4220.229000085965,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "order_items",
+    "products"
+  ],
+  "planned_tables": [
+    "products"
+  ],
+  "join_path": [],
+  "planner_confidence": null,
+  "generated_sql": "SELECT p.id, p.name FROM public.products AS p LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 6,
+  "result_rows_preview": [
+    {
+      "id": 1,
+      "name": "Ergonomic Mechanical Keyboard"
+    },
+    {
+      "id": 2,
+      "name": "Wireless Noise-Cancelling Headphones"
+    },
+    {
+      "id": 3,
+      "name": "Ultra-HD 27-inch Monitor"
+    },
+    {
+      "id": 4,
+      "name": "Standing Desk Mat"
+    },
+    {
+      "id": 5,
+      "name": "Adjustable Lumbar Support Chair"
+    }
+  ],
+  "final_answer": "Here is the list of products:\n* Product #1: Ergonomic Mechanical Keyboard\n* Product #2: Wireless Noise-Cancelling Headphones\n* Product #3: Ultra-HD 27-inch Monitor\n* Product #4: Standing Desk Mat\n* Product #5: Adjustable Lumbar Support Chair\n* Product #6: Budget USB Mouse",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": true,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

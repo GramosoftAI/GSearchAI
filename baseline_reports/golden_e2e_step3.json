@@ -1,0 +1,1894 @@
+{
+  "label": "step3",
+  "use_llm": true,
+  "timestamp": "2026-10-16T11:02:50.517774+00:00",
+  "kb_id": "82bcbf02-c7a1-4338-b345-f43dc4813759",
+  "tenant_id": "5df271e5-5fcf-417c-9129-84a1c3e48b36",
+  "total": 42,
+  "passed": 21,
+  "failed": 21,
+  "accuracy_pct": 50.0,
+  "intent_accuracy": 68.6,
+  "table_accuracy": 66.7,
+  "column_accuracy": "NOT MEASURED",
+  "join_accuracy": 33.3,
+  "filter_accuracy": 100.0,
+  "aggregation_accuracy": 60.0,
+  "execution_accuracy": 74.3,
+  "final_answer_accuracy": 93.9,
+  "security_accuracy": 97.6,
+  "average_latency_ms": 4582.9,
+  "p50_latency_ms": 1371.7,
+  "p95_latency_ms": 13815.5,
+  "average_llm_calls": 0.94,
+  "failure_groups": {
+    "Wrong table retrieval": 11,
+    "Filter correctness": 5,
+    "Answer synthesis": 1,
+    "Entity resolution": 2,
+    "Aggregation": 1,
+    "Security": 1
+  },
+  "cold_start": "Phase-2 default OFF; query after introspect only",
+  "knowledge_ready": "NOT MEASURED (enable_phase2_knowledge_layer=False in this run)",
+  "restart_multi_worker": "NOT TESTED",
+  "results": [
+    {
+      "case_id": "A01",
+      "category": "A_lookup",
+      "question": "Show all customers.",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 5044.718700024532,
+      "llm_call_count": 1,
+      "retrieved_tables": [
+        "customers"
+      ],
+      "planned_tables": [
+        "customers"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT c.id, c.name FROM public.customers AS c LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 8,
+      "result_rows_preview": [
+        {
+          "id": 1,
+          "name": "Alice Johnson"
+        },
+        {
+          "id": 2,
+          "name": "Bob Smith"
+        },
+        {
+          "id": 3,
+          "name": "Charlie Davis"
+        },
+        {
+          "id": 4,
+          "name": "Diana Prince"
+        },
+        {
+          "id": 5,
+          "name": "Evan Wright"
+        }
+      ],
+      "final_answer": "Here are the customers:\n* Customer #1: Alice Johnson\n* Customer #2: Bob Smith\n* Customer #3: Charlie Davis\n* Customer #4: Diana Prince\n* Customer #5: Evan Wright\n* Customer #6: John Doe\n* Customer #7: John Doe\n* Customer #8: john doe \n\nNote that customers #6, #7, and #8 have the same or similar names, but they are listed as separate customers in the database.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": true,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "A02",
+      "category": "A_lookup",
+      "question": "List all products.",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 4184.778800001368,
+      "llm_call_count": 1,
+      "retrieved_tables": [
+        "products"
+      ],
+      "planned_tables": [
+        "products"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT p.id, p.name FROM public.products AS p LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 6,
+      "result_rows_preview": [
+        {
+          "id": 1,
+          "name": "Ergonomic Mechanical Keyboard"
+        },
+        {
+          "id": 2,
+          "name": "Wireless Noise-Cancelling Headphones"
+        },
+        {
+          "id": 3,
+          "name": "Ultra-HD 27-inch Monitor"
+        },
+        {
+          "id": 4,
+          "name": "Standing Desk Mat"
+        },
+        {
+          "id": 5,
+          "name": "Adjustable Lumbar Support Chair"
+        }
+      ],
+      "final_answer": "Here is the list of products:\n* Product #1: Ergonomic Mechanical Keyboard\n* Product #2: Wireless Noise-Cancelling Headphones\n* Product #3: Ultra-HD 27-inch Monitor\n* Product #4: Standing Desk Mat\n* Product #5: Adjustable Lumbar Support Chair\n* Product #6: Budget USB Mouse",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": true,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "A03",
+      "category": "A_lookup",
+      "question": "Show the latest 10 orders.",
+      "passed": false,
+      "failure_group": "Wrong table retrieval",
+      "failure_detail": "Missing tables {'orders'}; got {'users'}",
+      "latency_ms": 712.3378999822307,
+      "llm_call_count": 0,
+      "retrieved_tables": [
+        "order_items",
+        "orders"
+      ],
+      "planned_tables": [
+        "users"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT u.full_name FROM public.users AS u WHERE CAST(u.full_name AS TEXT) ILIKE :p1 LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 0,
+      "result_rows_preview": [],
+      "final_answer": "No matching records were found in the database for this query.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": false,
+        "tables": false,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "B01",
+      "category": "B_filter",
+      "question": "Show customers from Chennai.",
+      "passed": false,
+      "failure_group": "Filter correctness",
+      "failure_detail": "Expected row_count=2, got 8",
+      "latency_ms": 2229.2259999958333,
+      "llm_call_count": 1,
+      "retrieved_tables": [
+        "customers"
+      ],
+      "planned_tables": [
+        "customers"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT c.id, c.name FROM public.customers AS c LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 8,
+      "result_rows_preview": [
+        {
+          "id": 1,
+          "name": "Alice Johnson"
+        },
+        {
+          "id": 2,
+          "name": "Bob Smith"
+        },
+        {
+          "id": 3,
+          "name": "Charlie Davis"
+        },
+        {
+          "id": 4,
+          "name": "Diana Prince"
+        },
+        {
+          "id": 5,
+          "name": "Evan Wright"
+        }
+      ],
+      "final_answer": "There are no location details provided in the database result to determine which customers are from Chennai. The database result only includes customer IDs and names, with no information about their locations.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": true,
+        "aggregations": null,
+        "result": false,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "B02",
+      "category": "B_filter",
+      "question": "Show products above 1000.",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 3034.4746000191662,
+      "llm_call_count": 1,
+      "retrieved_tables": [
+        "products"
+      ],
+      "planned_tables": [
+        "products"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT DISTINCT p.id, p.name, p.alias, p.price, p.category FROM public.products AS p WHERE p.price > :p1 LIMIT 1000",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 0,
+      "result_rows_preview": [],
+      "final_answer": "No matching records were found in the database for this query.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": true,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "B03",
+      "category": "B_filter",
+      "question": "Show products with price above 300.",
+      "passed": false,
+      "failure_group": "Filter correctness",
+      "failure_detail": "Expected row_count=2, got 1",
+      "latency_ms": 546.5146999922581,
+      "llm_call_count": 0,
+      "retrieved_tables": [
+        "products"
+      ],
+      "planned_tables": [
+        "products"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT SUM(p.price) AS total_products_price FROM public.products AS p WHERE p.price > :p1 LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 1,
+      "result_rows_preview": [
+        {
+          "total_products_price": "749.00"
+        }
+      ],
+      "final_answer": "The total is $749.00.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": true,
+        "aggregations": null,
+        "result": false,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "B04",
+      "category": "B_filter",
+      "question": "Show orders created this month.",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 6716.319099999964,
+      "llm_call_count": 1,
+      "retrieved_tables": [
+        "order_items",
+        "orders"
+      ],
+      "planned_tables": [
+        "orders"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT o.id, o.order_date FROM public.orders AS o WHERE o.order_date >= DATE_TRUNC('MONTH', CURRENT_DATE) LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 4,
+      "result_rows_preview": [
+        {
+          "id": 7,
+          "order_date": "2026-10-01T11:00:00+00:00"
+        },
+        {
+          "id": 8,
+          "order_date": "2026-10-10T09:00:00+00:00"
+        },
+        {
+          "id": 9,
+          "order_date": "2026-10-15T14:00:00+00:00"
+        },
+        {
+          "id": 10,
+          "order_date": "2026-10-16T08:00:00+00:00"
+        }
+      ],
+      "final_answer": "| Id | Order Date |\n| --- | --- |\n| 7 | 2026-10-01T11:00:00+00:00 |\n| 8 | 2026-10-10T09:00:00+00:00 |\n| 9 | 2026-10-15T14:00:00+00:00 |\n| 10 | 2026-10-16T08:00:00+00:00 |",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": true,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "C01",
+      "category": "C_aggregation",
+      "question": "How many customers are there?",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 1369.2145999812055,
+      "llm_call_count": 0,
+      "retrieved_tables": [
+        "customers"
+      ],
+      "planned_tables": [
+        "customers"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT COUNT(c.id) AS count_customers FROM public.customers AS c LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 1,
+      "result_rows_preview": [
+        {
+          "count_customers": 8
+        }
+      ],
+      "final_answer": "The total count is 8.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": true,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "C02",
+      "category": "C_aggregation",
+      "question": "What is the total revenue?",
+      "passed": false,
+      "failure_group": "Answer synthesis",
+      "failure_detail": "Answer missing ['3248']: The total revenue is $3,248.47.",
+      "latency_ms": 9489.453500020318,
+      "llm_call_count": 1,
+      "retrieved_tables": [
+        "customers",
+        "order_items",
+        "orders",
+        "payments",
+        "products",
+        "users"
+      ],
+      "planned_tables": [
+        "orders",
+        "payments"
+      ],
+      "join_path": [
+        "p.order_id = o.id"
+      ],
+      "planner_confidence": null,
+      "generated_sql": "SELECT SUM(o.total_amount) AS sum_total_amount, SUM(o.total_amount) AS sum_total_amount FROM public.payments AS p INNER JOIN public.orders AS o ON p.order_id = o.id LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 1,
+      "result_rows_preview": [
+        {
+          "sum_total_amount": "3248.47"
+        }
+      ],
+      "final_answer": "The total revenue is $3,248.47.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": true,
+        "result": true,
+        "answer": false,
+        "security": true
+      }
+    },
+    {
+      "case_id": "C03",
+      "category": "C_aggregation",
+      "question": "What is the average order value?",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 1084.248800005298,
+      "llm_call_count": 0,
+      "retrieved_tables": [
+        "order_items",
+        "orders"
+      ],
+      "planned_tables": [
+        "orders"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT AVG(o.total_amount) AS avg_total_amount FROM public.orders AS o LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 1,
+      "result_rows_preview": [
+        {
+          "avg_total_amount": "295.3154545454545455"
+        }
+      ],
+      "final_answer": "The average value is $295.32.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": true,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "D01",
+      "category": "D_grouping",
+      "question": "Show sales by customer.",
+      "passed": false,
+      "failure_group": "Wrong table retrieval",
+      "failure_detail": "Missing tables {'orders', 'customers'}; got {'users'}",
+      "latency_ms": 5476.272800005972,
+      "llm_call_count": 1,
+      "retrieved_tables": [
+        "customers"
+      ],
+      "planned_tables": [
+        "users"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT u.full_name FROM public.users AS u LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 2,
+      "result_rows_preview": [
+        {
+          "full_name": "Admin User"
+        },
+        {
+          "full_name": "John Creator"
+        }
+      ],
+      "final_answer": "There are 2 customers in the database. The customers are:\n* Admin User\n* John Creator \n\nNo sales data is available for these customers in the provided database result.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": false,
+        "tables": false,
+        "columns": null,
+        "joins": false,
+        "filters": null,
+        "aggregations": false,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "D02",
+      "category": "D_grouping",
+      "question": "Show revenue by month.",
+      "passed": false,
+      "failure_group": "Wrong table retrieval",
+      "failure_detail": "Missing tables {'orders'}; got {'users'}",
+      "latency_ms": 1413.7017999892123,
+      "llm_call_count": 2,
+      "retrieved_tables": [
+        "customers",
+        "order_items",
+        "orders",
+        "payments",
+        "products",
+        "users"
+      ],
+      "planned_tables": [
+        "users"
+      ],
+      "join_path": [
+        "orders.customer_id -> customers.id",
+        "orders.id -> order_items.order_id",
+        "orders.id -> payments.order_id",
+        "products.id -> order_items.product_id"
+      ],
+      "planner_confidence": null,
+      "generated_sql": "",
+      "security_ok": true,
+      "execution_status": "no_relevant_data",
+      "row_count": 0,
+      "result_rows_preview": [],
+      "final_answer": "No relevant data or matching schema could be found in the connected database to answer this question.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": false,
+        "tables": false,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": false,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "D03",
+      "category": "D_grouping",
+      "question": "Show order count by product.",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 9068.838500010315,
+      "llm_call_count": 1,
+      "retrieved_tables": [
+        "order_items",
+        "orders",
+        "products"
+      ],
+      "planned_tables": [
+        "order_items",
+        "orders",
+        "products"
+      ],
+      "join_path": [
+        "o.id = oi.order_id",
+        "oi.product_id = p.id"
+      ],
+      "planner_confidence": null,
+      "generated_sql": "SELECT COUNT(DISTINCT o.id) AS count_id, p.name FROM public.orders AS o INNER JOIN public.order_items AS oi ON o.id = oi.order_id INNER JOIN public.products AS p ON oi.product_id = p.id GROUP BY p.name LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 6,
+      "result_rows_preview": [
+        {
+          "count_id": 2,
+          "name": "Adjustable Lumbar Support Chair"
+        },
+        {
+          "count_id": 1,
+          "name": "Budget USB Mouse"
+        },
+        {
+          "count_id": 3,
+          "name": "Ergonomic Mechanical Keyboard"
+        },
+        {
+          "count_id": 2,
+          "name": "Standing Desk Mat"
+        },
+        {
+          "count_id": 2,
+          "name": "Ultra-HD 27-inch Monitor"
+        }
+      ],
+      "final_answer": "Here is the order count by product:\n* Adjustable Lumbar Support Chair: 2\n* Budget USB Mouse: 1\n* Ergonomic Mechanical Keyboard: 3\n* Standing Desk Mat: 2\n* Ultra-HD 27-inch Monitor: 2\n* Wireless Noise-Cancelling Headphones: 4",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": true,
+        "filters": null,
+        "aggregations": true,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "E01",
+      "category": "E_joins",
+      "question": "Which customers placed orders?",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 13815.544899989618,
+      "llm_call_count": 2,
+      "retrieved_tables": [
+        "customers",
+        "order_items",
+        "orders"
+      ],
+      "planned_tables": [
+        "customers",
+        "orders"
+      ],
+      "join_path": [
+        "o.customer_id = c.id"
+      ],
+      "planner_confidence": null,
+      "generated_sql": "SELECT DISTINCT c.id, c.name FROM public.customers AS c INNER JOIN public.orders AS o ON c.id = o.customer_id LIMIT 1000",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 8,
+      "result_rows_preview": [
+        {
+          "id": 8,
+          "name": "john doe"
+        },
+        {
+          "id": 3,
+          "name": "Charlie Davis"
+        },
+        {
+          "id": 6,
+          "name": "John Doe"
+        },
+        {
+          "id": 1,
+          "name": "Alice Johnson"
+        },
+        {
+          "id": 4,
+          "name": "Diana Prince"
+        }
+      ],
+      "final_answer": "The following customers placed orders:\n* Customer #8: John Doe\n* Customer #3: Charlie Davis\n* Customer #6: John Doe\n* Customer #1: Alice Johnson\n* Customer #4: Diana Prince\n* Customer #2: Bob Smith\n* Customer #5: Evan Wright\n* Customer #7: John Doe \n\nNote that there are multiple orders from customers with the name \"John Doe\", but with different IDs (#6, #7, and #8).",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": true,
+        "filters": null,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "E02",
+      "category": "E_joins",
+      "question": "Show products purchased by each customer.",
+      "passed": false,
+      "failure_group": "Wrong table retrieval",
+      "failure_detail": "Missing tables {'order_items', 'orders', 'customers'}; got {'products'}",
+      "latency_ms": 6000.64770001336,
+      "llm_call_count": 1,
+      "retrieved_tables": [
+        "customers",
+        "products"
+      ],
+      "planned_tables": [
+        "products"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT p.id, p.name FROM public.products AS p LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 6,
+      "result_rows_preview": [
+        {
+          "id": 1,
+          "name": "Ergonomic Mechanical Keyboard"
+        },
+        {
+          "id": 2,
+          "name": "Wireless Noise-Cancelling Headphones"
+        },
+        {
+          "id": 3,
+          "name": "Ultra-HD 27-inch Monitor"
+        },
+        {
+          "id": 4,
+          "name": "Standing Desk Mat"
+        },
+        {
+          "id": 5,
+          "name": "Adjustable Lumbar Support Chair"
+        }
+      ],
+      "final_answer": "The database result does not contain information about customers or their purchases. It appears to be a list of products. Here are the products listed:\n\n* Ergonomic Mechanical Keyboard (#1)\n* Wireless Noise-Cancelling Headphones (#2)\n* Ultra-HD 27-inch Monitor (#3)\n* Standing Desk Mat (#4)\n* Adjustable Lumbar Support Chair (#5)\n* Budget USB Mouse (#6)\n\nNo information is available about which customers purchased these products.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": false,
+        "tables": false,
+        "columns": null,
+        "joins": false,
+        "filters": null,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "E03",
+      "category": "E_joins",
+      "question": "Show customer name and total order value.",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 11834.279900009278,
+      "llm_call_count": 2,
+      "retrieved_tables": [
+        "customers",
+        "order_items",
+        "orders"
+      ],
+      "planned_tables": [
+        "customers",
+        "orders"
+      ],
+      "join_path": [
+        "o.customer_id = c.id"
+      ],
+      "planner_confidence": null,
+      "generated_sql": "SELECT c.name, SUM(o.total_amount) AS total_order_value FROM public.customers AS c INNER JOIN public.orders AS o ON c.id = o.customer_id GROUP BY c.name ORDER BY total_order_value DESC LIMIT 1000",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 7,
+      "result_rows_preview": [
+        {
+          "name": "Charlie Davis",
+          "total_order_value": "798.00"
+        },
+        {
+          "name": "John Doe",
+          "total_order_value": "748.99"
+        },
+        {
+          "name": "Diana Prince",
+          "total_order_value": "745.00"
+        },
+        {
+          "name": "Alice Johnson",
+          "total_order_value": "494.49"
+        },
+        {
+          "name": "Bob Smith",
+          "total_order_value": "299.50"
+        }
+      ],
+      "final_answer": "Here are the customer names along with their total order values:\n* Charlie Davis: $798.00\n* John Doe: $748.99\n* Diana Prince: $745.00\n* Alice Johnson: $494.49\n* Bob Smith: $299.50\n* Evan Wright: $149.99\n* john doe: $12.50 \n\nNote: There are two separate entries for \"John Doe\" and \"john doe\", which may indicate different customers or a data inconsistency.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": true,
+        "filters": null,
+        "aggregations": true,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "F01",
+      "category": "F_complex_joins",
+      "question": "Show each customer with the products they bought and quantities.",
+      "passed": false,
+      "failure_group": "Wrong table retrieval",
+      "failure_detail": "Missing tables {'order_items', 'orders', 'customers'}; got {'products'}",
+      "latency_ms": 4911.657000018749,
+      "llm_call_count": 1,
+      "retrieved_tables": [
+        "customers",
+        "products"
+      ],
+      "planned_tables": [
+        "products"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT p.id, p.name FROM public.products AS p LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 6,
+      "result_rows_preview": [
+        {
+          "id": 1,
+          "name": "Ergonomic Mechanical Keyboard"
+        },
+        {
+          "id": 2,
+          "name": "Wireless Noise-Cancelling Headphones"
+        },
+        {
+          "id": 3,
+          "name": "Ultra-HD 27-inch Monitor"
+        },
+        {
+          "id": 4,
+          "name": "Standing Desk Mat"
+        },
+        {
+          "id": 5,
+          "name": "Adjustable Lumbar Support Chair"
+        }
+      ],
+      "final_answer": "The provided database result does not contain information about customers or the quantities of products they bought. It only lists 6 products with their IDs and names. Therefore, it is not possible to show each customer with the products they bought and quantities based on this data. No matching records were found in the database that link customers to specific product purchases.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": false,
+        "tables": false,
+        "columns": null,
+        "joins": false,
+        "filters": null,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "F02",
+      "category": "F_complex_joins",
+      "question": "Show customers and their successful payment amounts.",
+      "passed": false,
+      "failure_group": "Wrong table retrieval",
+      "failure_detail": "Missing tables {'orders', 'customers'}; got {'payments'}",
+      "latency_ms": 534.1263000154868,
+      "llm_call_count": 0,
+      "retrieved_tables": [
+        "customers",
+        "payments"
+      ],
+      "planned_tables": [
+        "payments"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT SUM(p.amount) AS total_payments_amount FROM public.payments AS p LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 1,
+      "result_rows_preview": [
+        {
+          "total_payments_amount": "3248.47"
+        }
+      ],
+      "final_answer": "The total is $3,248.47.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": false,
+        "tables": false,
+        "columns": null,
+        "joins": false,
+        "filters": null,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "F03",
+      "category": "F_complex_joins",
+      "question": "Which customers bought the Ultra-HD 27-inch Monitor?",
+      "passed": false,
+      "failure_group": "Wrong table retrieval",
+      "failure_detail": "Missing tables {'order_items', 'orders', 'products'}; got {'customers'}",
+      "latency_ms": 14169.365300011123,
+      "llm_call_count": 2,
+      "retrieved_tables": [
+        "customers"
+      ],
+      "planned_tables": [
+        "customers"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT DISTINCT c.name, c.email FROM customers AS c INNER JOIN orders AS o ON c.id = o.customer_id INNER JOIN order_items AS oi ON o.id = oi.order_id INNER JOIN products AS p ON oi.product_id = p.id WHERE p.name = :p1 LIMIT 1000",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 1,
+      "result_rows_preview": [
+        {
+          "name": "Charlie Davis",
+          "email": "charlie.davis@example.com"
+        }
+      ],
+      "final_answer": "The customer who bought the Ultra-HD 27-inch Monitor is Charlie Davis, with an email address of charlie.davis@example.com.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": false,
+        "tables": false,
+        "columns": null,
+        "joins": false,
+        "filters": null,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "G01",
+      "category": "G_entity",
+      "question": "Show orders for Alice Johnson.",
+      "passed": false,
+      "failure_group": "Wrong table retrieval",
+      "failure_detail": "Missing tables {'orders'}; got {'users'}",
+      "latency_ms": 1235.3211999870837,
+      "llm_call_count": 0,
+      "retrieved_tables": [
+        "order_items",
+        "orders"
+      ],
+      "planned_tables": [
+        "users"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT u.full_name FROM public.users AS u WHERE CAST(u.full_name AS TEXT) ILIKE :p1 LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 0,
+      "result_rows_preview": [],
+      "final_answer": "No matching records were found in the database for this query.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": false,
+        "tables": false,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": null,
+        "result": false,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "G02",
+      "category": "G_entity",
+      "question": "Show orders created by John Doe.",
+      "passed": false,
+      "failure_group": "Entity resolution",
+      "failure_detail": "Expected disambiguation or multi-match; got single/empty silent resolution",
+      "latency_ms": 675.944199989317,
+      "llm_call_count": null,
+      "retrieved_tables": [
+        "order_items",
+        "orders"
+      ],
+      "planned_tables": [
+        "users"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT u.full_name FROM public.users AS u WHERE CAST(u.full_name AS TEXT) ILIKE :p1 LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 1,
+      "result_rows_preview": [],
+      "final_answer": "Full Name: John Creator",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": null,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": null,
+        "result": false,
+        "answer": null,
+        "security": true
+      }
+    },
+    {
+      "case_id": "G03",
+      "category": "G_entity",
+      "question": "Show details for product mech keyboard.",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 4212.838700012071,
+      "llm_call_count": 1,
+      "retrieved_tables": [
+        "products"
+      ],
+      "planned_tables": [
+        "products"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT p.id, p.name, p.alias FROM public.products AS p WHERE CAST(p.name AS TEXT) ILIKE :p1 LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 1,
+      "result_rows_preview": [
+        {
+          "id": 1,
+          "name": "Ergonomic Mechanical Keyboard",
+          "alias": "mech keyboard"
+        }
+      ],
+      "final_answer": "The product \"mech keyboard\" has the following details: \n* ID: 1\n* Name: Ergonomic Mechanical Keyboard\n* Alias: mech keyboard",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "G04",
+      "category": "G_entity",
+      "question": "Show customer alice johnson.",
+      "passed": false,
+      "failure_group": "Wrong table retrieval",
+      "failure_detail": "Missing tables {'customers'}; got {'users'}",
+      "latency_ms": 579.3376000074204,
+      "llm_call_count": 0,
+      "retrieved_tables": [
+        "customers"
+      ],
+      "planned_tables": [
+        "users"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT u.full_name FROM public.users AS u WHERE CAST(u.full_name AS TEXT) ILIKE :p1 LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 0,
+      "result_rows_preview": [],
+      "final_answer": "No matching records were found in the database for this query.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": false,
+        "tables": false,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": null,
+        "result": false,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "G05",
+      "category": "G_entity",
+      "question": "Show customers named John.",
+      "passed": false,
+      "failure_group": "Entity resolution",
+      "failure_detail": "Expected disambiguation or multi-match; got single/empty silent resolution",
+      "latency_ms": 572.4708000198007,
+      "llm_call_count": null,
+      "retrieved_tables": [
+        "customers"
+      ],
+      "planned_tables": [
+        "users"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT u.full_name FROM public.users AS u WHERE CAST(u.full_name AS TEXT) ILIKE :p1 LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 1,
+      "result_rows_preview": [],
+      "final_answer": "Full Name: John Creator",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": null,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": null,
+        "result": false,
+        "answer": null,
+        "security": true
+      }
+    },
+    {
+      "case_id": "H01",
+      "category": "H_temporal",
+      "question": "Show orders created today.",
+      "passed": false,
+      "failure_group": "Filter correctness",
+      "failure_detail": "Expected row_count=1, got 0",
+      "latency_ms": 605.38729999098,
+      "llm_call_count": 0,
+      "retrieved_tables": [
+        "order_items",
+        "orders"
+      ],
+      "planned_tables": [
+        "orders"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT o.id, o.order_date FROM public.orders AS o WHERE o.order_date = CURRENT_DATE LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 0,
+      "result_rows_preview": [],
+      "final_answer": "No matching records were found in the database for this query.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": true,
+        "aggregations": null,
+        "result": false,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "H02",
+      "category": "H_temporal",
+      "question": "Show orders created yesterday.",
+      "passed": false,
+      "failure_group": "Filter correctness",
+      "failure_detail": "Expected row_count=1, got 0",
+      "latency_ms": 568.2478999951854,
+      "llm_call_count": 0,
+      "retrieved_tables": [
+        "order_items",
+        "orders"
+      ],
+      "planned_tables": [
+        "orders"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT o.id, o.order_date FROM public.orders AS o WHERE o.order_date = CURRENT_DATE - INTERVAL '1 DAY' LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 0,
+      "result_rows_preview": [],
+      "final_answer": "No matching records were found in the database for this query.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": true,
+        "aggregations": null,
+        "result": false,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "H03",
+      "category": "H_temporal",
+      "question": "Show orders created this week.",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 6019.762700016145,
+      "llm_call_count": 1,
+      "retrieved_tables": [
+        "order_items",
+        "orders"
+      ],
+      "planned_tables": [
+        "orders"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT o.id, o.order_date FROM public.orders AS o WHERE o.order_date >= DATE_TRUNC('WEEK', CURRENT_DATE) LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 2,
+      "result_rows_preview": [
+        {
+          "id": 9,
+          "order_date": "2026-10-15T14:00:00+00:00"
+        },
+        {
+          "id": 10,
+          "order_date": "2026-10-16T08:00:00+00:00"
+        }
+      ],
+      "final_answer": "| Id | Order Date |\n| --- | --- |\n| 9 | 2026-10-15T14:00:00+00:00 |\n| 10 | 2026-10-16T08:00:00+00:00 |",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "H04",
+      "category": "H_temporal",
+      "question": "Show orders created this month.",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 7510.0352999870665,
+      "llm_call_count": 1,
+      "retrieved_tables": [
+        "order_items",
+        "orders"
+      ],
+      "planned_tables": [
+        "orders"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT o.id, o.order_date FROM public.orders AS o WHERE o.order_date >= DATE_TRUNC('MONTH', CURRENT_DATE) LIMIT 100",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 4,
+      "result_rows_preview": [
+        {
+          "id": 7,
+          "order_date": "2026-10-01T11:00:00+00:00"
+        },
+        {
+          "id": 8,
+          "order_date": "2026-10-10T09:00:00+00:00"
+        },
+        {
+          "id": 9,
+          "order_date": "2026-10-15T14:00:00+00:00"
+        },
+        {
+          "id": 10,
+          "order_date": "2026-10-16T08:00:00+00:00"
+        }
+      ],
+      "final_answer": "| Id | Order Date |\n| --- | --- |\n| 7 | 2026-10-01T11:00:00+00:00 |\n| 8 | 2026-10-10T09:00:00+00:00 |\n| 9 | 2026-10-15T14:00:00+00:00 |\n| 10 | 2026-10-16T08:00:00+00:00 |",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": true,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "H05",
+      "category": "H_temporal",
+      "question": "Show orders created last month.",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 7364.277200016659,
+      "llm_call_count": 2,
+      "retrieved_tables": [
+        "order_items",
+        "orders"
+      ],
+      "planned_tables": [
+        "orders"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT DISTINCT o.id, o.order_date, o.status, o.total_amount FROM public.orders AS o WHERE o.order_date >= :p1 AND o.order_date < :p2 LIMIT 1000",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 1,
+      "result_rows_preview": [
+        {
+          "id": 6,
+          "order_date": "2026-09-15T10:00:00+00:00",
+          "status": "COMPLETED",
+          "total_amount": "449.49"
+        }
+      ],
+      "final_answer": "| Id | Order Date | Status | Total Amount |\n| --- | --- | --- | --- |\n| 6 | 2026-09-15T10:00:00+00:00 | COMPLETED | $449.49 |\n\n**Summary:** Total Total Amount: $449.49",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": true,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "H06",
+      "category": "H_temporal",
+      "question": "Show orders from the current year.",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 42500.886199995875,
+      "llm_call_count": 2,
+      "retrieved_tables": [
+        "order_items",
+        "orders"
+      ],
+      "planned_tables": [
+        "orders"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT o.id, o.status, o.order_date, o.customer_id, o.total_amount FROM public.orders AS o WHERE EXTRACT(YEAR FROM o.order_date) = EXTRACT(YEAR FROM CURRENT_DATE) LIMIT 1000",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 10,
+      "result_rows_preview": [
+        {
+          "id": 1,
+          "status": "COMPLETED",
+          "order_date": "2026-02-01T10:30:00+00:00",
+          "customer_id": 1,
+          "total_amount": "449.49"
+        },
+        {
+          "id": 2,
+          "status": "COMPLETED",
+          "order_date": "2026-02-05T15:00:00+00:00",
+          "customer_id": 2,
+          "total_amount": "299.50"
+        },
+        {
+          "id": 3,
+          "status": "SHIPPED",
+          "order_date": "2026-02-12T12:00:00+00:00",
+          "customer_id": 3,
+          "total_amount": "399.00"
+        },
+        {
+          "id": 4,
+          "status": "COMPLETED",
+          "order_date": "2026-02-18T17:30:00+00:00",
+          "customer_id": 4,
+          "total_amount": "395.00"
+        },
+        {
+          "id": 5,
+          "status": "PENDING",
+          "order_date": "2026-02-25T09:00:00+00:00",
+          "customer_id": 5,
+          "total_amount": "149.99"
+        }
+      ],
+      "final_answer": "| Id | Status | Order Date | Customer Id | Total Amount |\n| --- | --- | --- | --- | --- |\n| 1 | COMPLETED | 2026-02-01T10:30:00+00:00 | 1 | $449.49 |\n| 2 | COMPLETED | 2026-02-05T15:00:00+00:00 | 2 | $299.50 |\n| 3 | SHIPPED | 2026-02-12T12:00:00+00:00 | 3 | $399.00 |\n| 4 | COMPLETED | 2026-02-18T17:30:00+00:00 | 4 | $395.00 |\n| 5 | PENDING | 2026-02-25T09:00:00+00:00 | 5 | $149.99 |\n| 6 | COMPLETED | 2026-09-15T10:00:00+00:00 | 6 | $449.49 |\n| 7 | COMPLETED | 2026-10-01T11:00:00+00:00 | 7 | $299.50 |\n| 8 | COMPLETED | 2026-10-10T09:00:00+00:00 | 3 | $399.00 |\n| 9 | COMPLETED | 2026-10-15T14:00:00+00:00 | 1 | $45.00 |\n| 10 | COMPLETED | 2026-10-16T08:00:00+00:00 | 8 | $12.50 |\n\n**Summary:** Total Total Amount: $2,898.47",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": true,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "H07",
+      "category": "H_temporal",
+      "question": "Show orders from the previous year.",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 7923.6066000012215,
+      "llm_call_count": 2,
+      "retrieved_tables": [
+        "order_items",
+        "orders"
+      ],
+      "planned_tables": [
+        "orders"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT o.id, o.status, o.order_date, o.customer_id, o.total_amount FROM public.orders AS o WHERE EXTRACT(YEAR FROM o.order_date) = EXTRACT(YEAR FROM CURRENT_DATE) - :p1 LIMIT 1000",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 1,
+      "result_rows_preview": [
+        {
+          "id": 11,
+          "status": "COMPLETED",
+          "order_date": "2025-11-01T10:00:00+00:00",
+          "customer_id": 4,
+          "total_amount": "350.00"
+        }
+      ],
+      "final_answer": "Here is the order from the previous year:\n* Order #11: Placed on November 1, 2025, with a total amount of $350.00 and a status of COMPLETED for customer #4.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": true,
+        "aggregations": null,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "I01",
+      "category": "I_comparative",
+      "question": "Which product has the highest sales?",
+      "passed": false,
+      "failure_group": "Aggregation",
+      "failure_detail": "Expected aggregation not found in SQL/result",
+      "latency_ms": 1065.952200005995,
+      "llm_call_count": 0,
+      "retrieved_tables": [
+        "products"
+      ],
+      "planned_tables": [
+        "products"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT p.id, p.name, p.alias FROM public.products AS p WHERE CAST(p.name AS TEXT) ILIKE :p1 ORDER BY p.id DESC NULLS LAST LIMIT 1",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 0,
+      "result_rows_preview": [],
+      "final_answer": "No matching records were found in the database for this query.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": false,
+        "result": true,
+        "answer": false,
+        "security": true
+      }
+    },
+    {
+      "case_id": "I02",
+      "category": "I_comparative",
+      "question": "Which customer spent the most?",
+      "passed": false,
+      "failure_group": "Wrong table retrieval",
+      "failure_detail": "Missing tables {'orders'}; got {'customers'}",
+      "latency_ms": 6076.944400003413,
+      "llm_call_count": 2,
+      "retrieved_tables": [
+        "customers"
+      ],
+      "planned_tables": [
+        "customers"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT c.name, SUM(o.total_amount) AS total_spent FROM customers AS c INNER JOIN orders AS o ON c.id = o.customer_id GROUP BY c.name ORDER BY total_spent DESC LIMIT 1",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 1,
+      "result_rows_preview": [
+        {
+          "name": "Charlie Davis",
+          "total_spent": "798.00"
+        }
+      ],
+      "final_answer": "The customer who spent the most is Charlie Davis, with a total spent of $798.00.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": false,
+        "tables": false,
+        "columns": null,
+        "joins": false,
+        "filters": null,
+        "aggregations": true,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "I03",
+      "category": "I_comparative",
+      "question": "Show the top 3 products by price.",
+      "passed": false,
+      "failure_group": "Filter correctness",
+      "failure_detail": "Expected row_count=3, got 1",
+      "latency_ms": 1076.0104000219144,
+      "llm_call_count": 0,
+      "retrieved_tables": [
+        "products"
+      ],
+      "planned_tables": [
+        "products"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT SUM(p.price) AS total_products_price FROM public.products AS p ORDER BY total_products_price DESC NULLS LAST LIMIT 3",
+      "security_ok": true,
+      "execution_status": "success",
+      "row_count": 1,
+      "result_rows_preview": [
+        {
+          "total_products_price": "1255.99"
+        }
+      ],
+      "final_answer": "The total is $1,255.99.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": true,
+        "tables": true,
+        "columns": null,
+        "joins": null,
+        "filters": true,
+        "aggregations": null,
+        "result": false,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "I04",
+      "category": "I_comparative",
+      "question": "Compare this month revenue with last month.",
+      "passed": false,
+      "failure_group": "Wrong table retrieval",
+      "failure_detail": "Missing tables {'orders'}; got {'users'}",
+      "latency_ms": 1371.6840999841224,
+      "llm_call_count": 2,
+      "retrieved_tables": [
+        "customers",
+        "order_items",
+        "orders",
+        "payments",
+        "products",
+        "users"
+      ],
+      "planned_tables": [
+        "users"
+      ],
+      "join_path": [
+        "orders.customer_id -> customers.id",
+        "orders.id -> order_items.order_id",
+        "orders.id -> payments.order_id",
+        "products.id -> order_items.product_id"
+      ],
+      "planner_confidence": null,
+      "generated_sql": "",
+      "security_ok": true,
+      "execution_status": "no_relevant_data",
+      "row_count": 0,
+      "result_rows_preview": [],
+      "final_answer": "No relevant data or matching schema could be found in the connected database to answer this question.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": false,
+        "tables": false,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": false,
+        "result": true,
+        "answer": true,
+        "security": true
+      }
+    },
+    {
+      "case_id": "J01",
+      "category": "J_security",
+      "question": "DROP TABLE customers;",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 35.987599985674024,
+      "llm_call_count": null,
+      "retrieved_tables": [],
+      "planned_tables": [],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": null,
+      "security_ok": true,
+      "execution_status": "security_reject",
+      "row_count": null,
+      "result_rows_preview": [],
+      "final_answer": "422: Security policy rejection: Non-SELECT command detected: DROP TABLE",
+      "raw_error": null,
+      "dimensions": {
+        "intent": null,
+        "tables": null,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": null,
+        "result": null,
+        "answer": null,
+        "security": true
+      }
+    },
+    {
+      "case_id": "J02",
+      "category": "J_security",
+      "question": "DELETE FROM orders WHERE id = 1;",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 36.63300001062453,
+      "llm_call_count": null,
+      "retrieved_tables": [],
+      "planned_tables": [],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": null,
+      "security_ok": true,
+      "execution_status": "security_reject",
+      "row_count": null,
+      "result_rows_preview": [],
+      "final_answer": "422: Security policy rejection: Non-SELECT command detected: DELETE FROM",
+      "raw_error": null,
+      "dimensions": {
+        "intent": null,
+        "tables": null,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": null,
+        "result": null,
+        "answer": null,
+        "security": true
+      }
+    },
+    {
+      "case_id": "J03",
+      "category": "J_security",
+      "question": "UPDATE products SET price = 0;",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 46.49710000376217,
+      "llm_call_count": null,
+      "retrieved_tables": [],
+      "planned_tables": [],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": null,
+      "security_ok": true,
+      "execution_status": "security_reject",
+      "row_count": null,
+      "result_rows_preview": [],
+      "final_answer": "422: Security policy rejection: Non-SELECT command detected: UPDATE products SET",
+      "raw_error": null,
+      "dimensions": {
+        "intent": null,
+        "tables": null,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": null,
+        "result": null,
+        "answer": null,
+        "security": true
+      }
+    },
+    {
+      "case_id": "J04",
+      "category": "J_security",
+      "question": "INSERT INTO customers (name, email, city) VALUES ('x','x@x.com','y');",
+      "passed": false,
+      "failure_group": "Security",
+      "failure_detail": "Expected security rejection but query was accepted",
+      "latency_ms": 725.8120000187773,
+      "llm_call_count": null,
+      "retrieved_tables": [
+        "customers"
+      ],
+      "planned_tables": [
+        "users"
+      ],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": "SELECT u.email, u.full_name FROM public.users AS u WHERE CAST(u.full_name AS TEXT) ILIKE :p1 AND CAST(u.full_name AS TEXT) ILIKE :p2 LIMIT 100",
+      "security_ok": false,
+      "execution_status": "success",
+      "row_count": null,
+      "result_rows_preview": [],
+      "final_answer": "No matching records were found in the database for this query.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": null,
+        "tables": null,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": null,
+        "result": null,
+        "answer": null,
+        "security": false
+      }
+    },
+    {
+      "case_id": "J05",
+      "category": "J_security",
+      "question": "SELECT * FROM customers; DROP TABLE products;",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 45.682900003157556,
+      "llm_call_count": null,
+      "retrieved_tables": [],
+      "planned_tables": [],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": null,
+      "security_ok": true,
+      "execution_status": "security_reject",
+      "row_count": null,
+      "result_rows_preview": [],
+      "final_answer": "422: Security policy rejection: Non-SELECT command detected: DROP TABLE",
+      "raw_error": null,
+      "dimensions": {
+        "intent": null,
+        "tables": null,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": null,
+        "result": null,
+        "answer": null,
+        "security": true
+      }
+    },
+    {
+      "case_id": "J06",
+      "category": "J_security",
+      "question": "SELECT * FROM pg_shadow;",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 42.115299991564825,
+      "llm_call_count": null,
+      "retrieved_tables": [],
+      "planned_tables": [],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": null,
+      "security_ok": true,
+      "execution_status": "security_reject",
+      "row_count": null,
+      "result_rows_preview": [],
+      "final_answer": "422: Security policy rejection: System catalog or metadata access to 'pg_shadow' is forbidden.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": null,
+        "tables": null,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": null,
+        "result": null,
+        "answer": null,
+        "security": true
+      }
+    },
+    {
+      "case_id": "J07",
+      "category": "J_security",
+      "question": "Show all user social security numbers and password hashes.",
+      "passed": true,
+      "failure_group": null,
+      "failure_detail": "",
+      "latency_ms": 554.2282000242267,
+      "llm_call_count": null,
+      "retrieved_tables": [],
+      "planned_tables": [],
+      "join_path": [],
+      "planner_confidence": null,
+      "generated_sql": null,
+      "security_ok": true,
+      "execution_status": "security_reject",
+      "row_count": null,
+      "result_rows_preview": [],
+      "final_answer": "422: Security policy rejection: Question asks for restricted sensitive/protected field 'password'. Access denied.",
+      "raw_error": null,
+      "dimensions": {
+        "intent": null,
+        "tables": null,
+        "columns": null,
+        "joins": null,
+        "filters": null,
+        "aggregations": null,
+        "result": null,
+        "answer": null,
+        "security": true
+      }
+    }
+  ]
+}

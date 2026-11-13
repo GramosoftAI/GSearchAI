@@ -1,0 +1,60 @@
+{
+  "case_id": "A01",
+  "category": "A_lookup",
+  "question": "Show all customers.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 7602.2240000311285,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "orders"
+  ],
+  "planned_tables": [
+    "customers"
+  ],
+  "join_path": [],
+  "planner_confidence": null,
+  "generated_sql": "SELECT c.id, c.name FROM public.customers AS c LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 8,
+  "result_rows_preview": [
+    {
+      "id": 1,
+      "name": "Alice Johnson"
+    },
+    {
+      "id": 2,
+      "name": "Bob Smith"
+    },
+    {
+      "id": 3,
+      "name": "Charlie Davis"
+    },
+    {
+      "id": 4,
+      "name": "Diana Prince"
+    },
+    {
+      "id": 5,
+      "name": "Evan Wright"
+    }
+  ],
+  "final_answer": "Here are the customers:\n* #1: Alice Johnson\n* #2: Bob Smith\n* #3: Charlie Davis\n* #4: Diana Prince\n* #5: Evan Wright\n* #6: John Doe\n* #7: John Doe\n* #8: john doe",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": true,
+    "aggregations": null,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

@@ -1,0 +1,51 @@
+{
+  "case_id": "I04",
+  "category": "I_comparative",
+  "question": "Compare this month revenue with last month.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 3263.2800999563187,
+  "llm_call_count": 0,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "orders"
+  ],
+  "join_path": [
+    "orders.id -> payments.order_id",
+    "orders.customer_id -> customers.id",
+    "orders.id -> order_items.order_id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT SUM(o.total_amount) AS sum_total_amount FROM public.orders AS o WHERE o.order_date >= DATE_TRUNC('MONTH', CURRENT_DATE) LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 1,
+  "result_rows_preview": [
+    {
+      "sum_total_amount": "756.00"
+    }
+  ],
+  "final_answer": "The total is $756.00.",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": null,
+    "filters": null,
+    "aggregations": true,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

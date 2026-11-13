@@ -1,0 +1,60 @@
+{
+  "case_id": "D03",
+  "category": "D_grouping",
+  "question": "Show order count by product.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 3617.655000067316,
+  "llm_call_count": 1,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products"
+  ],
+  "planned_tables": [
+    "order_items",
+    "orders",
+    "products"
+  ],
+  "join_path": [
+    "o.id = oi.order_id",
+    "oi.product_id = p.id"
+  ],
+  "planner_confidence": null,
+  "generated_sql": "SELECT COUNT(DISTINCT o.id) AS count_id, p.category FROM public.orders AS o INNER JOIN public.order_items AS oi ON o.id = oi.order_id INNER JOIN public.products AS p ON oi.product_id = p.id GROUP BY p.category LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 3,
+  "result_rows_preview": [
+    {
+      "count_id": 8,
+      "category": "Electronics"
+    },
+    {
+      "count_id": 2,
+      "category": "Furniture"
+    },
+    {
+      "count_id": 2,
+      "category": "Office Supplies"
+    }
+  ],
+  "final_answer": "Here is the order count by product:\n* Electronics: 8\n* Furniture: 2\n* Office Supplies: 2",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": true,
+    "columns": null,
+    "joins": true,
+    "filters": null,
+    "aggregations": true,
+    "result": true,
+    "answer": true,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

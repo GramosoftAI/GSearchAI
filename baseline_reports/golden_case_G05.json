@@ -1,0 +1,43 @@
+{
+  "case_id": "G05",
+  "category": "G_entity",
+  "question": "Show customers named John.",
+  "passed": true,
+  "failure_group": null,
+  "failure_detail": "",
+  "latency_ms": 3382.9515000106767,
+  "llm_call_count": null,
+  "retrieved_tables": [
+    "customers",
+    "order_items",
+    "orders",
+    "payments",
+    "products",
+    "users"
+  ],
+  "planned_tables": [
+    "customers"
+  ],
+  "join_path": [],
+  "planner_confidence": null,
+  "generated_sql": "SELECT c.id, c.name FROM public.customers AS c WHERE CAST(c.name AS TEXT) ILIKE :p1 LIMIT 100",
+  "security_ok": true,
+  "execution_status": "success",
+  "row_count": 4,
+  "result_rows_preview": [],
+  "final_answer": "The database contains 3 customers named John: \n* John Doe (id: 6)\n* John Doe (id: 7)\n* john doe (id: 8)",
+  "raw_error": null,
+  "dimensions": {
+    "intent": true,
+    "tables": null,
+    "columns": null,
+    "joins": null,
+    "filters": null,
+    "aggregations": null,
+    "result": true,
+    "answer": null,
+    "security": true
+  },
+  "outcome_status": "success",
+  "outcome_error": null
+}

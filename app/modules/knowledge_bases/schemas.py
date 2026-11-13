@@ -188,7 +188,7 @@ class KBURLIngest(BaseModel):
     Schema for URL ingestion request.
     """
     url: str = Field(..., description="Target URL to crawl")
-    crawl_type: str = Field("all", pattern="^(single|all)$", description="Crawl depth: single or all (up to 10 pages)")
+    crawl_type: str = Field("all", pattern="^(single|all)$", description="Crawl depth: single or all (unrestricted)")
 
     class Config:
         json_schema_extra = {
@@ -204,7 +204,7 @@ class URLDiscoverRequest(BaseModel):
     Schema for link discovery request from a root website URL.
     """
     url: str = Field(..., description="Root website URL to discover internal links from")
-    max_pages: int = Field(100, description="Maximum number of links to return after filtering")
+    max_pages: Optional[int] = Field(None, description="Maximum number of links to return after filtering (None or <=0 for unrestricted)")
 
 
 class URLSelectIngestRequest(BaseModel):

@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import select
 
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 import logging
 
@@ -3056,7 +3056,10 @@ class KnowledgeBaseService:
                         # Fetch children
                         children = await connector.list_directory(current_fid)
                         for c in children:
-                            if c.get("mimeType") == "application/vnd.google-apps.folder":
+                            if c.get("is_folder") or c.get("mimeType") in (
+                                "application/vnd.microsoft.graph.folder",
+                                "application/vnd.google-apps.folder",
+                            ):
                                 folders_to_process.append(c["id"])
                             else:
                                 all_file_ids.add(c["id"])
@@ -3563,6 +3566,47 @@ class KnowledgeBaseService:
 
             return format_error(f"Failed to synchronize Google Drive: {str(e)}")
 
+    async def _persist_ms_connector_tokens(
+        self,
+        db_conn: Any,
+        exported_creds: Dict[str, Any],
+    ) -> None:
+        """Persist refreshed Microsoft OAuth tokens back to DatabaseConnection if changed."""
+        if not db_conn or not exported_creds:
+            return
+        new_access = exported_creds.get("access_token")
+        new_refresh = exported_creds.get("refresh_token")
+        if not new_access:
+            return
+
+        params = dict(db_conn.connection_params or {})
+        nested = params.get("credentials") if isinstance(params.get("credentials"), dict) else None
+        old_access = (nested.get("access_token") if nested else None) or params.get("access_token")
+        old_refresh = (nested.get("refresh_token") if nested else None) or params.get("refresh_token")
+
+        if new_access == old_access and new_refresh == old_refresh:
+            return
+
+        if nested is not None:
+            nested = dict(nested)
+            nested["access_token"] = new_access
+            if new_refresh:
+                nested["refresh_token"] = new_refresh
+            if exported_creds.get("expires_at"):
+                nested["expires_at"] = exported_creds["expires_at"]
+            params["credentials"] = nested
+        else:
+            params["access_token"] = new_access
+            if new_refresh:
+                params["refresh_token"] = new_refresh
+            if exported_creds.get("expires_at"):
+                params["expires_at"] = exported_creds["expires_at"]
+
+        from sqlalchemy.orm.attributes import flag_modified
+        db_conn.connection_params = params
+        flag_modified(db_conn, "connection_params")
+        await self.db.commit()
+
     async def list_sharepoint_directory(self, kb_id: str, parent_id: Optional[str] = None) -> dict:
         try:
             from sqlalchemy import select
@@ -3579,7 +3623,7 @@ class KnowledgeBaseService:
             if not db_conn:
                 return format_error("No registered SharePoint connection found for this KB", meta={"status_code": 404})
 
-            credentials = db_conn.connection_params.get("credentials", {})
+            credentials = db_conn.connection_params.get("credentials", db_conn.connection_params or {})
             site_urls = db_conn.connection_params.get("site_urls", [])
             
             from app.modules.connectors.sharepoint.crawler import SharePointConnector
@@ -3597,6 +3641,7 @@ class KnowledgeBaseService:
                     target_id = "root"
 
             raw_items = await connector.list_directory(target_id or "root")
+            await self._persist_ms_connector_tokens(db_conn, connector.export_credentials())
             items = []
             for item in raw_items:
                 items.append({
@@ -3671,7 +3716,10 @@ class KnowledgeBaseService:
 
                         children = await connector.list_directory(current_fid)
                         for c in children:
-                            if c.get("mimeType") == "application/vnd.google-apps.folder":
+                            if c.get("is_folder") or c.get("mimeType") in (
+                                "application/vnd.microsoft.graph.folder",
+                                "application/vnd.google-apps.folder",
+                            ):
                                 folders_to_process.append(c["id"])
                             else:
                                 all_file_ids.add(c["id"])
@@ -3915,6 +3963,21 @@ class KnowledgeBaseService:
                     }
                 )
             
+            try:
+                from sqlalchemy import select
+                from .models import DatabaseConnection
+                sp_conn_res = await self.db.execute(
+                    select(DatabaseConnection).where(
+                        DatabaseConnection.kb_id == uuid.UUID(kb_id),
+                        DatabaseConnection.tenant_id == self.tenant_id,
+                        DatabaseConnection.db_type == "sharepoint",
+                    )
+                )
+                sp_db_conn = sp_conn_res.scalar_one_or_none()
+                await self._persist_ms_connector_tokens(sp_db_conn, connector.export_credentials())
+            except Exception as tok_err:
+                logger.warning(f"Failed to persist refreshed SharePoint tokens: {tok_err}")
+
             return format_success(
                 {
                     "success": True,
@@ -4334,10 +4397,43 @@ class KnowledgeBaseService:
             logger.error(f'Gmail sync queue failed: {e}', exc_info=True)
             return format_error(f'Failed to queue Gmail sync: {e}')
 
+    async def list_outlook_folders(self, kb_id: str) -> dict:
+        """List Outlook mail folders via Microsoft Graph, with standard fallback if not yet connected."""
+        from sqlalchemy import select
+        from .models import DatabaseConnection
+        from app.modules.connectors.sharepoint.outlook_crawler import OutlookConnector
+
+        default_folders = [
+            {"id": "inbox", "name": "Inbox", "is_folder": True},
+            {"id": "sentitems", "name": "Sent Items", "is_folder": True},
+            {"id": "archive", "name": "Archive", "is_folder": True},
+        ]
+        try:
+            conn_query = select(DatabaseConnection).where(
+                DatabaseConnection.kb_id == uuid.UUID(kb_id),
+                DatabaseConnection.tenant_id == self.tenant_id,
+                DatabaseConnection.db_type == "outlook",
+            )
+            conn_res = await self.db.execute(conn_query)
+            db_conn = conn_res.scalar_one_or_none()
+            if not db_conn or not db_conn.connection_params:
+                return format_success({"items": default_folders})
+
+            crawler = OutlookConnector()
+            crawler.load_credentials(db_conn.connection_params)
+            params = db_conn.connection_params or {}
+            creds = params.get("credentials") if isinstance(params.get("credentials"), dict) else params
+            user_email = creds.get("primary_admin_email") or creds.get("email") or "me"
+            folders = await crawler.list_mail_folders(user_email=user_email)
+            await self._persist_ms_connector_tokens(db_conn, crawler.export_credentials())
+            return format_success({"items": folders or default_folders})
+        except Exception as e:
+            logger.warning(f"Falling back to default Outlook folders for KB {kb_id}: {e}")
+            return format_success({"items": default_folders})
+
     async def sync_outlook_source(self, kb_id: str, sync_req: dict) -> dict:
         from app.utils.formatters import format_success, format_error
         import time
-        import json
         from uuid import uuid4
         from sqlalchemy import select
         from app.modules.knowledge_bases.models import KnowledgeBase, DatabaseConnection, DocumentChunk
@@ -4345,8 +4441,11 @@ class KnowledgeBaseService:
         from app.core.connectors import ConnectorCheckpoint
 
         sync_start_time = time.time()
-        
-        query = select(KnowledgeBase).where(KnowledgeBase.id == uuid.UUID(kb_id), KnowledgeBase.tenant_id == self.tenant_id)
+
+        query = select(KnowledgeBase).where(
+            KnowledgeBase.id == uuid.UUID(kb_id),
+            KnowledgeBase.tenant_id == self.tenant_id,
+        )
         res = await self.db.execute(query)
         pg_kb = res.scalar_one_or_none()
         if not pg_kb:
@@ -4362,58 +4461,95 @@ class KnowledgeBaseService:
         if not db_conn:
             return format_error('Outlook connection not configured for this KB.')
 
-        user_email = sync_req.get('user_email')
+        user_email = sync_req.get('user_email') or sync_req.get('email')
         if not user_email:
             return format_error('user_email is required for Outlook sync.')
 
         pg_kb.source = f'outlook({user_email})'
         await self.db.commit()
 
-        crawler = OutlookConnector(folder_id=sync_req.get('folder_id'), max_results=sync_req.get('max_results', 100))
-        crawler.load_credentials(db_conn.connection_params)
-        checkpoint = ConnectorCheckpoint(user_emails=[user_email], has_more=True, completion_stage='start')
+        raw_folders = sync_req.get('folder_ids') or []
+        if not raw_folders and sync_req.get('folder_id'):
+            raw_folders = [sync_req.get('folder_id')]
+        target_folders = raw_folders if raw_folders else [None]
 
+        # Preload existing synced Outlook message_ids for this KB to avoid duplicate chunks on re-sync
+        existing_res = await self.db.execute(
+            select(DocumentChunk.metadata_json).where(
+                DocumentChunk.kb_id == uuid.UUID(kb_id),
+                DocumentChunk.tenant_id == self.tenant_id,
+            )
+        )
+        seen_message_ids = set()
+        for (meta_json,) in existing_res.all():
+            if isinstance(meta_json, dict) and meta_json.get("source") == "outlook":
+                mid = meta_json.get("message_id")
+                if mid:
+                    seen_message_ids.add(mid)
+
+        max_results = sync_req.get('max_results') or 100
         messages_synced = 0
         neo4j_nodes = []
+        last_crawler: Optional[OutlookConnector] = None
 
         try:
-            async for doc in crawler.load_from_checkpoint(0, time.time(), checkpoint):
-                if hasattr(doc, 'node_type'):
-                    continue
-                
-                msg_data = await crawler.get_message_content(user_email, doc.id)
-                if not msg_data or not msg_data.get('body'):
-                    continue
-
-                chunk_id = str(uuid4())
-                chunk_text = f"Subject: {msg_data.get('subject')}\nFrom: {msg_data.get('sender')}\nDate: {msg_data.get('date')}\n\n{msg_data.get('body')}"
-
-                from app.core.entity_extraction import EntityExtractor
-                entities = await EntityExtractor.extract_entities(msg_data.get('body') or "")
-
-                neo4j_nodes.append({
-                    'chunk_id': chunk_id,
-                    'message_id': doc.id,
-                    'subject': msg_data.get('subject'),
-                    'sender': msg_data.get('sender'),
-                    'date': msg_data.get('date'),
-                    'entities': [{'text': e.text, 'type': e.entity_type} for e in entities[:50]]
-                })
-
-                from app.core.embeddings import EmbeddingGenerator
-                emb = await EmbeddingGenerator.generate_embedding(chunk_text)
-                
-                pg_chunk = DocumentChunk(
-                    id=uuid.UUID(chunk_id),
-                    tenant_id=self.tenant_id,
-                    kb_id=uuid.UUID(kb_id),
-                    text=chunk_text,
-                    chunk_index=messages_synced,
-                    embedding=emb,
-                    metadata_json={"source": "outlook", "subject": msg_data.get("subject"), "sender": msg_data.get("sender")}
+            for folder_id in target_folders:
+                crawler = OutlookConnector(folder_id=folder_id, max_results=max_results)
+                crawler.load_credentials(db_conn.connection_params)
+                last_crawler = crawler
+                checkpoint = ConnectorCheckpoint(
+                    user_emails=[user_email],
+                    has_more=True,
+                    completion_stage='start',
+                    all_retrieved_file_ids=set(seen_message_ids),
                 )
-                self.db.add(pg_chunk)
-                messages_synced += 1
+
+                async for doc in crawler.load_from_checkpoint(0, time.time(), checkpoint):
+                    if hasattr(doc, 'node_type'):
+                        continue
+                    if doc.id in seen_message_ids:
+                        continue
+                    seen_message_ids.add(doc.id)
+
+                    msg_data = await crawler.get_message_content(user_email, doc.id)
+                    if not msg_data or not msg_data.get('body'):
+                        continue
+
+                    chunk_id = str(uuid4())
+                    chunk_text = f"Subject: {msg_data.get('subject')}\nFrom: {msg_data.get('sender')}\nDate: {msg_data.get('date')}\n\n{msg_data.get('body')}"
+
+                    from app.core.entity_extraction import EntityExtractor
+                    entities = await EntityExtractor.extract_entities(msg_data.get('body') or "")
+
+                    neo4j_nodes.append({
+                        'chunk_id': chunk_id,
+                        'message_id': doc.id,
+                        'subject': msg_data.get('subject'),
+                        'sender': msg_data.get('sender'),
+                        'date': msg_data.get('date'),
+                        'entities': [{'text': e.text, 'type': e.entity_type} for e in entities[:50]]
+                    })
+
+                    from app.core.embeddings import EmbeddingGenerator
+                    emb = await EmbeddingGenerator.generate_embedding(chunk_text)
+
+                    pg_chunk = DocumentChunk(
+                        id=uuid.UUID(chunk_id),
+                        tenant_id=self.tenant_id,
+                        kb_id=uuid.UUID(kb_id),
+                        text=chunk_text,
+                        chunk_index=messages_synced,
+                        embedding=emb,
+                        metadata_json={
+                            "source": "outlook",
+                            "message_id": doc.id,
+                            "subject": msg_data.get("subject"),
+                            "sender": msg_data.get("sender"),
+                            "folder_id": folder_id,
+                        }
+                    )
+                    self.db.add(pg_chunk)
+                    messages_synced += 1
 
             if neo4j_nodes:
                 neo_query_emails = """
@@ -4436,9 +4572,12 @@ class KnowledgeBaseService:
                     'tenant_id': str(self.tenant_id),
                     'chunks': neo4j_nodes
                 })
-                
-                pg_kb.total_chunks += messages_synced
+
+                pg_kb.total_chunks = (pg_kb.total_chunks or 0) + messages_synced
                 await self.db.commit()
+
+            if last_crawler:
+                await self._persist_ms_connector_tokens(db_conn, last_crawler.export_credentials())
 
             return format_success({'kb_id': kb_id, 'messages_synced': messages_synced, 'sync_duration_seconds': time.time() - sync_start_time}, meta={'message': 'Outlook synchronized successfully'})
 
