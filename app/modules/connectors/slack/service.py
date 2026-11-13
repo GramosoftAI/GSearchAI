@@ -183,10 +183,8 @@ class SlackService:
         """List channels available in the Slack workspace connected to an agent."""
         conn = await self.get_connection_for_agent(agent_id)
         if not conn:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No active Slack connection found for agent {agent_id}",
-            )
+            logger.info("No active Slack connection found for agent %s; returning empty channel list", agent_id)
+            return []
 
         bot_token = decrypt_token(conn.bot_access_token_encrypted)
         channels_raw = await self.client.list_channels(bot_token)
