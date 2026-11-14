@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useEffect } from "react";
 import { Card, Flex, Button, Typography, Modal, Spin } from "antd";
@@ -8,6 +8,7 @@ import { signIn, useSession } from "next-auth/react";
 import { getCookie } from "../../config/cookies";
 import GoogleDriveFolderModal from "./GoogleDriveFolderModal";
 import SharePointFolderModal from "./SharePointFolderModal";
+import OneDriveFolderModal from "./OneDriveFolderModal";
 import IntegrationConnectModal from "./IntegrationConnectModal";
 import { toast } from "react-hot-toast";
 
@@ -18,11 +19,12 @@ export default function ChannelsSection() {
   const { data: session } = useSession() as any;
   const [googleModal, setGoogleModal] = useState(false);
   const [sharePointModal, setSharePointModal] = useState(false);
+  const [oneDriveModal, setOneDriveModal] = useState(false);
   
   const [agentkbres, setagentkbres] = useState("");
   const [selectedAgent, setSelectedAgent] = useState<{ id: string; name: string } | null>(null);
 
-  const [connectModalType, setConnectModalType] = useState<"google" | "sharepoint" | "email" | "outlook" | null>(null);
+  const [connectModalType, setConnectModalType] = useState<"google" | "sharepoint" | "email" | "outlook" | "onedrive" | null>(null);
   const [support, setSupport] = useState<string | null>(null);
 
   const [syncingGmail, setSyncingGmail] = useState(false);
@@ -108,6 +110,42 @@ export default function ChannelsSection() {
       }
     };
 
+    const registerOneDrive = async () => {
+      const token = getCookie("AUTH_TOKEN");
+      try {
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/${agentkbres}/onedrive/register`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              credentials: {
+                client_id: process.env.NEXT_PUBLIC_MS_CLIENT_ID,
+                client_secret: process.env.NEXT_PUBLIC_MS_CLIENT_SECRET,
+                tenant_id: session?.tenantId || "common",
+                access_token: session?.accessToken,
+                refresh_token: session?.refreshToken,
+              },
+              folder_ids: [],
+            }),
+          }
+        );
+
+        if (response.ok) {
+          setOneDriveModal(true);
+          setSupport(null);
+        }
+      } catch (error) {
+        console.error("Error registering OneDrive:", error);
+      }
+    };
+
+    if (agentkbres && support === "onedrive") {
+      registerOneDrive();
+    }
     if (agentkbres && support === "share") {
       registerSharePoint();
     }
@@ -311,7 +349,7 @@ export default function ChannelsSection() {
       }
 
       localStorage.setItem("my_saved_kb_id", kbId);
-      localStorage.setItem("files", currentType === "google" ? "google" : "share");
+      localStorage.setItem("files", currentType === "google" ? "google" : currentType === "onedrive" ? "onedrive" : "share");
       
       if (currentType === "google") {
         signIn("google-drive");
@@ -513,6 +551,36 @@ export default function ChannelsSection() {
               </Button>
             </div>
           </Card>
+
+            <Card
+              hoverable
+              className="group relative overflow-hidden bg-[var(--app-surface)] border border-[var(--app-border)] rounded-3xl transition-all duration-300 hover:shadow-xl hover:shadow-blue-900/5 hover:-translate-y-1"
+              styles={{ body: { padding: "24px sm:32px" } }}
+            >
+              <div className="p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Image
+                    src="https://img.icons8.com/color/96/microsoft-onedrive-2019.png"
+                    alt="OneDrive"
+                    width={40}
+                    height={40}
+                    unoptimized
+                  />
+                  <div>
+                    <h2 className="font-semibold text-[var(--app-text)]">OneDrive</h2>
+                    <p className="text-sm text-gray-500">Personal & business cloud files, docs</p>
+                  </div>
+                </div>
+
+                <Button
+                  type="primary"
+                  onClick={() => setConnectModalType("onedrive")}
+                  className="bg-purple-500 hover:bg-purple-600 border-none text-white px-6 py-2 rounded-xl h-11 font-semibold transition-transform active:scale-95"
+                >
+                  Connect
+                </Button>
+              </div>
+            </Card>
         </div>
       </Flex>
 
@@ -550,6 +618,17 @@ export default function ChannelsSection() {
         session={session?.user?.email}
       />
 
+      <OneDriveFolderModal
+        open={oneDriveModal}
+        kbId={agentkbres}
+        token={getCookie("AUTH_TOKEN") || ""}
+        onClose={() => setOneDriveModal(false)}
+        onSuccess={() => {
+          setOneDriveModal(false);
+        }}
+        session={session?.user?.email}
+      />
+
 
 
     
@@ -576,3 +655,8 @@ export default function ChannelsSection() {
     </>
   );
 }
+
+
+
+
+

@@ -8,9 +8,16 @@ export function useLoginApi() {
   return useAxios<LoginResponse, LoginPayload>({
     endpoint: "LOGIN",
     // hideErrorMsg: false,
-    showSuccessMsg: true,
+    showSuccessMsg: false,
   });
 
+}
+
+export function useGoogleAuthApi() {
+  return useAxios<LoginResponse, { credential: string; tenant_name?: string }>({
+    endpoint: "GOOGLE_AUTH",
+    showSuccessMsg: false,
+  });
 }
 
 

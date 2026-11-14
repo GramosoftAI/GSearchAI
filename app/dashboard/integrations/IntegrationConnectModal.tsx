@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { Modal, Button, Spin, Tag, App} from "antd";
@@ -18,7 +18,7 @@ interface Agent {
 
 interface Props {
   open: boolean;
-  type: "google" | "sharepoint" | "email" | "outlook";
+  type: "google" | "sharepoint" | "email" | "outlook" | "onedrive";
   onClose: () => void;
   onConnect: (agent: { id: string; name: string }, kbId: string) => void;
   onAdd: (agent: { id: string; name: string }, kbId: string) => void;
@@ -44,11 +44,11 @@ export default function IntegrationConnectModal({
 
   const providerLabel = 
     type === "google" ? "Google Drive" : 
-    type === "sharepoint" ? "SharePoint" : 
+    type === "sharepoint" ? "SharePoint" : type === "onedrive" ? "OneDrive" : 
     type === "email" ? "Email" : "Outlook";
   const providerKey = 
     type === "google" ? "google_drive" : 
-    type === "sharepoint" ? "sharepoint" : 
+    type === "sharepoint" ? "sharepoint" : type === "onedrive" ? "onedrive" : 
     type === "email" ? "email" : "outlook";
 
   
@@ -75,7 +75,7 @@ export default function IntegrationConnectModal({
 
       const searchTerms = 
         type === "google" ? ["google_drive", "google drive"] :
-        type === "sharepoint" ? ["sharepoint", "share point"] :
+        type === "sharepoint" ? ["sharepoint", "share point"] : type === "onedrive" ? ["onedrive", "one drive"] :
         type === "email" ? ["email", "gmail"] :
         type === "outlook" ? ["outlook"] :
         [];
@@ -105,7 +105,7 @@ export default function IntegrationConnectModal({
       const token = getCookie("AUTH_TOKEN");
       const kbName = 
         type === "google" ? "Google Drive Knowledge" :
-        type === "sharepoint" ? "SharePoint Knowledge" :
+        type === "sharepoint" ? "SharePoint Knowledge" : type === "onedrive" ? "OneDrive Knowledge" :
         type === "email" ? "Gmail Knowledge" :
         type === "outlook" ? "Outlook Knowledge" :
         `${agentName} Knowledge`;
@@ -427,3 +427,4 @@ export default function IntegrationConnectModal({
     </Modal>
   );
 }
+
