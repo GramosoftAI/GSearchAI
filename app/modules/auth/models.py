@@ -43,7 +43,12 @@ class User(Base):
     first_name = Column(String(255), nullable=True)
     last_name = Column(String(255), nullable=True)
 
-    hashed_password = Column(String(255), nullable=False)
+    hashed_password = Column(String(255), nullable=True)
+
+    # ============= OAUTH / SSO =============
+    auth_provider = Column(String(50), default="local", nullable=False)  # 'local', 'google', etc.
+    google_id = Column(String(255), unique=True, index=True, nullable=True)
+    picture = Column(String(1024), nullable=True)
 
     # ============= PREFERENCES =============
     preferred_llm_model = Column(String(255), nullable=True)

@@ -156,6 +156,10 @@ class Settings(BaseSettings):
 
 
 
+    # ============= GOOGLE OAUTH =============
+    google_client_id: Optional[str] = None
+    google_client_secret: Optional[str] = None
+
     # ============= JWT / SECURITY =============
 
     jwt_secret_key: str  # Must be strong and long (32+ chars)

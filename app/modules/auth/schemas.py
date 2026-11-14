@@ -95,6 +95,12 @@ class ResetPasswordRequest(BaseModel):
         return v
 
 
+class GoogleAuthRequest(BaseModel):
+    """Google OAuth authentication request (via Google ID token)"""
+    credential: str = Field(..., description="Google ID Token (JWT) from Google Identity Services")
+    tenant_name: Optional[str] = Field(None, description="Optional tenant name if new user registration")
+
+
 # ============= RESPONSE SCHEMAS =============
 class TokenResponse(BaseModel):
     """Token response (access + refresh)"""

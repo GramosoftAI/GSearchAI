@@ -43,6 +43,7 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
         ("/api/v1/auth/send-registration-otp", "POST"),
         ("/api/v1/auth/forgot-password", "POST"),
         ("/api/v1/auth/reset-password", "POST"),
+        ("/api/v1/auth/google", "POST"),
         ("/docs", "GET"),
         ("/openapi.json", "GET"),
         ("/redoc", "GET"),

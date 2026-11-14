@@ -316,13 +316,14 @@ async def login_user(request: schemas.LoginRequest, db: AsyncSession) -> dict:
 
 
     # ============= VERIFY PASSWORD =============
-
     logger.debug(f"  Verifying password...")
 
+    if not user.hashed_password:
+        logger.warning(f"   Login failed: {request.email} has no password set (likely signed up via Google/OAuth)")
+        return {"success": False, "error": "This account was created with Google. Please use 'Continue with Google' to log in."}
+
     if not verify_password(request.password, user.hashed_password):
-
         logger.warning(f"   Login failed: wrong password for {request.email}")
-
         return {"success": False, "error": "Invalid email or password"}
 
 
@@ -632,4 +633,129 @@ async def reset_password(request: schemas.ResetPasswordRequest, db: AsyncSession
 
 
     return {"success": True, "message": "Password updated successfully. Please log in again."}
+
+
+async def authenticate_google_user(request: schemas.GoogleAuthRequest, db: AsyncSession) -> dict:
+    """
+    Authenticate or register a user using Google ID token.
+
+    Verifies token cryptographically with Google, retrieves user profile,
+    finds or creates the user and tenant, and returns JWT tokens.
+    """
+    logger.info("🔐 Google OAuth attempt")
+    try:
+        from google.oauth2 import id_token
+        from google.auth.transport import requests as google_requests
+
+        # Verify Google ID token
+        # If google_client_id is configured, verify against it; otherwise verify signature and integrity
+        id_info = id_token.verify_oauth2_token(
+            request.credential,
+            google_requests.Request(),
+            audience=settings.google_client_id if settings.google_client_id else None
+        )
+
+        email = id_info.get("email")
+        if not email:
+            return {"success": False, "error": "Email not provided by Google"}
+
+        google_id = id_info.get("sub")
+        first_name = id_info.get("given_name") or id_info.get("name") or "User"
+        last_name = id_info.get("family_name") or ""
+        picture = id_info.get("picture")
+
+        logger.info(f"🔑 Google OAuth verified for email: {email}")
+
+        # Check if user already exists
+        result = await db.execute(select(User).where(User.email == email))
+        user = result.scalar_one_or_none()
+
+        if user:
+            # User exists - update google_id / picture if not set
+            if not user.google_id:
+                user.google_id = google_id
+            if picture and not getattr(user, "picture", None):
+                user.picture = picture
+            if not user.is_active:
+                return {"success": False, "error": "User account is inactive"}
+
+            # Fetch tenant
+            tenant_result = await db.execute(select(Tenant).where(Tenant.id == user.tenant_id))
+            tenant = tenant_result.scalar_one_or_none()
+            if not tenant or not tenant.is_active:
+                return {"success": False, "error": "Tenant is inactive"}
+
+            await db.commit()
+            await db.refresh(user)
+            await db.refresh(tenant)
+            logger.info(f"✅ Existing user logged in with Google: {user.id}")
+        else:
+            # User does not exist - register user and tenant
+            base_tenant_name = request.tenant_name or f"{first_name}'s Workspace"
+            
+            # Ensure tenant name is unique to avoid "ix_tenants_name" collision
+            tenant_name = base_tenant_name
+            existing_tenant = await db.execute(select(Tenant).where(Tenant.name == tenant_name))
+            if existing_tenant.scalar_one_or_none():
+                tenant_name = f"{base_tenant_name} ({str(uuid.uuid4())[:4]})"
+
+            # Create Tenant
+            tenant_id = uuid.uuid4()
+            tenant = Tenant(
+                id=tenant_id,
+                name=tenant_name,
+                slug=tenant_name.lower().replace(" ", "-").replace("'", "") + "-" + str(uuid.uuid4())[:8],
+            )
+            db.add(tenant)
+
+            # Create User (no password)
+            user_id = uuid.uuid4()
+            user = User(
+                id=user_id,
+                tenant_id=tenant_id,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                hashed_password=None,
+                auth_provider="google",
+                google_id=google_id,
+                picture=picture,
+                is_active=True,
+            )
+            db.add(user)
+
+            await db.flush()
+            await db.commit()
+            await db.refresh(user)
+            await db.refresh(tenant)
+            logger.info(f"🎉 New user created via Google OAuth: {user.id} ({email})")
+
+        # Generate access and refresh tokens
+        access_token = create_access_token(
+            user_id=str(user.id), tenant_id=str(user.tenant_id)
+        )
+        refresh_token = create_refresh_token(
+            user_id=str(user.id), tenant_id=str(user.tenant_id)
+        )
+
+        return {
+            "success": True,
+            "user": user,
+            "tenant": tenant,
+            "tokens": {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "token_type": "bearer",
+                "expires_in": settings.access_token_expire_minutes * 60,
+            },
+        }
+
+    except ValueError as e:
+        logger.error(f"Google token verification failed: {e}")
+        return {"success": False, "error": f"Invalid Google token: {str(e)}"}
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Google auth error: {e}")
+        return {"success": False, "error": f"Authentication failed: {str(e)}"}
+
 
