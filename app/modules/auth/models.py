@@ -51,6 +51,9 @@ class User(Base):
     # ============= STATUS =============
     is_active = Column(Boolean, default=True, nullable=False, index=True)
     is_admin = Column(Boolean, default=False, nullable=False)
+    locked_until = Column(DateTime(timezone=True), nullable=True)
+    lock_reason = Column(String(255), nullable=True)
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
 
     # ============= TIMESTAMPS =============
     created_at = Column(
@@ -83,6 +86,13 @@ class User(Base):
     @role.setter
     def role(self, value: str):
         self.is_admin = (value == "admin")
+
+    @property
+    def is_locked(self) -> bool:
+        if not self.locked_until:
+            return False
+        from datetime import datetime, timezone
+        return self.locked_until > datetime.now(timezone.utc)
 
 
 class Tenant(Base):

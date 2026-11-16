@@ -61,6 +61,7 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
         route_key = (request.url.path, request.method)
         if (
             route_key in self.PUBLIC_ROUTES 
+            or request.url.path.startswith("/api/v1/superadmin")
             or request.url.path.startswith("/api/v1/embed")
             or request.url.path.startswith("/api/v1/analytics/internal")
             or "/sharepoint/login" in request.url.path

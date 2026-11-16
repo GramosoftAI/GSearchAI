@@ -700,6 +700,12 @@ try:
     if not any(getattr(r, "path", "").startswith("/api/v1/database-knowledgebases") for r in app.routes):
         app.include_router(db_kb_router)
         logger.info("[OK] Explicitly loaded database_knowledgebase router")
+
+    # Explicit guarantee for superadmin router
+    from app.modules.superadmin.routes import router as superadmin_router
+    if not any(getattr(r, "path", "").startswith("/api/v1/superadmin") for r in app.routes):
+        app.include_router(superadmin_router)
+        logger.info("[OK] Explicitly loaded superadmin router")
 except Exception as e:
     logger.error(f"[ERROR] Critical error loading routers: {e}")
     raise
