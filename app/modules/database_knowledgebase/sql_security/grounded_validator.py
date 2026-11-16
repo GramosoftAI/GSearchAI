@@ -6,6 +6,7 @@ Directly implements the validator from D:\\DB\\main\\app\\pipeline\\sql_validato
 """
 
 import logging
+import re
 from typing import Optional, List
 import sqlglot
 from sqlglot import exp
@@ -357,17 +358,46 @@ class GroundedSQLValidator:
 
         # Convert string literal equality checks to case-insensitive ILIKE only in PostgreSQL
         if out_dialect in ("postgres", "postgresql"):
+            NON_TEXT_TYPES = {
+                "DATE", "TIMESTAMP", "TIMESTAMPTZ", "TIME",
+                "INTEGER", "INT", "BIGINT", "SMALLINT",
+                "NUMERIC", "DECIMAL", "FLOAT", "DOUBLE", "REAL",
+                "BOOLEAN", "BOOL", "UUID",
+            }
+            DATE_TIME_PATTERNS = [
+                re.compile(r"^\d{4}-\d{2}-\d{2}$"),
+                re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}"),
+                re.compile(r"^\d{1,2}:\d{2}(:\d{2})?(\.\d+)?$"),
+            ]
+
+            def _is_non_text_or_date(target_node: exp.Expression, lit_node: exp.Literal) -> bool:
+                # 1. Target node is an explicit cast to non-text type (e.g. CAST(col AS DATE) or col::date)
+                if isinstance(target_node, exp.Cast):
+                    target_type = str(target_node.to).upper().split("(")[0].strip()
+                    if target_type in NON_TEXT_TYPES:
+                        return True
+                # 2. Literal value is formatted as a date, timestamp, or time
+                if lit_node and lit_node.is_string:
+                    lit_str = str(lit_node.this).strip()
+                    if any(p.match(lit_str) for p in DATE_TIME_PATTERNS):
+                        return True
+                return False
+
             for eq in list(tree.find_all(exp.EQ)):
                 if isinstance(eq.expression, exp.Literal) and eq.expression.is_string:
-                    eq.replace(exp.ILike(this=eq.this, expression=eq.expression))
+                    if not _is_non_text_or_date(eq.this, eq.expression):
+                        eq.replace(exp.ILike(this=eq.this, expression=eq.expression))
                 elif isinstance(eq.this, exp.Literal) and eq.this.is_string:
-                    eq.replace(exp.ILike(this=eq.expression, expression=eq.this))
+                    if not _is_non_text_or_date(eq.expression, eq.this):
+                        eq.replace(exp.ILike(this=eq.expression, expression=eq.this))
 
             for neq in list(tree.find_all(exp.NEQ)):
                 if isinstance(neq.expression, exp.Literal) and neq.expression.is_string:
-                    neq.replace(exp.Not(this=exp.ILike(this=neq.this, expression=neq.expression)))
+                    if not _is_non_text_or_date(neq.this, neq.expression):
+                        neq.replace(exp.Not(this=exp.ILike(this=neq.this, expression=neq.expression)))
                 elif isinstance(neq.this, exp.Literal) and neq.this.is_string:
-                    neq.replace(exp.Not(this=exp.ILike(this=neq.expression, expression=neq.this)))
+                    if not _is_non_text_or_date(neq.expression, neq.this):
+                        neq.replace(exp.Not(this=exp.ILike(this=neq.expression, expression=neq.this)))
 
         validated_sql = tree.sql(dialect=out_dialect)
         if available_columns:

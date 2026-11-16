@@ -68,13 +68,17 @@ class TransactionManager:
         """
         sql_working = parameterized_sql
 
-        # If any parameter is a time object/string, ensure comparisons against columns are cast to time (PostgreSQL only)
+        # If any parameter is a date/time object/string, ensure operators against columns are valid (PostgreSQL only)
         if dialect not in ("mysql", "mariadb", "sqlserver", "mssql", "tsql"):
             for key, raw_val in parameters.items():
                 coerced_check = cls._coerce_param_value(raw_val)
                 if isinstance(coerced_check, datetime.time):
                     pattern = rf"(?i)(?<!CAST\()(?<!::)\b([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)?)\s*([><!=]+)\s*:{key}\b"
                     sql_working = re.sub(pattern, rf"CAST(\1 AS time) \2 :{key}", sql_working)
+                elif isinstance(coerced_check, (datetime.date, datetime.datetime)):
+                    # Dynamically fix any invalid ILIKE or LIKE operator applied to date/datetime parameters
+                    pattern_like = rf"(?i)(?:\bCAST\s*\(\s*([^)]+?)\s+AS\s+(?:DATE|TIMESTAMP|TIMESTAMPTZ|TIME)\s*\)|([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)?::(?:date|timestamp|timestamptz|time))|([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)?))\s+(?:I?LIKE)\s+:{key}\b"
+                    sql_working = re.sub(pattern_like, lambda m: f"CAST({m.group(1) or m.group(2) or m.group(3)} AS DATE) = :{key}", sql_working)
 
         pos_args: List[Any] = []
         param_keys_ordered: List[str] = []
