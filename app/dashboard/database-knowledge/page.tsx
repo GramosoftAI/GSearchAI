@@ -2052,7 +2052,7 @@ export default function DatabaseKnowledgePage() {
                 onClick={() => setModalOpen(true)}
                 style={{ backgroundColor: "var(--app-primary)", borderRadius: 8 }}
               >
-                Connect HRMS Database
+                Connect Database
               </Button>
             </Card>
           ) : (
@@ -4610,7 +4610,7 @@ export default function DatabaseKnowledgePage() {
             <Input
               value={formName}
               onChange={(e) => setFormName(e.target.value)}
-              placeholder="e.g. HRMS Enterprise Database"
+              placeholder="e.g. Production Enterprise Database"
               className="mt-1"
             />
           </div>
@@ -4681,7 +4681,7 @@ export default function DatabaseKnowledgePage() {
             <Input
               value={formDbName}
               onChange={(e) => setFormDbName(e.target.value)}
-              placeholder="gsearch_hrms_demo_db"
+              placeholder="e.g. my_database"
               className="mt-1"
             />
           </div>
