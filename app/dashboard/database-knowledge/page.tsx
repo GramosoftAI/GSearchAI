@@ -327,27 +327,31 @@ export default function DatabaseKnowledgePage() {
   const [testResult, setTestResult] = useState<{ success: boolean; latency_ms?: number; message?: string } | null>(null);
 
   // Form State
-  const [formDbType, setFormDbType] = useState<"postgresql" | "mariadb" | "mysql">("postgresql");
-  const [formName, setFormName] = useState("HRMS Enterprise Database (Demo)");
+  const [formDbType, setFormDbType] = useState<"postgresql" | "mariadb" | "mysql" | "sqlserver">("postgresql");
+  const [formName, setFormName] = useState("Database Agent Name");
 
-  const handleDbTypeChange = (newType: "postgresql" | "mariadb" | "mysql") => {
+  const handleDbTypeChange = (newType: "postgresql" | "mariadb" | "mysql" | "sqlserver") => {
     setFormDbType(newType);
     if (newType === "mariadb" || newType === "mysql") {
-      if (formPort === 5432 || formPort === 5433) {
+      if (formPort === 5432 || formPort === 5433 || formPort === 1433) {
         setFormPort(3306);
       }
+    } else if (newType === "sqlserver") {
+      if (formPort === 5432 || formPort === 5433 || formPort === 3306 || formPort === 3307) {
+        setFormPort(1433);
+      }
     } else if (newType === "postgresql") {
-      if (formPort === 3306 || formPort === 3307) {
+      if (formPort === 3306 || formPort === 3307 || formPort === 1433) {
         setFormPort(5432);
       }
     }
   };
-  const [formDesc, setFormDesc] = useState("14-table HRMS demo database covering employees, departments, payroll, attendance, and projects");
-  const [formHost, setFormHost] = useState("localhost");
-  const [formPort, setFormPort] = useState(5433);
-  const [formDbName, setFormDbName] = useState("gsearch_hrms_demo_db");
-  const [formUser, setFormUser] = useState("test_ro_user");
-  const [formPassword, setFormPassword] = useState("test_ro_password");
+  const [formDesc, setFormDesc] = useState("Provide a brief note explaining what data or business domains this database contains.");
+  const [formHost, setFormHost] = useState("localhost or db.yourcompany.com or 192.168.1.50");
+  const [formPort, setFormPort] = useState(5432);
+  const [formDbName, setFormDbName] = useState("e.g. analytics_db, production_db");
+  const [formUser, setFormUser] = useState("e.g. db_user, read_only_user.");
+  const [formPassword, setFormPassword] = useState("Enter database user password");
   const [formSsl, setFormSsl] = useState("disable");
 
   // Schema Explorer state
@@ -1156,8 +1160,13 @@ export default function DatabaseKnowledgePage() {
         } catch {}
         pollPipelineStatus(kbId);
       } else {
-        const err = await res.json();
-        toast.error(err.detail || "Schema introspection failed.");
+        const err = await res.json().catch(() => ({}));
+        const rawMsg = typeof err.detail === "string" ? err.detail : "";
+        const friendlyMsg =
+          rawMsg && (rawMsg.includes("timed out") || rawMsg.includes("Cannot reach") || rawMsg.includes("Failed to connect") || rawMsg.includes("TooManyConnectionsError") || rawMsg.includes("clients already"))
+            ? (rawMsg.includes("clients already") ? "Target database connection limit reached ('too many clients'). Please check active connections." : "Cannot reach the database server. Please check your network and database credentials.")
+            : (rawMsg || "Cannot reach the database server. Please check your network and database credentials.");
+        toast.error(friendlyMsg);
         setPipelineProgressMap((prev) => ({
           ...prev,
           [kbId]: {
@@ -4587,7 +4596,7 @@ export default function DatabaseKnowledgePage() {
         title={
           <div className="flex items-center gap-2">
             <DatabaseOutlined style={{ color: "var(--app-primary)" }} />
-            <span>Connect PostgreSQL Database Knowledgebase</span>
+            <span>Connect Relational Database Knowledgebase</span>
           </div>
         }
         open={modalOpen}
@@ -4626,6 +4635,7 @@ export default function DatabaseKnowledgePage() {
                 className="w-full mt-1"
                 options={[
                   { label: "PostgreSQL", value: "postgresql" },
+                  { label: "Microsoft SQL Server", value: "sqlserver" },
                   { label: "MariaDB", value: "mariadb" },
                   { label: "MySQL", value: "mysql" },
                 ]}
@@ -4660,7 +4670,7 @@ export default function DatabaseKnowledgePage() {
               <Text strong>Port</Text>
               <InputNumber
                 value={formPort}
-                onChange={(v) => setFormPort(v || (formDbType === "postgresql" ? 5432 : 3306))}
+                onChange={(v) => setFormPort(v || (formDbType === "postgresql" ? 5432 : formDbType === "sqlserver" ? 1433 : 3306))}
                 className="w-full mt-1"
               />
             </div>
