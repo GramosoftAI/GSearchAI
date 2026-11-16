@@ -2,11 +2,11 @@ import type { Metadata } from "next";
 import { Plus_Jakarta_Sans, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import GlobalProvider from "./components/provider/GlobalProvider";
-import { Toaster } from "react-hot-toast";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import Script from "next/script";
 import { schema } from "./lib/schema";
 import GSearchChat from "./components/layout/GSearchChat";
+import ToastWithDismiss from "./components/common/ToastWithDismiss";
 
 
 const plusJakartaSans = Plus_Jakarta_Sans({
@@ -163,9 +163,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
         <AntdRegistry>
           <GlobalProvider>
             {children}
-            <Toaster position="top-right" toastOptions={{
-              duration: 5000, // 3 seconds
-            }} />
+            <ToastWithDismiss />
           </GlobalProvider>
         </AntdRegistry>
       </body>
