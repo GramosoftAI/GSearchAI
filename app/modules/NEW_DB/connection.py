@@ -5,12 +5,14 @@ with credential encryption and safe connection string masking.
 """
 
 import asyncpg
+import asyncio
 import time
 import base64
 import hashlib
 import json
 import logging
 from typing import Optional, Dict, Any, List, Tuple
+from fastapi import HTTPException, status
 from cryptography.fernet import Fernet
 
 from app.core.config import get_settings
@@ -56,15 +58,34 @@ class DatabaseConnector:
             ssl_ctx.check_hostname = False
             ssl_ctx.verify_mode = ssl.CERT_NONE
 
-        return await asyncpg.connect(
-            user=config.username,
-            password=config.password,
-            database=config.database_name,
-            host=config.host,
-            port=config.port,
-            timeout=config.connection_timeout,
-            ssl=ssl_ctx,
-        )
+        try:
+            return await asyncpg.connect(
+                user=config.username,
+                password=config.password,
+                database=config.database_name,
+                host=config.host,
+                port=config.port,
+                timeout=config.connection_timeout,
+                ssl=ssl_ctx,
+            )
+        except asyncpg.exceptions.TooManyConnectionsError as e:
+            logger.error(f"[NEW_DB] Target PostgreSQL database connection limit reached: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Target database has reached its maximum connection limit ('sorry, too many clients already'). Please verify active connections or increase 'max_connections' on your PostgreSQL server.",
+            ) from e
+        except (TimeoutError, asyncio.TimeoutError) as e:
+            logger.error(f"[NEW_DB] Connection timeout to target database {config.host}:{config.port}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="Cannot reach the database server. Please check your network and database credentials.",
+            ) from e
+        except (asyncpg.PostgresError, OSError) as e:
+            logger.error(f"[NEW_DB] Target database connection failed for {config.host}:{config.port}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Cannot reach the database server. Please check your network and database credentials.",
+            ) from e
 
     @classmethod
     async def test_connection(cls, config: DBConnectionConfig) -> ConnectionTestResult:

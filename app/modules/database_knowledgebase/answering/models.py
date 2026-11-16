@@ -32,6 +32,7 @@ class GroundingStatus(str, Enum):
     VERIFIED = "VERIFIED"                        # Successfully verified against evidence
     REPAIRED = "REPAIRED"                        # Verified after 1 targeted repair attempt
     FALLBACK_DETERMINISTIC = "FALLBACK_DETERMINISTIC"  # Failed LLM validation; failed closed to deterministic formatter
+    FAILED = "FAILED"                            # Grounding failed (no evidence or schema mismatch)
 
 
 class VerificationStatus(str, Enum):
