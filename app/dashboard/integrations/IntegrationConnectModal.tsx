@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState } from "react";
 import { Modal, Button, Spin, Tag, App, Checkbox } from "antd";
@@ -55,17 +55,6 @@ export default function IntegrationConnectModal({
   // Helper to fetch an existing KB ID for a single agent (read-only query, no side effects)
   const fetchExistingAgentKbId = async (agentId: string) => {
     try {
-      const token = getCookie("AUTH_TOKEN");
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/${agentId}/list_knowledge_bases`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-      if (!res.ok) return null;
-      const data = await res.json();
       const token = getCookie("AUTH_TOKEN");
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/agents/${agentId}?limit=100&offset=0`,
