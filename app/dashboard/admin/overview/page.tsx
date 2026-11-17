@@ -378,144 +378,193 @@ export default function AdminOverviewPage() {
         </div>
       ) : (
         <div className="space-y-8">
-          {/* 4 PRIMARY KPI CARDS */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {/* 1. TOTAL USERS */}
-            <div className="bg-[var(--app-surface)] border border-[var(--app-border)]/60 rounded-3xl p-6 relative overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 flex flex-col justify-between group">
-              <div className="absolute top-[-20%] right-[-10%] w-[50%] h-[80%] bg-emerald-500/5 rounded-full blur-[40px] transition-all group-hover:scale-110" />
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <span className="text-xs font-black uppercase tracking-wider text-[var(--app-text-soft)]">
-                    Total Users
-                  </span>
-                  <div className="w-11 h-11 rounded-2xl bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 flex items-center justify-center shadow-sm">
-                    <Users size={22} />
-                  </div>
-                </div>
-                <h3 className="text-4xl font-black text-[var(--app-text)] tracking-tight">
+          {/* 4 PRIMARY KPI CARDS (MATCHING DESIGN REFERENCE) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {/* 1. TOTAL USERS - TEAL THEME */}
+            <Link
+              href="/dashboard/admin/users"
+              className="relative overflow-hidden rounded-[22px] p-6 shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex items-center justify-between group no-underline text-inherit cursor-pointer"
+              style={{
+                background: "linear-gradient(135deg, #096350 0%, #0d725d 55%, #10816a 100%)",
+              }}
+            >
+              <div className="flex flex-col justify-between z-10">
+                <span className="text-[11px] font-black tracking-wider uppercase text-[#79dfc8]">
+                  TOTAL USERS
+                </span>
+                <h3 className="text-3xl sm:text-4xl font-black text-white tracking-tight leading-none my-2.5">
                   {overviewData?.metrics?.total_users ?? 0}
                 </h3>
-                <span className="text-xs text-[var(--app-text-soft)] font-medium mt-1.5 block">
-                  Registered accounts (excl. widget & visitor)
+                <span className="text-xs font-semibold text-[#a5ecdc]">
+                  Core Entities
                 </span>
               </div>
-              <div className="mt-6 pt-4 border-t border-[var(--app-border)]/40 flex items-center justify-between">
-                <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  Tenant Isolated
-                </span>
-                <Link
-                  href="/dashboard/admin/users"
-                  className="text-xs font-bold text-[#0fb5a1] hover:underline flex items-center gap-1"
-                >
-                  Manage Users <ArrowRightOutlined className="text-[10px]" />
-                </Link>
-              </div>
-            </div>
 
-            {/* 2. ACTIVE ENDPOINTS */}
-            <div className="bg-[var(--app-surface)] border border-[var(--app-border)]/60 rounded-3xl p-6 relative overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 flex flex-col justify-between group">
-              <div className="absolute top-[-20%] right-[-10%] w-[50%] h-[80%] bg-sky-500/5 rounded-full blur-[40px] transition-all group-hover:scale-110" />
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <span className="text-xs font-black uppercase tracking-wider text-[var(--app-text-soft)]">
-                    Active Endpoints
-                  </span>
-                  <div className="w-11 h-11 rounded-2xl bg-sky-50 dark:bg-sky-950/20 text-sky-600 flex items-center justify-center shadow-sm">
-                    <Globe size={22} />
-                  </div>
+              <div className="relative w-16 h-16 flex items-center justify-center shrink-0">
+                {/* Circular Glass Badge with Grid */}
+                <div className="w-13 h-13 rounded-full bg-[#1aa383]/45 border-2 border-[#5ce8ca]/60 flex items-center justify-center shadow-inner">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
+                  </svg>
                 </div>
-                <h3 className="text-4xl font-black text-[var(--app-text)] tracking-tight">
+                {/* Flourish Curved Underline with Terminal Dot */}
+                <svg
+                  className="absolute -bottom-1 -right-1 overflow-visible pointer-events-none"
+                  width="42"
+                  height="20"
+                  viewBox="0 0 42 20"
+                  fill="none"
+                >
+                  <path
+                    d="M2 4C10 16 26 17 38 9"
+                    stroke="#5ce8ca"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                  />
+                  <circle cx="38" cy="9" r="2.8" fill="#5ce8ca" />
+                </svg>
+              </div>
+            </Link>
+
+            {/* 2. ACTIVE ENDPOINTS - SLATE NAVY THEME */}
+            <div
+              onClick={() => setActiveTab("endpoints")}
+              className="relative overflow-hidden rounded-[22px] p-6 shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex items-center justify-between group cursor-pointer"
+              style={{
+                background: "linear-gradient(135deg, #163044 0%, #1a394f 55%, #1e425c 100%)",
+              }}
+            >
+              <div className="flex flex-col justify-between z-10">
+                <span className="text-[11px] font-black tracking-wider uppercase text-[#7ba4c1]">
+                  ACTIVE ENDPOINTS
+                </span>
+                <h3 className="text-3xl sm:text-4xl font-black text-white tracking-tight leading-none my-2.5">
                   {overviewData?.metrics?.active_endpoints ?? 0}
                 </h3>
-                <span className="text-xs text-[var(--app-text-soft)] font-medium mt-1.5 block">
-                  {overviewData?.breakdown?.api_routes_count ?? 0} API Routes +{" "}
-                  {overviewData?.breakdown?.agent_endpoints_count ?? 0} Agent Webhooks
+                <span className="text-xs font-semibold text-[#8eb6d4]">
+                  Total Routes & Agents
                 </span>
               </div>
-              <div className="mt-6 pt-4 border-t border-[var(--app-border)]/40 flex items-center justify-between">
-                <span className="text-[11px] font-bold text-sky-600 dark:text-sky-400 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-sky-500" />
-                  100% Operational
-                </span>
-                <button
-                  onClick={() => setActiveTab("endpoints")}
-                  className="text-xs font-bold text-[#0fb5a1] hover:underline flex items-center gap-1 cursor-pointer bg-transparent border-none p-0"
-                >
-                  View Explorer <ArrowRightOutlined className="text-[10px]" />
-                </button>
+
+              {/* 3D Isometric Stacked Cubes Graphic */}
+              <div className="relative w-16 h-16 flex items-center justify-center shrink-0">
+                <svg width="48" height="48" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  {/* Top Cube (Orange / Amber) */}
+                  <g transform="translate(20, 4)">
+                    <polygon points="12,0 24,7 12,14 0,7" fill="#fbbf24" />
+                    <polygon points="0,7 12,14 12,26 0,19" fill="#f59e0b" />
+                    <polygon points="12,14 24,7 24,19 12,26" fill="#d97706" />
+                  </g>
+                  {/* Bottom-Left Cube (Emerald / Mint) */}
+                  <g transform="translate(8, 22)">
+                    <polygon points="12,0 24,7 12,14 0,7" fill="#34d399" />
+                    <polygon points="0,7 12,14 12,26 0,19" fill="#10b981" />
+                    <polygon points="12,14 24,7 24,19 12,26" fill="#059669" />
+                  </g>
+                  {/* Bottom-Right Cube (Sky / Royal Blue) */}
+                  <g transform="translate(32, 22)">
+                    <polygon points="12,0 24,7 12,14 0,7" fill="#60a5fa" />
+                    <polygon points="0,7 12,14 12,26 0,19" fill="#3b82f6" />
+                    <polygon points="12,14 24,7 24,19 12,26" fill="#2563eb" />
+                  </g>
+                </svg>
               </div>
             </div>
 
-            {/* 3. SYSTEM HEALTH */}
-            <div className="bg-[var(--app-surface)] border border-[var(--app-border)]/60 rounded-3xl p-6 relative overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 flex flex-col justify-between group">
-              <div className="absolute top-[-20%] right-[-10%] w-[50%] h-[80%] bg-teal-500/5 rounded-full blur-[40px] transition-all group-hover:scale-110" />
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <span className="text-xs font-black uppercase tracking-wider text-[var(--app-text-soft)]">
-                    System Health
-                  </span>
-                  <div className="w-11 h-11 rounded-2xl bg-teal-50 dark:bg-teal-950/20 text-teal-600 flex items-center justify-center shadow-sm">
-                    <Activity size={22} />
-                  </div>
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <h3 className="text-4xl font-black text-[var(--app-text)] tracking-tight">
-                    {overviewData?.metrics?.system_health ?? 98.5}%
-                  </h3>
-                  <span className="text-xs font-bold text-emerald-600 uppercase tracking-wide">
-                    {overviewData?.breakdown?.system_health_details?.status ?? "Optimal"}
-                  </span>
-                </div>
-                <div className="mt-3">
-                  <Progress
-                    percent={overviewData?.metrics?.system_health ?? 98.5}
-                    showInfo={false}
-                    strokeColor="#0fb5a1"
-                    trailColor="var(--app-surface-muted)"
-                    size="small"
+            {/* 3. SYSTEM HEALTH - AMBER / WARM GOLD THEME */}
+            <div
+              onClick={() => setActiveTab("resources")}
+              className="relative overflow-hidden rounded-[22px] p-6 shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex items-center justify-between group cursor-pointer border border-[#f8cd68]/50"
+              style={{
+                background: "linear-gradient(135deg, #fee8aa 0%, #fed884 55%, #fecf72 100%)",
+              }}
+            >
+              <div className="flex flex-col justify-between z-10">
+                <span className="text-[11px] font-black tracking-wider uppercase text-[#8b4b12]">
+                  SYSTEM HEALTH
+                </span>
+                <h3 className="text-3xl sm:text-4xl font-black text-[#4e2504] tracking-tight leading-none my-2.5">
+                  {overviewData?.metrics?.system_health ?? 98.5}%
+                </h3>
+                <span className="text-xs font-semibold text-[#8b4b12]">
+                  Optimal Diagnostics
+                </span>
+              </div>
+
+              {/* Key & Lock with Flourish Swoosh Underline */}
+              <div className="relative w-16 h-16 flex items-center justify-center shrink-0">
+                <svg width="52" height="52" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  {/* Golden Key */}
+                  <g transform="rotate(-18 28 24)">
+                    <circle cx="20" cy="24" r="7" stroke="#ea580c" strokeWidth="3" fill="#fed7aa" />
+                    <path d="M26 24H42" stroke="#ea580c" strokeWidth="3.5" strokeLinecap="round" />
+                    <path d="M35 24V29" stroke="#ea580c" strokeWidth="3" strokeLinecap="round" />
+                    <path d="M39 24V28" stroke="#ea580c" strokeWidth="3" strokeLinecap="round" />
+                  </g>
+                  {/* Teal Padlock */}
+                  <g transform="translate(26, 17)">
+                    <path d="M6 9V5.5a4.5 4.5 0 0 1 9 0V9" stroke="#ea580c" strokeWidth="2.5" fill="none" strokeLinecap="round" />
+                    <rect x="2" y="9" width="17" height="14" rx="3.5" fill="#0d9488" stroke="#14b8a6" strokeWidth="1.5" />
+                    <circle cx="10.5" cy="15" r="1.6" fill="#ffffff" />
+                    <path d="M10.5 16.5V19.5" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
+                  </g>
+                  {/* Curved flourish swoosh with terminal dot */}
+                  <path
+                    d="M20 50C28 54 44 52 54 42"
+                    stroke="#b45309"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
                   />
-                </div>
-              </div>
-              <div className="mt-4 pt-3 border-t border-[var(--app-border)]/40 flex items-center justify-between text-[11px] text-[var(--app-text-soft)] font-semibold">
-                <span>Core Services</span>
-                <span className="text-emerald-600 font-bold">5 / 5 Active</span>
+                  <circle cx="54" cy="42" r="2.5" fill="#b45309" />
+                </svg>
               </div>
             </div>
 
-            {/* 4. TOTAL KNOWLEDGEBASES */}
-            <div className="bg-[var(--app-surface)] border border-[var(--app-border)]/60 rounded-3xl p-6 relative overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 flex flex-col justify-between group">
-              <div className="absolute top-[-20%] right-[-10%] w-[50%] h-[80%] bg-violet-500/5 rounded-full blur-[40px] transition-all group-hover:scale-110" />
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <span className="text-xs font-black uppercase tracking-wider text-[var(--app-text-soft)]">
-                    Knowledge Bases
-                  </span>
-                  <div className="w-11 h-11 rounded-2xl bg-violet-50 dark:bg-violet-950/20 text-violet-600 flex items-center justify-center shadow-sm">
-                    <Database size={22} />
-                  </div>
-                </div>
-                <h3 className="text-4xl font-black text-[var(--app-text)] tracking-tight">
+            {/* 4. TOTAL KNOWLEDGEBASES - ROYAL PURPLE THEME */}
+            <Link
+              href="/dashboard/knowledge-base"
+              className="relative overflow-hidden rounded-[22px] p-6 shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex items-center justify-between group no-underline text-inherit cursor-pointer"
+              style={{
+                background: "linear-gradient(135deg, #271952 0%, #381d6e 55%, #462280 100%)",
+              }}
+            >
+              <div className="flex flex-col justify-between z-10">
+                <span className="text-[11px] font-black tracking-wider uppercase text-[#bba1eb]">
+                  TOTAL KNOWLEDGEBASES
+                </span>
+                <h3 className="text-3xl sm:text-4xl font-black text-white tracking-tight leading-none my-2.5">
                   {overviewData?.metrics?.total_knowledgebases ?? 0}
                 </h3>
-                <span className="text-xs text-[var(--app-text-soft)] font-medium mt-1.5 block">
-                  {overviewData?.breakdown?.document_knowledgebases ?? 0} Document ·{" "}
-                  {overviewData?.breakdown?.database_knowledgebases ?? 0} Database
+                <span className="text-xs font-semibold text-[#cebbf3]">
+                  Active Joins & Network Density
                 </span>
               </div>
-              <div className="mt-6 pt-4 border-t border-[var(--app-border)]/40 flex items-center justify-between">
-                <span className="text-[11px] font-bold text-violet-600 dark:text-violet-400 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-violet-500" />
-                  Synced & Indexed
-                </span>
-                <Link
-                  href="/dashboard/knowledge-base"
-                  className="text-xs font-bold text-[#0fb5a1] hover:underline flex items-center gap-1"
-                >
-                  View KBs <ArrowRightOutlined className="text-[10px]" />
-                </Link>
+
+              {/* Multi-Node Network Graph Graphic */}
+              <div className="relative w-16 h-16 flex items-center justify-center shrink-0">
+                <svg width="52" height="52" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  {/* Dashed connector struts */}
+                  <line x1="16" y1="16" x2="28" y2="28" stroke="#c084fc" strokeWidth="2.2" strokeDasharray="3 2" />
+                  <line x1="48" y1="16" x2="36" y2="28" stroke="#c084fc" strokeWidth="2.2" strokeDasharray="3 2" />
+                  <line x1="16" y1="48" x2="28" y2="36" stroke="#c084fc" strokeWidth="2.2" strokeDasharray="3 2" />
+                  <line x1="48" y1="48" x2="36" y2="36" stroke="#c084fc" strokeWidth="2.2" strokeDasharray="3 2" />
+
+                  {/* Central 3D Cube Node */}
+                  <g transform="translate(24, 23)">
+                    <polygon points="8,0 16,5 8,10 0,5" fill="#38bdf8" />
+                    <polygon points="0,5 8,10 8,18 0,13" fill="#0284c7" />
+                    <polygon points="8,10 16,5 16,13 8,18" fill="#0369a1" />
+                  </g>
+
+                  {/* Satellite colored nodes */}
+                  <circle cx="16" cy="16" r="4.5" fill="#38bdf8" stroke="#e0f2fe" strokeWidth="1.5" />
+                  <circle cx="48" cy="16" r="4.5" fill="#f43f5e" stroke="#ffe4e6" strokeWidth="1.5" />
+                  <circle cx="16" cy="48" r="4.5" fill="#2dd4bf" stroke="#ccfbf1" strokeWidth="1.5" />
+                  <circle cx="48" cy="48" r="4.5" fill="#fbbf24" stroke="#fef3c7" strokeWidth="1.5" />
+                </svg>
               </div>
-            </div>
+            </Link>
           </div>
 
           {/* SUBSYSTEM HEALTH ROW */}
