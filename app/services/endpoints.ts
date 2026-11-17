@@ -132,6 +132,34 @@ export const endpoints = {
   SAVE_WIDGET_CONFIG: {
     url: "/embed/configs",
     method: methods.post,
+  },
+  ADMIN_OVERVIEW: {
+    url: "/admin/overview",
+    method: methods.get,
+  },
+  ADMIN_HEALTH: {
+    url: "/admin/overview/health",
+    method: methods.get,
+  },
+  ADMIN_ENDPOINTS: {
+    url: "/admin/overview/endpoints",
+    method: methods.get,
+  },
+  ADMIN_ANNOUNCEMENTS: {
+    url: "/admin/announcements",
+    method: methods.get,
+  },
+  ADMIN_CREATE_ANNOUNCEMENT: {
+    url: "/admin/announcements",
+    method: methods.post,
+  },
+  ADMIN_UPDATE_ANNOUNCEMENT: {
+    url: "/admin/announcements",
+    method: methods.put,
+  },
+  ADMIN_DELETE_ANNOUNCEMENT: {
+    url: "/admin/announcements",
+    method: methods.delete,
   }
 } as const;
 

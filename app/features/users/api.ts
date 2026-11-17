@@ -21,7 +21,7 @@ export function useGetUsersApi() {
     const skip = config?.params?.skip ?? 0;
     const limit = config?.params?.limit ?? 10;
     try {
-      const res = await fetch(`${getBaseUrl()}/users/?skip=${skip}&limit=${limit}`, {
+      const res = await fetch(`${getBaseUrl()}/users/?skip=${skip}&limit=${limit}&include_total=true`, {
         method: "GET",
         headers: {
           accept: "application/json",
