@@ -104,7 +104,6 @@ const DatabaseTableNode = ({ id, data }: NodeProps<Node<TableNodeData>>) => {
   const [expanded, setExpanded] = useState(false);
   const maxInitialColumns = 7;
   const hasMoreColumns = columns.length > maxInitialColumns;
-  const visibleColumns = expanded ? columns : columns.slice(0, maxInitialColumns);
 
   const handleCopyName = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -317,12 +316,33 @@ const DatabaseTableNode = ({ id, data }: NodeProps<Node<TableNodeData>>) => {
 
       {/* Columns List */}
       <div style={{ backgroundColor: "#ffffff" }}>
-        {visibleColumns.map((col, idx) => {
+        {columns.map((col, idx) => {
           const isPK = Boolean(col.is_primary_key);
           const isFK = Boolean(col.is_foreign_key);
           const isColMatch =
             Boolean(searchQuery.trim()) &&
             col.name.toLowerCase().includes(searchQuery.toLowerCase().trim());
+          const isVisible = expanded || idx < maxInitialColumns;
+
+          if (!isVisible) {
+            // Keep handles in DOM so React Flow can resolve edges even when table is collapsed
+            return (
+              <div key={col.name || idx} style={{ display: "none" }}>
+                <Handle
+                  type="target"
+                  position={Position.Left}
+                  id={`${tableName}-${col.name}-target`}
+                  style={{ pointerEvents: "none" }}
+                />
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={`${tableName}-${col.name}-source`}
+                  style={{ pointerEvents: "none" }}
+                />
+              </div>
+            );
+          }
 
           return (
             <div
@@ -333,7 +353,7 @@ const DatabaseTableNode = ({ id, data }: NodeProps<Node<TableNodeData>>) => {
                 alignItems: "center",
                 justifyContent: "space-between",
                 padding: "5.5px 12px",
-                borderBottom: idx === visibleColumns.length - 1 && !hasMoreColumns ? "none" : "1px solid #f1f5f9",
+                borderBottom: (expanded ? idx === columns.length - 1 : idx === maxInitialColumns - 1) && !hasMoreColumns ? "none" : "1px solid #f1f5f9",
                 backgroundColor: isColMatch
                   ? "#fef08a"
                   : isPK

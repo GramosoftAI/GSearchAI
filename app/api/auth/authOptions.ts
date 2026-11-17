@@ -1,4 +1,4 @@
-import GoogleProvider from "next-auth/providers/google";
+﻿import GoogleProvider from "next-auth/providers/google";
 import AzureADProvider from "next-auth/providers/azure-ad";
 import { AuthOptions } from "next-auth";
 
@@ -44,6 +44,7 @@ export const authOptions: AuthOptions = {
         params: {
           scope:
             "openid profile email offline_access User.Read Files.Read.All Mail.Read",
+          prompt: "select_account",
         },
       },
     }),

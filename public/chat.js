@@ -24,7 +24,7 @@
   }
 
   const targetAgentId = agentId || "24b3d80f-aed6-4b70-b5b2-48c64cb616c1";
-  const apiHost = baseUrl || window.location.origin || "https://uat.gramosoft.tech";
+  const apiHost = script.getAttribute("data-api-host") || (baseUrl && (baseUrl.includes(":3000") || baseUrl.includes(":3001")) ? "http://localhost:8001" : baseUrl) || window.location.origin || "https://uat.gramosoft.tech";
   const cleanApiHost = apiHost.endsWith("/api/v1") ? apiHost : apiHost + "/api/v1";
   const configApiUrl = `${cleanApiHost}/embed/configs/${targetAgentId}?device=${getDeviceType()}${tenantId ? `&tenant_id=${tenantId}` : ""}`;
 
@@ -98,14 +98,14 @@
       const cleanUrl = url.split("?")[0];
       const s3Match = cleanUrl.match(/amazonaws\.com\/grag\/logos\/(.+)/);
       if (s3Match) {
-        return `${baseUrl.endsWith("/api/v1") ? baseUrl : baseUrl + "/api/v1"}/embed/logo/render/${s3Match[1]}`;
+        return `${cleanApiHost}/embed/logo/render/${s3Match[1]}`;
       }
       if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("blob:") || url.startsWith("data:")) {
         return url;
       }
       const proxyMatch = cleanUrl.match(/\/embed\/logo\/render\/(.+)/);
       if (proxyMatch) {
-        return `${baseUrl.endsWith("/api/v1") ? baseUrl : baseUrl + "/api/v1"}/embed/logo/render/${proxyMatch[1]}`;
+        return `${cleanApiHost}/embed/logo/render/${proxyMatch[1]}`;
       }
       return url;
     };
@@ -925,33 +925,34 @@
         openIframe("");
       };
 
-      // Powered by Gramosoft label wrapper
+      // Powered by GSearchAI & Gramosoft label wrapper
       searchPoweredByContainer = document.createElement("div");
       searchPoweredByContainer.style.display = "flex"; // Always shown below search bar
       searchPoweredByContainer.style.justifyContent = "center";
       searchPoweredByContainer.style.marginTop = "6px";
 
-      const poweredBy = document.createElement("a");
-      poweredBy.href = "https://gsearchai.com/";
-      poweredBy.target = "_blank";
-      poweredBy.rel = "noopener noreferrer";
+      const poweredBy = document.createElement("div");
       poweredBy.style.display = "inline-flex";
       poweredBy.style.alignItems = "center";
       poweredBy.style.justifyContent = "center";
       poweredBy.style.gap = "4px";
       poweredBy.style.padding = "4px 12px";
       poweredBy.style.fontSize = "11px";
+      poweredBy.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
       poweredBy.style.color = "#18181b";
       poweredBy.style.fontWeight = "600";
       poweredBy.style.userSelect = "none";
-      poweredBy.style.textDecoration = "none";
-      poweredBy.style.cursor = "pointer";
       poweredBy.style.borderRadius = "100px";
       poweredBy.style.background = "#ffffff";
       poweredBy.style.border = "1px solid #d4d4d8";
       poweredBy.style.boxShadow = "0 2px 6px rgba(0, 0, 0, 0.08)";
       poweredBy.style.transition = "all 0.2s ease-in-out";
-      poweredBy.innerHTML = `Powered by <span style="font-weight: 750; color: ${themeColor};">Gsearch</span>`;
+      poweredBy.style.cursor = "default";
+      poweredBy.style.pointerEvents = "auto";
+
+      const gsearchBrandColor = (themeColor && themeColor !== "#0fb5a1") ? themeColor : "#2563eb";
+
+      poweredBy.innerHTML = `Powered by <a href="https://gsearchai.com/" target="_blank" rel="noopener noreferrer" style="color: ${gsearchBrandColor}; font-weight: 750; font-family: inherit; text-decoration: none; cursor: pointer; transition: opacity 0.2s;">GSearchAI</a> <span style="color: #71717a; font-weight: 500;">&amp;</span> <a href="https://gramosoft.tech/" target="_blank" rel="noopener noreferrer" style="color: #0b2347; font-weight: 750; font-family: inherit; text-decoration: none; cursor: pointer; transition: opacity 0.2s;">Gramosoft</a>`;
 
       poweredBy.addEventListener("mouseenter", () => {
         poweredBy.style.transform = "translateY(-1px)";
@@ -960,6 +961,16 @@
       poweredBy.addEventListener("mouseleave", () => {
         poweredBy.style.transform = "none";
         poweredBy.style.boxShadow = "0 2px 6px rgba(0, 0, 0, 0.08)";
+      });
+
+      const poweredByLinks = poweredBy.querySelectorAll("a");
+      poweredByLinks.forEach((link) => {
+        link.addEventListener("mouseenter", () => {
+          link.style.textDecoration = "underline";
+        });
+        link.addEventListener("mouseleave", () => {
+          link.style.textDecoration = "none";
+        });
       });
 
       searchPoweredByContainer.appendChild(poweredBy);
@@ -1018,7 +1029,7 @@
       // Fetch Customization API if tenantId exists to apply logo_url to embed launch button if show_in_embed is true
       if (tenantId) {
         try {
-          const custApiUrl = `${baseUrl.endsWith("/api/v1") ? baseUrl : baseUrl + "/api/v1"}/embed/customization?tenant_id=${tenantId}`;
+          const custApiUrl = `${cleanApiHost}/embed/customization?tenant_id=${tenantId}`;
           fetch(custApiUrl)
             .then(res => res.json())
             .then(result => {

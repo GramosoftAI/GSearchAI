@@ -63,6 +63,10 @@ export interface StreamQueryOptions {
   useLlm?: boolean;
   timeoutSeconds?: number;
   abortSignal?: AbortSignal;
+  resolvedEntities?: any[];
+  selectedTables?: string[];
+  executionStrategy?: "separate" | "union";
+  onDisambiguationRequired?: (data: { message: string; options: any[]; entity_type?: string; candidate_tables?: any[]; all_tables?: string[]; table_aliases?: Record<string, string[]> }) => void;
   onEvent?: (event: DatabaseStreamEvent) => void;
   onAnswer?: (answer: any) => void;
   onError?: (error: StreamQueryError) => void;
@@ -83,6 +87,9 @@ export class DatabaseStreamClient {
       useLlm = true,
       timeoutSeconds,
       abortSignal,
+      resolvedEntities,
+      selectedTables,
+      onDisambiguationRequired,
       onEvent,
       onAnswer,
       onError,
@@ -103,6 +110,9 @@ export class DatabaseStreamClient {
     const payload: Record<string, any> = {
       query,
       use_llm: useLlm,
+      resolved_entities: resolvedEntities,
+      selected_tables: selectedTables,
+      execution_strategy: options.executionStrategy,
     };
     if (timeoutSeconds) {
       payload["timeout_seconds"] = timeoutSeconds;
@@ -206,7 +216,24 @@ export class DatabaseStreamClient {
               }
             } else if (parsedEvent.event === "query.error") {
               hasCompleted = true;
-              if (onError) {
+              const isDisambig =
+                parsedEvent.status === "disambiguation_required" ||
+                parsedEvent.stage === "DISAMBIGUATION" ||
+                parsedEvent.data?.stage === "DISAMBIGUATION" ||
+                parsedEvent.data?.error_code === 300 ||
+                parsedEvent.data?.error_code === "300" ||
+                Boolean(parsedEvent.data?.options && parsedEvent.data.options.length > 0);
+
+              if (isDisambig && onDisambiguationRequired) {
+                onDisambiguationRequired({
+                  message: parsedEvent.data?.message || "Multiple matches found.",
+                  options: parsedEvent.data?.options || [],
+                  entity_type: parsedEvent.data?.entity_type,
+                  candidate_tables: parsedEvent.data?.candidate_tables,
+                  all_tables: parsedEvent.data?.all_tables,
+                  table_aliases: parsedEvent.data?.table_aliases || {},
+                });
+              } else if (onError) {
                 onError({
                   code: parsedEvent.data?.error_code || "QUERY_ERROR",
                   message: parsedEvent.data?.message || "An error occurred during query execution.",

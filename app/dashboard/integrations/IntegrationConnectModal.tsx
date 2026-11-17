@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { Modal, Button, Spin, Tag, App, Checkbox } from "antd";
@@ -18,7 +18,7 @@ interface Agent {
 
 interface Props {
   open: boolean;
-  type: "google" | "sharepoint" | "email" | "outlook";
+  type: "google" | "sharepoint" | "email" | "outlook" | "onedrive";
   onClose: () => void;
   onConnect: (agent: { id: string; name: string }, kbId: string) => void;
   onAdd: (agent: { id: string; name: string }, kbId: string) => void;
@@ -45,11 +45,11 @@ export default function IntegrationConnectModal({
 
   const providerLabel = 
     type === "google" ? "Google Drive" : 
-    type === "sharepoint" ? "SharePoint" : 
+    type === "sharepoint" ? "SharePoint" : type === "onedrive" ? "OneDrive" : 
     type === "email" ? "Email" : "Outlook";
   const providerKey = 
     type === "google" ? "google_drive" : 
-    type === "sharepoint" ? "sharepoint" : 
+    type === "sharepoint" ? "sharepoint" : type === "onedrive" ? "onedrive" : 
     type === "email" ? "email" : "outlook";
 
   // Helper to fetch an existing KB ID for a single agent (read-only query, no side effects)
@@ -66,14 +66,39 @@ export default function IntegrationConnectModal({
       );
       if (!res.ok) return null;
       const data = await res.json();
-      const kbs: any[] = data?.data?.kbs || [];
-      const match = kbs.find(
-        (kb) =>
-          kb.connected_integration === providerKey ||
-          (kb.source && kb.source.startsWith(providerKey)) ||
-          (kb.name && kb.name.toLowerCase().includes(providerLabel.toLowerCase()))
+      const token = getCookie("AUTH_TOKEN");
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_BASE_URL}/knowledge-bases/agents/${agentId}?limit=100&offset=0`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
       );
-      return match?.id || (kbs.length > 0 ? kbs[0].id : null);
+      if (!res.ok) return null;
+      const data = await res.json();
+      const currentAgentKBs: any[] = 
+        Array.isArray(data?.data?.kbs) ? data.data.kbs :
+        Array.isArray(data?.data?.sources) ? data.data.sources :
+        Array.isArray(data?.data) ? data.data :
+        Array.isArray(data?.kbs) ? data.kbs :
+        Array.isArray(data?.sources) ? data.sources : [];
+
+      const searchTerms = 
+        type === "google" ? ["google_drive", "google drive"] :
+        type === "sharepoint" ? ["sharepoint", "share point"] : type === "onedrive" ? ["onedrive", "one drive"] :
+        type === "email" ? ["email", "gmail"] :
+        type === "outlook" ? ["outlook"] :
+        [];
+
+      const existingKB = currentAgentKBs.find((kb) => {
+        const conn = (kb.connected_integration || "").toLowerCase();
+        const kbName = (kb.name || kb.source || "").toLowerCase();
+        return searchTerms.some(term => conn === term || kbName.includes(term));
+      });
+
+      return existingKB?.id || null;
     } catch (err) {
       console.error(`Error checking existing KB for agent ${agentId}:`, err);
       return null;
@@ -86,7 +111,7 @@ export default function IntegrationConnectModal({
       const token = getCookie("AUTH_TOKEN");
       const kbName = 
         type === "google" ? "Google Drive Knowledge" :
-        type === "sharepoint" ? "SharePoint Knowledge" :
+        type === "sharepoint" ? "SharePoint Knowledge" : type === "onedrive" ? "OneDrive Knowledge" :
         type === "email" ? "Gmail Knowledge" :
         type === "outlook" ? "Outlook Knowledge" :
         `${agentName} Knowledge`;
@@ -422,3 +447,4 @@ export default function IntegrationConnectModal({
     </Modal>
   );
 }
+

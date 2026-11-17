@@ -11,6 +11,7 @@ import {
   InputNumber,
   Select,
   Modal,
+  Popover,
   Tag,
   Space,
   Table,
@@ -29,11 +30,14 @@ import {
   Popconfirm,
   Radio,
   Segmented,
+  Checkbox,
+  Switch,
 } from "antd";
 import {
   DatabaseOutlined,
   PlusOutlined,
   SyncOutlined,
+  LoadingOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   ThunderboltOutlined,
@@ -41,15 +45,19 @@ import {
   EyeOutlined,
   ApartmentOutlined,
   TableOutlined,
+  EditOutlined,
+  CloseOutlined,
   CodeOutlined,
   FieldTimeOutlined,
   SafetyCertificateOutlined,
   InfoCircleOutlined,
+  QuestionCircleOutlined,
   ArrowRightOutlined,
   DeleteOutlined,
   DownloadOutlined,
   CopyOutlined,
   FileTextOutlined,
+  BookOutlined,
   DownOutlined,
   FilterOutlined,
   FullscreenOutlined,
@@ -267,10 +275,50 @@ interface AuditLogEntry {
   audit_metadata?: any;
 }
 
+interface PipelineProgressState {
+  is_active: boolean;
+  progress_percent: number;
+  current_stage?: string;
+  current_stage_label?: string;
+  status: string;
+  error?: string | null;
+}
+
 export default function DatabaseKnowledgePage() {
   const [kbList, setKbList] = useState<DBKnowledgebase[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedKb, setSelectedKb] = useState<DBKnowledgebase | null>(null);
+  const [pipelineProgressMap, setPipelineProgressMap] = useState<Record<string, PipelineProgressState>>({});
+
+  const pollPipelineStatus = async (kbId: string) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/database-knowledgebases/${kbId}/pipeline-status`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPipelineProgressMap((prev) => ({
+          ...prev,
+          [kbId]: {
+            is_active: data.is_active,
+            progress_percent: data.progress_percent || 0,
+            current_stage: data.current_stage,
+            current_stage_label: data.current_stage_label,
+            status: data.status,
+            error: data.error,
+          },
+        }));
+
+        if (data.is_active) {
+          setTimeout(() => pollPipelineStatus(kbId), 3000);
+        } else if (data.status === "succeeded" || data.status === "succeeded_with_warnings") {
+          await fetchKnowledgebases();
+        }
+      }
+    } catch (e) {
+      console.error("Failed to poll pipeline status:", e);
+    }
+  };
 
   // Connection Modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -279,27 +327,31 @@ export default function DatabaseKnowledgePage() {
   const [testResult, setTestResult] = useState<{ success: boolean; latency_ms?: number; message?: string } | null>(null);
 
   // Form State
-  const [formDbType, setFormDbType] = useState<"postgresql" | "mariadb" | "mysql">("postgresql");
-  const [formName, setFormName] = useState("HRMS Enterprise Database (Demo)");
+  const [formDbType, setFormDbType] = useState<"postgresql" | "mariadb" | "mysql" | "sqlserver">("postgresql");
+  const [formName, setFormName] = useState("Database Agent Name");
 
-  const handleDbTypeChange = (newType: "postgresql" | "mariadb" | "mysql") => {
+  const handleDbTypeChange = (newType: "postgresql" | "mariadb" | "mysql" | "sqlserver") => {
     setFormDbType(newType);
     if (newType === "mariadb" || newType === "mysql") {
-      if (formPort === 5432 || formPort === 5433) {
+      if (formPort === 5432 || formPort === 5433 || formPort === 1433) {
         setFormPort(3306);
       }
+    } else if (newType === "sqlserver") {
+      if (formPort === 5432 || formPort === 5433 || formPort === 3306 || formPort === 3307) {
+        setFormPort(1433);
+      }
     } else if (newType === "postgresql") {
-      if (formPort === 3306 || formPort === 3307) {
+      if (formPort === 3306 || formPort === 3307 || formPort === 1433) {
         setFormPort(5432);
       }
     }
   };
-  const [formDesc, setFormDesc] = useState("14-table HRMS demo database covering employees, departments, payroll, attendance, and projects");
-  const [formHost, setFormHost] = useState("localhost");
-  const [formPort, setFormPort] = useState(5433);
-  const [formDbName, setFormDbName] = useState("gsearch_hrms_demo_db");
-  const [formUser, setFormUser] = useState("test_ro_user");
-  const [formPassword, setFormPassword] = useState("test_ro_password");
+  const [formDesc, setFormDesc] = useState("Provide a brief note explaining what data or business domains this database contains.");
+  const [formHost, setFormHost] = useState("localhost or db.yourcompany.com or 192.168.1.50");
+  const [formPort, setFormPort] = useState(5432);
+  const [formDbName, setFormDbName] = useState("e.g. analytics_db, production_db");
+  const [formUser, setFormUser] = useState("e.g. db_user, read_only_user.");
+  const [formPassword, setFormPassword] = useState("Enter database user password");
   const [formSsl, setFormSsl] = useState("disable");
 
   // Schema Explorer state
@@ -324,6 +376,119 @@ export default function DatabaseKnowledgePage() {
   const [expandedTableKeys, setExpandedTableKeys] = useState<string[]>([]);
   const [tableCustomNames, setTableCustomNames] = useState<Record<string, string[]>>({});
   const [newTableTagInput, setNewTableTagInput] = useState<Record<string, string>>({});
+  const [columnCustomNames, setColumnCustomNames] = useState<Record<string, Record<string, string[]>>>({});
+  const [newColumnTagInput, setNewColumnTagInput] = useState<Record<string, string>>({});
+  const [aliasNotesModalOpen, setAliasNotesModalOpen] = useState(false);
+  const [aliasNotesSearch, setAliasNotesSearch] = useState("");
+
+  // Compute grouped alternative names summary for preview & export
+  const getAliasSummaryList = () => {
+    // Gather all table names from schemaData or tableCustomNames or columnCustomNames
+    const allTableNamesSet = new Set<string>();
+    Object.keys(tableCustomNames || {}).forEach((t) => allTableNamesSet.add(t));
+    Object.keys(columnCustomNames || {}).forEach((t) => allTableNamesSet.add(t));
+    if (schemaData?.schemas) {
+      Object.values(schemaData.schemas).forEach((s: any) => {
+        if (s?.tables) Object.keys(s.tables).forEach((t) => allTableNamesSet.add(t));
+      });
+    }
+
+    const items: Array<{
+      tableName: string;
+      tableAliases: string[];
+      columnAliases: Array<{ columnName: string; aliases: string[] }>;
+    }> = [];
+
+    allTableNamesSet.forEach((tableName) => {
+      const tAliases = (tableCustomNames[tableName] || []).filter(Boolean);
+      const colsMap = columnCustomNames[tableName] || {};
+      const colAliasesList: Array<{ columnName: string; aliases: string[] }> = [];
+
+      Object.entries(colsMap).forEach(([colName, aList]) => {
+        const cleanAliases = (aList || []).filter(Boolean);
+        if (cleanAliases.length > 0) {
+          colAliasesList.push({ columnName: colName, aliases: cleanAliases });
+        }
+      });
+
+      // Include if table has alternative names OR any columns have alternative names
+      if (tAliases.length > 0 || colAliasesList.length > 0) {
+        items.push({
+          tableName,
+          tableAliases: tAliases,
+          columnAliases: colAliasesList,
+        });
+      }
+    });
+
+    items.sort((a, b) => a.tableName.localeCompare(b.tableName));
+    return items;
+  };
+
+  const handleDownloadAliasNotes = (format: "json" | "txt" = "txt") => {
+    const list = getAliasSummaryList();
+    if (list.length === 0) {
+      toast.error("No alternative names have been added yet to download.");
+      return;
+    }
+
+    const kbTitle = selectedKb?.name || "Database";
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+    if (format === "json") {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(list, null, 2));
+      const downloadAnchor = document.createElement("a");
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `${kbTitle}_alternative_names_${timestamp}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      toast.success("Downloaded alternative names JSON successfully!");
+      return;
+    }
+
+    // Formatted Text / Instructions format
+    let doc = `====================================================================\n`;
+    doc += `       ALTERNATIVE NAMES DICTIONARY & NOTES PREVIEW                 \n`;
+    doc += ` Knowledgebase: ${kbTitle}\n`;
+    doc += ` Generated On : ${new Date().toLocaleString()}\n`;
+    doc += ` Total Configured Tables: ${list.length}\n`;
+    doc += `====================================================================\n\n`;
+    doc += `GUIDE & INSTRUCTIONS:\n`;
+    doc += `  • When end-users or queries ask about an alternative table or column name,\n`;
+    doc += `    GSearchAI maps it accurately to the corresponding original database entity.\n\n`;
+    doc += `--------------------------------------------------------------------\n`;
+
+    list.forEach((item, idx) => {
+      doc += `\n[${idx + 1}] TABLE: ${item.tableName}`;
+      if (item.tableAliases.length > 0) {
+        doc += `  --> Alternative Name(s): ${item.tableAliases.join(", ")}\n`;
+      } else {
+        doc += `  (No alternative table name set, original table name used)\n`;
+      }
+
+      if (item.columnAliases.length > 0) {
+        doc += `    Under this table, the following alternative column names are defined:\n`;
+        item.columnAliases.forEach((c) => {
+          doc += `      • Column: "${c.columnName}" --> Alternative Word(s): ${c.aliases.join(", ")}\n`;
+        });
+      } else {
+        doc += `    (No alternative column names defined for this table)\n`;
+      }
+      doc += `--------------------------------------------------------------------\n`;
+    });
+
+    const dataBlob = new Blob([doc], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(dataBlob);
+    const downloadAnchor = document.createElement("a");
+    downloadAnchor.setAttribute("href", url);
+    downloadAnchor.setAttribute("download", `${kbTitle}_alternative_names_${timestamp}.txt`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    URL.revokeObjectURL(url);
+    toast.success("Downloaded alternative names notes successfully!");
+  };
 
   // Load table aliases from PostgreSQL DB API with localStorage fallback
   useEffect(() => {
@@ -349,6 +514,49 @@ export default function DatabaseKnowledgePage() {
           }
         })
         .catch((err) => console.warn("Failed to load table aliases from server:", err));
+
+      // Fetch persistent column aliases from backend PostgreSQL API with localStorage cache
+      try {
+        const savedCol = localStorage.getItem(`k2b_col_names_${selectedKb.id}`);
+        if (savedCol) setColumnCustomNames(JSON.parse(savedCol));
+      } catch (e) {}
+
+      fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/column-aliases`, {
+        headers: getAuthHeaders(),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => {
+          if (json && json.column_aliases) {
+            setColumnCustomNames(json.column_aliases);
+            localStorage.setItem(`k2b_col_names_${selectedKb.id}`, JSON.stringify(json.column_aliases));
+          }
+        })
+        .catch((err) => console.warn("Failed to load column aliases from server:", err));
+    }
+    if (selectedKb?.id) {
+      fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/schema`, {
+        headers: getAuthHeaders(),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => {
+          if (json) {
+            const raw = json.schema_data || json;
+            const tbls: string[] = [];
+            if (raw.schemas) {
+              Object.values(raw.schemas).forEach((s: any) => {
+                if (s && s.tables) {
+                  tbls.push(...Object.keys(s.tables));
+                }
+              });
+            } else if (raw.tables) {
+              tbls.push(...Object.keys(raw.tables));
+            }
+            if (tbls.length > 0) {
+              setAllDbTablesList(Array.from(new Set(tbls)).sort());
+            }
+          }
+        })
+        .catch((e) => console.warn("Failed to load schema for search:", e));
     }
   }, [selectedKb?.id]);
 
@@ -383,6 +591,21 @@ export default function DatabaseKnowledgePage() {
       };
       if (selectedKb?.id) {
         localStorage.setItem(`k2b_table_names_${selectedKb.id}`, JSON.stringify(nextState));
+        // Auto-persist to backend so aliases are active immediately without requiring Save button
+        fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/table-aliases`, {
+          method: "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            table_name: tableName,
+            aliases: updatedList,
+          }),
+        })
+          .then((res) => {
+            if (res.ok) {
+              toast.success(`Saved alternative name "${text}" for "${tableName}" in AI Knowledgebase!`);
+            }
+          })
+          .catch((err) => console.warn("Failed to auto-sync alias to server:", err));
       }
       return nextState;
     });
@@ -470,6 +693,100 @@ export default function DatabaseKnowledgePage() {
     toast.success(`Removed names for table "${tableName}"`);
   };
 
+  const handleAddColumnName = (tableName: string, columnName: string, nameToAdd?: string) => {
+    const tagKey = `${tableName}.${columnName}`;
+    const text = (nameToAdd || newColumnTagInput[tagKey] || "").trim();
+    if (!text) return;
+
+    // Validate NO DUPLICATE aliases across ANY column in the database
+    const textLower = text.toLowerCase();
+    for (const [tbl, cols] of Object.entries(columnCustomNames)) {
+      for (const [col, aliases] of Object.entries(cols || {})) {
+        if (aliases.some((a) => a.toLowerCase() === textLower)) {
+          if (tbl === tableName && col === columnName) {
+            toast.error(`"${text}" already exists for ${tableName}.${columnName}.`);
+          } else {
+            toast.error(`"${text}" is already assigned to "${tbl}.${col}". Duplicates are not allowed across columns!`);
+          }
+          return;
+        }
+      }
+    }
+
+    setColumnCustomNames((prev) => {
+      const tblCols = prev[tableName] || {};
+      const existingList = tblCols[columnName] || [];
+      const updatedList = [...existingList, text];
+      const nextState = {
+        ...prev,
+        [tableName]: {
+          ...tblCols,
+          [columnName]: updatedList,
+        },
+      };
+
+      if (selectedKb?.id) {
+        localStorage.setItem(`k2b_col_names_${selectedKb.id}`, JSON.stringify(nextState));
+        fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/column-aliases`, {
+          method: "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            table_name: tableName,
+            column_name: columnName,
+            aliases: updatedList,
+          }),
+        })
+          .then(async (res) => {
+            if (res.ok) {
+              toast.success(`Saved column alias "${text}" for ${tableName}.${columnName}!`);
+            } else {
+              const errJson = await res.json().catch(() => ({}));
+              toast.error(errJson.detail || "Failed to save column alias.");
+            }
+          })
+          .catch((err) => console.warn("Failed to save column alias:", err));
+      }
+
+      return nextState;
+    });
+
+    setNewColumnTagInput((prev) => ({ ...prev, [tagKey]: "" }));
+  };
+
+  const handleRemoveColumnSingleName = async (tableName: string, columnName: string, nameToRemove: string) => {
+    const tagKey = `${tableName}.${columnName}`;
+    const tblCols = columnCustomNames[tableName] || {};
+    const existingList = tblCols[columnName] || [];
+    const updatedList = existingList.filter((n) => n !== nameToRemove);
+
+    const nextState = {
+      ...columnCustomNames,
+      [tableName]: {
+        ...tblCols,
+        [columnName]: updatedList,
+      },
+    };
+    setColumnCustomNames(nextState);
+
+    if (selectedKb?.id) {
+      localStorage.setItem(`k2b_col_names_${selectedKb.id}`, JSON.stringify(nextState));
+      try {
+        await fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/column-aliases`, {
+          method: "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            table_name: tableName,
+            column_name: columnName,
+            aliases: updatedList,
+          }),
+        });
+        toast.success(`Removed "${nameToRemove}" from ${tableName}.${columnName}`);
+      } catch (err) {
+        console.warn("Failed to sync column alias removal:", err);
+      }
+    }
+  };
+
   // Query Agent State
   const [userQuery, setUserQuery] = useState("");
   const [queryLoading, setQueryLoading] = useState(false);
@@ -477,11 +794,141 @@ export default function DatabaseKnowledgePage() {
   const [tableFilter, setTableFilter] = useState("");
   const [answerViewMode, setAnswerViewMode] = useState<"formatted" | "raw">("formatted");
   const [copiedAnswer, setCopiedAnswer] = useState(false);
+  const [provenanceModalOpen, setProvenanceModalOpen] = useState(false);
+  const [detailModalData, setDetailModalData] = useState<{ title: string; content: string } | null>(null);
+  const [expandedCellKeys, setExpandedCellKeys] = useState<Record<string, boolean>>({});
   const [observabilityOpen, setObservabilityOpen] = useState(false);
   const [streamEvents, setStreamEvents] = useState<DatabaseStreamEvent[]>([]);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [isCancelled, setIsCancelled] = useState<boolean>(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [disambiguationData, setDisambiguationData] = useState<{ message: string; options: any[]; entity_type?: string; candidate_tables?: any[]; all_tables?: string[]; table_aliases?: Record<string, string[]> } | null>(null);
+  const [selectedTablesForExecution, setSelectedTablesForExecution] = useState<string[]>([]);
+  const [multiTableStrategy, setMultiTableStrategy] = useState<"separate" | "union">("separate");
+  const [tableSearchFilter, setTableSearchFilter] = useState<string>('');
+  const [allDbTablesList, setAllDbTablesList] = useState<string[]>([]);
+
+  // 3-Way Query Rephrasing Studio State
+  interface RephraseOption {
+    id: number;
+    title: string;
+    tag: string;
+    rephrased_query: string;
+    description: string;
+  }
+  const [rephraseOptions, setRephraseOptions] = useState<RephraseOption[]>([]);
+  const [rephraseLoading, setRephraseLoading] = useState<boolean>(false);
+  const [selectedOptionId, setSelectedOptionId] = useState<number | null>(null);
+  const [editableRephrasedQuery, setEditableRephrasedQuery] = useState<string>("");
+  const [rephrasePanelOpen, setRephrasePanelOpen] = useState<boolean>(false);
+  const [isRephraseEnabled, setIsRephraseEnabled] = useState<boolean>(false);
+
+  const handleToggleRephrase = (checked: boolean, targetTables?: string[]) => {
+    setIsRephraseEnabled(checked);
+    if (checked) {
+      toast.success("Activate Rephrasing !!");
+      const q = userQuery.trim() || editableRephrasedQuery.trim();
+      const tables = targetTables || (selectedTablesForExecution.length > 0 ? selectedTablesForExecution : undefined);
+      if (q) {
+        handleFetchRephrasings(tables);
+      } else {
+        setRephrasePanelOpen(true);
+      }
+    } else {
+      toast("Rephrasing deactivated. Direct query execution enabled.", { icon: "⚡" });
+      setRephrasePanelOpen(false);
+      setRephraseOptions([]);
+    }
+  };
+
+  const handleFetchRephrasings = async (overrideTables?: string[]) => {
+    const q = userQuery.trim() || editableRephrasedQuery.trim();
+    if (!q) {
+      toast.error("Please enter a question to generate rephrasings.");
+      return;
+    }
+    if (!selectedKb) {
+      toast.error("Please select a database knowledgebase first.");
+      return;
+    }
+
+    const targetTables =
+      overrideTables !== undefined
+        ? overrideTables
+        : selectedTablesForExecution.length > 0
+        ? selectedTablesForExecution
+        : undefined;
+
+    setIsRephraseEnabled(true);
+    setRephraseLoading(true);
+    setRephrasePanelOpen(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/query/suggest-rephrasings`,
+        {
+          method: "POST",
+          headers: {
+            ...getAuthHeaders(),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            query: q,
+            selected_tables: targetTables,
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `Server responded with ${res.status}`);
+      }
+
+      const data = await res.json();
+      const opts: RephraseOption[] = data.options || [];
+      setRephraseOptions(opts);
+      if (opts.length > 0) {
+        setSelectedOptionId(opts[0].id);
+        setEditableRephrasedQuery(opts[0].rephrased_query);
+      } else {
+        setSelectedOptionId(null);
+        setEditableRephrasedQuery(q);
+      }
+    } catch (err: any) {
+      console.error("Failed to suggest query rephrasings:", err);
+      toast.error(`Failed to generate rephrasings: ${err.message}`);
+    } finally {
+      setRephraseLoading(false);
+    }
+  };
+
+  const handleSelectRephraseOption = (opt: RephraseOption) => {
+    setSelectedOptionId(opt.id);
+    setEditableRephrasedQuery(opt.rephrased_query);
+  };
+
+  const handleExecuteRephrasedQuery = (overrideTables?: string[], overrideStrategy?: "separate" | "union") => {
+    const finalQuery = editableRephrasedQuery.trim() || userQuery.trim();
+    if (!finalQuery) {
+      toast.error("Query cannot be empty.");
+      return;
+    }
+    const targetTables =
+      overrideTables !== undefined
+        ? overrideTables
+        : selectedTablesForExecution.length > 0
+        ? selectedTablesForExecution
+        : undefined;
+    const targetStrategy =
+      overrideStrategy ||
+      (targetTables && targetTables.length > 1 ? multiTableStrategy : undefined);
+
+    setUserQuery(finalQuery);
+    setRephrasePanelOpen(false);
+    setDisambiguationData(null);
+    setSelectedTablesForExecution([]);
+    setTableSearchFilter("");
+    handleRunQuery(finalQuery, undefined, targetTables, targetStrategy);
+  };
 
   // Phase 3B Tabs & Observability State
   const [activeTab, setActiveTab] = useState<string>("query");
@@ -568,9 +1015,42 @@ export default function DatabaseKnowledgePage() {
   }, []);
 
   useEffect(() => {
+    if (kbList.length > 0) {
+      kbList.forEach((kb) => {
+        pollPipelineStatus(kb.id);
+      });
+    }
+  }, [kbList.map((k) => k.id).join(",")]);
+
+  useEffect(() => {
     if (selectedKb) {
       fetchMetricsAndHealth(selectedKb.id);
       fetchAuditLogs(selectedKb.id, 1, auditStatusFilter);
+    }
+    if (selectedKb?.id) {
+      fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/schema`, {
+        headers: getAuthHeaders(),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => {
+          if (json) {
+            const raw = json.schema_data || json;
+            const tbls: string[] = [];
+            if (raw.schemas) {
+              Object.values(raw.schemas).forEach((s: any) => {
+                if (s && s.tables) {
+                  tbls.push(...Object.keys(s.tables));
+                }
+              });
+            } else if (raw.tables) {
+              tbls.push(...Object.keys(raw.tables));
+            }
+            if (tbls.length > 0) {
+              setAllDbTablesList(Array.from(new Set(tbls)).sort());
+            }
+          }
+        })
+        .catch((e) => console.warn("Failed to load schema for search:", e));
     }
   }, [selectedKb?.id]);
 
@@ -655,20 +1135,59 @@ export default function DatabaseKnowledgePage() {
 
   const handleSyncSchema = async (kbId: string) => {
     setLoading(true);
+    setPipelineProgressMap((prev) => ({
+      ...prev,
+      [kbId]: {
+        is_active: true,
+        progress_percent: 5,
+        current_stage_label: "Introspecting schema and catalogs...",
+        status: "running",
+      },
+    }));
     try {
       const res = await fetch(`${API_BASE_URL}/database-knowledgebases/${kbId}/introspect`, {
         method: "POST",
         headers: getAuthHeaders(),
       });
       if (res.ok) {
-        toast.success("Database schema synchronized and indexed successfully!");
+        toast.success("Database schema synchronized! Starting Phase 2 knowledge processing...");
         await fetchKnowledgebases();
+        try {
+          fetch(`${API_BASE_URL}/database-knowledgebases/${kbId}/knowledge/pipeline/run?force_recompute=true&run_inline=false`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+          }).catch(() => {});
+        } catch {}
+        pollPipelineStatus(kbId);
       } else {
-        const err = await res.json();
-        toast.error(err.detail || "Schema introspection failed.");
+        const err = await res.json().catch(() => ({}));
+        const rawMsg = typeof err.detail === "string" ? err.detail : "";
+        const friendlyMsg =
+          rawMsg && (rawMsg.includes("timed out") || rawMsg.includes("Cannot reach") || rawMsg.includes("Failed to connect") || rawMsg.includes("TooManyConnectionsError") || rawMsg.includes("clients already"))
+            ? (rawMsg.includes("clients already") ? "Target database connection limit reached ('too many clients'). Please check active connections." : "Cannot reach the database server. Please check your network and database credentials.")
+            : (rawMsg || "Cannot reach the database server. Please check your network and database credentials.");
+        toast.error(friendlyMsg);
+        setPipelineProgressMap((prev) => ({
+          ...prev,
+          [kbId]: {
+            is_active: false,
+            progress_percent: 0,
+            current_stage_label: "Introspection failed",
+            status: "failed",
+          },
+        }));
       }
     } catch (err: any) {
       toast.error(err.message || "Schema introspection error.");
+      setPipelineProgressMap((prev) => ({
+        ...prev,
+        [kbId]: {
+          is_active: false,
+          progress_percent: 0,
+          current_stage_label: "Introspection error",
+          status: "failed",
+        },
+      }));
     } finally {
       setLoading(false);
     }
@@ -968,7 +1487,23 @@ export default function DatabaseKnowledgePage() {
     toast("Query cancelled by user.", { icon: "🛑" });
   };
 
-  const handleRunQuery = async (queryText?: string) => {
+  const handleSelectDisambiguation = (option: any) => {
+    const isTable = disambiguationData?.entity_type === 'table' || option.table_name || option.table;
+    const tblName = option.table_name || option.table || (typeof option.id === 'string' ? option.id : null);
+    setDisambiguationData(null);
+    if (isTable && tblName) {
+      handleRunQuery(userQuery, undefined, [tblName]);
+    } else {
+      handleRunQuery(userQuery, [option]);
+    }
+  };
+
+  const handleRunQuery = async (
+    queryText?: string,
+    explicitResolvedEntities?: any[],
+    explicitSelectedTables?: string[],
+    explicitStrategy?: "separate" | "union"
+  ) => {
     const q = queryText || userQuery;
     if (!q.trim()) {
       toast.error("Please enter a question.");
@@ -990,6 +1525,9 @@ export default function DatabaseKnowledgePage() {
     setStreamEvents([]);
     setStreamError(null);
     setIsCancelled(false);
+    if (!explicitResolvedEntities && !explicitSelectedTables) {
+      setDisambiguationData(null);
+    }
 
     try {
       const token = getCookie("AUTH_TOKEN");
@@ -999,9 +1537,16 @@ export default function DatabaseKnowledgePage() {
         query: q,
         token: token || undefined,
         useLlm: true,
+        resolvedEntities: explicitResolvedEntities,
+        selectedTables: explicitSelectedTables,
+        executionStrategy: explicitStrategy,
         abortSignal: controller.signal,
         onEvent: (event: DatabaseStreamEvent) => {
           setStreamEvents((prev) => [...prev, event]);
+        },
+        onDisambiguationRequired: (data) => {
+          setDisambiguationData(data);
+          setQueryLoading(false);
         },
         onAnswer: (answerData: any) => {
           // Normalize answer structure
@@ -1130,20 +1675,21 @@ export default function DatabaseKnowledgePage() {
       } else if (colLower.includes("phone") || colLower.includes("mobile")) {
         colWidth = 135;
       } else if (colLower.includes("address") || colLower.includes("location") || colLower.includes("description") || colLower.includes("notes") || colLower.includes("comment") || colLower.includes("reason")) {
-        colWidth = 230;
+        colWidth = 450;
       } else if (colLower.includes("name") || colLower.includes("title") || colLower.includes("department") || colLower.includes("city")) {
         colWidth = 160;
       }
 
       const fallbackKey = `${colLower.replace(/\s+/g, "_")}_${idx}`;
       const directKey = col;
+      const isLongTextCol = colLower.includes("description") || colLower.includes("notes") || colLower.includes("comment") || colLower.includes("reason") || colLower.includes("address") || colLower.includes("body");
 
       return {
         title: displayTitle,
         key: `${col}_${idx}`,
         width: colWidth,
         align,
-        ellipsis: true,
+        ellipsis: !isLongTextCol,
         sorter: (a: any, b: any) => {
           const valA = a[fallbackKey] !== undefined ? a[fallbackKey] : (a[directKey] !== undefined ? a[directKey] : "");
           const valB = b[fallbackKey] !== undefined ? b[fallbackKey] : (b[directKey] !== undefined ? b[directKey] : "");
@@ -1175,10 +1721,78 @@ export default function DatabaseKnowledgePage() {
               </Tooltip>
             );
           }
+
+          const cellKey = `${record.key ?? idx}_${col}`;
+          const isExpanded = !!expandedCellKeys[cellKey];
+          const isLongContent = strVal.length > 45 || strVal.includes("\n");
+
+          if (isLongTextCol || isLongContent) {
+            return (
+              <div className="text-xs font-sans leading-relaxed text-[var(--app-text)] py-1 group/cell">
+                <div
+                  className="custom-scrollbar"
+                  style={{
+                    display: isExpanded ? "block" : "-webkit-box",
+                    WebkitLineClamp: isExpanded ? "unset" : (isLongTextCol ? 3 : 2),
+                    WebkitBoxOrient: "vertical",
+                    overflowY: isExpanded ? "auto" : "hidden",
+                    textOverflow: isExpanded ? "unset" : "ellipsis",
+                    whiteSpace: isExpanded ? "pre-wrap" : "normal",
+                    wordBreak: "break-word",
+                    lineHeight: "1.55",
+                    maxHeight: isExpanded ? "260px" : (isLongTextCol ? "4.6em" : "3.2em"),
+                  }}
+                >
+                  {strVal}
+                </div>
+                {isLongContent && (
+                  <div className="flex items-center gap-2 mt-1.5 pt-1 border-t border-[var(--app-border)]/40">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedCellKeys((prev) => ({ ...prev, [cellKey]: !prev[cellKey] }));
+                      }}
+                      className="text-[11px] font-medium text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      {isExpanded ? "Show Less" : "Expand"}
+                    </button>
+                    <span className="text-[10px] text-gray-400">•</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDetailModalData({
+                          title: `${displayTitle}: ${record.subject || record.title || record.name || ""}`,
+                          content: strVal,
+                        });
+                      }}
+                      className="text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <EyeOutlined style={{ fontSize: 10 }} />
+                      Full Modal
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          }
+
           return (
-            <Tooltip title={strVal.length > 25 ? strVal : undefined}>
-              <span className="text-xs font-sans truncate block">{strVal}</span>
-            </Tooltip>
+            <span
+              className="text-xs font-sans truncate block cursor-pointer hover:text-teal-500"
+              onClick={() => {
+                if (strVal.length > 25) {
+                  setDetailModalData({
+                    title: `${displayTitle}: ${record.subject || record.title || record.name || ""}`,
+                    content: strVal,
+                  });
+                }
+              }}
+              title={strVal.length > 25 ? "Click to view full text" : undefined}
+            >
+              {strVal}
+            </span>
           );
         },
       };
@@ -1194,22 +1808,35 @@ export default function DatabaseKnowledgePage() {
     );
   }, [effectiveRows, tableFilter]);
 
-  const parsedMarkdownHtml = React.useMemo(() => {
-    if (!groundedAnswer || !groundedAnswer.answer_text) return "";
-    try {
-      const markedObj = marked as any;
-      return typeof markedObj === "function"
-        ? markedObj(groundedAnswer.answer_text)
-        : markedObj.parse(groundedAnswer.answer_text);
-    } catch (e) {
-      console.error("Failed to parse markdown:", e);
-      return groundedAnswer.answer_text;
+  const { parsedCleanHtml, parsedProvHtml, parsedRawProv } = React.useMemo(() => {
+    if (!groundedAnswer || !groundedAnswer.answer_text) return { parsedCleanHtml: "", parsedProvHtml: "", parsedRawProv: "" };
+    const markedObj = marked as any;
+    const render = (t: string) => {
+      try {
+        return typeof markedObj === "function" ? markedObj(t) : markedObj.parse(t);
+      } catch (e) {
+        return t;
+      }
+    };
+    let txt = groundedAnswer.answer_text;
+    const provMarkerRegex = /(?:###?\s*📋?\s*Data Source & Provenance|📋\s*Data Source & Provenance)/i;
+    const match = txt.match(provMarkerRegex);
+    let prov = "";
+    if (match && match.index !== undefined) {
+      prov = txt.slice(match.index).trim();
+      txt = txt.slice(0, match.index).trim();
     }
+    return {
+      parsedCleanHtml: render(txt),
+      parsedProvHtml: render(prov),
+      parsedRawProv: prov,
+    };
   }, [groundedAnswer?.answer_text]);
 
-  const { introMarkdownHtml, summaryMarkdownHtml } = React.useMemo(() => {
+  // Separate core narrative answer from technical Data Source & Provenance
+  const { cleanIntroHtml, provenanceHtml, rawProvenanceText, summaryMarkdownHtml } = React.useMemo(() => {
     if (!groundedAnswer || !groundedAnswer.answer_text) {
-      return { introMarkdownHtml: "", summaryMarkdownHtml: "" };
+      return { cleanIntroHtml: "", provenanceHtml: "", rawProvenanceText: "", summaryMarkdownHtml: "" };
     }
     const markedObj = marked as any;
     const renderMd = (txt: string) => {
@@ -1221,7 +1848,8 @@ export default function DatabaseKnowledgePage() {
       }
     };
 
-    const lines = groundedAnswer.answer_text.split("\n");
+    let text = groundedAnswer.answer_text;
+    const lines = text.split("\n");
     let tableStart = -1;
     let tableEnd = -1;
 
@@ -1233,18 +1861,23 @@ export default function DatabaseKnowledgePage() {
       }
     }
 
-    if (tableStart === -1) {
-      return {
-        introMarkdownHtml: renderMd(groundedAnswer.answer_text.trim()),
-        summaryMarkdownHtml: "",
-      };
+    let intro = tableStart === -1 ? text.trim() : lines.slice(0, tableStart).join("\n").trim();
+    const summary = tableStart === -1 ? "" : lines.slice(tableEnd + 1).join("\n").trim();
+
+    // Check for Data Source & Provenance block inside intro or text
+    let provText = "";
+    const provMarkerRegex = /(?:###?\s*📋?\s*Data Source & Provenance|📋\s*Data Source & Provenance)/i;
+    const match = intro.match(provMarkerRegex);
+
+    if (match && match.index !== undefined) {
+      provText = intro.slice(match.index).trim();
+      intro = intro.slice(0, match.index).trim();
     }
 
-    const intro = lines.slice(0, tableStart).join("\n").trim();
-    const summary = lines.slice(tableEnd + 1).join("\n").trim();
-
     return {
-      introMarkdownHtml: renderMd(intro),
+      cleanIntroHtml: renderMd(intro),
+      provenanceHtml: renderMd(provText),
+      rawProvenanceText: provText,
       summaryMarkdownHtml: renderMd(summary),
     };
   }, [groundedAnswer?.answer_text]);
@@ -1268,16 +1901,27 @@ export default function DatabaseKnowledgePage() {
     if (!schemaSearchQuery.trim()) return allSchemaTables;
     const q = schemaSearchQuery.toLowerCase();
     return allSchemaTables.filter((tbl: any) => {
-      if (tbl.table_name.toLowerCase().includes(q)) return true;
+      const tName = tbl.table_name || "";
+      if (tName.toLowerCase().includes(q)) return true;
       if (tbl.comment && tbl.comment.toLowerCase().includes(q)) return true;
+
+      // Also filter by alternative table names / aliases
+      const aliases = tableCustomNames[tName] || tableCustomNames[tName.toLowerCase()] || [];
+      if (aliases.some((a: string) => a.toLowerCase().includes(q))) return true;
+
       const cols = Array.isArray(tbl.columns) ? tbl.columns : Object.values(tbl.columns || {});
+      const tblColAliases = columnCustomNames[tName] || columnCustomNames[tName.toLowerCase()] || {};
+
       return cols.some(
-        (c: any) =>
-          c.name.toLowerCase().includes(q) ||
-          (c.comment && c.comment.toLowerCase().includes(q))
+        (c: any) => {
+          if (c.name.toLowerCase().includes(q)) return true;
+          if (c.comment && c.comment.toLowerCase().includes(q)) return true;
+          const colAliases = tblColAliases[c.name] || tblColAliases[c.name.toLowerCase()] || [];
+          return colAliases.some((ca: string) => ca.toLowerCase().includes(q));
+        }
       );
     });
-  }, [allSchemaTables, schemaSearchQuery]);
+  }, [allSchemaTables, schemaSearchQuery, tableCustomNames, columnCustomNames]);
 
   return (
     <div className="database-knowledge-page p-6 md:p-8 pb-36 max-w-[1600px] mx-auto min-h-screen text-[var(--app-text)]">
@@ -1408,7 +2052,7 @@ export default function DatabaseKnowledgePage() {
                 onClick={() => setModalOpen(true)}
                 style={{ backgroundColor: "var(--app-primary)", borderRadius: 8 }}
               >
-                Connect HRMS Database
+                Connect Database
               </Button>
             </Card>
           ) : (
@@ -1509,32 +2153,71 @@ export default function DatabaseKnowledgePage() {
 
                       {/* Top Right: Status Pill & Delete Button */}
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <span
-                          style={{
-                            fontSize: 10,
-                            fontWeight: 700,
-                            letterSpacing: "0.5px",
-                            padding: "2px 7px",
-                            borderRadius: 9999,
-                            backgroundColor: isReady ? "#ecfdf5" : "#f0f9ff",
-                            color: isReady ? "#047857" : "#0369a1",
-                            border: isReady ? "1px solid #a7f3d0" : "1px solid #bae6fd",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                            textTransform: "uppercase",
-                          }}
-                        >
+                        {pipelineProgressMap[kb.id]?.is_active ? (
+                          <Tooltip
+                            title={`${pipelineProgressMap[kb.id]?.current_stage_label || "Processing"} (${pipelineProgressMap[kb.id]?.progress_percent || 0}%)`}
+                          >
+                            <div
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 5,
+                                padding: "2px 7px 2px 4px",
+                                borderRadius: 9999,
+                                backgroundColor: "#f0fdfa",
+                                border: "1px solid #99f6e4",
+                                boxShadow: "0 1px 3px rgba(13, 148, 136, 0.12)",
+                              }}
+                            >
+                              <Progress
+                                type="circle"
+                                percent={pipelineProgressMap[kb.id]?.progress_percent || 0}
+                                size={20}
+                                strokeColor={{ "0%": "#14b8a6", "100%": "#0d9488" }}
+                                trailColor="#e2e8f0"
+                                strokeWidth={14}
+                                showInfo={false}
+                              />
+                              <span
+                                style={{
+                                  fontSize: 10.5,
+                                  fontWeight: 700,
+                                  color: "#0f766e",
+                                  fontFamily: "ui-monospace, monospace",
+                                }}
+                              >
+                                {pipelineProgressMap[kb.id]?.progress_percent || 0}%
+                              </span>
+                            </div>
+                          </Tooltip>
+                        ) : (
                           <span
                             style={{
-                              width: 5,
-                              height: 5,
-                              borderRadius: "50%",
-                              backgroundColor: isReady ? "#10b981" : "#0ea5e9",
+                              fontSize: 10,
+                              fontWeight: 700,
+                              letterSpacing: "0.5px",
+                              padding: "2px 7px",
+                              borderRadius: 9999,
+                              backgroundColor: isReady ? "#ecfdf5" : "#f0f9ff",
+                              color: isReady ? "#047857" : "#0369a1",
+                              border: isReady ? "1px solid #a7f3d0" : "1px solid #bae6fd",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              textTransform: "uppercase",
                             }}
-                          />
-                          {kb.status}
-                        </span>
+                          >
+                            <span
+                              style={{
+                                width: 5,
+                                height: 5,
+                                borderRadius: "50%",
+                                backgroundColor: isReady ? "#10b981" : "#0ea5e9",
+                              }}
+                            />
+                            {kb.status}
+                          </span>
+                        )}
 
                         <Tooltip title="Delete Database">
                           <Button
@@ -1617,7 +2300,14 @@ export default function DatabaseKnowledgePage() {
                     <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                       <Button
                         size="small"
-                        icon={<SyncOutlined style={{ fontSize: 11 }} />}
+                        icon={
+                          pipelineProgressMap[kb.id]?.is_active ? (
+                            <LoadingOutlined spin style={{ fontSize: 11, color: "#0d9488" }} />
+                          ) : (
+                            <SyncOutlined style={{ fontSize: 11 }} />
+                          )
+                        }
+                        disabled={pipelineProgressMap[kb.id]?.is_active}
                         onClick={(e) => {
                           e.stopPropagation();
                           handleSyncSchema(kb.id);
@@ -1626,13 +2316,16 @@ export default function DatabaseKnowledgePage() {
                           borderRadius: 8,
                           fontSize: 11.5,
                           fontWeight: 600,
-                          borderColor: "#cbd5e1",
-                          color: "#334155",
+                          borderColor: pipelineProgressMap[kb.id]?.is_active ? "#99f6e4" : "#cbd5e1",
+                          backgroundColor: pipelineProgressMap[kb.id]?.is_active ? "#f0fdfa" : "#ffffff",
+                          color: pipelineProgressMap[kb.id]?.is_active ? "#0f766e" : "#334155",
                           height: 30,
                         }}
                         className="hover:border-teal-500 hover:text-teal-600"
                       >
-                        Sync Schema
+                        {pipelineProgressMap[kb.id]?.is_active
+                          ? `Syncing (${pipelineProgressMap[kb.id]?.progress_percent || 0}%)`
+                          : "Sync Schema"}
                       </Button>
                       <Button
                         size="small"
@@ -1790,13 +2483,63 @@ export default function DatabaseKnowledgePage() {
                     >
                       Browse Schema
                     </Button>
+                    {selectedKb && pipelineProgressMap[selectedKb.id]?.is_active && (
+                      <Tooltip title={pipelineProgressMap[selectedKb.id]?.current_stage_label}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            padding: "3px 10px 3px 6px",
+                            borderRadius: 10,
+                            backgroundColor: "#f0fdfa",
+                            border: "1.5px solid #99f6e4",
+                            boxShadow: "0 2px 8px rgba(13, 148, 136, 0.12)",
+                          }}
+                        >
+                          <Progress
+                            type="circle"
+                            percent={pipelineProgressMap[selectedKb.id]?.progress_percent || 0}
+                            size={26}
+                            strokeColor={{ "0%": "#14b8a6", "100%": "#0d9488" }}
+                            trailColor="#cbd5e1"
+                            strokeWidth={14}
+                            format={(pct) => (
+                              <span style={{ fontSize: 9, fontWeight: 800, color: "#0f766e" }}>
+                                {pct}%
+                              </span>
+                            )}
+                          />
+                          <div style={{ display: "flex", flexDirection: "column", textAlign: "left" }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: "#0f766e", lineHeight: 1.2 }}>
+                              Phase 2 Syncing ({pipelineProgressMap[selectedKb.id]?.progress_percent || 0}%)
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 9.5,
+                                color: "#64748b",
+                                maxWidth: 160,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                marginTop: 1,
+                              }}
+                            >
+                              {pipelineProgressMap[selectedKb.id]?.current_stage_label || "Processing stages..."}
+                            </span>
+                          </div>
+                        </div>
+                      </Tooltip>
+                    )}
                     <Button
-                      icon={<SyncOutlined />}
+                      icon={<SyncOutlined spin={Boolean(selectedKb && pipelineProgressMap[selectedKb.id]?.is_active)} />}
+                      disabled={Boolean(selectedKb && pipelineProgressMap[selectedKb.id]?.is_active)}
                       onClick={() => handleSyncSchema(selectedKb.id)}
                       style={{
                         borderRadius: 10,
-                        borderColor: "#cbd5e1",
-                        color: "#334155",
+                        borderColor: Boolean(selectedKb && pipelineProgressMap[selectedKb.id]?.is_active) ? "#99f6e4" : "#cbd5e1",
+                        backgroundColor: Boolean(selectedKb && pipelineProgressMap[selectedKb.id]?.is_active) ? "#f0fdfa" : "#ffffff",
+                        color: Boolean(selectedKb && pipelineProgressMap[selectedKb.id]?.is_active) ? "#0f766e" : "#334155",
                         fontWeight: 600,
                         fontSize: 13,
                         height: 38,
@@ -1806,7 +2549,9 @@ export default function DatabaseKnowledgePage() {
                         gap: 6,
                       }}
                     >
-                      Re-Sync
+                      {selectedKb && pipelineProgressMap[selectedKb.id]?.is_active
+                        ? `Re-Syncing (${pipelineProgressMap[selectedKb.id]?.progress_percent || 0}%)`
+                        : "Re-Sync"}
                     </Button>
                     <Button
                       danger
@@ -1929,40 +2674,937 @@ export default function DatabaseKnowledgePage() {
                             >
                               Ask Database
                             </Button>
+                            <Button
+                              size="large"
+                              loading={rephraseLoading}
+                              onClick={() => {
+                                if (!isRephraseEnabled) {
+                                  handleToggleRephrase(true);
+                                } else {
+                                  handleFetchRephrasings();
+                                }
+                              }}
+                              style={{
+                                backgroundColor: rephrasePanelOpen ? "#fef3c7" : "#ffffff",
+                                borderColor: rephrasePanelOpen ? "#f59e0b" : "#cbd5e1",
+                                color: rephrasePanelOpen ? "#92400e" : "#334155",
+                                borderRadius: 10,
+                                fontWeight: 600,
+                                fontSize: 13,
+                                height: 42,
+                                paddingLeft: 16,
+                                paddingRight: 16,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
+                                boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                              }}
+                              className="shrink-0 hover:border-amber-400 hover:text-amber-700 transition-all"
+                              title="Generate 3 schema-aligned query interpretations you can choose & edit"
+                            >
+                              <span style={{ fontSize: 16 }}>✨</span> 3 Ways Rephrase
+                            </Button>
                           </div>
 
-                          {/* Quick Suggested Queries / Hint Chips */}
-                          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center gap-2 flex-wrap">
-                            <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                              Suggested:
-                            </span>
-                            {[
-                              "Show top 5 departments by headcount",
-                              "List all active employees and their roles",
-                              "Total payroll expenses by department",
-                            ].map((promptText, pIdx) => (
-                              <button
-                                key={pIdx}
-                                type="button"
-                                onClick={() => setUserQuery(promptText)}
+                          {/* Quick Suggested Queries & Rephrase Toggle Row */}
+                          <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            {/* Left: Suggested queries */}
+                            <div className="flex items-center gap-2 flex-wrap flex-1">
+                              <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                                Suggested:
+                              </span>
+                              {[
+                                "Show top 5 departments by headcount",
+                                "List all active employees and their roles",
+                                "Total payroll expenses by department",
+                              ].map((promptText, pIdx) => (
+                                <button
+                                  key={pIdx}
+                                  type="button"
+                                  onClick={() => setUserQuery(promptText)}
+                                  style={{
+                                    fontSize: 11.5,
+                                    fontWeight: 500,
+                                    color: "#475569",
+                                    backgroundColor: "#f8fafc",
+                                    border: "1px solid #e2e8f0",
+                                    borderRadius: 6,
+                                    padding: "3px 9px",
+                                    cursor: "pointer",
+                                    transition: "all 0.15s ease",
+                                  }}
+                                  className="hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200"
+                                >
+                                  {promptText}
+                                </button>
+                              ))}
+                            </div>
+
+                            {/* Right: Rephrasing Toggle Button (Exact area outlined by user) */}
+                            <div className="shrink-0 flex items-center">
+                              <div
+                                onClick={() => handleToggleRephrase(!isRephraseEnabled)}
                                 style={{
-                                  fontSize: 11.5,
-                                  fontWeight: 500,
-                                  color: "#475569",
-                                  backgroundColor: "#f8fafc",
-                                  border: "1px solid #e2e8f0",
-                                  borderRadius: 6,
-                                  padding: "3px 9px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  padding: "5px 12px",
+                                  borderRadius: 8,
                                   cursor: "pointer",
-                                  transition: "all 0.15s ease",
+                                  backgroundColor: isRephraseEnabled ? "#f0fdfa" : "#f8fafc",
+                                  border: isRephraseEnabled ? "1.5px solid #0d9488" : "1.5px solid #cbd5e1",
+                                  boxShadow: isRephraseEnabled
+                                    ? "0 2px 8px rgba(13, 148, 136, 0.2)"
+                                    : "0 1px 2px rgba(0, 0, 0, 0.04)",
+                                  transition: "all 0.2s ease",
                                 }}
-                                className="hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200"
+                                className="hover:border-teal-500 select-none"
+                                title="Click to toggle AI Query Rephrasing mode"
                               >
-                                {promptText}
-                              </button>
-                            ))}
+                                <Switch
+                                  size="small"
+                                  checked={isRephraseEnabled}
+                                  onChange={(checked, e) => {
+                                    e?.stopPropagation();
+                                    handleToggleRephrase(checked);
+                                  }}
+                                  style={{
+                                    backgroundColor: isRephraseEnabled ? "#0d9488" : undefined,
+                                  }}
+                                />
+                                <div className="flex items-center gap-1.5">
+                                  <span
+                                    style={{
+                                      fontSize: 12,
+                                      fontWeight: 700,
+                                      color: isRephraseEnabled ? "#0f766e" : "#475569",
+                                    }}
+                                  >
+                                    {isRephraseEnabled ? "Activate Rephrasing !!" : "Query Rephrasing"}
+                                  </span>
+                                  <span
+                                    style={{
+                                      fontSize: 10,
+                                      fontWeight: 800,
+                                      padding: "1px 6px",
+                                      borderRadius: 4,
+                                      textTransform: "uppercase",
+                                      letterSpacing: "0.5px",
+                                      backgroundColor: isRephraseEnabled ? "#ccfbf1" : "#e2e8f0",
+                                      color: isRephraseEnabled ? "#0f766e" : "#64748b",
+                                    }}
+                                  >
+                                    {isRephraseEnabled ? "ON" : "OFF"}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
+
+                        {/* Standalone 3-Way Rephrasing Studio under search box when Rephrase is ON */}
+                        {isRephraseEnabled && (rephrasePanelOpen || rephraseOptions.length > 0) && !disambiguationData && !queryLoading && (
+                          <div
+                            style={{
+                              marginTop: 14,
+                              marginBottom: 12,
+                              padding: "16px 18px",
+                              borderRadius: 12,
+                              background: "linear-gradient(145deg, #ffffff 0%, #f0fdfa 100%)",
+                              border: "1.5px solid #5eead4",
+                              boxShadow: "0 4px 16px -2px rgba(13, 110, 101, 0.12)",
+                            }}
+                            className="transition-all animate-fadeIn"
+                          >
+                            <div className="flex items-center justify-between pb-2.5 border-b border-teal-100 mb-3">
+                              <div className="flex items-center gap-2">
+                                <span style={{ fontSize: 18 }}>✨</span>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span style={{ fontSize: 13.5, fontWeight: 700, color: "#0f766e" }}>
+                                      3 Schema-Aligned Query Angles
+                                    </span>
+                                    <Tag color="cyan" style={{ fontSize: 11, fontWeight: 800, borderRadius: 6, margin: 0 }}>
+                                      Activate Rephrasing !!
+                                    </Tag>
+                                  </div>
+                                  <div style={{ fontSize: 11, color: "#64748b" }}>
+                                    Choose the query angle that best matches your intent, customize it, and execute against the database.
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  size="small"
+                                  icon={<SyncOutlined />}
+                                  loading={rephraseLoading}
+                                  onClick={() => handleFetchRephrasings()}
+                                  style={{ fontSize: 11, borderRadius: 6 }}
+                                >
+                                  Regenerate
+                                </Button>
+                                <Button
+                                  size="small"
+                                  type="text"
+                                  icon={<CloseOutlined />}
+                                  onClick={() => setRephrasePanelOpen(false)}
+                                  style={{ fontSize: 11 }}
+                                />
+                              </div>
+                            </div>
+
+                            {rephraseLoading ? (
+                              <div className="py-6 flex flex-col items-center justify-center gap-2.5">
+                                <Spin indicator={<LoadingOutlined style={{ fontSize: 24, color: "#0d6e65" }} spin />} />
+                                <span style={{ fontSize: 12, fontWeight: 500, color: "#0f766e" }}>
+                                  Generating 3 query interpretations...
+                                </span>
+                              </div>
+                            ) : (
+                              <div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3.5">
+                                  {rephraseOptions.map((opt) => {
+                                    const isSelected = selectedOptionId === opt.id;
+                                    return (
+                                      <div
+                                        key={opt.id}
+                                        onClick={() => handleSelectRephraseOption(opt)}
+                                        style={{
+                                          cursor: "pointer",
+                                          padding: "12px 14px",
+                                          borderRadius: 8,
+                                          backgroundColor: isSelected ? "#ffffff" : "rgba(255, 255, 255, 0.75)",
+                                          border: isSelected ? "2px solid #0d6e65" : "1px solid #cbd5e1",
+                                          boxShadow: isSelected
+                                            ? "0 3px 10px rgba(13, 110, 101, 0.15)"
+                                            : "0 1px 2px rgba(0,0,0,0.03)",
+                                          transition: "all 0.15s ease",
+                                          display: "flex",
+                                          flexDirection: "column",
+                                          justifyContent: "space-between",
+                                        }}
+                                        className={`hover:border-teal-500 hover:bg-white hover:shadow-sm ${
+                                          isSelected ? "ring-2 ring-teal-200" : ""
+                                        }`}
+                                      >
+                                        <div>
+                                          <div className="flex items-center justify-between mb-1.5">
+                                            <Tag
+                                              color={
+                                                opt.tag.toLowerCase().includes("aggregat")
+                                                  ? "purple"
+                                                  : opt.tag.toLowerCase().includes("detail")
+                                                  ? "blue"
+                                                  : "cyan"
+                                              }
+                                              style={{ fontSize: 10, fontWeight: 700, borderRadius: 4, margin: 0 }}
+                                            >
+                                              {opt.tag}
+                                            </Tag>
+                                            {isSelected && (
+                                              <span className="flex items-center gap-1" style={{ fontSize: 11, fontWeight: 700, color: "#0d6e65" }}>
+                                                <CheckCircleOutlined /> Selected
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>
+                                            {opt.title}
+                                          </div>
+                                          <div
+                                            style={{
+                                              fontSize: 11.5,
+                                              fontWeight: 600,
+                                              color: "#1e293b",
+                                              backgroundColor: isSelected ? "#f0fdf4" : "#f8fafc",
+                                              padding: "6px 8px",
+                                              borderRadius: 6,
+                                              border: "1px dashed #cbd5e1",
+                                              marginBottom: 6,
+                                              lineHeight: 1.35,
+                                            }}
+                                          >
+                                            "{opt.rephrased_query}"
+                                          </div>
+                                        </div>
+                                        <div style={{ fontSize: 10.5, color: "#64748b", lineHeight: 1.3 }}>
+                                          {opt.description}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+
+                                <div
+                                  style={{
+                                    padding: "12px 14px",
+                                    borderRadius: 8,
+                                    backgroundColor: "#ffffff",
+                                    border: "1.5px solid #94a3b8",
+                                    marginBottom: 12,
+                                  }}
+                                >
+                                  <div className="flex items-center justify-between mb-1.5">
+                                    <div className="flex items-center gap-1.5" style={{ fontSize: 11.5, fontWeight: 700, color: "#334155" }}>
+                                      <EditOutlined style={{ color: "#0d6e65" }} />
+                                      <span>Edit Rephrased Query:</span>
+                                    </div>
+                                    <span style={{ fontSize: 10.5, color: "#94a3b8" }}>
+                                      Editable — tweak columns or filters
+                                    </span>
+                                  </div>
+
+                                  <Input.TextArea
+                                    value={editableRephrasedQuery}
+                                    onChange={(e) => setEditableRephrasedQuery(e.target.value)}
+                                    rows={2}
+                                    style={{
+                                      fontSize: 12.5,
+                                      fontWeight: 500,
+                                      fontFamily: "var(--font-mono, monospace)",
+                                      color: "#0f172a",
+                                      borderRadius: 6,
+                                      borderColor: "#cbd5e1",
+                                    }}
+                                    placeholder="Edit your query here..."
+                                  />
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    type="primary"
+                                    size="middle"
+                                    style={{
+                                      borderRadius: 8,
+                                      fontWeight: 700,
+                                      backgroundColor: "#0d6e65",
+                                      borderColor: "#0d6e65",
+                                    }}
+                                    onClick={() => handleExecuteRephrasedQuery()}
+                                  >
+                                    Execute Rephrased Query
+                                  </Button>
+                                  <Button
+                                    size="middle"
+                                    style={{ borderRadius: 8, fontSize: 12 }}
+                                    onClick={() => {
+                                      setRephrasePanelOpen(false);
+                                      handleRunQuery(userQuery);
+                                    }}
+                                  >
+                                    Execute Original Query ("{userQuery.length > 25 ? userQuery.slice(0, 25) + '...' : userQuery}")
+                                  </Button>
+                                  <Button
+                                    type="text"
+                                    danger
+                                    size="small"
+                                    onClick={() => setRephrasePanelOpen(false)}
+                                  >
+                                    Close
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Interactive Disambiguation Prompt / Multi-Select Table Selection */}
+                        {disambiguationData && !queryLoading && (
+                          <div className="mt-4 p-5 rounded-2xl border border-teal-300 dark:border-teal-800 bg-teal-50/60 dark:bg-teal-950/20 shadow-md transition-all animate-fadeIn">
+                            <div className="flex items-start gap-3.5">
+                              <div className="p-2.5 rounded-xl bg-teal-100 dark:bg-teal-900/50 text-teal-700 dark:text-teal-400 mt-0.5 shadow-sm">
+                                <QuestionCircleOutlined style={{ fontSize: 22 }} />
+                              </div>
+                              <div className="flex-1">
+                                <div className="flex items-center justify-between flex-wrap gap-2">
+                                  <Text strong style={{ fontSize: 16, color: "var(--app-text)" }}>
+                                    {disambiguationData.message}
+                                  </Text>
+                                  <div className="flex items-center gap-2">
+                                    {/* Rephrasing Mode Toggle Switch */}
+                                    <div
+                                      onClick={() => handleToggleRephrase(!isRephraseEnabled, selectedTablesForExecution)}
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        padding: "3px 8px",
+                                        borderRadius: 8,
+                                        cursor: "pointer",
+                                        backgroundColor: isRephraseEnabled ? "#ccfbf1" : "#f1f5f9",
+                                        border: isRephraseEnabled ? "1px solid #14b8a6" : "1px solid #cbd5e1",
+                                      }}
+                                      title="Toggle Rephrasing Mode"
+                                    >
+                                      <Switch
+                                        size="small"
+                                        checked={isRephraseEnabled}
+                                        onChange={(checked, e) => {
+                                          e?.stopPropagation();
+                                          handleToggleRephrase(checked, selectedTablesForExecution);
+                                        }}
+                                        style={{
+                                          backgroundColor: isRephraseEnabled ? "#0d9488" : undefined,
+                                        }}
+                                      />
+                                      <span style={{ fontSize: 11, fontWeight: 700, color: isRephraseEnabled ? "#0f766e" : "#475569" }}>
+                                        {isRephraseEnabled ? "Activate Rephrasing !!" : "Rephrasing: OFF"}
+                                      </span>
+                                    </div>
+                                    <Tag color={(disambiguationData.entity_type === "table" || Boolean(disambiguationData.candidate_tables && disambiguationData.candidate_tables.length > 0) || (disambiguationData.options && disambiguationData.options.length > 0 && Boolean(disambiguationData.options[0].table || disambiguationData.options[0].table_name))) ? "cyan" : "orange"} style={{ borderRadius: 8, fontWeight: 700, padding: "2px 10px", margin: 0 }}>
+                                      {(disambiguationData.entity_type === "table" || Boolean(disambiguationData.candidate_tables && disambiguationData.candidate_tables.length > 0) || (disambiguationData.options && disambiguationData.options.length > 0 && Boolean(disambiguationData.options[0].table || disambiguationData.options[0].table_name))) ? "Table Selection Required" : "Action Required"}
+                                    </Tag>
+                                  </div>
+                                </div>
+
+                                {(disambiguationData.entity_type === "table" || Boolean(disambiguationData.candidate_tables && disambiguationData.candidate_tables.length > 0) || (disambiguationData.options && disambiguationData.options.length > 0 && Boolean(disambiguationData.options[0].table || disambiguationData.options[0].table_name))) ? (
+                                  <div className="mt-3 space-y-3.5">
+                                    <p className="text-xs text-gray-600 dark:text-gray-300 m-0">
+                                      Your question was broad. Choose which candidate table(s) to query, or search any other table in this database:
+                                    </p>
+
+                                    {/* Live Table Filter Search Bar */}
+                                    <div className="relative max-w-md">
+                                      <Input
+                                        placeholder="Filter tables (e.g. work_flows, users, monitor)..."
+                                        prefix={<SearchOutlined style={{ color: "#0d6e65" }} />}
+                                        value={tableSearchFilter}
+                                        onChange={(e) => setTableSearchFilter(e.target.value)}
+                                        allowClear
+                                        size="middle"
+                                        style={{ borderRadius: 8 }}
+                                      />
+                                    </div>
+
+                                    {/* Candidate & Searched Tables Grid */}
+                                    {(() => {
+                                      // Extract candidate tables from candidate_tables OR options
+                                      const rawCandidates = (disambiguationData.candidate_tables && disambiguationData.candidate_tables.length > 0)
+                                        ? disambiguationData.candidate_tables
+                                        : (disambiguationData.options || []);
+
+                                      const filterLower = (tableSearchFilter || "").toLowerCase().trim();
+                                      // Merge backend table_aliases with local/state tableCustomNames case-insensitively
+                                      const aliasMap: Record<string, string[]> = {};
+                                      const registerAliases = (source?: Record<string, string[]>) => {
+                                        if (!source) return;
+                                        Object.entries(source).forEach(([k, vals]) => {
+                                          if (!vals || !Array.isArray(vals)) return;
+                                          const kLower = k.toLowerCase();
+                                          if (!aliasMap[kLower]) aliasMap[kLower] = [];
+                                          vals.forEach((v) => {
+                                            if (v && !aliasMap[kLower].includes(v)) aliasMap[kLower].push(v);
+                                          });
+                                          if (!aliasMap[k]) aliasMap[k] = aliasMap[kLower];
+                                        });
+                                      };
+                                      registerAliases(tableCustomNames);
+                                      registerAliases(disambiguationData.table_aliases);
+
+                                      const getAliasesForTable = (tbl: string): string[] => {
+                                        return aliasMap[tbl] || aliasMap[tbl.toLowerCase()] || [];
+                                      };
+
+                                      let displayTables: { name: string; isCandidate: boolean; score?: number; isBackup?: boolean }[] = [];
+                                      const seenNames = new Set<string>();
+
+                                      rawCandidates.forEach((c: any) => {
+                                        const tName = typeof c === "string" ? c : (c.table_name || c.table || c.name || c.label || c.id);
+                                        if (tName && typeof tName === "string" && !seenNames.has(tName.toLowerCase())) {
+                                          seenNames.add(tName.toLowerCase());
+                                          const aliases = getAliasesForTable(tName);
+                                          const aliasMatches = aliases.some((a: string) => a.toLowerCase().includes(filterLower));
+                                          if (!filterLower || tName.toLowerCase().includes(filterLower) || aliasMatches) {
+                                            displayTables.push({
+                                              name: tName,
+                                              isCandidate: true,
+                                              score: c.score,
+                                              isBackup: Boolean(c.is_backup || tName.includes("_bk_") || tName.startsWith("archive_")),
+                                            });
+                                          }
+                                        }
+                                      });
+
+                                      // Also include schema tables or all_tables if user searches or if candidates are empty
+                                      const schemaTableList: string[] = [];
+                                      if (disambiguationData.all_tables && disambiguationData.all_tables.length > 0) {
+                                        schemaTableList.push(...disambiguationData.all_tables);
+                                      }
+                                      if (allDbTablesList && allDbTablesList.length > 0) {
+                                        schemaTableList.push(...allDbTablesList);
+                                      }
+                                      if ((selectedKb as any)?.schema?.schemas) {
+                                        Object.values((selectedKb as any).schema.schemas).forEach((s: any) => {
+                                          if (s?.tables) {
+                                            schemaTableList.push(...Object.keys(s.tables));
+                                          }
+                                        });
+                                      }
+                                      if (schemaData?.schemas) {
+                                        Object.values(schemaData.schemas).forEach((s: any) => {
+                                          if (s?.tables) {
+                                            schemaTableList.push(...Object.keys(s.tables));
+                                          }
+                                        });
+                                      }
+                                      // Include all tables having aliases so they are always searchable
+                                      Object.keys(aliasMap).forEach((t) => schemaTableList.push(t));
+
+                                      schemaTableList.forEach((tName: string) => {
+                                        if (tName && !seenNames.has(tName.toLowerCase())) {
+                                          const aliases = getAliasesForTable(tName);
+                                          const aliasMatches = aliases.some((a: string) => a.toLowerCase().includes(filterLower));
+                                          if (filterLower && (tName.toLowerCase().includes(filterLower) || aliasMatches)) {
+                                            seenNames.add(tName.toLowerCase());
+                                            displayTables.push({
+                                              name: tName,
+                                              isCandidate: false,
+                                            });
+                                          }
+                                        }
+                                      });
+
+                                      const allSelected = displayTables.length > 0 && displayTables.every((t) => selectedTablesForExecution.includes(t.name));
+
+                                      return (
+                                        <div className="space-y-3">
+                                          {/* Select All Row */}
+                                          <div className="flex items-center justify-between pb-1 border-b border-teal-200/60 dark:border-teal-900/60">
+                                            <Checkbox
+                                              checked={allSelected}
+                                              indeterminate={selectedTablesForExecution.length > 0 && !allSelected}
+                                              onChange={(e) => {
+                                                if (e.target.checked) {
+                                                  const newSel = Array.from(new Set([...selectedTablesForExecution, ...displayTables.map((t) => t.name)]));
+                                                  setSelectedTablesForExecution(newSel);
+                                                  if (isRephraseEnabled && newSel.length > 0) {
+                                                    handleFetchRephrasings(newSel);
+                                                  }
+                                                } else {
+                                                  const displayedSet = new Set(displayTables.map((t) => t.name));
+                                                  const nextSel = selectedTablesForExecution.filter((x) => !displayedSet.has(x));
+                                                  setSelectedTablesForExecution(nextSel);
+                                                  if (isRephraseEnabled) {
+                                                    if (nextSel.length > 0) {
+                                                      handleFetchRephrasings(nextSel);
+                                                    } else {
+                                                      setRephraseOptions([]);
+                                                    }
+                                                  }
+                                                }
+                                              }}
+                                            >
+                                              <span className="text-xs font-semibold text-gray-700 dark:text-gray-200">
+                                                Select All Displayed ({displayTables.length} tables)
+                                              </span>
+                                            </Checkbox>
+
+                                            <span className="text-xs text-teal-800 dark:text-teal-300 font-medium">
+                                              {selectedTablesForExecution.length} selected
+                                            </span>
+                                          </div>
+
+                                          {/* Checkbox List */}
+                                          <div className="max-h-56 overflow-y-auto pr-1 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                                            {displayTables.map((item, idx) => {
+                                              const isChecked = selectedTablesForExecution.includes(item.name);
+                                              return (
+                                                <div
+                                                  key={idx}
+                                                  onClick={() => {
+                                                    let nextSel: string[];
+                                                    if (isChecked) {
+                                                      nextSel = selectedTablesForExecution.filter((t) => t !== item.name);
+                                                    } else {
+                                                      nextSel = [...selectedTablesForExecution, item.name];
+                                                    }
+                                                    setSelectedTablesForExecution(nextSel);
+                                                    if (isRephraseEnabled) {
+                                                      if (nextSel.length > 0) {
+                                                        handleFetchRephrasings(nextSel);
+                                                      } else {
+                                                        setRephraseOptions([]);
+                                                      }
+                                                    }
+                                                  }}
+                                                  className={`flex items-center justify-between p-2 rounded-lg border text-xs cursor-pointer transition-all ${
+                                                    isChecked
+                                                      ? "bg-teal-100/70 dark:bg-teal-900/40 border-teal-500 font-semibold"
+                                                      : "bg-white dark:bg-slate-900/60 border-slate-200 dark:border-slate-800 hover:border-teal-400"
+                                                  }`}
+                                                >
+                                                  {(() => {
+                                                    const aliases = getAliasesForTable(item.name);
+                                                    const primaryAlias = aliases.length > 0 ? aliases.join(", ") : null;
+                                                    const fullTitle = primaryAlias ? `${item.name} / ${primaryAlias}` : item.name;
+
+                                                    return (
+                                                      <div className="flex items-center gap-2 truncate">
+                                                        <Checkbox
+                                                          checked={isChecked}
+                                                          onChange={(e) => e.stopPropagation()}
+                                                        />
+                                                        <div className="flex items-baseline gap-1.5 truncate" title={fullTitle}>
+                                                          <span className="truncate text-gray-800 dark:text-gray-100 font-medium">
+                                                            {item.name}
+                                                          </span>
+                                                          {primaryAlias && (
+                                                            <span className="text-[11px] text-teal-600 dark:text-teal-400 truncate font-normal">
+                                                              / {primaryAlias}
+                                                            </span>
+                                                          )}
+                                                        </div>
+                                                      </div>
+                                                    );
+                                                  })()}
+                                                  {item.score !== undefined && (
+                                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 shrink-0">
+                                                      {item.score}
+                                                    </span>
+                                                  )}
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+
+                                          {/* Execution Strategy Selector when multiple tables are selected */}
+                                          {selectedTablesForExecution.length > 1 && (
+                                            <div className="p-3 bg-teal-50/70 dark:bg-slate-900/80 rounded-xl border border-teal-200 dark:border-teal-900/70 text-xs">
+                                              <div className="font-semibold text-teal-900 dark:text-teal-200 mb-2 flex items-center justify-between">
+                                                <span>Choose Execution Strategy for {selectedTablesForExecution.length} Tables:</span>
+                                                <Tag color="cyan" style={{ fontSize: 10, borderRadius: 4 }}>Required</Tag>
+                                              </div>
+                                              <Radio.Group
+                                                value={multiTableStrategy}
+                                                onChange={(e) => setMultiTableStrategy(e.target.value)}
+                                                className="flex flex-col gap-2"
+                                              >
+                                                <Radio value="separate" className="items-start">
+                                                  <div className="ml-1">
+                                                    <div className="font-bold text-gray-800 dark:text-gray-100">
+                                                      Separate Execution (Per-Table Breakdown)
+                                                      <span className="ml-1.5 text-[10px] text-teal-600 dark:text-teal-400 font-normal">[Recommended]</span>
+                                                    </div>
+                                                    <div className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                                                      Executes the query independently on each selected table and returns all results in a clear table-by-table summary.
+                                                    </div>
+                                                  </div>
+                                                </Radio>
+                                                <Radio value="union" className="items-start">
+                                                  <div className="ml-1">
+                                                    <div className="font-bold text-gray-800 dark:text-gray-100">
+                                                      Union Search (Merged Results)
+                                                    </div>
+                                                    <div className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                                                      Combines matching records across selected tables using SQL UNION into one unified view.
+                                                    </div>
+                                                  </div>
+                                                </Radio>
+                                              </Radio.Group>
+                                            </div>
+                                          )}
+
+                                          {/* 3-Way Query Rephrasing Studio After Table Selection - ONLY when Rephrasing is ON */}
+                                          {isRephraseEnabled && selectedTablesForExecution.length > 0 && (
+                                            <div
+                                              style={{
+                                                marginTop: 14,
+                                                marginBottom: 12,
+                                                padding: "16px 18px",
+                                                borderRadius: 12,
+                                                background: "linear-gradient(145deg, #ffffff 0%, #f0fdfa 100%)",
+                                                border: "1.5px solid #5eead4",
+                                                boxShadow: "0 4px 16px -2px rgba(13, 110, 101, 0.12)",
+                                              }}
+                                              className="transition-all animate-fadeIn"
+                                            >
+                                              <div className="flex items-center justify-between pb-2.5 border-b border-teal-100 mb-3">
+                                                <div className="flex items-center gap-2">
+                                                  <span style={{ fontSize: 18 }}>✨</span>
+                                                  <div>
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                      <span style={{ fontSize: 13.5, fontWeight: 700, color: "#0f766e" }}>
+                                                        3 Schema-Aligned Query Angles for:{" "}
+                                                        <span className="font-mono text-teal-950 font-bold underline">
+                                                          {selectedTablesForExecution.join(", ")}
+                                                        </span>
+                                                      </span>
+                                                      <Tag color="cyan" style={{ fontSize: 11, fontWeight: 800, borderRadius: 6, margin: 0 }}>
+                                                        Activate Rephrasing !!
+                                                      </Tag>
+                                                    </div>
+                                                    <div style={{ fontSize: 11, color: "#64748b" }}>
+                                                      Choose the exact query phrasing that matches your intent, edit or customize it below, and execute.
+                                                    </div>
+                                                  </div>
+                                                </div>
+                                                <Button
+                                                  size="small"
+                                                  icon={<SyncOutlined />}
+                                                  loading={rephraseLoading}
+                                                  onClick={() => handleFetchRephrasings(selectedTablesForExecution)}
+                                                  style={{ fontSize: 11, borderRadius: 6 }}
+                                                >
+                                                  Regenerate
+                                                </Button>
+                                              </div>
+
+                                              {rephraseLoading ? (
+                                                <div className="py-6 flex flex-col items-center justify-center gap-2.5">
+                                                  <Spin indicator={<LoadingOutlined style={{ fontSize: 24, color: "#0d6e65" }} spin />} />
+                                                  <span style={{ fontSize: 12, fontWeight: 500, color: "#0f766e" }}>
+                                                    Crafting 3 query interpretations for {selectedTablesForExecution.join(", ")}...
+                                                  </span>
+                                                </div>
+                                              ) : rephraseOptions.length === 0 ? (
+                                                <div className="py-3 flex items-center justify-between flex-wrap gap-2">
+                                                  <span className="text-xs text-slate-500">
+                                                    Analyze schema for {selectedTablesForExecution.join(", ")} to generate 3 query angles:
+                                                  </span>
+                                                  <Button
+                                                    type="primary"
+                                                    size="small"
+                                                    onClick={() => handleFetchRephrasings(selectedTablesForExecution)}
+                                                    style={{ backgroundColor: "#0d6e65", borderColor: "#0d6e65", borderRadius: 6, fontSize: 11 }}
+                                                  >
+                                                    ✨ Generate 3 Angles
+                                                  </Button>
+                                                </div>
+                                              ) : (
+                                                <div>
+                                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3.5">
+                                                    {rephraseOptions.map((opt) => {
+                                                      const isSelected = selectedOptionId === opt.id;
+                                                      return (
+                                                        <div
+                                                          key={opt.id}
+                                                          onClick={() => handleSelectRephraseOption(opt)}
+                                                          style={{
+                                                            cursor: "pointer",
+                                                            padding: "12px 14px",
+                                                            borderRadius: 8,
+                                                            backgroundColor: isSelected ? "#ffffff" : "rgba(255, 255, 255, 0.75)",
+                                                            border: isSelected ? "2px solid #0d6e65" : "1px solid #cbd5e1",
+                                                            boxShadow: isSelected
+                                                              ? "0 3px 10px rgba(13, 110, 101, 0.15)"
+                                                              : "0 1px 2px rgba(0,0,0,0.03)",
+                                                            transition: "all 0.15s ease",
+                                                            display: "flex",
+                                                            flexDirection: "column",
+                                                            justifyContent: "space-between",
+                                                          }}
+                                                          className={`hover:border-teal-500 hover:bg-white hover:shadow-sm ${
+                                                            isSelected ? "ring-2 ring-teal-200" : ""
+                                                          }`}
+                                                        >
+                                                          <div>
+                                                            <div className="flex items-center justify-between mb-1.5">
+                                                              <Tag
+                                                                color={
+                                                                  opt.tag.toLowerCase().includes("aggregat")
+                                                                    ? "purple"
+                                                                    : opt.tag.toLowerCase().includes("detail")
+                                                                    ? "blue"
+                                                                    : "cyan"
+                                                                }
+                                                                style={{ fontSize: 10, fontWeight: 700, borderRadius: 4, margin: 0 }}
+                                                              >
+                                                                {opt.tag}
+                                                              </Tag>
+                                                              {isSelected && (
+                                                                <span className="flex items-center gap-1" style={{ fontSize: 11, fontWeight: 700, color: "#0d6e65" }}>
+                                                                  <CheckCircleOutlined /> Selected
+                                                                </span>
+                                                              )}
+                                                            </div>
+                                                            <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>
+                                                              {opt.title}
+                                                            </div>
+                                                            <div
+                                                              style={{
+                                                                fontSize: 11.5,
+                                                                fontWeight: 600,
+                                                                color: "#1e293b",
+                                                                backgroundColor: isSelected ? "#f0fdf4" : "#f8fafc",
+                                                                padding: "6px 8px",
+                                                                borderRadius: 6,
+                                                                border: "1px dashed #cbd5e1",
+                                                                marginBottom: 6,
+                                                                lineHeight: 1.35,
+                                                              }}
+                                                            >
+                                                              "{opt.rephrased_query}"
+                                                            </div>
+                                                          </div>
+                                                          <div style={{ fontSize: 10.5, color: "#64748b", lineHeight: 1.3 }}>
+                                                            {opt.description}
+                                                          </div>
+                                                        </div>
+                                                      );
+                                                    })}
+                                                  </div>
+
+                                                  {/* Editable Query Box */}
+                                                  <div
+                                                    style={{
+                                                      padding: "12px 14px",
+                                                      borderRadius: 8,
+                                                      backgroundColor: "#ffffff",
+                                                      border: "1.5px solid #94a3b8",
+                                                    }}
+                                                  >
+                                                    <div className="flex items-center justify-between mb-1.5">
+                                                      <div className="flex items-center gap-1.5" style={{ fontSize: 11.5, fontWeight: 700, color: "#334155" }}>
+                                                        <EditOutlined style={{ color: "#0d6e65" }} />
+                                                        <span>Edit Rephrased Query (Customize before executing on {selectedTablesForExecution.join(", ")}):</span>
+                                                      </div>
+                                                      <span style={{ fontSize: 10.5, color: "#94a3b8" }}>
+                                                        Editable — tweak columns or filters
+                                                      </span>
+                                                    </div>
+
+                                                    <Input.TextArea
+                                                      value={editableRephrasedQuery}
+                                                      onChange={(e) => setEditableRephrasedQuery(e.target.value)}
+                                                      rows={2}
+                                                      style={{
+                                                        fontSize: 12.5,
+                                                        fontWeight: 500,
+                                                        fontFamily: "var(--font-mono, monospace)",
+                                                        color: "#0f172a",
+                                                        borderRadius: 6,
+                                                        borderColor: "#cbd5e1",
+                                                      }}
+                                                      placeholder="Edit your query here..."
+                                                    />
+                                                  </div>
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+
+                                          {/* Action Execution Buttons */}
+                                          <div className="flex items-center gap-2 pt-2 border-t border-teal-200/60 dark:border-teal-900/60 flex-wrap">
+                                            {isRephraseEnabled ? (
+                                              <>
+                                                <Button
+                                                  type="primary"
+                                                  size="middle"
+                                                  disabled={selectedTablesForExecution.length === 0}
+                                                  style={{
+                                                    borderRadius: 8,
+                                                    fontWeight: 700,
+                                                    backgroundColor: selectedTablesForExecution.length > 0 ? "#0d6e65" : undefined,
+                                                    borderColor: selectedTablesForExecution.length > 0 ? "#0d6e65" : undefined,
+                                                  }}
+                                                  onClick={() => {
+                                                    const sel = [...selectedTablesForExecution];
+                                                    const strat = sel.length > 1 ? multiTableStrategy : undefined;
+                                                    handleExecuteRephrasedQuery(sel, strat);
+                                                  }}
+                                                >
+                                                  Execute Rephrased Query on {selectedTablesForExecution.length} Selected Table{selectedTablesForExecution.length === 1 ? "" : "s"}
+                                                  {selectedTablesForExecution.length > 1 ? (multiTableStrategy === "separate" ? " (Separate)" : " (Union)") : ""}
+                                                </Button>
+
+                                                <Button
+                                                  size="middle"
+                                                  disabled={selectedTablesForExecution.length === 0}
+                                                  style={{ borderRadius: 8, fontSize: 12 }}
+                                                  onClick={() => {
+                                                    const sel = [...selectedTablesForExecution];
+                                                    const strat = sel.length > 1 ? multiTableStrategy : undefined;
+                                                    setDisambiguationData(null);
+                                                    setSelectedTablesForExecution([]);
+                                                    setTableSearchFilter("");
+                                                    handleRunQuery(userQuery, undefined, sel, strat);
+                                                  }}
+                                                >
+                                                  Execute Original Query ("{userQuery.length > 25 ? userQuery.slice(0, 25) + '...' : userQuery}")
+                                                </Button>
+                                              </>
+                                            ) : (
+                                              <Button
+                                                type="primary"
+                                                size="middle"
+                                                disabled={selectedTablesForExecution.length === 0}
+                                                style={{
+                                                  borderRadius: 8,
+                                                  fontWeight: 700,
+                                                  backgroundColor: selectedTablesForExecution.length > 0 ? "#0d6e65" : undefined,
+                                                  borderColor: selectedTablesForExecution.length > 0 ? "#0d6e65" : undefined,
+                                                }}
+                                                onClick={() => {
+                                                  const sel = [...selectedTablesForExecution];
+                                                  const strat = sel.length > 1 ? multiTableStrategy : undefined;
+                                                  setDisambiguationData(null);
+                                                  setSelectedTablesForExecution([]);
+                                                  setTableSearchFilter("");
+                                                  handleRunQuery(userQuery, undefined, sel, strat);
+                                                }}
+                                              >
+                                                Execute on {selectedTablesForExecution.length} Selected Table{selectedTablesForExecution.length === 1 ? "" : "s"}
+                                                {selectedTablesForExecution.length > 1 ? (multiTableStrategy === "separate" ? " (Separate)" : " (Union)") : ""}
+                                              </Button>
+                                            )}
+
+                                            <Button
+                                              type="text"
+                                              danger
+                                              size="small"
+                                              onClick={() => {
+                                                setDisambiguationData(null);
+                                                setSelectedTablesForExecution([]);
+                                                setTableSearchFilter("");
+                                              }}
+                                            >
+                                              Cancel
+                                            </Button>
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
+                                  </div>
+                                ) : (
+                                  <div>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 mb-4">
+                                      Multiple matching records were found in the database. Please select which one you want to inspect, or query all of them:
+                                    </p>
+                                    <div className="flex flex-wrap items-center gap-2.5">
+                                      {disambiguationData.options.map((opt: any, idx: number) => {
+                                        const isAll = opt.id === "all" || Array.isArray(opt.id);
+                                        return (
+                                          <Button
+                                            key={idx}
+                                            type={isAll ? "default" : "primary"}
+                                            style={{
+                                              borderRadius: 8,
+                                              fontWeight: 600,
+                                              borderColor: isAll ? "#d97706" : "#0d6e65",
+                                              color: isAll ? "#d97706" : "#ffffff",
+                                              backgroundColor: isAll ? "#ffffff" : "#0d6e65",
+                                              boxShadow: "0 2px 4px rgba(0,0,0,0.08)",
+                                            }}
+                                            onClick={() => handleSelectDisambiguation(opt)}
+                                          >
+                                            {opt.label || opt.name}
+                                          </Button>
+                                        );
+                                      })}
+                                      <Button
+                                        type="text"
+                                        danger
+                                        size="small"
+                                        onClick={() => setDisambiguationData(null)}
+                                      >
+                                        Cancel
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Real-Time Pipeline Progress Stepper (Phase 3E) */}
                         {(queryLoading || streamEvents.length > 0 || streamError || isCancelled) && (
@@ -2111,11 +3753,63 @@ export default function DatabaseKnowledgePage() {
 
                                 {answerViewMode === "formatted" ? (
                                   <div className="space-y-4">
-                                    {introMarkdownHtml && (
-                                      <div
-                                        className="grounded-markdown-container text-sm text-[var(--app-text)] mb-3"
-                                        dangerouslySetInnerHTML={{ __html: introMarkdownHtml }}
-                                      />
+                                    {cleanIntroHtml && (
+                                      <div className="relative mb-3">
+                                        <div
+                                          className="grounded-markdown-container text-sm text-[var(--app-text)] inline"
+                                          dangerouslySetInnerHTML={{ __html: cleanIntroHtml }}
+                                        />
+                                        {rawProvenanceText && (
+                                          <Popover
+                                            trigger="click"
+                                            placement="bottomLeft"
+                                            overlayClassName="source-provenance-popover"
+                                            content={
+                                              <div style={{ maxWidth: 460, maxHeight: 360, overflowY: "auto" }} className="p-1">
+                                                <div className="flex items-center justify-between pb-2 mb-2 border-b border-gray-200 dark:border-gray-700">
+                                                  <span className="font-semibold text-xs text-teal-600 dark:text-teal-400 flex items-center gap-1.5">
+                                                    <DatabaseOutlined /> Data Source & Provenance
+                                                  </span>
+                                                </div>
+                                                <div
+                                                  className="grounded-markdown-container text-xs text-[var(--app-text)] font-sans leading-relaxed"
+                                                  dangerouslySetInnerHTML={{ __html: provenanceHtml }}
+                                                />
+                                              </div>
+                                            }
+                                          >
+                                            <button
+                                              type="button"
+                                              className="inline-flex items-center gap-1.5 px-2.5 py-0.5 ml-2 rounded-full border text-xs font-medium cursor-pointer transition-all shadow-sm align-middle"
+                                              style={{
+                                                backgroundColor: "var(--app-surface-muted, #f1f5f9)",
+                                                borderColor: "var(--app-border, #cbd5e1)",
+                                                color: "var(--app-text, #334155)",
+                                              }}
+                                              title="Click to view Data Source & Provenance"
+                                            >
+                                              <span
+                                                style={{
+                                                  width: 14,
+                                                  height: 14,
+                                                  borderRadius: "50%",
+                                                  backgroundColor: "#0d9488",
+                                                  color: "#ffffff",
+                                                  display: "inline-flex",
+                                                  alignItems: "center",
+                                                  justifyContent: "center",
+                                                  fontSize: 8,
+                                                  fontWeight: 700,
+                                                }}
+                                              >
+                                                <DatabaseOutlined style={{ fontSize: 7 }} />
+                                              </span>
+                                              <span>Source</span>
+                                              <DownOutlined style={{ fontSize: 9, opacity: 0.7 }} />
+                                            </button>
+                                          </Popover>
+                                        )}
+                                      </div>
                                     )}
                                     <div className="w-full overflow-hidden rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)]">
                                       <Table
@@ -2136,6 +3830,33 @@ export default function DatabaseKnowledgePage() {
                                         }}
                                       />
                                     </div>
+
+                                    {/* Full Cell Detail Modal */}
+                                    <Modal
+                                      open={!!detailModalData}
+                                      onCancel={() => setDetailModalData(null)}
+                                      footer={[
+                                        <Button key="close" type="primary" onClick={() => setDetailModalData(null)}>
+                                          Close
+                                        </Button>
+                                      ]}
+                                      title={
+                                        <div className="flex items-center gap-2">
+                                          <FileTextOutlined className="text-teal-500" />
+                                          <span className="text-sm font-semibold text-[var(--app-text)]">
+                                            {detailModalData?.title || "Field Content"}
+                                          </span>
+                                        </div>
+                                      }
+                                      width={680}
+                                      centered
+                                    >
+                                      <div
+                                        className="max-h-[60vh] overflow-y-auto p-4 rounded-xl bg-[var(--app-surface-muted)] border border-[var(--app-border)] font-sans text-xs leading-relaxed text-[var(--app-text)] whitespace-pre-wrap select-text custom-scrollbar mt-3"
+                                      >
+                                        {detailModalData?.content}
+                                      </div>
+                                    </Modal>
                                     {summaryMarkdownHtml && (
                                       <div className="p-4 rounded-xl bg-[var(--app-surface-muted)] border border-[var(--app-border)] text-sm text-[var(--app-text)] mt-3">
                                         <div
@@ -2154,9 +3875,59 @@ export default function DatabaseKnowledgePage() {
                             ) : (
                               <div className="mt-4 p-5 rounded-xl bg-[var(--app-surface-muted)] border border-[var(--app-border)] overflow-x-auto max-w-full custom-scrollbar">
                                 <div
-                                  className="grounded-markdown-container max-w-full"
-                                  dangerouslySetInnerHTML={{ __html: parsedMarkdownHtml }}
+                                  className="grounded-markdown-container max-w-full inline"
+                                  dangerouslySetInnerHTML={{ __html: parsedCleanHtml }}
                                 />
+                                {parsedRawProv && (
+                                  <Popover
+                                    trigger="click"
+                                    placement="bottomLeft"
+                                    overlayClassName="source-provenance-popover"
+                                    content={
+                                      <div style={{ maxWidth: 460, maxHeight: 360, overflowY: "auto" }} className="p-1">
+                                        <div className="flex items-center justify-between pb-2 mb-2 border-b border-gray-200 dark:border-gray-700">
+                                          <span className="font-semibold text-xs text-teal-600 dark:text-teal-400 flex items-center gap-1.5">
+                                            <DatabaseOutlined /> Data Source & Provenance
+                                          </span>
+                                        </div>
+                                        <div
+                                          className="grounded-markdown-container text-xs text-[var(--app-text)] font-sans leading-relaxed"
+                                          dangerouslySetInnerHTML={{ __html: parsedProvHtml }}
+                                        />
+                                      </div>
+                                    }
+                                  >
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center gap-1.5 px-2.5 py-0.5 ml-2 rounded-full border text-xs font-medium cursor-pointer transition-all shadow-sm align-middle"
+                                      style={{
+                                        backgroundColor: "var(--app-surface, #ffffff)",
+                                        borderColor: "var(--app-border, #cbd5e1)",
+                                        color: "var(--app-text, #334155)",
+                                      }}
+                                      title="Click to view Data Source & Provenance"
+                                    >
+                                      <span
+                                        style={{
+                                          width: 14,
+                                          height: 14,
+                                          borderRadius: "50%",
+                                          backgroundColor: "#0d9488",
+                                          color: "#ffffff",
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          justifyContent: "center",
+                                          fontSize: 8,
+                                          fontWeight: 700,
+                                        }}
+                                      >
+                                        <DatabaseOutlined style={{ fontSize: 7 }} />
+                                      </span>
+                                      <span>Source</span>
+                                      <DownOutlined style={{ fontSize: 9, opacity: 0.7 }} />
+                                    </button>
+                                  </Popover>
+                                )}
                               </div>
                             )}
                           </Card>
@@ -2825,7 +4596,7 @@ export default function DatabaseKnowledgePage() {
         title={
           <div className="flex items-center gap-2">
             <DatabaseOutlined style={{ color: "var(--app-primary)" }} />
-            <span>Connect PostgreSQL Database Knowledgebase</span>
+            <span>Connect Relational Database Knowledgebase</span>
           </div>
         }
         open={modalOpen}
@@ -2839,7 +4610,7 @@ export default function DatabaseKnowledgePage() {
             <Input
               value={formName}
               onChange={(e) => setFormName(e.target.value)}
-              placeholder="e.g. HRMS Enterprise Database"
+              placeholder="e.g. Production Enterprise Database"
               className="mt-1"
             />
           </div>
@@ -2864,6 +4635,7 @@ export default function DatabaseKnowledgePage() {
                 className="w-full mt-1"
                 options={[
                   { label: "PostgreSQL", value: "postgresql" },
+                  { label: "Microsoft SQL Server", value: "sqlserver" },
                   { label: "MariaDB", value: "mariadb" },
                   { label: "MySQL", value: "mysql" },
                 ]}
@@ -2898,7 +4670,7 @@ export default function DatabaseKnowledgePage() {
               <Text strong>Port</Text>
               <InputNumber
                 value={formPort}
-                onChange={(v) => setFormPort(v || (formDbType === "postgresql" ? 5432 : 3306))}
+                onChange={(v) => setFormPort(v || (formDbType === "postgresql" ? 5432 : formDbType === "sqlserver" ? 1433 : 3306))}
                 className="w-full mt-1"
               />
             </div>
@@ -2909,7 +4681,7 @@ export default function DatabaseKnowledgePage() {
             <Input
               value={formDbName}
               onChange={(e) => setFormDbName(e.target.value)}
-              placeholder="gsearch_hrms_demo_db"
+              placeholder="e.g. my_database"
               className="mt-1"
             />
           </div>
@@ -3346,9 +5118,62 @@ export default function DatabaseKnowledgePage() {
                   allowClear
                   style={{ maxWidth: 380, borderRadius: 8 }}
                 />
-                <span className="text-xs text-gray-500 font-semibold">
-                  Showing <strong className="text-teal-600">{filteredSchemaTables.length}</strong> of {allSchemaTables.length} tables
-                </span>
+                <div className="flex items-center gap-3">
+                  {/* Circle Shaped Notes Button for Configured Alternative Names */}
+                  {(() => {
+                    const aliasList = getAliasSummaryList();
+                    const totalAliasesCount = aliasList.reduce((acc, curr) => {
+                      return acc + curr.tableAliases.length + curr.columnAliases.reduce((cAcc, c) => cAcc + c.aliases.length, 0);
+                    }, 0);
+
+                    return (
+                      <Tooltip
+                        title={
+                          <div className="text-xs p-1">
+                            <div className="font-bold text-teal-300 mb-0.5">Alternative Names Notes & Preview</div>
+                            <div>
+                              {totalAliasesCount > 0
+                                ? `${totalAliasesCount} alternative name(s) configured across ${aliasList.length} table(s). Click to preview or download.`
+                                : "No alternative names added yet. Click to view notes."}
+                            </div>
+                          </div>
+                        }
+                        placement="top"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setAliasNotesModalOpen(true)}
+                          className="relative flex items-center justify-center w-8 h-8 rounded-full transition-all duration-200 cursor-pointer shadow-sm border focus:outline-none hover:scale-105 active:scale-95"
+                          style={{
+                            backgroundColor: totalAliasesCount > 0 ? "#f0fdfa" : "#f8fafc",
+                            borderColor: totalAliasesCount > 0 ? "#0d9488" : "#cbd5e1",
+                            boxShadow: totalAliasesCount > 0 ? "0 2px 8px rgba(13, 148, 136, 0.25)" : "0 1px 3px rgba(0,0,0,0.08)",
+                          }}
+                          aria-label="Alternative Names Notes"
+                        >
+                          <BookOutlined
+                            style={{
+                              fontSize: 15,
+                              color: totalAliasesCount > 0 ? "#0d9488" : "#64748b",
+                            }}
+                          />
+                          {totalAliasesCount > 0 && (
+                            <span
+                              className="absolute -top-1 -right-1 flex items-center justify-center min-w-[17px] h-[17px] px-1 text-[9px] font-bold text-white rounded-full border-2 border-white"
+                              style={{ backgroundColor: "#0f766e" }}
+                            >
+                              {totalAliasesCount}
+                            </span>
+                          )}
+                        </button>
+                      </Tooltip>
+                    );
+                  })()}
+
+                  <span className="text-xs text-gray-500 font-semibold">
+                    Showing <strong className="text-teal-600">{filteredSchemaTables.length}</strong> of {allSchemaTables.length} tables
+                  </span>
+                </div>
               </div>
             )}
 
@@ -3451,6 +5276,98 @@ export default function DatabaseKnowledgePage() {
                                 render: (c: string) => (
                                   <span className="text-gray-400 text-xs">{c || "—"}</span>
                                 ),
+                              },
+                              {
+                                title: "Alternative Column Names",
+                                key: "column_aliases",
+                                width: "42%",
+                                render: (_: any, record: TableColumn) => {
+                                  const colName = record.name;
+                                  const tblName = tbl.table_name;
+                                  const tagKey = `${tblName}.${colName}`;
+                                  const namesList = (columnCustomNames[tblName] && columnCustomNames[tblName][colName]) || [];
+                                  const inputValue = newColumnTagInput[tagKey] || "";
+
+                                  return (
+                                    <div className="flex flex-col gap-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                                      {/* Tags display */}
+                                      <div className="flex flex-wrap gap-1.5 items-center">
+                                        {namesList.map((tag, tagIdx) => (
+                                          <Tag
+                                            key={tagIdx}
+                                            closable
+                                            onClose={(e) => {
+                                              e.preventDefault();
+                                              handleRemoveColumnSingleName(tblName, colName, tag);
+                                            }}
+                                            color="cyan"
+                                            style={{
+                                              borderRadius: 6,
+                                              fontSize: 11,
+                                              fontWeight: 600,
+                                              padding: "1px 6px",
+                                              margin: 0,
+                                              border: "1px solid #a5f3fc",
+                                              display: "inline-flex",
+                                              alignItems: "center",
+                                              gap: 4,
+                                            }}
+                                          >
+                                            {tag}
+                                          </Tag>
+                                        ))}
+
+                                        {namesList.length === 0 && (
+                                          <span className="text-[11px] text-gray-400 italic">
+                                            No alternative names added
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      {/* Add Tag Input */}
+                                      <div className="flex items-center gap-1.5 mt-0.5">
+                                        <Input
+                                          size="small"
+                                          placeholder="Type alias (e.g. stage, status) & press Enter..."
+                                          value={inputValue}
+                                          onChange={(e) =>
+                                            setNewColumnTagInput((prev) => ({
+                                              ...prev,
+                                              [tagKey]: e.target.value,
+                                            }))
+                                          }
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") {
+                                              e.preventDefault();
+                                              handleAddColumnName(tblName, colName);
+                                            }
+                                          }}
+                                          style={{
+                                            maxWidth: 240,
+                                            fontSize: 11,
+                                            borderRadius: 6,
+                                          }}
+                                        />
+                                        <Button
+                                          size="small"
+                                          icon={<PlusOutlined style={{ fontSize: 10 }} />}
+                                          onClick={() => handleAddColumnName(tblName, colName)}
+                                          disabled={!inputValue.trim()}
+                                          style={{
+                                            fontSize: 11,
+                                            borderRadius: 6,
+                                            height: 24,
+                                            padding: "0 8px",
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                          }}
+                                        >
+                                          Add
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  );
+                                },
                               },
                             ]}
                             pagination={false}
@@ -3645,6 +5562,258 @@ export default function DatabaseKnowledgePage() {
         )}
       </Modal>
 
+      {/* Alternative Names Notes & Preview Modal */}
+      <Modal
+        open={aliasNotesModalOpen}
+        onCancel={() => {
+          setAliasNotesModalOpen(false);
+          setAliasNotesSearch("");
+        }}
+        footer={null}
+        width="min(860px, 95vw)"
+        styles={{
+          container: { borderRadius: 20, overflow: "hidden" },
+          body: { padding: "20px 24px", backgroundColor: "#faf9f6" },
+        }}
+        title={
+          <div className="flex items-center justify-between pr-6 py-1">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-full bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 shadow-sm">
+                <BookOutlined style={{ fontSize: 17 }} />
+              </div>
+              <div>
+                <div className="text-base font-bold text-slate-800 leading-tight">
+                  Configured Alternative Names
+                </div>
+                <div className="text-xs text-gray-500 font-normal mt-0.5">
+                  Overview of all original table & column names mapped to user-defined aliases
+                </div>
+              </div>
+            </div>
+
+            {/* Download and Action Buttons */}
+            <div className="flex items-center gap-2">
+              <Button
+                size="small"
+                icon={<DownloadOutlined />}
+                onClick={() => handleDownloadAliasNotes("txt")}
+                style={{
+                  borderRadius: 8,
+                  fontWeight: 600,
+                  fontSize: 12,
+                  borderColor: "#0d6e65",
+                  color: "#0d6e65",
+                  backgroundColor: "#f0fdfa",
+                }}
+              >
+                Download (.txt)
+              </Button>
+              <Button
+                size="small"
+                icon={<DownloadOutlined />}
+                onClick={() => handleDownloadAliasNotes("json")}
+                style={{
+                  borderRadius: 8,
+                  fontWeight: 600,
+                  fontSize: 12,
+                  borderColor: "#cbd5e1",
+                  color: "#475569",
+                }}
+              >
+                JSON
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        {(() => {
+          const allAliases = getAliasSummaryList();
+          const filterQ = aliasNotesSearch.trim().toLowerCase();
+
+          const filteredList = allAliases.filter((item) => {
+            if (!filterQ) return true;
+            if (item.tableName.toLowerCase().includes(filterQ)) return true;
+            if (item.tableAliases.some((a) => a.toLowerCase().includes(filterQ))) return true;
+            return item.columnAliases.some(
+              (c) =>
+                c.columnName.toLowerCase().includes(filterQ) ||
+                c.aliases.some((a) => a.toLowerCase().includes(filterQ))
+            );
+          });
+
+          const totalConfiguredTables = allAliases.length;
+          const totalColumnAliases = allAliases.reduce(
+            (sum, item) => sum + item.columnAliases.reduce((cSum, c) => cSum + c.aliases.length, 0),
+            0
+          );
+          const totalTableAliases = allAliases.reduce((sum, item) => sum + item.tableAliases.length, 0);
+
+          return (
+            <div className="flex flex-col gap-4 pt-1">
+              {/* Instructions & Summary Banner */}
+              <div className="p-3.5 rounded-xl bg-gradient-to-r from-teal-50 via-emerald-50 to-cyan-50 border border-teal-200/80 shadow-xs">
+                <div className="flex items-start gap-2.5">
+                  <InfoCircleOutlined style={{ color: "#0d9488", fontSize: 16, marginTop: 2 }} />
+                  <div className="text-xs text-slate-700 leading-relaxed flex-1">
+                    <div className="font-bold text-teal-900 mb-0.5">How Alternative Names Work</div>
+                    When users ask questions using these alternative words (e.g. non-technical synonyms or custom aliases), 
+                    the GSearchAI retrieval engine automatically resolves them to their exact database tables and columns.
+                  </div>
+                </div>
+
+                {/* Quick stats pills */}
+                <div className="flex flex-wrap items-center gap-2 mt-3 pt-2.5 border-t border-teal-200/60 text-xs font-medium">
+                  <Tag color="cyan" style={{ borderRadius: 6, padding: "2px 10px", fontWeight: 600 }}>
+                    {totalConfiguredTables} Tables with Aliases
+                  </Tag>
+                  <Tag color="teal" style={{ borderRadius: 6, padding: "2px 10px", fontWeight: 600 }}>
+                    {totalTableAliases} Alternative Table Names
+                  </Tag>
+                  <Tag color="blue" style={{ borderRadius: 6, padding: "2px 10px", fontWeight: 600 }}>
+                    {totalColumnAliases} Alternative Column Names
+                  </Tag>
+                </div>
+              </div>
+
+              {/* Search filter for notes */}
+              {allAliases.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <Input
+                    prefix={<SearchOutlined style={{ color: "#94a3b8" }} />}
+                    placeholder="Filter notes by table, column, or alias word..."
+                    value={aliasNotesSearch}
+                    onChange={(e) => setAliasNotesSearch(e.target.value)}
+                    allowClear
+                    size="middle"
+                    style={{ borderRadius: 8 }}
+                  />
+                </div>
+              )}
+
+              {/* List of Alternative Names clean and clear */}
+              {allAliases.length === 0 ? (
+                <div className="py-12 text-center bg-white rounded-xl border border-gray-200">
+                  <Empty
+                    description={
+                      <div className="text-sm text-gray-500">
+                        <div className="font-semibold mb-1">No alternative names added yet</div>
+                        <div>You can add alternative table names or column names from the Data Dictionary table list.</div>
+                      </div>
+                    }
+                  />
+                </div>
+              ) : filteredList.length === 0 ? (
+                <div className="py-8 text-center bg-white rounded-xl border border-gray-200">
+                  <Empty description="No alternative names matched your search." />
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3 max-h-[55vh] overflow-y-auto pr-1 custom-scrollbar">
+                  {filteredList.map((item, idx) => {
+                    const hasTableAliases = item.tableAliases.length > 0;
+                    const hasColAliases = item.columnAliases.length > 0;
+
+                    return (
+                      <div
+                        key={item.tableName}
+                        className="p-4 rounded-xl bg-white border border-slate-200 hover:border-teal-300 transition-all shadow-xs flex flex-col gap-3"
+                      >
+                        {/* Table Header Row: original table name --> alternative name */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-100">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 font-mono text-xs font-bold flex items-center justify-center">
+                              {idx + 1}
+                            </span>
+                            <span className="font-mono font-bold text-sm text-slate-800 bg-slate-100 px-2 py-0.5 rounded">
+                              {item.tableName}
+                            </span>
+
+                            {hasTableAliases ? (
+                              <div className="flex items-center gap-1.5">
+                                <ArrowRightOutlined style={{ fontSize: 11, color: "#0d9488" }} />
+                                <span className="text-xs font-medium text-gray-500">Alternative Name:</span>
+                                {item.tableAliases.map((aliasStr, aIdx) => (
+                                  <Tag
+                                    key={aIdx}
+                                    color="cyan"
+                                    style={{
+                                      fontSize: 12,
+                                      fontWeight: 700,
+                                      borderRadius: 6,
+                                      padding: "2px 9px",
+                                      backgroundColor: "#f0fdfa",
+                                      borderColor: "#99f6e4",
+                                      color: "#0f766e",
+                                    }}
+                                  >
+                                    {aliasStr}
+                                  </Tag>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-400 italic">
+                                (No alternative table name set — original table name used)
+                              </span>
+                            )}
+                          </div>
+
+                          <Tag color={hasTableAliases ? "teal" : "default"} style={{ fontSize: 11, borderRadius: 6 }}>
+                            {item.columnAliases.length} column(s) with aliases
+                          </Tag>
+                        </div>
+
+                        {/* Column Aliases Section Under Table */}
+                        {hasColAliases ? (
+                          <div className="bg-slate-50/80 rounded-lg p-3 border border-slate-100 flex flex-col gap-2">
+                            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                              <span>Under &quot;{item.tableName}&quot;, column alternative words:</span>
+                            </div>
+                            <div className="flex flex-col gap-2 pl-2">
+                              {item.columnAliases.map((colItem) => (
+                                <div
+                                  key={colItem.columnName}
+                                  className="flex flex-wrap items-center gap-2 text-xs"
+                                >
+                                  <span className="font-mono font-bold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded shadow-2xs">
+                                    {colItem.columnName}
+                                  </span>
+                                  <ArrowRightOutlined style={{ fontSize: 10, color: "#0284c7" }} />
+                                  <span className="text-xs text-slate-500 font-medium">Alternative Word(s):</span>
+                                  {colItem.aliases.map((colAlias, cIdx) => (
+                                    <Tag
+                                      key={cIdx}
+                                      color="blue"
+                                      style={{
+                                        fontSize: 11,
+                                        fontWeight: 600,
+                                        borderRadius: 6,
+                                        padding: "2px 8px",
+                                        backgroundColor: "#f0f9ff",
+                                        borderColor: "#bae6fd",
+                                        color: "#0369a1",
+                                      }}
+                                    >
+                                      {colAlias}
+                                    </Tag>
+                                  ))}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-400 italic pl-1">
+                            No alternative column names defined for this table.
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </Modal>
+
       {/* Observability Trace Drawer */}
       <Drawer
         title={
@@ -3672,7 +5841,7 @@ export default function DatabaseKnowledgePage() {
                   {inspectedTrace.total_latency_ms.toFixed(1)} ms
                 </div>
               </div>
-              <Space direction="vertical" align="end">
+              <Space direction="vertical" orientation="vertical" align="end">
                 <Tag color={inspectedTrace.final_status === "SUCCESS" ? "green" : inspectedTrace.final_status === "SECURITY_REJECTED" ? "red" : "orange"}>
                   {inspectedTrace.final_status}
                 </Tag>
@@ -3775,7 +5944,7 @@ export default function DatabaseKnowledgePage() {
                   {groundedAnswer.pipeline_trace.total_latency_ms} ms
                 </div>
               </div>
-              <Space direction="vertical" align="end">
+              <Space direction="vertical" orientation="vertical" align="end">
                 <Tag color={groundedAnswer.pipeline_trace.success ? "green" : "red"}>
                   {groundedAnswer.pipeline_trace.success ? "PIPELINE SUCCESS" : "PIPELINE FAILED"}
                 </Tag>

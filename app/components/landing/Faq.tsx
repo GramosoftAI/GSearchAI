@@ -30,7 +30,7 @@ export default function Faq() {
           defaultActiveKey={["0"]}
           bordered={false}
           className="gs-faq-collapse"
-          expandIconPosition="end"
+          expandIconPlacement="end"
           expandIcon={() => (
             <span className="plus" style={{ color: "var(--teal)", fontSize: 22, fontWeight: 600 }}>
               +

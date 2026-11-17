@@ -80,12 +80,36 @@ export default function Navbar() {
             <span className="gs-github-star-count">{stars}</span>
           </a>
           <Button
-            // type="text"
-            className="signin"
-            href="/login"
-            style={{ fontWeight: 600, color: "var(--body)", padding: 10 }}
+          type="text"
+          href="/login"
+          style={{
+            fontWeight: 600,
+            fontSize: "15px",
+            color: "var(--body, #334155)",
+            background: "transparent",
+            border: "none",
+            boxShadow: "none",
+            padding: "0 8px",
+            cursor: "pointer",
+          }}
+        >
+         Sign In
+        </Button>
+
+          <Button
+          type="primary"
+          href="/register"
+          style={{
+            background: "var(--teal, #0fb5a1)",
+            borderColor: "var(--teal, #0fb5a1)",
+            color: "#fff",
+            fontWeight: 600,
+            borderRadius: 8,
+            padding: "6px 16px",
+            height: "auto",
+          }}
           >
-            Log in
+          Sign Up
           </Button>
 
           {/* <Button

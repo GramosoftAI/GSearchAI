@@ -22,6 +22,10 @@ export const endpoints = {
     url: "/auth/login",
     method: methods.post,
   },
+  GOOGLE_AUTH: {
+    url: "/auth/google",
+    method: methods.post,
+  },
   REGISTER: {
     url: "/auth/register",
     method: methods.post,
