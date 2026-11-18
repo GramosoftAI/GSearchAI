@@ -60,6 +60,9 @@ interface ServiceHealthItem {
 interface OverviewData {
   metrics: {
     total_users: number;
+    total_agents?: number;
+    total_tenants?: number;
+    files_processed?: number;
     active_endpoints: number;
     system_health: number;
     total_knowledgebases: number;
@@ -68,6 +71,8 @@ interface OverviewData {
     document_knowledgebases: number;
     database_knowledgebases: number;
     active_agents: number;
+    total_tenants?: number;
+    files_processed?: number;
     total_conversations: number;
     total_chunks: number;
     total_users_active: number;
@@ -378,7 +383,7 @@ export default function AdminOverviewPage() {
         </div>
       ) : (
         <div className="space-y-8">
-          {/* 4 PRIMARY KPI CARDS (MATCHING DESIGN REFERENCE) */}
+          {/* PRIMARY KPI METRICS - 7 CARDS MATCHING REFERENCE DESIGN */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             {/* 1. TOTAL USERS - TEAL THEME */}
             <Link
@@ -396,19 +401,20 @@ export default function AdminOverviewPage() {
                   {overviewData?.metrics?.total_users ?? 0}
                 </h3>
                 <span className="text-xs font-semibold text-[#a5ecdc]">
-                  Core Entities
+                  Verified Platform Accounts
                 </span>
               </div>
 
+              {/* Directly Related Icon: Users / People */}
               <div className="relative w-16 h-16 flex items-center justify-center shrink-0">
-                {/* Circular Glass Badge with Grid */}
                 <div className="w-13 h-13 rounded-full bg-[#1aa383]/45 border-2 border-[#5ce8ca]/60 flex items-center justify-center shadow-inner">
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2">
-                    <rect x="3" y="3" width="18" height="18" rx="2" />
-                    <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                   </svg>
                 </div>
-                {/* Flourish Curved Underline with Terminal Dot */}
                 <svg
                   className="absolute -bottom-1 -right-1 overflow-visible pointer-events-none"
                   width="42"
@@ -427,7 +433,201 @@ export default function AdminOverviewPage() {
               </div>
             </Link>
 
-            {/* 2. ACTIVE ENDPOINTS - SLATE NAVY THEME */}
+            {/* 2. ACTIVE AGENTS - CYBER BLUE THEME */}
+            <Link
+              href="/dashboard/bots"
+              className="relative overflow-hidden rounded-[22px] p-6 shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex items-center justify-between group no-underline text-inherit cursor-pointer"
+              style={{
+                background: "linear-gradient(135deg, #0d4b75 0%, #116299 55%, #157abb 100%)",
+              }}
+            >
+              <div className="flex flex-col justify-between z-10">
+                <span className="text-[11px] font-black tracking-wider uppercase text-[#7dd3fc]">
+                  ACTIVE AGENTS
+                </span>
+                <h3 className="text-3xl sm:text-4xl font-black text-white tracking-tight leading-none my-2.5">
+                  {overviewData?.metrics?.total_agents ?? overviewData?.breakdown?.active_agents ?? 0}
+                </h3>
+                <span className="text-xs font-semibold text-[#bae6fd]">
+                  Autonomous AI Assistants
+                </span>
+              </div>
+
+              {/* Directly Related Icon: AI Agent Robot */}
+              <div className="relative w-16 h-16 flex items-center justify-center shrink-0">
+                <div className="w-13 h-13 rounded-full bg-[#0284c7]/45 border-2 border-[#38bdf8]/60 flex items-center justify-center shadow-inner">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="11" width="18" height="10" rx="3" />
+                    <circle cx="8.5" cy="16" r="1.5" fill="#ffffff" />
+                    <circle cx="15.5" cy="16" r="1.5" fill="#ffffff" />
+                    <path d="M12 2v4" />
+                    <path d="M8 2h8" />
+                    <path d="M2 14h1" />
+                    <path d="M21 14h1" />
+                  </svg>
+                </div>
+                <svg
+                  className="absolute -bottom-1 -right-1 overflow-visible pointer-events-none"
+                  width="42"
+                  height="20"
+                  viewBox="0 0 42 20"
+                  fill="none"
+                >
+                  <path
+                    d="M2 4C10 16 26 17 38 9"
+                    stroke="#38bdf8"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                  />
+                  <circle cx="38" cy="9" r="2.8" fill="#38bdf8" />
+                </svg>
+              </div>
+            </Link>
+
+            {/* 3. TENANTS - ROYAL VIOLET THEME */}
+            <div
+              onClick={() => setActiveTab("resources")}
+              className="relative overflow-hidden rounded-[22px] p-6 shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex items-center justify-between group cursor-pointer"
+              style={{
+                background: "linear-gradient(135deg, #2b1f5d 0%, #3d257a 55%, #4f2c96 100%)",
+              }}
+            >
+              <div className="flex flex-col justify-between z-10">
+                <span className="text-[11px] font-black tracking-wider uppercase text-[#c4b5fd]">
+                  TENANTS
+                </span>
+                <h3 className="text-3xl sm:text-4xl font-black text-white tracking-tight leading-none my-2.5">
+                  {overviewData?.metrics?.total_tenants ?? 0}
+                </h3>
+                <span className="text-xs font-semibold text-[#ddd6fe]">
+                  Multi-Tenant Workspaces
+                </span>
+              </div>
+
+              {/* Directly Related Icon: Multi-Tenant Enterprise Buildings */}
+              <div className="relative w-16 h-16 flex items-center justify-center shrink-0">
+                <div className="w-13 h-13 rounded-full bg-[#7c3aed]/45 border-2 border-[#a78bfa]/60 flex items-center justify-center shadow-inner">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="4" y="2" width="16" height="20" rx="2" />
+                    <path d="M9 22v-4h6v4" />
+                    <path d="M8 6h.01M16 6h.01M12 6h.01" />
+                    <path d="M8 10h.01M16 10h.01M12 10h.01" />
+                    <path d="M8 14h.01M16 14h.01M12 14h.01" />
+                  </svg>
+                </div>
+                <svg
+                  className="absolute -bottom-1 -right-1 overflow-visible pointer-events-none"
+                  width="42"
+                  height="20"
+                  viewBox="0 0 42 20"
+                  fill="none"
+                >
+                  <path
+                    d="M2 4C10 16 26 17 38 9"
+                    stroke="#a78bfa"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                  />
+                  <circle cx="38" cy="9" r="2.8" fill="#a78bfa" />
+                </svg>
+              </div>
+            </div>
+
+            {/* 4. FILES PROCESSED - WARM GOLD / AMBER THEME */}
+            <Link
+              href="/dashboard/knowledge-base-files"
+              className="relative overflow-hidden rounded-[22px] p-6 shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex items-center justify-between group no-underline text-inherit cursor-pointer"
+              style={{
+                background: "linear-gradient(135deg, #9a4806 0%, #ba5d08 55%, #d97706 100%)",
+              }}
+            >
+              <div className="flex flex-col justify-between z-10">
+                <span className="text-[11px] font-black tracking-wider uppercase text-[#fde68a]">
+                  FILES PROCESSED
+                </span>
+                <h3 className="text-3xl sm:text-4xl font-black text-white tracking-tight leading-none my-2.5">
+                  {overviewData?.metrics?.files_processed ?? 0}
+                </h3>
+                <span className="text-xs font-semibold text-[#fef08a]">
+                  Documents, PDFs & Sheets
+                </span>
+              </div>
+
+              {/* Directly Related Icon: Processed Document with Checkmark */}
+              <div className="relative w-16 h-16 flex items-center justify-center shrink-0">
+                <div className="w-13 h-13 rounded-full bg-[#f59e0b]/45 border-2 border-[#fde68a]/60 flex items-center justify-center shadow-inner">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <path d="M9 15l2 2 4-4" stroke="#ffffff" strokeWidth="2.5" />
+                  </svg>
+                </div>
+                <svg
+                  className="absolute -bottom-1 -right-1 overflow-visible pointer-events-none"
+                  width="42"
+                  height="20"
+                  viewBox="0 0 42 20"
+                  fill="none"
+                >
+                  <path
+                    d="M2 4C10 16 26 17 38 9"
+                    stroke="#fde68a"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                  />
+                  <circle cx="38" cy="9" r="2.8" fill="#fde68a" />
+                </svg>
+              </div>
+            </Link>
+
+            {/* 5. TOTAL KNOWLEDGEBASES - AMETHYST PURPLE THEME */}
+            <Link
+              href="/dashboard/knowledge-base"
+              className="relative overflow-hidden rounded-[22px] p-6 shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex items-center justify-between group no-underline text-inherit cursor-pointer"
+              style={{
+                background: "linear-gradient(135deg, #3d155f 0%, #541d82 55%, #6b24a3 100%)",
+              }}
+            >
+              <div className="flex flex-col justify-between z-10">
+                <span className="text-[11px] font-black tracking-wider uppercase text-[#e9d5ff]">
+                  KNOWLEDGE BASES
+                </span>
+                <h3 className="text-3xl sm:text-4xl font-black text-white tracking-tight leading-none my-2.5">
+                  {overviewData?.metrics?.total_knowledgebases ?? 0}
+                </h3>
+                <span className="text-xs font-semibold text-[#f3e8ff]">
+                  {overviewData?.breakdown?.document_knowledgebases ?? 0} Docs • {overviewData?.breakdown?.database_knowledgebases ?? 0} DBs
+                </span>
+              </div>
+
+              {/* Directly Related Icon: Database & Knowledge Repository */}
+              <div className="relative w-16 h-16 flex items-center justify-center shrink-0">
+                <div className="w-13 h-13 rounded-full bg-[#9333ea]/45 border-2 border-[#c084fc]/60 flex items-center justify-center shadow-inner">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <ellipse cx="12" cy="5" rx="9" ry="3" />
+                    <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+                    <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+                  </svg>
+                </div>
+                <svg
+                  className="absolute -bottom-1 -right-1 overflow-visible pointer-events-none"
+                  width="42"
+                  height="20"
+                  viewBox="0 0 42 20"
+                  fill="none"
+                >
+                  <path
+                    d="M2 4C10 16 26 17 38 9"
+                    stroke="#c084fc"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                  />
+                  <circle cx="38" cy="9" r="2.8" fill="#c084fc" />
+                </svg>
+              </div>
+            </Link>
+
+            {/* 6. ACTIVE ENDPOINTS - SLATE NAVY THEME */}
             <div
               onClick={() => setActiveTab("endpoints")}
               className="relative overflow-hidden rounded-[22px] p-6 shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex items-center justify-between group cursor-pointer"
@@ -443,128 +643,87 @@ export default function AdminOverviewPage() {
                   {overviewData?.metrics?.active_endpoints ?? 0}
                 </h3>
                 <span className="text-xs font-semibold text-[#8eb6d4]">
-                  Total Routes & Agents
+                  {overviewData?.breakdown?.api_routes_count ?? 0} API Routes • {overviewData?.breakdown?.agent_endpoints_count ?? 0} Agents
                 </span>
               </div>
 
-              {/* 3D Isometric Stacked Cubes Graphic */}
+              {/* Directly Related Icon: API Endpoint & Routing Code Brackets */}
               <div className="relative w-16 h-16 flex items-center justify-center shrink-0">
-                <svg width="48" height="48" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  {/* Top Cube (Orange / Amber) */}
-                  <g transform="translate(20, 4)">
-                    <polygon points="12,0 24,7 12,14 0,7" fill="#fbbf24" />
-                    <polygon points="0,7 12,14 12,26 0,19" fill="#f59e0b" />
-                    <polygon points="12,14 24,7 24,19 12,26" fill="#d97706" />
-                  </g>
-                  {/* Bottom-Left Cube (Emerald / Mint) */}
-                  <g transform="translate(8, 22)">
-                    <polygon points="12,0 24,7 12,14 0,7" fill="#34d399" />
-                    <polygon points="0,7 12,14 12,26 0,19" fill="#10b981" />
-                    <polygon points="12,14 24,7 24,19 12,26" fill="#059669" />
-                  </g>
-                  {/* Bottom-Right Cube (Sky / Royal Blue) */}
-                  <g transform="translate(32, 22)">
-                    <polygon points="12,0 24,7 12,14 0,7" fill="#60a5fa" />
-                    <polygon points="0,7 12,14 12,26 0,19" fill="#3b82f6" />
-                    <polygon points="12,14 24,7 24,19 12,26" fill="#2563eb" />
-                  </g>
-                </svg>
-              </div>
-            </div>
-
-            {/* 3. SYSTEM HEALTH - AMBER / WARM GOLD THEME */}
-            <div
-              onClick={() => setActiveTab("resources")}
-              className="relative overflow-hidden rounded-[22px] p-6 shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex items-center justify-between group cursor-pointer border border-[#f8cd68]/50"
-              style={{
-                background: "linear-gradient(135deg, #fee8aa 0%, #fed884 55%, #fecf72 100%)",
-              }}
-            >
-              <div className="flex flex-col justify-between z-10">
-                <span className="text-[11px] font-black tracking-wider uppercase text-[#8b4b12]">
-                  SYSTEM HEALTH
-                </span>
-                <h3 className="text-3xl sm:text-4xl font-black text-[#4e2504] tracking-tight leading-none my-2.5">
-                  {overviewData?.metrics?.system_health ?? 98.5}%
-                </h3>
-                <span className="text-xs font-semibold text-[#8b4b12]">
-                  Optimal Diagnostics
-                </span>
-              </div>
-
-              {/* Key & Lock with Flourish Swoosh Underline */}
-              <div className="relative w-16 h-16 flex items-center justify-center shrink-0">
-                <svg width="52" height="52" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  {/* Golden Key */}
-                  <g transform="rotate(-18 28 24)">
-                    <circle cx="20" cy="24" r="7" stroke="#ea580c" strokeWidth="3" fill="#fed7aa" />
-                    <path d="M26 24H42" stroke="#ea580c" strokeWidth="3.5" strokeLinecap="round" />
-                    <path d="M35 24V29" stroke="#ea580c" strokeWidth="3" strokeLinecap="round" />
-                    <path d="M39 24V28" stroke="#ea580c" strokeWidth="3" strokeLinecap="round" />
-                  </g>
-                  {/* Teal Padlock */}
-                  <g transform="translate(26, 17)">
-                    <path d="M6 9V5.5a4.5 4.5 0 0 1 9 0V9" stroke="#ea580c" strokeWidth="2.5" fill="none" strokeLinecap="round" />
-                    <rect x="2" y="9" width="17" height="14" rx="3.5" fill="#0d9488" stroke="#14b8a6" strokeWidth="1.5" />
-                    <circle cx="10.5" cy="15" r="1.6" fill="#ffffff" />
-                    <path d="M10.5 16.5V19.5" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
-                  </g>
-                  {/* Curved flourish swoosh with terminal dot */}
+                <div className="w-13 h-13 rounded-full bg-[#0284c7]/40 border-2 border-[#38bdf8]/60 flex items-center justify-center shadow-inner">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="16 18 22 12 16 6" />
+                    <polyline points="8 6 2 12 8 18" />
+                    <line x1="10" y1="19" x2="14" y2="5" />
+                  </svg>
+                </div>
+                <svg
+                  className="absolute -bottom-1 -right-1 overflow-visible pointer-events-none"
+                  width="42"
+                  height="20"
+                  viewBox="0 0 42 20"
+                  fill="none"
+                >
                   <path
-                    d="M20 50C28 54 44 52 54 42"
-                    stroke="#b45309"
-                    strokeWidth="2.2"
+                    d="M2 4C10 16 26 17 38 9"
+                    stroke="#38bdf8"
+                    strokeWidth="2.4"
                     strokeLinecap="round"
                   />
-                  <circle cx="54" cy="42" r="2.5" fill="#b45309" />
+                  <circle cx="38" cy="9" r="2.8" fill="#38bdf8" />
                 </svg>
               </div>
             </div>
 
-            {/* 4. TOTAL KNOWLEDGEBASES - ROYAL PURPLE THEME */}
-            <Link
-              href="/dashboard/knowledge-base"
-              className="relative overflow-hidden rounded-[22px] p-6 shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 flex items-center justify-between group no-underline text-inherit cursor-pointer"
+            {/* 7. SYSTEM HEALTH - EMERALD PULSE THEME (2 COLUMNS) */}
+            <div
+              onClick={() => setActiveTab("resources")}
+              className="col-span-1 lg:col-span-2 relative overflow-hidden rounded-[22px] p-6 shadow-md hover:shadow-xl hover:scale-[1.01] transition-all duration-300 flex items-center justify-between group cursor-pointer"
               style={{
-                background: "linear-gradient(135deg, #271952 0%, #381d6e 55%, #462280 100%)",
+                background: "linear-gradient(135deg, #064e3b 0%, #065f46 55%, #047857 100%)",
               }}
             >
               <div className="flex flex-col justify-between z-10">
-                <span className="text-[11px] font-black tracking-wider uppercase text-[#bba1eb]">
-                  TOTAL KNOWLEDGEBASES
+                <span className="text-[11px] font-black tracking-wider uppercase text-[#6ee7b7]">
+                  SYSTEM HEALTH
                 </span>
-                <h3 className="text-3xl sm:text-4xl font-black text-white tracking-tight leading-none my-2.5">
-                  {overviewData?.metrics?.total_knowledgebases ?? 0}
-                </h3>
-                <span className="text-xs font-semibold text-[#cebbf3]">
-                  Active Joins & Network Density
+                <div className="flex items-baseline gap-3 my-2.5">
+                  <h3 className="text-3xl sm:text-4xl font-black text-white tracking-tight leading-none">
+                    {overviewData?.metrics?.system_health ?? 98.5}%
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-400/20 text-[#a7f3d0] border border-emerald-400/30">
+                    {overviewData?.breakdown?.system_health_details?.status ?? "Optimal"}
+                  </span>
+                </div>
+                <span className="text-xs font-semibold text-[#a7f3d0]">
+                  Core Subsystems Operational • All Diagnostics Normal
                 </span>
               </div>
 
-              {/* Multi-Node Network Graph Graphic */}
+              {/* Directly Related Icon: Security Shield with EKG Heartbeat Pulse */}
               <div className="relative w-16 h-16 flex items-center justify-center shrink-0">
-                <svg width="52" height="52" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  {/* Dashed connector struts */}
-                  <line x1="16" y1="16" x2="28" y2="28" stroke="#c084fc" strokeWidth="2.2" strokeDasharray="3 2" />
-                  <line x1="48" y1="16" x2="36" y2="28" stroke="#c084fc" strokeWidth="2.2" strokeDasharray="3 2" />
-                  <line x1="16" y1="48" x2="28" y2="36" stroke="#c084fc" strokeWidth="2.2" strokeDasharray="3 2" />
-                  <line x1="48" y1="48" x2="36" y2="36" stroke="#c084fc" strokeWidth="2.2" strokeDasharray="3 2" />
-
-                  {/* Central 3D Cube Node */}
-                  <g transform="translate(24, 23)">
-                    <polygon points="8,0 16,5 8,10 0,5" fill="#38bdf8" />
-                    <polygon points="0,5 8,10 8,18 0,13" fill="#0284c7" />
-                    <polygon points="8,10 16,5 16,13 8,18" fill="#0369a1" />
-                  </g>
-
-                  {/* Satellite colored nodes */}
-                  <circle cx="16" cy="16" r="4.5" fill="#38bdf8" stroke="#e0f2fe" strokeWidth="1.5" />
-                  <circle cx="48" cy="16" r="4.5" fill="#f43f5e" stroke="#ffe4e6" strokeWidth="1.5" />
-                  <circle cx="16" cy="48" r="4.5" fill="#2dd4bf" stroke="#ccfbf1" strokeWidth="1.5" />
-                  <circle cx="48" cy="48" r="4.5" fill="#fbbf24" stroke="#fef3c7" strokeWidth="1.5" />
+                <div className="w-13 h-13 rounded-full bg-[#10b981]/45 border-2 border-[#34d399]/60 flex items-center justify-center shadow-inner">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    <path d="M8 12h2.5l1.5-3 2 6 1.5-3H18" stroke="#ffffff" strokeWidth="2.2" />
+                  </svg>
+                </div>
+                <svg
+                  className="absolute -bottom-1 -right-1 overflow-visible pointer-events-none"
+                  width="42"
+                  height="20"
+                  viewBox="0 0 42 20"
+                  fill="none"
+                >
+                  <path
+                    d="M2 4C10 16 26 17 38 9"
+                    stroke="#34d399"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                  />
+                  <circle cx="38" cy="9" r="2.8" fill="#34d399" />
                 </svg>
               </div>
-            </Link>
+            </div>
           </div>
 
           {/* SUBSYSTEM HEALTH ROW */}
