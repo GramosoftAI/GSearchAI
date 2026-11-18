@@ -435,9 +435,9 @@ async def init_rls_policies():
 
             FOR ALL
 
-            USING (current_setting('app.is_superadmin', true) = 'true' OR id = COALESCE(NULLIF(current_setting('app.current_tenant', true), '')::uuid, '00000000-0000-0000-0000-000000000000'))
+            USING (id = COALESCE(NULLIF(current_setting('app.current_tenant', true), '')::uuid, '00000000-0000-0000-0000-000000000000'))
 
-            WITH CHECK (current_setting('app.is_superadmin', true) = 'true' OR id = COALESCE(NULLIF(current_setting('app.current_tenant', true), '')::uuid, '00000000-0000-0000-0000-000000000000'))
+            WITH CHECK (id = COALESCE(NULLIF(current_setting('app.current_tenant', true), '')::uuid, '00000000-0000-0000-0000-000000000000'))
 
             """
 
@@ -519,8 +519,6 @@ async def init_rls_policies():
 
                 USING (
 
-                    current_setting('app.is_superadmin', true) = 'true' OR
-
                     { "tenant_id IS NULL OR " if table == "personalities" else "" }
 
                     tenant_id = COALESCE(NULLIF(current_setting('app.current_tenant', true), '')::uuid, '00000000-0000-0000-0000-000000000000')
@@ -528,8 +526,6 @@ async def init_rls_policies():
                 )
 
                 WITH CHECK (
-
-                    current_setting('app.is_superadmin', true) = 'true' OR
 
                     { "tenant_id IS NULL OR " if table == "personalities" else "" }
 
@@ -776,16 +772,6 @@ async def init_db():
             DatabaseSchemaSnapshot,
             DatabaseSchemaEmbedding,
         )
-        from ..modules.superadmin.models import (
-            SuperAdminUser,
-            SuperAdminAuditLog,
-            SuperAdminDashboardWidget,
-            SuperAdminSession,
-            SuperAdminLoginHistory,
-            SuperAdminPasswordResetToken,
-            SuperAdminWebAuthnCredential,
-            SuperAdminRoleDefinition,
-        )
         try:
             from ..memory.app.schema.database import EpisodicMemory, UserPreference, init_db as init_memory_db
             await init_memory_db()
@@ -961,9 +947,6 @@ async def init_db():
             # Auto-migrate users columns
             user_cols = [
                 ("preferred_llm_model", "VARCHAR(255)"),
-                ("locked_until", "TIMESTAMPTZ"),
-                ("lock_reason", "VARCHAR(255)"),
-                ("last_login_at", "TIMESTAMPTZ"),
             ]
             for col_n, col_t in user_cols:
                 await conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col_n} {col_t}"))

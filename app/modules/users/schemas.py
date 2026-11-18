@@ -23,6 +23,14 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
+class PaginatedUsersResponse(BaseModel):
+    """Paginated users response schema"""
+    data: list[UserResponse]
+    total: int
+    skip: int
+    limit: int
+
+
 class UserUpdate(BaseModel):
     """User update schema"""
     email: Optional[str] = None
@@ -32,6 +40,17 @@ class UserUpdate(BaseModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
     is_admin: Optional[bool] = None
+
+
+class UserCreate(BaseModel):
+    """User creation schema for tenant admin"""
+    email: str
+    password: Optional[str] = "TempPass123!"
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    role: Optional[str] = "user"
+    is_admin: Optional[bool] = False
+    is_active: Optional[bool] = True
 
 
 class UserLLMPreferenceUpdate(BaseModel):

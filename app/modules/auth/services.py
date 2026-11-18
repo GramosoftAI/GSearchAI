@@ -188,33 +188,43 @@ async def register_user(request: schemas.RegisterRequest, db: AsyncSession) -> d
             
         latest_otp.is_used = True
 
-        # ============= CREATE TENANT =============
-        if request.tenant_name:
+        # ============= CREATE OR JOIN TENANT =============
+        tenant_name_clean = (request.tenant_name or "").strip()
+        if tenant_name_clean:
             # Check if tenant already exists
-            logger.debug(f"  Checking if tenant '{request.tenant_name}' exists...")
+            logger.debug(f"  Checking if tenant '{tenant_name_clean}' exists...")
             existing_tenant = await db.execute(
-                select(Tenant).where(Tenant.name == request.tenant_name)
+                select(Tenant).where(Tenant.name.ilike(tenant_name_clean))
             )
-            if existing_tenant.scalar_one_or_none():
-                logger.warning(f"   Tenant '{request.tenant_name}' already exists")
-                return {
-                    "success": False,
-                    "error": "Tenant name already registered",
-                }
-
-            # Create new tenant
-            tenant_id = uuid.uuid4()
-            tenant = Tenant(
-                id=tenant_id,
-                name=request.tenant_name,
-                slug=request.tenant_name.lower().replace(" ", "-"),
-            )
-            db.add(tenant)
-            logger.info(f"   Created tenant: {tenant.id} ({request.tenant_name})")
+            existing = existing_tenant.scalar_one_or_none()
+            if existing:
+                tenant_id = existing.id
+                logger.info(f"   Joined existing tenant: {tenant_id} ({existing.name})")
+            else:
+                # Create new tenant
+                tenant_id = uuid.uuid4()
+                tenant = Tenant(
+                    id=tenant_id,
+                    name=tenant_name_clean,
+                    slug=tenant_name_clean.lower().replace(" ", "-"),
+                )
+                db.add(tenant)
+                logger.info(f"   Created tenant: {tenant.id} ({tenant_name_clean})")
         else:
-            # For now, require tenant_name
-            logger.warning(f"   No tenant_name provided for signup")
-            return {"success": False, "error": "tenant_name required for registration"}
+            # Default to primary tenant if exists, or generate one
+            pt_query = await db.execute(select(Tenant).order_by(Tenant.created_at.asc()).limit(1))
+            primary_tenant = pt_query.scalar_one_or_none()
+            if primary_tenant:
+                tenant_id = primary_tenant.id
+                logger.info(f"   Assigned to primary tenant: {tenant_id} ({primary_tenant.name})")
+            else:
+                tenant_id = uuid.uuid4()
+                tenant = Tenant(
+                    id=tenant_id,
+                    name="Default Organization",
+                    slug="default-organization",
+                )
+                db.add(tenant)
 
         # ============= CREATE USER =============
         logger.debug(f"  Creating user: {request.email}...")
