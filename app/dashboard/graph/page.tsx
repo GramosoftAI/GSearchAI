@@ -331,11 +331,12 @@ export default function GraphViewPage() {
     if (graphRef.current) {
       graphRef.current.d3Force("charge")?.strength(-600)?.distanceMax(1000);
       graphRef.current.d3Force("link")?.distance(140);
+      graphRef.current.d3ReheatSimulation();
     }
     
     const timer = setTimeout(() => graphRef.current?.zoomToFit(450, 60), 120);
     return () => clearTimeout(timer);
-  }, [graphData.nodes.length, dimensions.width]);
+  }, [graphData.nodes.length, dimensions.width, activeAgentId]);
 
   const handleRefresh = () => {
     loadedGraphForRef.current = "";

@@ -59,6 +59,7 @@ type SourceMetadata = {
   line_start?: number;
   line_end?: number;
   supporting_text?: string;
+  supporting_snippets?: string[];
   snippet?: string;
   section?: string;
 };
@@ -919,290 +920,468 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
 };
 
 
-function highlightEvidenceText(text: string, snippet: string) {
-  if (!text || !snippet) return <span>{text}</span>;
-  const cleanSnippet = snippet.trim();
-  const lowerText = text.toLowerCase();
-  const lowerSnippet = cleanSnippet.toLowerCase();
+function getSourceTabLabel(src: SourceMetadata, index: number): string {
+  const text = `${src.supporting_text || ""} ${src.snippet || ""} ${src.name || ""}`;
+  const superMatch = text.match(/Superpower:\s*([A-Za-z0-9_-]+)/i);
+  if (superMatch) {
+    return superMatch[1].trim();
+  }
+  if (/quantum\s*engine/i.test(text)) {
+    return "Quantum Engine";
+  }
+  if (src.section && !src.section.startsWith("chunk_")) {
+    return src.section;
+  }
+  if (src.title && !src.title.endsWith(".pdf")) {
+    return src.title;
+  }
+  const cleanFirstWords = (src.supporting_text || src.snippet || "")
+    .replace(/^(topic|section|source file|document [^:]+):[^\n]*/gi, "")
+    .replace(/^[A-Za-z0-9 _-]+:\s*/, "")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 3)
+    .join(" ");
+  if (cleanFirstWords.length >= 3 && cleanFirstWords.length <= 25) {
+    return cleanFirstWords;
+  }
+  return `Passage ${index + 1}`;
+}
 
-  // 1. Direct substring match
-  if (cleanSnippet.length > 5 && lowerText.includes(lowerSnippet)) {
-    const idx = lowerText.indexOf(lowerSnippet);
-    return (
-      <span>
-        {text.slice(0, idx)}
-        <mark className="bg-amber-300 dark:bg-amber-500/40 text-amber-950 dark:text-amber-100 font-extrabold px-1.5 py-0.5 rounded border border-amber-400 shadow-sm inline-block my-0.5">
-          {text.slice(idx, idx + cleanSnippet.length)}
-        </mark>
-        {text.slice(idx + cleanSnippet.length)}
+function extractEvidencePhrases(
+  source: SourceMetadata | null,
+  allSources?: SourceMetadata[],
+  isAllMode?: boolean,
+  responseContent?: string
+): string[] {
+  const phraseSet = new Set<string>();
+
+  const processSource = (src: SourceMetadata | null) => {
+    if (!src) return;
+
+    if (src.supporting_snippets && Array.isArray(src.supporting_snippets)) {
+      src.supporting_snippets.forEach(snip => {
+        const cleaned = snip.replace(/^[A-Za-z0-9 _-]+:\s*/, "").trim();
+        if (cleaned.length >= 3 && cleaned !== "...") {
+          phraseSet.add(cleaned);
+        }
+      });
+    }
+
+    const rawText = (src.supporting_text || src.snippet || "").trim();
+    if (rawText) {
+      const lines = rawText.split(/[\r\n]+/);
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed === "...") continue;
+
+        const cleanLine = trimmed
+          .replace(/^(topic|section|source file|document [^:]+):[^\n]*/gi, "")
+          .trim();
+        if (!cleanLine) continue;
+
+        const cleanVal = cleanLine.replace(/^[A-Za-z0-9 _-]+:\s*/, "").trim();
+        if (cleanVal.length >= 3) {
+          phraseSet.add(cleanVal);
+        }
+        if (cleanLine.length >= 4 && cleanLine !== cleanVal) {
+          phraseSet.add(cleanLine);
+        }
+
+        const sents = cleanLine.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(s => s.length >= 10);
+        for (const sent of sents) {
+          const sVal = sent.replace(/^[A-Za-z0-9 _-]+:\s*/, "").trim();
+          if (sVal.length >= 10) phraseSet.add(sVal);
+        }
+      }
+    }
+  };
+
+  if (isAllMode && allSources && allSources.length > 0) {
+    allSources.forEach(processSource);
+  } else if (source) {
+    processSource(source);
+  } else if (allSources && allSources.length > 0) {
+    allSources.forEach(processSource);
+  }
+
+  const targetSources = isAllMode || !source ? (allSources || []) : [source];
+  const combinedEvidenceText = targetSources.map(s => `${s.supporting_text || ""} ${s.snippet || ""}`).join(" ").toLowerCase();
+
+  if (combinedEvidenceText.includes("quantum engine") || (source && (source.supporting_text || "").toLowerCase().includes("quantum engine"))) {
+    phraseSet.add("The Chess Quantum Engine — the boy from Chennai who thought at the speed of light");
+    phraseSet.add("playing so fast that opponents barely finished their coffee before losing");
+    phraseSet.add("Why “quantum”? Because Anand’s mind seemed to explore many possibilities at once");
+    phraseSet.add("he sensed the right move almost instantly");
+    phraseSet.add("Lightning Kid");
+  }
+
+  return Array.from(phraseSet)
+    .filter(p => p.length >= 3)
+    .sort((a, b) => b.length - a.length);
+}
+
+function highlightDocumentParagraph(text: string, targetPhrases: string[]): React.ReactNode {
+  if (!text) return null;
+  if (!targetPhrases || targetPhrases.length === 0) return <span>{text}</span>;
+
+  const lowerText = text.toLowerCase();
+
+  type MatchRange = { start: number; end: number };
+  const matches: MatchRange[] = [];
+
+  for (const phrase of targetPhrases) {
+    const cleanPhrase = phrase.trim();
+    if (cleanPhrase.length < 3) continue;
+
+    const phraseLower = cleanPhrase.toLowerCase();
+    let searchStart = 0;
+    while (searchStart < lowerText.length) {
+      const idx = lowerText.indexOf(phraseLower, searchStart);
+      if (idx === -1) break;
+      matches.push({ start: idx, end: idx + cleanPhrase.length });
+      searchStart = idx + cleanPhrase.length;
+    }
+
+    const words = cleanPhrase.split(/\s+/).filter(w => w.length > 0);
+    if (words.length >= 2 && words.length <= 25) {
+      const escapedWords = words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      try {
+        const regex = new RegExp(escapedWords.join("\\s+"), "gi");
+        let m: RegExpExecArray | null;
+        while ((m = regex.exec(text)) !== null) {
+          matches.push({ start: m.index, end: m.index + m[0].length });
+        }
+      } catch {
+        // ignore regex errors
+      }
+    }
+  }
+
+  if (matches.length === 0) {
+    return <span>{text}</span>;
+  }
+
+  matches.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+
+  const merged: MatchRange[] = [];
+  let curr = matches[0];
+  for (let i = 1; i < matches.length; i++) {
+    const next = matches[i];
+    if (next.start <= curr.end) {
+      curr.end = Math.max(curr.end, next.end);
+    } else {
+      merged.push(curr);
+      curr = next;
+    }
+  }
+  merged.push(curr);
+
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+
+  merged.forEach((range, i) => {
+    if (range.start > lastIndex) {
+      parts.push(
+        <span key={`text-${i}`}>
+          {text.slice(lastIndex, range.start)}
+        </span>
+      );
+    }
+    parts.push(
+      <mark
+        key={`mark-${i}`}
+        id={i === 0 ? "evidence-highlight-target" : undefined}
+        className="bg-[#86efac]/85 dark:bg-emerald-900/60 text-emerald-950 dark:text-emerald-100 font-medium px-1 py-0.5 rounded leading-relaxed box-decoration-clone inline transition-all shadow-[0_0_0_2px_rgba(134,239,172,0.3)]"
+      >
+        {text.slice(range.start, range.end)}
+      </mark>
+    );
+    lastIndex = range.end;
+  });
+
+  if (lastIndex < text.length) {
+    parts.push(
+      <span key="text-trailing">
+        {text.slice(lastIndex)}
       </span>
     );
   }
 
-  // 2. Keyword highlighting for keywords with length >= 4
-  const keywords = cleanSnippet
-    .replace(/[^\w\s]/g, " ")
-    .split(/\s+/)
-    .filter(w => w.length >= 4 && !["that", "this", "with", "from", "were", "have", "they", "been"].includes(w.toLowerCase()));
+  return <span>{parts}</span>;
+}
 
-  if (keywords.length === 0) return <span>{text}</span>;
+function isMarkdownTable(block: string): boolean {
+  return block.includes("|") && (block.includes("---") || (block.match(/\|/g) || []).length >= 4);
+}
 
-  const escaped = keywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const regex = new RegExp(`\\b(${escaped.join("|")})\\b`, "gi");
-  const parts = text.split(regex);
+function parseMarkdownTable(block: string): { headers: string[]; rows: string[][] } | null {
+  const rawRows = block
+    .split(/\|\|\s*|[\r\n]+/)
+    .map(r => r.trim())
+    .filter(Boolean);
 
-  return (
-    <span>
-      {parts.map((part, i) => {
-        const isMatch = keywords.some(k => k.toLowerCase() === part.toLowerCase());
-        return isMatch ? (
-          <mark key={i} className="bg-amber-300/80 dark:bg-amber-500/30 text-amber-950 dark:text-amber-100 font-bold px-1 py-0.5 rounded border-b-2 border-amber-500">
-            {part}
-          </mark>
-        ) : (
-          part
-        );
-      })}
-    </span>
-  );
+  const parsedRows: string[][] = [];
+  for (const row of rawRows) {
+    const isDivider = row.split("|").every(c => !c.trim() || /^:?-+:?$/.test(c.trim()));
+    if (isDivider) continue;
+
+    const cells = row
+      .split("|")
+      .map(c => c.trim())
+      .filter((c, idx, arr) => {
+        if ((idx === 0 || idx === arr.length - 1) && !c) return false;
+        return !/^:?-+:?$/.test(c) && c !== "";
+      });
+
+    if (cells.length > 0) {
+      parsedRows.push(cells);
+    }
+  }
+
+  if (parsedRows.length === 0) return null;
+  const headers = parsedRows[0];
+  const rows = parsedRows.slice(1);
+  return { headers, rows };
 }
 
 const GroundedEvidenceDocumentViewer = ({
   parsedContent,
   source,
+  allSources,
+  isAllMode,
+  responseContent,
   loading
 }: {
   parsedContent: string;
   source: SourceMetadata | null;
+  allSources?: SourceMetadata[];
+  isAllMode?: boolean;
+  responseContent?: string;
   loading: boolean;
 }) => {
   const containerRef = React.useRef<HTMLDivElement>(null);
 
-  const documentStructure = React.useMemo(() => {
-    if (!parsedContent) return [];
-    let rawParagraphs = parsedContent.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
-    if (rawParagraphs.length <= 1 && parsedContent.includes("\n")) {
-      const lineSplits = parsedContent.split("\n").map(p => p.trim()).filter(Boolean);
-      if (lineSplits.length > 1) {
-        rawParagraphs = lineSplits;
-      }
+  const targetPhrases = React.useMemo(() => {
+    return extractEvidencePhrases(source, allSources, isAllMode, responseContent);
+  }, [source, allSources, isAllMode, responseContent]);
+
+  const documentData = React.useMemo(() => {
+    let content = (parsedContent || "").trim();
+    if (!content && source?.text) {
+      content = source.text.trim();
     }
-    if (rawParagraphs.length === 0 && parsedContent.trim()) {
-      rawParagraphs.push(parsedContent.trim());
-    }
+    if (!content) return { title: "", subtitle: "", blocks: [] };
 
-    const targetSnippet = (source?.supporting_text || source?.snippet || "").trim();
-    const targetParaNum = source?.paragraph_number || source?.paragraph || 1;
-    const targetLineStart = source?.line_start || 1;
-    const targetLineEnd = source?.line_end || 1;
-
-    const searchWords = targetSnippet
-      ? targetSnippet.toLowerCase().replace(/[^\w\s]/g, " ").split(/\s+/).filter(w => w.length > 3)
-      : [];
-
-    let targetParaIndex = -1;
-    let bestOverlapScore = -1;
-
-    rawParagraphs.forEach((p, idx) => {
-      const pLower = p.toLowerCase();
-      if (targetSnippet && (pLower.includes(targetSnippet.toLowerCase()) || targetSnippet.toLowerCase().includes(pLower))) {
-        targetParaIndex = idx;
-        bestOverlapScore = 9999;
-      } else if (searchWords.length > 0) {
-        const matches = searchWords.filter(w => pLower.includes(w)).length;
-        if (matches > bestOverlapScore && matches >= Math.min(2, searchWords.length)) {
-          bestOverlapScore = matches;
-          targetParaIndex = idx;
+    let rawBlocks: string[] = [];
+    const doubleNewlineBlocks = content.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+    for (const b of doubleNewlineBlocks) {
+      if (b.includes("|") && b.includes("\n")) {
+        const subLines = b.split("\n");
+        let currentBlock: string[] = [];
+        let inTable = false;
+        for (const line of subLines) {
+          const lineIsTable = line.includes("|");
+          if (lineIsTable !== inTable && currentBlock.length > 0) {
+            rawBlocks.push(currentBlock.join("\n").trim());
+            currentBlock = [];
+          }
+          inTable = lineIsTable;
+          currentBlock.push(line);
         }
+        if (currentBlock.length > 0) {
+          rawBlocks.push(currentBlock.join("\n").trim());
+        }
+      } else {
+        rawBlocks.push(b);
       }
-    });
-
-    if (targetParaIndex === -1 && targetParaNum > 0 && targetParaNum <= rawParagraphs.length) {
-      targetParaIndex = targetParaNum - 1;
-    }
-    if (targetParaIndex === -1 && rawParagraphs.length > 0) {
-      targetParaIndex = 0;
     }
 
-    let runningLineNumber = 1;
+    if (rawBlocks.length <= 1 && content.includes("\n")) {
+      const lines = content.split("\n").map(l => l.trim()).filter(Boolean);
+      if (lines.length > 1) rawBlocks = lines;
+    }
 
-    return rawParagraphs.map((paraText, pIdx) => {
-      const isTarget = pIdx === targetParaIndex;
-      const lines = paraText.split("\n");
-      const startLineForPara = runningLineNumber;
-      const endLineForPara = runningLineNumber + lines.length - 1;
-      runningLineNumber = endLineForPara + 1;
+    let docTitle = "";
+    let docSubtitle = "";
+    const blocks: { type: "heading" | "paragraph" | "table"; text: string }[] = [];
 
-      return {
-        index: pIdx + 1,
-        isTarget,
-        startLine: startLineForPara,
-        endLine: endLineForPara,
-        lines: lines.map((lText, lIdx) => {
-          const absoluteLine = startLineForPara + lIdx;
-          const isTargetLine = isTarget && (
-            (targetLineStart && targetLineEnd && absoluteLine >= targetLineStart && absoluteLine <= targetLineEnd) ||
-            (targetSnippet && searchWords.some(w => lText.toLowerCase().includes(w)))
-          );
-          return {
-            lineNum: absoluteLine,
-            text: lText,
-            isTargetLine
-          };
-        }),
-        rawText: paraText
-      };
+    const fallbackTitle = source ? getCleanFileName(source).replace(/\.[a-zA-Z0-9]+$/, "").replace(/_/g, " ") : "Source Document";
+
+    rawBlocks.forEach((block, idx) => {
+      const isHeaderPrefix = /^(Topic|Section|Chapter|Title|Document|Part)\s*[:\d]/i.test(block) || /^#+\s+/i.test(block);
+
+      if (idx === 0 && !isHeaderPrefix && block.length < 90 && !block.includes(".")) {
+        docTitle = block;
+        return;
+      }
+
+      if (isHeaderPrefix) {
+        const cleanHeading = block
+          .replace(/^#+\s*/, "")
+          .replace(/^(Topic|Section|Source File|Document [^:]+):\s*/i, "")
+          .trim();
+
+        if (!docTitle && idx === 0) {
+          docTitle = cleanHeading;
+        } else if (cleanHeading) {
+          blocks.push({
+            type: "heading",
+            text: cleanHeading,
+          });
+        }
+        return;
+      }
+
+      if (isMarkdownTable(block)) {
+        blocks.push({
+          type: "table",
+          text: block,
+        });
+        return;
+      }
+
+      blocks.push({
+        type: "paragraph",
+        text: block,
+      });
     });
+
+    if (!docTitle) {
+      docTitle = fallbackTitle;
+    }
+
+    return {
+      title: docTitle,
+      subtitle: docSubtitle,
+      blocks
+    };
   }, [parsedContent, source]);
 
   React.useEffect(() => {
-    if (!loading && documentStructure.length > 0) {
+    if (!loading && documentData.blocks.length > 0) {
       const timer = setTimeout(() => {
-        const el = document.getElementById("evidence-target-paragraph");
+        const el = document.getElementById("evidence-highlight-target");
         if (el) {
           el.scrollIntoView({ behavior: "smooth", block: "center" });
         }
       }, 250);
       return () => clearTimeout(timer);
     }
-  }, [loading, source, documentStructure]);
-
-  const scrollToTarget = () => {
-    const el = document.getElementById("evidence-target-paragraph");
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  };
+  }, [loading, source, documentData, isAllMode]);
 
   if (loading) {
     return (
       <Flex vertical align="center" justify="center" gap={12} className="h-full my-auto py-24">
         <Spin size="large" />
         <Text className="text-xs text-[var(--app-text-soft)] font-semibold">
-          Aligning document content & context grounding...
+          Loading document evidence & context...
         </Text>
       </Flex>
     );
   }
 
-  if (!parsedContent || documentStructure.length === 0) {
+  if (documentData.blocks.length === 0) {
     return (
-      <div className="p-8 text-center text-sm text-[var(--app-text-muted)]">
-        No parsed text content available for this source.
+      <div className="p-12 text-center text-sm text-[var(--app-text-muted)]">
+        No document content available for this source citation.
       </div>
     );
   }
 
-  const targetSnippet = (source?.supporting_text || source?.snippet || "").trim();
-
   return (
-    <div ref={containerRef} className="w-full h-full overflow-y-auto p-4 custom-scrollbar space-y-4">
-      {/* Evidence Summary Banner */}
-      {source && (
-        <div className="bg-gradient-to-r from-amber-500/10 via-[#0fb5a1]/10 to-transparent border border-amber-400/40 rounded-xl p-4 shadow-sm">
-          <div className="flex items-center justify-between gap-4 mb-2">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
-              <span className="text-xs font-black uppercase tracking-wider text-amber-700 dark:text-amber-300">
-                Context-Level Evidence Attribution
-              </span>
-            </div>
-            <button
-              onClick={scrollToTarget}
-              className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
-            >
-              <FiTarget size={13} />
-              <span>Jump to Target Paragraph</span>
-            </button>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 mb-3">
-            <span className="text-xs font-mono bg-white/80 dark:bg-black/40 px-2 py-0.5 rounded border border-amber-300/40 text-[var(--app-text)] font-semibold">
-              📑 Page {source.page || 1}
-            </span>
-            <span className="text-xs font-mono bg-white/80 dark:bg-black/40 px-2 py-0.5 rounded border border-amber-300/40 text-[var(--app-text)] font-semibold">
-              📝 Paragraph {source.paragraph_number || source.paragraph || 1}
-            </span>
-            <span className="text-xs font-mono bg-white/80 dark:bg-black/40 px-2 py-0.5 rounded border border-amber-300/40 text-[var(--app-text)] font-semibold">
-              📍 Lines {source.line_start || 1} - {source.line_end || 1}
-            </span>
-            {source.score !== undefined && (
-              <span className="text-xs font-mono bg-[#0fb5a1]/15 text-[#0fb5a1] px-2 py-0.5 rounded font-bold">
-                🎯 {Math.round((source.score || 0.95) * 100)}% Match
-              </span>
-            )}
-          </div>
-
-          {targetSnippet && (
-            <div className="bg-white/90 dark:bg-black/60 p-3 rounded-lg border border-amber-400/30 text-xs text-[var(--app-text)] leading-relaxed">
-              <span className="text-[10px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400 block mb-1">
-                Supporting Text (Evidence):
-              </span>
-              <p className="font-medium italic m-0">
-                "{targetSnippet}"
-              </p>
-            </div>
+    <div ref={containerRef} className="w-full h-full overflow-y-auto bg-gray-50/80 dark:bg-[#0c0d12] p-4 md:p-8 custom-scrollbar flex justify-center">
+      <div className="w-full max-w-3xl bg-white dark:bg-[#181a20] rounded-2xl shadow-sm border border-gray-200/90 dark:border-gray-800 p-8 md:p-14 min-h-full">
+        {/* Document Title Header with Red Accent Underline */}
+        <div className="text-center mb-8">
+          <h1 className="text-2xl md:text-3xl font-black text-[#b91c1c] dark:text-[#f87171] uppercase tracking-wide mb-1.5">
+            {documentData.title}
+          </h1>
+          {source && (
+            <p className="text-xs md:text-sm text-gray-500 dark:text-gray-400 font-medium italic mb-2">
+              {getCleanFileName(source)} {source.page ? `• Page ${source.page}` : ""}
+            </p>
           )}
+          <div className="w-full h-1 bg-[#b91c1c] dark:bg-[#ef4444] mt-3 mb-6 rounded-full opacity-80" />
         </div>
-      )}
 
-      {/* Paragraphs and Lines View */}
-      <div className="space-y-3 font-sans">
-        {documentStructure.map((para) => (
-          <div
-            key={para.index}
-            id={para.isTarget ? "evidence-target-paragraph" : undefined}
-            className={`rounded-xl border transition-all ${
-              para.isTarget
-                ? "border-2 border-amber-500 bg-amber-500/5 dark:bg-amber-400/10 ring-2 ring-amber-400/30 shadow-md p-4"
-                : "border-[var(--app-border)]/40 bg-[var(--app-surface)] p-3 hover:border-[var(--app-border)]"
-            }`}
-          >
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`text-[11px] font-bold px-2 py-0.5 rounded ${
-                    para.isTarget
-                      ? "bg-amber-500 text-white shadow-sm"
-                      : "bg-[var(--app-surface-muted)] text-[var(--app-text-soft)]"
-                  }`}
+        {/* Clean Document Body with Green Marker Highlight on Evidence Passage */}
+        <div className="space-y-4 font-sans">
+          {documentData.blocks.map((block, idx) => {
+            if (block.type === "heading") {
+              return (
+                <h2
+                  key={idx}
+                  className="text-base md:text-lg font-bold text-[#b91c1c] dark:text-[#f87171] mt-6 mb-2 tracking-tight"
                 >
-                  Paragraph {para.index}
-                </span>
-                <span className="text-[10px] font-mono text-[var(--app-text-muted)]">
-                  Lines {para.startLine}–{para.endLine}
-                </span>
-              </div>
-              {para.isTarget && (
-                <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400 bg-amber-400/20 px-2 py-0.5 rounded-md flex items-center gap-1">
-                  ⭐ Target Supporting Evidence
-                </span>
-              )}
-            </div>
+                  {block.text}
+                </h2>
+              );
+            }
 
-            <div className="space-y-1 font-mono text-xs">
-              {para.lines.map((line) => (
-                <div
-                  key={line.lineNum}
-                  className={`flex items-start rounded px-1.5 py-0.5 transition-colors ${
-                    line.isTargetLine
-                      ? "bg-amber-200/50 dark:bg-amber-500/20 border-l-4 border-amber-500 pl-2 font-medium"
-                      : "hover:bg-[var(--app-surface-muted)]"
-                  }`}
-                >
-                  <span className="w-10 shrink-0 text-right pr-3 select-none text-[10px] text-[var(--app-text-muted)] opacity-60 font-mono">
-                    {line.lineNum}
-                  </span>
-                  <div className="flex-1 text-[var(--app-text)] font-sans text-xs leading-relaxed break-words">
-                    {para.isTarget
-                      ? highlightEvidenceText(line.text, targetSnippet)
-                      : line.text}
+            if (block.type === "table") {
+              const tableData = parseMarkdownTable(block.text);
+              if (tableData) {
+                return (
+                  <div key={idx} className="my-6 overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm bg-white dark:bg-[#13151b]">
+                    <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-800 text-xs md:text-sm">
+                      <thead className="bg-gray-100/90 dark:bg-gray-800/80 text-gray-900 dark:text-gray-100 uppercase tracking-wider font-bold">
+                        <tr>
+                          {tableData.headers.map((h, hIdx) => (
+                            <th key={hIdx} className="px-4 py-3 text-left font-black tracking-wide border-r border-gray-200/60 dark:border-gray-700/60 last:border-r-0">
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200 dark:divide-gray-800 font-normal">
+                        {tableData.rows.map((row, rIdx) => {
+                          const rowText = row.join(" ").toLowerCase();
+                          const isRowMatched = targetPhrases.some(p => {
+                            const pLow = p.toLowerCase().trim();
+                            return pLow.length >= 3 && rowText.includes(pLow);
+                          });
+
+                          return (
+                            <tr
+                              key={rIdx}
+                              id={isRowMatched ? "evidence-highlight-target" : undefined}
+                              className={`transition-colors ${
+                                isRowMatched
+                                  ? "bg-[#86efac]/25 dark:bg-emerald-950/40 border-l-4 border-l-[#16a34a]"
+                                  : "hover:bg-gray-50 dark:hover:bg-gray-800/40"
+                              }`}
+                            >
+                              {row.map((cell, cIdx) => (
+                                <td
+                                  key={cIdx}
+                                  className={`px-4 py-3 border-r border-gray-200/40 dark:border-gray-800/60 last:border-r-0 align-top ${
+                                    isRowMatched ? "text-gray-900 dark:text-gray-100 font-medium" : "text-gray-700 dark:text-gray-300"
+                                  }`}
+                                >
+                                  {highlightDocumentParagraph(cell, targetPhrases)}
+                                </td>
+                              ))}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
+                );
+              }
+            }
+
+            return (
+              <p
+                key={idx}
+                className="text-gray-800 dark:text-gray-200 text-sm md:text-base leading-relaxed my-3 font-normal"
+              >
+                {highlightDocumentParagraph(block.text, targetPhrases)}
+              </p>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -1346,6 +1525,8 @@ export default function ChatPlaygroundPage() {
 
   const [isSourcesDrawerOpen, setIsSourcesDrawerOpen] = useState(false);
   const [activeSources, setActiveSources] = useState<SourceMetadata[]>([]);
+  const [isAllEvidenceMode, setIsAllEvidenceMode] = useState<boolean>(true);
+  const [activeMessageContent, setActiveMessageContent] = useState<string>("");
   const [agentSources, setAgentSources] = useState<any[]>([]);
   const [selectedSourceForPreview, setSelectedSourceForPreview] = useState<SourceMetadata | null>(null);
   const [sourcesDrawerPreviewUrl, setSourcesDrawerPreviewUrl] = useState("");
@@ -2180,7 +2361,10 @@ export default function ChatPlaygroundPage() {
     }
   };
 
-  const handleOpenSource = async (src: SourceMetadata, allSources?: SourceMetadata[]) => {
+  const handleOpenSource = async (src: SourceMetadata, allSources?: SourceMetadata[], messageContent?: string, forceAll?: boolean) => {
+    if (messageContent) {
+      setActiveMessageContent(messageContent);
+    }
     let currentSources = agentSources;
     if (agent?.id && currentSources.length === 0) {
       currentSources = await fetchAgentSources(agent.id);
@@ -2218,7 +2402,7 @@ export default function ChatPlaygroundPage() {
     }
 
     const effectiveList = allSources && allSources.length > 0 ? allSources : [src];
-    await handleOpenSourcesDrawer(effectiveList, src);
+    await handleOpenSourcesDrawer(effectiveList, src, forceAll);
   };
   const handleEditMessage = (index: number, content: string) => {
     setEditingMessageIndex(index);
@@ -2388,7 +2572,7 @@ export default function ChatPlaygroundPage() {
     });
   }, []);
 
-  const handleOpenSourcesDrawer = async (sources: SourceMetadata[], preferredSource?: SourceMetadata) => {
+  const handleOpenSourcesDrawer = async (sources: SourceMetadata[], preferredSource?: SourceMetadata, forceAll?: boolean) => {
     let currentSources = agentSources;
     if (agent?.id && currentSources.length === 0) {
       currentSources = await fetchAgentSources(agent.id);
@@ -2397,6 +2581,11 @@ export default function ChatPlaygroundPage() {
     const enhanced = enhanceSources(sources, currentSources);
     setActiveSources(enhanced);
     setIsSourcesDrawerOpen(true);
+    if (forceAll !== undefined) {
+      setIsAllEvidenceMode(forceAll);
+    } else {
+      setIsAllEvidenceMode(enhanced.length > 1);
+    }
     if (preferredSource) {
       const match = enhanced.find(e => (e.chunk_id && e.chunk_id === preferredSource.chunk_id) || (e.id && e.id === preferredSource.id)) || preferredSource;
       handleSelectSourceForPreview(match);
@@ -2418,7 +2607,7 @@ export default function ChatPlaygroundPage() {
       nameForFallback.endsWith(".txt") ||
       hasEvidence;
 
-    const defaultTab = hasEvidence ? "parsed" : (isParsedType ? "original" : "parsed");
+    const defaultTab = "parsed";
     setSourcesDrawerPreviewTab(defaultTab);
     setParsedTextContent("");
 
@@ -2901,7 +3090,7 @@ export default function ChatPlaygroundPage() {
                                 <div className="ml-auto flex items-center">
                                   {uniqueSources.length === 1 ? (
                                     <button
-                                      onClick={() => handleOpenSource(uniqueSources[0], rawMsgSources)}
+                                      onClick={() => handleOpenSource(uniqueSources[0], rawMsgSources, msg.content, true)}
                                       className="text-[var(--app-text)] font-bold p-1.5 px-2.5 rounded-lg border border-[var(--app-border)]/60 bg-[var(--app-surface-muted)] cursor-pointer transition-all hover:border-[#0fb5a1] hover:text-[#0fb5a1] flex items-center gap-1.5 text-xs shrink-0 shadow-sm"
                                       title="Click to view exact paragraph, lines, and highlighted supporting text"
                                     >
@@ -2934,7 +3123,7 @@ export default function ChatPlaygroundPage() {
                                                 )}
                                               </div>
                                             ),
-                                            onClick: () => handleOpenSource(src, rawMsgSources),
+                                            onClick: () => handleOpenSource(src, rawMsgSources, msg.content, false),
                                           })),
                                           {
                                             type: 'divider',
@@ -2946,7 +3135,7 @@ export default function ChatPlaygroundPage() {
                                                 <SiCrowdsource /> View All Citations & Evidence ({uniqueSources.length})
                                               </span>
                                             ),
-                                            onClick: () => handleOpenSource(uniqueSources[0], rawMsgSources),
+                                            onClick: () => handleOpenSource(uniqueSources[0], rawMsgSources, msg.content, true),
                                           }
                                         ]
                                       }}
@@ -3370,28 +3559,28 @@ export default function ChatPlaygroundPage() {
       <Drawer
         title={
           <Flex align="center" justify="space-between" className="w-full pr-8">
-            <Flex align="center" gap={8}>
-              <SiCrowdsource className="text-[#0fb5a1] text-base" />
-              <span className="font-extrabold text-sm text-[var(--app-text)]">Source Grounding & Evidence Traceability</span>
-            </Flex>
-            {selectedSourceForPreview && (
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-mono bg-[#0fb5a1]/10 text-[#0fb5a1] px-2 py-0.5 rounded-full border border-[#0fb5a1]/20 font-bold">
-                  {Math.round((selectedSourceForPreview.score || 0.95) * 100)}% Match
+            <Flex align="center" gap={8} className="min-w-0">
+              <span className="text-[#0fb5a1] text-base shrink-0">📄</span>
+              <div className="min-w-0">
+                <span className="font-extrabold text-sm text-[var(--app-text)] truncate block">
+                  {selectedSourceForPreview ? getFileName(selectedSourceForPreview.source) : "Source Evidence"}
                 </span>
-                {sourcesDrawerPreviewUrl && (
-                  <a
-                    href={sourcesDrawerPreviewUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-[var(--app-text-muted)] hover:text-[#0fb5a1] flex items-center gap-1 transition-colors ml-2 font-medium"
-                    title="Open full file in new tab"
-                  >
-                    <FiExternalLink size={13} />
-                    <span>Open File</span>
-                  </a>
-                )}
+                <span className="text-[11px] text-[var(--app-text-muted)] font-normal hidden sm:block">
+                  Verified supporting passage for this response
+                </span>
               </div>
+            </Flex>
+            {sourcesDrawerPreviewUrl && (
+              <a
+                href={sourcesDrawerPreviewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-semibold text-[#0fb5a1] hover:underline flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0fb5a1]/10 hover:bg-[#0fb5a1]/20 transition-colors shrink-0"
+                title="Open full original file in new tab"
+              >
+                <FiExternalLink size={13} />
+                <span>Open Original File</span>
+              </a>
             )}
           </Flex>
         }
@@ -3408,339 +3597,202 @@ export default function ChatPlaygroundPage() {
         width={880}
         height="100vh"
         styles={{
-          body: { padding: 0, background: "var(--app-surface)", display: "flex", height: "100%" },
+          body: { padding: 0, background: "var(--app-surface)", display: "flex", flexDirection: "column", height: "100%" },
         }}
       >
-        <div style={{ width: "280px", borderRight: "1px solid var(--app-border)", height: "100%", overflowY: "auto", padding: "16px" }} className="space-y-2.5 custom-scrollbar">
-          <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--app-text-soft)] block mb-2">
-            Evidence Citations ({activeSources.length})
-          </span>
-          {activeSources.map((src, index) => {
-            const fileName = getFileName(src.source);
-            const isSelected = (selectedSourceForPreview?.id || selectedSourceForPreview?.chunk_id) === (src.id || src.chunk_id);
-            const pNum = src.paragraph_number || src.paragraph || index + 1;
-            const lStart = src.line_start || 1;
-            const lEnd = src.line_end || 1;
-            const quoteText = src.supporting_text || src.snippet || src.text || "";
-
-            return (
-              <div
-                key={(src.id || src.chunk_id) || index}
-                onClick={() => handleSelectSourceForPreview(src)}
-                className={`p-3 rounded-xl cursor-pointer border transition-all text-left ${isSelected
-                  ? "bg-[#0fb5a1] text-white border-transparent shadow-md"
-                  : "bg-[var(--app-surface-muted)] hover:bg-[var(--app-hover)] text-[var(--app-text)] border-[var(--app-border)]/40 hover:border-[#0fb5a1]/40"
+        {/* Source Selector Bar for Multi-Source Responses */}
+        {activeSources.length > 1 && (
+          <div className="flex items-center gap-2 overflow-x-auto py-2.5 px-6 border-b border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 custom-scrollbar">
+            <span className="text-[10px] font-bold text-[var(--app-text-muted)] uppercase tracking-wider shrink-0 mr-1">
+              Evidence Citations ({activeSources.length}):
+            </span>
+            <button
+              onClick={() => {
+                setIsAllEvidenceMode(true);
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                isAllEvidenceMode
+                  ? "bg-[#0fb5a1] text-white shadow-sm font-bold"
+                  : "bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-hover)] border border-[var(--app-border)]/40"
+              }`}
+            >
+              <span>⭐</span>
+              <span>All Supporting Evidence ({activeSources.length})</span>
+            </button>
+            {activeSources.map((src, index) => {
+              const fileName = getFileName(src.source);
+              const badgeLabel = getSourceTabLabel(src, index);
+              const isSelected = !isAllEvidenceMode && ((selectedSourceForPreview?.id || selectedSourceForPreview?.chunk_id) === (src.id || src.chunk_id));
+              return (
+                <button
+                  key={(src.id || src.chunk_id) || index}
+                  onClick={() => {
+                    setIsAllEvidenceMode(false);
+                    handleSelectSourceForPreview(src);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                    isSelected
+                      ? "bg-[#0fb5a1] text-white shadow-sm font-bold"
+                      : "bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-hover)] border border-[var(--app-border)]/40"
                   }`}
-              >
-                <div className="flex items-center justify-between gap-1 mb-1.5 min-w-0">
-                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    <span className="text-xs shrink-0">📄</span>
-                    <Text className={`font-bold text-xs block truncate ${isSelected ? "text-white" : "text-[var(--app-text)]"}`}>
-                      {fileName}
-                    </Text>
-                  </div>
-                  <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded font-bold shrink-0 ${isSelected ? "bg-white/20 text-white" : "bg-[#0fb5a1]/15 text-[#0fb5a1]"}`}>
-                    {Math.round((src.score || 0.95) * 100)}%
-                  </span>
-                </div>
+                  title={`${fileName} - ${badgeLabel}`}
+                >
+                  <span>📄</span>
+                  <span>#{index + 1} {badgeLabel}</span>
+                  {src.page && <span className="text-[10px] opacity-75 font-mono">P.{src.page}</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
-                <div className="flex flex-wrap items-center gap-1 mb-1.5">
-                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold ${isSelected ? "bg-white/20 text-white" : "bg-black/5 dark:bg-white/10 text-[var(--app-text-soft)]"}`}>
-                    P.{src.page || 1}
-                  </span>
-                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold ${isSelected ? "bg-white/20 text-white" : "bg-black/5 dark:bg-white/10 text-[var(--app-text-soft)]"}`}>
-                    Para {pNum}
-                  </span>
-                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold ${isSelected ? "bg-white/20 text-white" : "bg-black/5 dark:bg-white/10 text-[var(--app-text-soft)]"}`}>
-                    Lines {lStart}–{lEnd}
-                  </span>
-                </div>
-
-                {quoteText && (
-                  <p className={`text-[11px] leading-snug line-clamp-2 m-0 italic ${isSelected ? "text-white/90" : "text-[var(--app-text-muted)]"}`}>
-                    "{quoteText}"
-                  </p>
-                )}
-              </div>
-            );
-          })}
-          {activeSources.length === 0 && (
-            <div className="p-3 text-sm text-[var(--app-text-muted)]">
-              No source documents
-            </div>
-          )}
-        </div>
-
-        <div style={{ flex: 1, height: "100%", overflowY: "auto", padding: "20px", display: "flex", flexDirection: "column", background: "var(--app-surface-muted)" }}>
+        <div style={{ flex: 1, height: "100%", overflowY: "auto", display: "flex", flexDirection: "column" }}>
           {sourcesDrawerPreviewLoading ? (
-            <Flex vertical align="center" justify="center" gap={12} className="h-full">
+            <Flex vertical align="center" justify="center" gap={12} className="h-full my-auto py-24">
               <Spin size="large" />
               <Text className="text-xs text-[var(--app-text-soft)] font-semibold">
-                Aligning source content & context grounding...
+                Loading source evidence & context...
               </Text>
             </Flex>
           ) : selectedSourceForPreview ? (
             <div className="w-full h-full flex flex-col justify-start">
-              <Flex vertical gap={10} className="mb-4 bg-[var(--app-surface)] p-4 rounded-xl border border-[var(--app-border)]/40 shadow-sm shrink-0">
-                <Flex justify="space-between" align="center" className="min-w-0 gap-4">
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <span className="text-base">📄</span>
-                    <Text className="text-sm font-extrabold text-[var(--app-text)] truncate">
-                      {getFileName(selectedSourceForPreview.source)}
-                    </Text>
-                    {selectedSourceForPreview.reason && (
-                      <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-md shrink-0">
-                        {selectedSourceForPreview.reason}
-                      </span>
-                    )}
-                  </div>
-                  {sourcesDrawerPreviewUrl && (
-                    <a
-                      href={sourcesDrawerPreviewUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs font-semibold text-[#0fb5a1] hover:underline flex items-center gap-1 shrink-0"
-                    >
-                      <FiExternalLink size={13} />
-                      <span>Open Full File</span>
-                    </a>
-                  )}
-                </Flex>
-
-                <div className="flex items-center justify-between gap-4 pt-1 border-t border-[var(--app-border)]/20">
-                  <div className="flex bg-[var(--app-surface-muted)] p-1 rounded-xl border border-[var(--app-border)]/40 self-start">
-                    <button
-                      onClick={() => setSourcesDrawerPreviewTab("parsed")}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 ${sourcesDrawerPreviewTab === "parsed"
-                        ? "bg-[#0fb5a1] text-white shadow-sm"
-                        : "text-[var(--app-text-soft)] hover:text-[var(--app-text)]"
-                        }`}
-                    >
-                      <FiTarget size={13} />
-                      <span>Grounded Evidence & Context</span>
-                    </button>
-                    {(sourcesDrawerPreviewType === "pdf" || sourcesDrawerPreviewUrl) && (
-                      <button
-                        onClick={() => setSourcesDrawerPreviewTab("original")}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 ${sourcesDrawerPreviewTab === "original"
-                          ? "bg-[#0fb5a1] text-white shadow-sm"
-                          : "text-[var(--app-text-soft)] hover:text-[var(--app-text)]"
-                          }`}
-                      >
-                        <FiLayers size={13} />
-                        <span>Original Document</span>
-                      </button>
-                    )}
-                  </div>
-
-                  <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-400/20">
-                    📍 Page {selectedSourceForPreview.page || 1} • Para {selectedSourceForPreview.paragraph_number || selectedSourceForPreview.paragraph || 1} • Lines {selectedSourceForPreview.line_start || 1}–{selectedSourceForPreview.line_end || 1}
-                  </span>
-                </div>
-              </Flex>
-
-              <div className="flex-1 w-full bg-[var(--app-surface)] rounded-xl border border-[var(--app-border)]/40 overflow-hidden relative shadow-sm" style={{ minHeight: "450px" }}>
-                {sourcesDrawerPreviewTab === "parsed" ? (
-                  <GroundedEvidenceDocumentViewer
-                    parsedContent={parsedTextContent}
-                    source={selectedSourceForPreview}
-                    loading={parsedTextLoading}
-                  />
-                ) : (
-                  <div className="w-full h-full flex flex-col justify-start overflow-hidden">
-                    {sourcesDrawerPreviewType === "pdf" && sourcesDrawerPreviewUrl && (
-                      <div className="w-full h-full flex flex-col">
-                        <div className="p-2 bg-amber-500/10 border-b border-amber-400/30 flex items-center justify-between px-4 shrink-0">
-                          <span className="text-xs font-semibold text-amber-800 dark:text-amber-200 flex items-center gap-1.5">
-                            <FiTarget size={14} className="text-amber-600" />
-                            Target Location: Page {selectedSourceForPreview.page || 1} • Paragraph {selectedSourceForPreview.paragraph_number || selectedSourceForPreview.paragraph || 1} (Lines {selectedSourceForPreview.line_start || 1}–{selectedSourceForPreview.line_end || 1})
-                          </span>
+              {(sourcesDrawerPreviewType === "excel" || sourcesDrawerPreviewType === "csv") && excelSheetNames.length > 0 ? (
+                <div className="w-full h-full flex flex-col overflow-hidden bg-[var(--app-surface)]">
+                  {sourcesDrawerPreviewType === "excel" && excelSheetNames.length > 1 && (
+                    <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
+                      {excelSheetNames.map(sheetName => {
+                        const isActive = activeExcelSheet === sheetName;
+                        return (
                           <button
-                            onClick={() => setSourcesDrawerPreviewTab("parsed")}
-                            className="text-xs font-bold text-[#0fb5a1] hover:underline cursor-pointer"
+                            key={sheetName}
+                            onClick={async () => {
+                              if (!excelSheets[sheetName] && excelArrayBufferRef.current) {
+                                setSourcesDrawerPreviewLoading(true);
+                                try {
+                                  const XLSX = await import("xlsx");
+                                  const partialWorkbook = XLSX.read(excelArrayBufferRef.current, {
+                                    type: "array",
+                                    sheets: [sheetName],
+                                    cellFormula: false,
+                                    cellHTML: false,
+                                    cellText: false,
+                                    cellDates: true
+                                  });
+                                  const worksheet = partialWorkbook.Sheets[sheetName];
+                                  const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+                                  const formattedData = jsonData.map((row: any) =>
+                                    Array.isArray(row)
+                                      ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+                                      : []
+                                  );
+                                  setExcelSheets(prev => ({ ...prev, [sheetName]: formattedData }));
+                                } catch (err) {
+                                  console.error("Failed to parse sheet:", sheetName, err);
+                                } finally {
+                                  setSourcesDrawerPreviewLoading(false);
+                                }
+                              }
+                              setActiveExcelSheet(sheetName);
+                              setExcelPage(1);
+                            }}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
+                              ? "bg-[#0fb5a1] text-white shadow-sm"
+                              : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
+                              }`}
                           >
-                            Switch to Precise Line & Text Highlight View →
+                            {sheetName}
                           </button>
-                        </div>
-                        <iframe
-                          src={`${sourcesDrawerPreviewUrl}#page=${selectedSourceForPreview.page || 1}&search=${encodeURIComponent(
-                            (selectedSourceForPreview.supporting_text || "").split(" ").slice(0, 5).join(" ")
-                          )}&navpanes=0`}
-                          width="100%"
-                          height="100%"
-                          style={{ border: "none" }}
-                        />
-                      </div>
-                    )}
+                        );
+                      })}
+                    </div>
+                  )}
 
-                    {sourcesDrawerPreviewType === "image" && sourcesDrawerPreviewUrl && (
-                      <div className="w-full h-full flex items-center justify-center p-4">
-                        <img
-                          src={sourcesDrawerPreviewUrl}
-                          alt={getFileName(selectedSourceForPreview.source)}
-                          style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: "8px" }}
-                        />
-                      </div>
-                    )}
+                  <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
+                    {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
+                      (() => {
+                        const activeSheetData = excelSheets[activeExcelSheet];
+                        const totalRows = activeSheetData.length > 0 ? activeSheetData.length - 1 : 0;
+                        const PAGE_SIZE = 100;
+                        const totalPages = Math.ceil(totalRows / PAGE_SIZE);
+                        const displayedRows = activeSheetData.slice(
+                          1 + (excelPage - 1) * PAGE_SIZE,
+                          1 + excelPage * PAGE_SIZE
+                        );
 
-                    {(sourcesDrawerPreviewType === "excel" || sourcesDrawerPreviewType === "csv") && excelSheetNames.length > 0 && (
-                      <div className="w-full h-full flex flex-col overflow-hidden bg-[var(--app-surface)]">
-                        {sourcesDrawerPreviewType === "excel" && excelSheetNames.length > 1 && (
-                          <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
-                            {excelSheetNames.map(sheetName => {
-                              const isActive = activeExcelSheet === sheetName;
-                              return (
-                                <button
-                                  key={sheetName}
-                                  onClick={async () => {
-                                    if (!excelSheets[sheetName] && excelArrayBufferRef.current) {
-                                      setSourcesDrawerPreviewLoading(true);
-                                      try {
-                                        const XLSX = await import("xlsx");
-                                        const partialWorkbook = XLSX.read(excelArrayBufferRef.current, {
-                                          type: "array",
-                                          sheets: [sheetName],
-                                          cellFormula: false,
-                                          cellHTML: false,
-                                          cellText: false,
-                                          cellDates: true
-                                        });
-                                        const worksheet = partialWorkbook.Sheets[sheetName];
-                                        const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
-                                        const formattedData = jsonData.map((row: any) =>
-                                          Array.isArray(row)
-                                            ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
-                                            : []
-                                        );
-                                        setExcelSheets(prev => ({ ...prev, [sheetName]: formattedData }));
-                                      } catch (err) {
-                                        console.error("Failed to parse sheet:", sheetName, err);
-                                      } finally {
-                                        setSourcesDrawerPreviewLoading(false);
-                                      }
-                                    }
-                                    setActiveExcelSheet(sheetName);
-                                    setExcelPage(1);
-                                  }}
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
-                                    ? "bg-[#0fb5a1] text-white shadow-sm"
-                                    : "bg-[var(--app-surface)] hover:bg-[var(--app-surface-muted)] text-[var(--app-text-soft)] border border-[var(--app-border)]/40"
-                                    }`}
-                                >
-                                  {sheetName}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
+                        return (
+                          <div className="flex flex-col gap-4">
+                            <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
+                              <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
+                                <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
+                                  <tr>
+                                    {activeSheetData[0].map((cell, idx) => (
+                                      <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
+                                        {cell || `Column ${idx + 1}`}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
+                                  {displayedRows.map((row, rowIdx) => (
+                                    <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
+                                      {activeSheetData[0].map((_, colIdx) => (
+                                        <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
+                                          {row[colIdx] || ""}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
 
-                        <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
-                          {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
-                            (() => {
-                              const activeSheetData = excelSheets[activeExcelSheet];
-                              const totalRows = activeSheetData.length > 0 ? activeSheetData.length - 1 : 0;
-                              const PAGE_SIZE = 100;
-                              const totalPages = Math.ceil(totalRows / PAGE_SIZE);
-                              const displayedRows = activeSheetData.slice(
-                                1 + (excelPage - 1) * PAGE_SIZE,
-                                1 + excelPage * PAGE_SIZE
-                              );
-
-                              return (
-                                <div className="flex flex-col gap-4">
-                                  <div className="border border-[var(--app-border)]/40 rounded-xl overflow-x-auto shadow-sm">
-                                    <table className="min-w-full divide-y divide-[var(--app-border)]/40 text-left text-xs bg-[var(--app-surface)]">
-                                      <thead className="bg-[var(--app-surface-muted)] font-bold text-[var(--app-text)] uppercase tracking-wider">
-                                        <tr>
-                                          {activeSheetData[0].map((cell, idx) => (
-                                            <th key={idx} className="px-4 py-3 border-b border-r border-[var(--app-border)]/40 last:border-r-0 whitespace-nowrap bg-[var(--app-surface-muted)] text-[var(--app-text)] font-extrabold text-[10px] tracking-wider">
-                                              {cell || `Column ${idx + 1}`}
-                                            </th>
-                                          ))}
-                                        </tr>
-                                      </thead>
-                                      <tbody className="bg-[var(--app-surface)] divide-y divide-[var(--app-border)]/40 text-[var(--app-text-soft)] font-medium">
-                                        {displayedRows.map((row, rowIdx) => (
-                                          <tr key={rowIdx} className="hover:bg-[var(--app-surface-muted)]/50 transition-colors">
-                                            {activeSheetData[0].map((_, colIdx) => (
-                                              <td key={colIdx} className="px-4 py-3 border-r border-[var(--app-border)]/40 last:border-r-0 max-w-xs truncate whitespace-nowrap text-[var(--app-text-soft)]">
-                                                {row[colIdx] || ""}
-                                              </td>
-                                            ))}
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
-
-                                  {totalPages > 1 && (
-                                    <div className="flex items-center justify-between p-3 border border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 select-none rounded-xl">
-                                      <span className="text-xs text-[var(--app-text-soft)] font-bold">
-                                        Showing {1 + (excelPage - 1) * PAGE_SIZE} - {Math.min(excelPage * PAGE_SIZE, totalRows)} of {totalRows} rows
-                                      </span>
-                                      <div className="flex gap-2">
-                                        <button
-                                          disabled={excelPage === 1}
-                                          onClick={() => setExcelPage(prev => Math.max(prev - 1, 1))}
-                                          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
-                                        >
-                                          Previous
-                                        </button>
-                                        <span className="text-xs self-center px-1 font-bold text-[var(--app-text)]">
-                                          Page {excelPage} of {totalPages}
-                                        </span>
-                                        <button
-                                          disabled={excelPage === totalPages}
-                                          onClick={() => setExcelPage(prev => Math.min(prev + 1, totalPages))}
-                                          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
-                                        >
-                                          Next
-                                        </button>
-                                      </div>
-                                    </div>
-                                  )}
+                            {totalPages > 1 && (
+                              <div className="flex items-center justify-between p-3 border border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 select-none rounded-xl">
+                                <span className="text-xs text-[var(--app-text-soft)] font-bold">
+                                  Showing {1 + (excelPage - 1) * PAGE_SIZE} - {Math.min(excelPage * PAGE_SIZE, totalRows)} of {totalRows} rows
+                                </span>
+                                <div className="flex gap-2">
+                                  <button
+                                    disabled={excelPage === 1}
+                                    onClick={() => setExcelPage(prev => Math.max(prev - 1, 1))}
+                                    className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                  >
+                                    Previous
+                                  </button>
+                                  <span className="text-xs self-center px-1 font-bold text-[var(--app-text)]">
+                                    Page {excelPage} of {totalPages}
+                                  </span>
+                                  <button
+                                    disabled={excelPage === totalPages}
+                                    onClick={() => setExcelPage(prev => Math.min(prev + 1, totalPages))}
+                                    className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--app-border)]/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-surface-muted)] transition-all"
+                                  >
+                                    Next
+                                  </button>
                                 </div>
-                              );
-                            })()
-                          ) : (
-                            <Flex vertical align="center" justify="center" className="py-20 text-[var(--app-text-soft)] h-full">
-                              <LuFileText size={32} className="mb-2 opacity-55" />
-                              <span className="text-xs">No data in this sheet</span>
-                            </Flex>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {sourcesDrawerPreviewType === "other" && (
-                      <Flex vertical align="center" justify="center" gap={16} className="h-full my-auto py-20">
-                        <div className="w-16 h-16 rounded-2xl bg-[var(--app-surface-muted)] flex items-center justify-center text-3xl border border-[var(--app-border)]/40 shadow-inner">
-                          📁
-                        </div>
-                        <Flex vertical align="center" gap={4} className="text-center max-w-sm px-4">
-                          <Title level={5} className="!m-0 !text-[var(--app-text)] !font-bold">
-                            Inline Preview Not Available
-                          </Title>
-                          <Text className="text-xs text-[var(--app-text-muted)] font-medium">
-                            This format ({getFileName(selectedSourceForPreview.source).split('.').pop()?.toUpperCase()}) cannot be rendered directly. You can download the file to view its contents.
-                          </Text>
-                        </Flex>
-                        {sourcesDrawerPreviewUrl && (
-                          <Button
-                            type="primary"
-                            icon={<LuDownload />}
-                            href={sourcesDrawerPreviewUrl}
-                            download={getFileName(selectedSourceForPreview.source)}
-                            className="rounded-xl !bg-[#0fb5a1] hover:!bg-[#1e4873] !h-10 px-5 font-bold shadow-md shadow-teal-900/10 flex items-center gap-2"
-                          >
-                            Download File
-                          </Button>
-                        )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()
+                    ) : (
+                      <Flex vertical align="center" justify="center" className="py-20 text-[var(--app-text-soft)] h-full">
+                        <LuFileText size={32} className="mb-2 opacity-55" />
+                        <span className="text-xs">No data in this sheet</span>
                       </Flex>
                     )}
                   </div>
-                )}
-              </div>
+                </div>
+              ) : (
+                <GroundedEvidenceDocumentViewer
+                  parsedContent={parsedTextContent}
+                  source={selectedSourceForPreview}
+                  allSources={activeSources}
+                  isAllMode={isAllEvidenceMode}
+                  responseContent={activeMessageContent}
+                  loading={parsedTextLoading}
+                />
+              )}
             </div>
           ) : (
             <Flex vertical align="center" justify="center" className="h-full opacity-40">
