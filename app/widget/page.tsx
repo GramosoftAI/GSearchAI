@@ -20,6 +20,12 @@ type SourceItem = {
   snippet?: string;
   file_path?: string;
   page?: number | string;
+  paragraph?: number;
+  paragraph_number?: number;
+  line_start?: number;
+  line_end?: number;
+  supporting_text?: string;
+  section?: string;
 };
 
 type ClarificationCandidate = {
@@ -281,8 +287,9 @@ function deduplicateSources(sources: SourceItem[]): SourceItem[] {
     const rawName = src.name || src.source || src.file_name || src.s3_path || "";
     const cleanName = getCleanSourceName(rawName).toLowerCase().trim();
     if (!cleanName) return false;
-    if (seen.has(cleanName)) return false;
-    seen.add(cleanName);
+    const key = src.id || `${cleanName}_p${src.page || 1}_para${src.paragraph_number || src.paragraph || 0}_l${src.line_start || 0}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }
@@ -3372,11 +3379,29 @@ function WidgetContent() {
                   </span>
                   {(() => {
                     const modalPage = activeSourceModal?.page || (typeof activeSourceModal?.url === "string" ? activeSourceModal.url.match(/#page=(\d+)/)?.[1] : null);
-                    return modalPage ? (
-                      <span style={{ fontSize: "11px", fontWeight: "700", background: "#e0f2fe", color: "#0369a1", padding: "2px 7px", borderRadius: "6px", flexShrink: 0 }}>
-                        Page {modalPage}
-                      </span>
-                    ) : null;
+                    const modalPara = activeSourceModal?.paragraph_number || activeSourceModal?.paragraph;
+                    const modalLineStart = activeSourceModal?.line_start;
+                    const modalLineEnd = activeSourceModal?.line_end;
+
+                    return (
+                      <div style={{ display: "flex", gap: "4px", alignItems: "center", flexShrink: 0 }}>
+                        {modalPage ? (
+                          <span style={{ fontSize: "10px", fontWeight: "700", background: "#e0f2fe", color: "#0369a1", padding: "2px 6px", borderRadius: "6px" }}>
+                            Page {modalPage}
+                          </span>
+                        ) : null}
+                        {modalPara ? (
+                          <span style={{ fontSize: "10px", fontWeight: "700", background: "#ecfdf5", color: "#047857", padding: "2px 6px", borderRadius: "6px" }}>
+                            Para {modalPara}
+                          </span>
+                        ) : null}
+                        {modalLineStart ? (
+                          <span style={{ fontSize: "10px", fontWeight: "700", background: "#fef3c7", color: "#b45309", padding: "2px 6px", borderRadius: "6px" }}>
+                            Lines {modalLineStart}{modalLineEnd && modalLineEnd !== modalLineStart ? `-${modalLineEnd}` : ""}
+                          </span>
+                        ) : null}
+                      </div>
+                    );
                   })()}
                 </div>
                 <button
@@ -3480,11 +3505,35 @@ function WidgetContent() {
                     fontSize: "12px",
                     color: "#334155",
                     lineHeight: "1.5",
-                    whiteSpace: "pre-wrap",
-                    maxHeight: "240px"
+                    maxHeight: "240px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "10px"
                   }}
                 >
-                  {activeSourceModal.text || activeSourceModal.content || activeSourceModal.page_content || activeSourceModal.snippet || "Cited knowledge base reference used to generate the answer."}
+                  {(activeSourceModal.supporting_text || activeSourceModal.snippet) && (
+                    <div style={{
+                      background: "#fffbeb",
+                      border: "1px solid #fde68a",
+                      borderRadius: "8px",
+                      padding: "8px 10px",
+                      fontSize: "11px",
+                      color: "#92400e"
+                    }}>
+                      <div style={{ fontWeight: "800", marginBottom: "4px", display: "flex", alignItems: "center", gap: "4px" }}>
+                        <span>🎯 Supporting Evidence Text</span>
+                        {activeSourceModal.paragraph_number && (
+                          <span style={{ fontWeight: "600", opacity: 0.8 }}>(Paragraph {activeSourceModal.paragraph_number})</span>
+                        )}
+                      </div>
+                      <div style={{ fontStyle: "italic", whiteSpace: "pre-wrap", borderLeft: "2px solid #f59e0b", paddingLeft: "8px" }}>
+                        "{activeSourceModal.supporting_text || activeSourceModal.snippet}"
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ whiteSpace: "pre-wrap" }}>
+                    {activeSourceModal.text || activeSourceModal.content || activeSourceModal.page_content || activeSourceModal.snippet || "Cited knowledge base reference used to generate the answer."}
+                  </div>
                 </div>
               )}
 

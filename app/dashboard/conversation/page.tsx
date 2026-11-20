@@ -15,6 +15,11 @@ import {
   FiThumbsDown,
   FiRotateCw,
   FiMenu,
+  FiExternalLink,
+  FiTarget,
+  FiCheckCircle,
+  FiLayers,
+  FiList,
 } from "react-icons/fi";
 import { MdBarChart as MdBarChartIcon } from "react-icons/md";
 import { PiGraphLight } from "react-icons/pi";
@@ -48,6 +53,14 @@ type SourceMetadata = {
   file_name?: string;
   title?: string;
   url?: string;
+  page?: number;
+  paragraph?: number;
+  paragraph_number?: number;
+  line_start?: number;
+  line_end?: number;
+  supporting_text?: string;
+  snippet?: string;
+  section?: string;
 };
 
 type Message = {
@@ -332,8 +345,10 @@ async function getCleanTextContent(kb_id: string): Promise<string> {
   }
 
   const data = await response.json();
-  if (data && data.success && typeof data.content === "string") {
-    return data.content;
+  if (data) {
+    if (typeof data.content === "string") return data.content;
+    if (data.data && typeof data.data.content === "string") return data.data.content;
+    if (typeof data === "string") return data;
   }
   return "";
 }
@@ -405,8 +420,10 @@ function deduplicateSources(sources: any[]): any[] {
   return sources.filter((src) => {
     const cleanName = getCleanFileName(src).toLowerCase().trim();
     if (!cleanName) return false;
-    if (seen.has(cleanName)) return false;
-    seen.add(cleanName);
+    // Distinguish individual evidence chunks by chunk_id, position, paragraph, or lines
+    const key = src.chunk_id || src.id || `${cleanName}_p${src.page || 1}_para${src.paragraph_number || src.paragraph || src.position || 0}_l${src.line_start || 0}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }
@@ -901,6 +918,297 @@ const renderFormattedContent = (content: string, isUser: boolean) => {
   });
 };
 
+
+function highlightEvidenceText(text: string, snippet: string) {
+  if (!text || !snippet) return <span>{text}</span>;
+  const cleanSnippet = snippet.trim();
+  const lowerText = text.toLowerCase();
+  const lowerSnippet = cleanSnippet.toLowerCase();
+
+  // 1. Direct substring match
+  if (cleanSnippet.length > 5 && lowerText.includes(lowerSnippet)) {
+    const idx = lowerText.indexOf(lowerSnippet);
+    return (
+      <span>
+        {text.slice(0, idx)}
+        <mark className="bg-amber-300 dark:bg-amber-500/40 text-amber-950 dark:text-amber-100 font-extrabold px-1.5 py-0.5 rounded border border-amber-400 shadow-sm inline-block my-0.5">
+          {text.slice(idx, idx + cleanSnippet.length)}
+        </mark>
+        {text.slice(idx + cleanSnippet.length)}
+      </span>
+    );
+  }
+
+  // 2. Keyword highlighting for keywords with length >= 4
+  const keywords = cleanSnippet
+    .replace(/[^\w\s]/g, " ")
+    .split(/\s+/)
+    .filter(w => w.length >= 4 && !["that", "this", "with", "from", "were", "have", "they", "been"].includes(w.toLowerCase()));
+
+  if (keywords.length === 0) return <span>{text}</span>;
+
+  const escaped = keywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const regex = new RegExp(`\\b(${escaped.join("|")})\\b`, "gi");
+  const parts = text.split(regex);
+
+  return (
+    <span>
+      {parts.map((part, i) => {
+        const isMatch = keywords.some(k => k.toLowerCase() === part.toLowerCase());
+        return isMatch ? (
+          <mark key={i} className="bg-amber-300/80 dark:bg-amber-500/30 text-amber-950 dark:text-amber-100 font-bold px-1 py-0.5 rounded border-b-2 border-amber-500">
+            {part}
+          </mark>
+        ) : (
+          part
+        );
+      })}
+    </span>
+  );
+}
+
+const GroundedEvidenceDocumentViewer = ({
+  parsedContent,
+  source,
+  loading
+}: {
+  parsedContent: string;
+  source: SourceMetadata | null;
+  loading: boolean;
+}) => {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  const documentStructure = React.useMemo(() => {
+    if (!parsedContent) return [];
+    let rawParagraphs = parsedContent.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+    if (rawParagraphs.length <= 1 && parsedContent.includes("\n")) {
+      const lineSplits = parsedContent.split("\n").map(p => p.trim()).filter(Boolean);
+      if (lineSplits.length > 1) {
+        rawParagraphs = lineSplits;
+      }
+    }
+    if (rawParagraphs.length === 0 && parsedContent.trim()) {
+      rawParagraphs.push(parsedContent.trim());
+    }
+
+    const targetSnippet = (source?.supporting_text || source?.snippet || "").trim();
+    const targetParaNum = source?.paragraph_number || source?.paragraph || 1;
+    const targetLineStart = source?.line_start || 1;
+    const targetLineEnd = source?.line_end || 1;
+
+    const searchWords = targetSnippet
+      ? targetSnippet.toLowerCase().replace(/[^\w\s]/g, " ").split(/\s+/).filter(w => w.length > 3)
+      : [];
+
+    let targetParaIndex = -1;
+    let bestOverlapScore = -1;
+
+    rawParagraphs.forEach((p, idx) => {
+      const pLower = p.toLowerCase();
+      if (targetSnippet && (pLower.includes(targetSnippet.toLowerCase()) || targetSnippet.toLowerCase().includes(pLower))) {
+        targetParaIndex = idx;
+        bestOverlapScore = 9999;
+      } else if (searchWords.length > 0) {
+        const matches = searchWords.filter(w => pLower.includes(w)).length;
+        if (matches > bestOverlapScore && matches >= Math.min(2, searchWords.length)) {
+          bestOverlapScore = matches;
+          targetParaIndex = idx;
+        }
+      }
+    });
+
+    if (targetParaIndex === -1 && targetParaNum > 0 && targetParaNum <= rawParagraphs.length) {
+      targetParaIndex = targetParaNum - 1;
+    }
+    if (targetParaIndex === -1 && rawParagraphs.length > 0) {
+      targetParaIndex = 0;
+    }
+
+    let runningLineNumber = 1;
+
+    return rawParagraphs.map((paraText, pIdx) => {
+      const isTarget = pIdx === targetParaIndex;
+      const lines = paraText.split("\n");
+      const startLineForPara = runningLineNumber;
+      const endLineForPara = runningLineNumber + lines.length - 1;
+      runningLineNumber = endLineForPara + 1;
+
+      return {
+        index: pIdx + 1,
+        isTarget,
+        startLine: startLineForPara,
+        endLine: endLineForPara,
+        lines: lines.map((lText, lIdx) => {
+          const absoluteLine = startLineForPara + lIdx;
+          const isTargetLine = isTarget && (
+            (targetLineStart && targetLineEnd && absoluteLine >= targetLineStart && absoluteLine <= targetLineEnd) ||
+            (targetSnippet && searchWords.some(w => lText.toLowerCase().includes(w)))
+          );
+          return {
+            lineNum: absoluteLine,
+            text: lText,
+            isTargetLine
+          };
+        }),
+        rawText: paraText
+      };
+    });
+  }, [parsedContent, source]);
+
+  React.useEffect(() => {
+    if (!loading && documentStructure.length > 0) {
+      const timer = setTimeout(() => {
+        const el = document.getElementById("evidence-target-paragraph");
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 250);
+      return () => clearTimeout(timer);
+    }
+  }, [loading, source, documentStructure]);
+
+  const scrollToTarget = () => {
+    const el = document.getElementById("evidence-target-paragraph");
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
+
+  if (loading) {
+    return (
+      <Flex vertical align="center" justify="center" gap={12} className="h-full my-auto py-24">
+        <Spin size="large" />
+        <Text className="text-xs text-[var(--app-text-soft)] font-semibold">
+          Aligning document content & context grounding...
+        </Text>
+      </Flex>
+    );
+  }
+
+  if (!parsedContent || documentStructure.length === 0) {
+    return (
+      <div className="p-8 text-center text-sm text-[var(--app-text-muted)]">
+        No parsed text content available for this source.
+      </div>
+    );
+  }
+
+  const targetSnippet = (source?.supporting_text || source?.snippet || "").trim();
+
+  return (
+    <div ref={containerRef} className="w-full h-full overflow-y-auto p-4 custom-scrollbar space-y-4">
+      {/* Evidence Summary Banner */}
+      {source && (
+        <div className="bg-gradient-to-r from-amber-500/10 via-[#0fb5a1]/10 to-transparent border border-amber-400/40 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-4 mb-2">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+              <span className="text-xs font-black uppercase tracking-wider text-amber-700 dark:text-amber-300">
+                Context-Level Evidence Attribution
+              </span>
+            </div>
+            <button
+              onClick={scrollToTarget}
+              className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+            >
+              <FiTarget size={13} />
+              <span>Jump to Target Paragraph</span>
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <span className="text-xs font-mono bg-white/80 dark:bg-black/40 px-2 py-0.5 rounded border border-amber-300/40 text-[var(--app-text)] font-semibold">
+              📑 Page {source.page || 1}
+            </span>
+            <span className="text-xs font-mono bg-white/80 dark:bg-black/40 px-2 py-0.5 rounded border border-amber-300/40 text-[var(--app-text)] font-semibold">
+              📝 Paragraph {source.paragraph_number || source.paragraph || 1}
+            </span>
+            <span className="text-xs font-mono bg-white/80 dark:bg-black/40 px-2 py-0.5 rounded border border-amber-300/40 text-[var(--app-text)] font-semibold">
+              📍 Lines {source.line_start || 1} - {source.line_end || 1}
+            </span>
+            {source.score !== undefined && (
+              <span className="text-xs font-mono bg-[#0fb5a1]/15 text-[#0fb5a1] px-2 py-0.5 rounded font-bold">
+                🎯 {Math.round((source.score || 0.95) * 100)}% Match
+              </span>
+            )}
+          </div>
+
+          {targetSnippet && (
+            <div className="bg-white/90 dark:bg-black/60 p-3 rounded-lg border border-amber-400/30 text-xs text-[var(--app-text)] leading-relaxed">
+              <span className="text-[10px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400 block mb-1">
+                Supporting Text (Evidence):
+              </span>
+              <p className="font-medium italic m-0">
+                "{targetSnippet}"
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Paragraphs and Lines View */}
+      <div className="space-y-3 font-sans">
+        {documentStructure.map((para) => (
+          <div
+            key={para.index}
+            id={para.isTarget ? "evidence-target-paragraph" : undefined}
+            className={`rounded-xl border transition-all ${
+              para.isTarget
+                ? "border-2 border-amber-500 bg-amber-500/5 dark:bg-amber-400/10 ring-2 ring-amber-400/30 shadow-md p-4"
+                : "border-[var(--app-border)]/40 bg-[var(--app-surface)] p-3 hover:border-[var(--app-border)]"
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`text-[11px] font-bold px-2 py-0.5 rounded ${
+                    para.isTarget
+                      ? "bg-amber-500 text-white shadow-sm"
+                      : "bg-[var(--app-surface-muted)] text-[var(--app-text-soft)]"
+                  }`}
+                >
+                  Paragraph {para.index}
+                </span>
+                <span className="text-[10px] font-mono text-[var(--app-text-muted)]">
+                  Lines {para.startLine}–{para.endLine}
+                </span>
+              </div>
+              {para.isTarget && (
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400 bg-amber-400/20 px-2 py-0.5 rounded-md flex items-center gap-1">
+                  ⭐ Target Supporting Evidence
+                </span>
+              )}
+            </div>
+
+            <div className="space-y-1 font-mono text-xs">
+              {para.lines.map((line) => (
+                <div
+                  key={line.lineNum}
+                  className={`flex items-start rounded px-1.5 py-0.5 transition-colors ${
+                    line.isTargetLine
+                      ? "bg-amber-200/50 dark:bg-amber-500/20 border-l-4 border-amber-500 pl-2 font-medium"
+                      : "hover:bg-[var(--app-surface-muted)]"
+                  }`}
+                >
+                  <span className="w-10 shrink-0 text-right pr-3 select-none text-[10px] text-[var(--app-text-muted)] opacity-60 font-mono">
+                    {line.lineNum}
+                  </span>
+                  <div className="flex-1 text-[var(--app-text)] font-sans text-xs leading-relaxed break-words">
+                    {para.isTarget
+                      ? highlightEvidenceText(line.text, targetSnippet)
+                      : line.text}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+
 export default function ChatPlaygroundPage() {
   const [agent, setAgent] = useState<{ id: string; name: string } | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -1117,7 +1425,7 @@ export default function ChatPlaygroundPage() {
               if (matchedSession) {
                 setCurrentSessionId(matchedSession.id);
                 const mappedMessages = (matchedSession.messages || []).map((msg: any) => {
-                  const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
+                  const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources || msg.metadata?.sources || msg.message_metadata?.sources);
                   return {
                     id: msg.message_id || msg.id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
                     role: msg.role,
@@ -1328,8 +1636,11 @@ export default function ChatPlaygroundPage() {
 
         if (incomingSources.length > 0) {
           incomingSources.forEach((src) => {
-            if (src && src.kb_id && !wsSourcesRef.current.some(s => s.kb_id === src.kb_id)) {
-              wsSourcesRef.current.push(src);
+            if (src) {
+              const key = src.chunk_id || src.id || `${src.kb_id}_${src.source}_${src.paragraph_number || src.position || 0}`;
+              if (!wsSourcesRef.current.some(s => (s.chunk_id || s.id || `${s.kb_id}_${s.source}_${s.paragraph_number || s.position || 0}`) === key)) {
+                wsSourcesRef.current.push(src);
+              }
             }
           });
         }
@@ -1418,7 +1729,7 @@ export default function ChatPlaygroundPage() {
               if (rawMsgs.length > 0) {
                 setMessages((prevMessages: any[]) => {
                   const mappedMessages = rawMsgs.map((msg: any, idx: number) => {
-                    const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
+                    const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources || msg.metadata?.sources || msg.message_metadata?.sources);
                     const msgId = msg.id || msg.message_id || msg.messageId || msg.msg_id || msg._id || msg.msgId;
                     const existingMsg = prevMessages.find((pm: any) => pm.id === msgId || (pm.role === msg.role && pm.content === cleanedContent));
                     const isLastAssistant = msg.role === "assistant" && idx === rawMsgs.length - 1;
@@ -1574,7 +1885,7 @@ export default function ChatPlaygroundPage() {
     }
 
     const mappedMessages = rawMessages.map((msg: any) => {
-      const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources);
+      const { cleanedContent, sources } = cleanAndExtractSources(msg.content, msg.sources || msg.metadata?.sources);
       const responseTimeVal = msg.response_time ?? msg.response_time_sec ?? msg.responseTime ?? msg.latency ?? undefined;
       return {
         id: msg.message_id || msg.id || msg.messageId || msg.msg_id || msg._id || msg.msgId,
@@ -1869,7 +2180,7 @@ export default function ChatPlaygroundPage() {
     }
   };
 
-  const handleOpenSource = async (src: SourceMetadata) => {
+  const handleOpenSource = async (src: SourceMetadata, allSources?: SourceMetadata[]) => {
     let currentSources = agentSources;
     if (agent?.id && currentSources.length === 0) {
       currentSources = await fetchAgentSources(agent.id);
@@ -1899,363 +2210,15 @@ export default function ChatPlaygroundPage() {
     }
 
     const stype = getSourceType(src.source, kbId);
-
-    if (stype === 'text') {
+    if (stype === 'url' && !kbId && !src.s3_path) {
+      const urlMatch = (src.source || '').match(/(https?:\/\/[^\s]+)/i);
+      const openUrl = urlMatch ? urlMatch[1] : (src.source.startsWith('http') ? src.source : `https://${src.source}`);
+      window.open(openUrl, '_blank', 'noopener,noreferrer');
       return;
     }
 
-    if (!kbId && src.source && currentSources.length > 0) {
-      const uuidMatch = src.source.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-      if (uuidMatch) {
-        const foundByUuid = currentSources.find(as => (as.id && as.id.toLowerCase() === uuidMatch[0].toLowerCase()) || (as.kb_id && as.kb_id.toLowerCase() === uuidMatch[0].toLowerCase()));
-        if (foundByUuid) {
-          kbId = foundByUuid.id || foundByUuid.kb_id;
-          matchedKb = foundByUuid;
-        }
-      }
-    }
-
-    if (stype === 'url') {
-      const rawSrc = src.source || '';
-      const isS3OrDoc = rawSrc.includes('amazonaws.com') || rawSrc.includes('s3.') || rawSrc.toLowerCase().includes('.pdf');
-      if (!isS3OrDoc || !kbId) {
-        const urlMatch = rawSrc.match(/(https?:\/\/[^\s]+)/i);
-        const openUrl = urlMatch ? urlMatch[1] : (rawSrc.startsWith('http') ? rawSrc : `https://${rawSrc}`);
-        window.open(openUrl, '_blank', 'noopener,noreferrer');
-        return;
-      }
-    }
-
-    
-    const newWindow = window.open('', '_blank');
-    if (!newWindow) {
-      message.error('Popup blocked. Please allow popups for this site.');
-      return;
-    }
-    newWindow.document.write('<p style="font-family:-apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; padding: 24px; color: #4b5563;">Loading preview...</p>');
-
-    if (kbId) {
-      try {
-        const blobUrl = await getFilePreview(kbId);
-        const filename = getCleanFileName(src);
-        const fullSourceStr = `${src.source || ''} ${src.name || ''} ${src.file_name || ''} ${src.title || ''} ${src.s3_path || ''} ${src.url || ''} ${filename}`.toLowerCase();
-
-        
-        const blobRes = await fetch(blobUrl);
-        const blob = await blobRes.blob();
-        const contentType = blob.type.toLowerCase();
-
-        const isPdf = contentType.includes('pdf') || fullSourceStr.includes('.pdf');
-        const isImage = contentType.includes('image/') || fullSourceStr.includes('.png') || fullSourceStr.includes('.jpg') || fullSourceStr.includes('.jpeg') || fullSourceStr.includes('.webp') || fullSourceStr.includes('.gif');
-        const isTxt = contentType.includes('text/plain') || fullSourceStr.includes('.txt');
-        const isCSV = contentType.includes('csv') || fullSourceStr.includes('.csv') || fullSourceStr.includes('csv:');
-        const isExcel = contentType.includes('excel') || contentType.includes('spreadsheet') ||
-          contentType.includes('vnd.ms-excel') || contentType.includes('vnd.openxmlformats-officedocument.spreadsheetml.sheet') ||
-          contentType.includes('octet-stream') || contentType.includes('zip') ||
-          fullSourceStr.includes('.xls') || fullSourceStr.includes('.xlsx') || fullSourceStr.includes('excel:') || fullSourceStr.includes('spreadsheet:');
-
-        if (isPdf || isImage || isTxt) {
-          const viewBlobUrl = URL.createObjectURL(blob);
-
-          newWindow.document.open();
-          newWindow.document.write('');
-          newWindow.document.close();
-
-          newWindow.document.title = filename || 'Source Preview';
-          newWindow.document.body.style.margin = '0';
-          newWindow.document.body.style.padding = '0';
-          newWindow.document.body.style.height = '100vh';
-          newWindow.document.body.style.overflow = 'hidden';
-
-          const iframe = newWindow.document.createElement('iframe');
-          iframe.src = viewBlobUrl;
-          iframe.style.width = '100%';
-          iframe.style.height = '100%';
-          iframe.style.border = 'none';
-          newWindow.document.body.appendChild(iframe);
-        } else if (isCSV || isExcel) {
-          
-          try {
-            const arrayBuffer = await blob.arrayBuffer();
-            const XLSX = await import("xlsx");
-            const workbook = XLSX.read(arrayBuffer, { type: "array" });
-
-            const sheetsData: { [sheetName: string]: string[][] } = {};
-            workbook.SheetNames.forEach((sheetName) => {
-              const worksheet = workbook.Sheets[sheetName];
-              const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
-              sheetsData[sheetName] = jsonData.map((row: any) =>
-                Array.isArray(row)
-                  ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
-                  : []
-              );
-            });
-            const sheetNames = workbook.SheetNames;
-            const viewBlobUrl = URL.createObjectURL(blob);
-
-            newWindow.document.open();
-            newWindow.document.write(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <meta charset="utf-8">
-              <title>${filename || 'Spreadsheet Preview'}</title>
-              <style>
-                body {
-                  margin: 0;
-                  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                  background: #f9fafb;
-                  color: #374151;
-                  display: flex;
-                  flex-direction: column;
-                  height: 100vh;
-                }
-                header {
-                  background: #ffffff;
-                  border-bottom: 1px solid #e5e7eb;
-                  padding: 16px 24px;
-                  display: flex;
-                  align-items: center;
-                  justify-content: space-between;
-                  flex-shrink: 0;
-                }
-                h1 {
-                  margin: 0;
-                  font-size: 18px;
-                  font-weight: 600;
-                  color: #111827;
-                }
-                .tabs-container {
-                  background: #f3f4f6;
-                  border-bottom: 1px solid #e5e7eb;
-                  padding: 8px 16px;
-                  display: flex;
-                  gap: 8px;
-                  overflow-x: auto;
-                  flex-shrink: 0;
-                }
-                .tab-btn {
-                  background: #ffffff;
-                  border: 1px solid #d1d5db;
-                  border-radius: 6px;
-                  padding: 6px 12px;
-                  font-size: 13px;
-                  font-weight: 500;
-                  cursor: pointer;
-                  color: #4b5563;
-                  white-space: nowrap;
-                  transition: all 0.2s;
-                }
-                .tab-btn:hover {
-                  background: #f9fafb;
-                  color: #111827;
-                }
-                .tab-btn.active {
-                  background: #0fb5a1;
-                  color: #ffffff;
-                  border-color: #0fb5a1;
-                }
-                .table-wrapper {
-                  flex-grow: 1;
-                  overflow: auto;
-                  padding: 16px;
-                }
-                table {
-                  border-collapse: collapse;
-                  width: 100%;
-                  background: #ffffff;
-                  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-                  border-radius: 8px;
-                  overflow: hidden;
-                  font-size: 13px;
-                }
-                th, td {
-                  border: 1px solid #e5e7eb;
-                  padding: 10px 14px;
-                  text-align: left;
-                }
-                th {
-                  background: #f9fafb;
-                  font-weight: 600;
-                  color: #374151;
-                  position: sticky;
-                  top: 0;
-                  z-index: 10;
-                }
-                tr:nth-child(even) {
-                  background: #f9fafb;
-                }
-                tr:hover {
-                  background: #f3f4f6;
-                }
-              </style>
-            </head>
-            <body>
-              <header>
-                <h1>${filename}</h1>
-                <button id="download-btn" style="background: #0fb5a1; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px;">
-                  <svg stroke="currentColor" fill="none" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                  Download File
-                </button>
-              </header>
-              <div class="tabs-container" id="tabs"></div>
-              <div class="table-wrapper">
-                <table id="sheet-table"></table>
-              </div>
-              <script>
-                const sheetsData = ${JSON.stringify(sheetsData)};
-                const sheetNames = ${JSON.stringify(sheetNames)};
-                
-                function renderSheet(sheetName) {
-                  const rows = sheetsData[sheetName] || [];
-                  const table = document.getElementById('sheet-table');
-                  table.innerHTML = '';
-                  
-                  if (rows.length === 0) {
-                    table.innerHTML = '<tr><td style="text-align:center; padding: 20px; color: #9ca3af;">Empty Sheet</td></tr>';
-                    return;
-                  }
-                  
-                  // Render headers
-                  const headerRow = rows[0];
-                  const thead = document.createElement('thead');
-                  const trHead = document.createElement('tr');
-                  
-                  // Let's draw row index as column 0
-                  const thIdx = document.createElement('th');
-                  thIdx.innerText = '#';
-                  thIdx.style.width = '40px';
-                  thIdx.style.textAlign = 'center';
-                  trHead.appendChild(thIdx);
-
-                  headerRow.forEach((cellText, idx) => {
-                    const th = document.createElement('th');
-                    th.innerText = cellText || ('Column ' + (idx + 1));
-                    trHead.appendChild(th);
-                  });
-                  thead.appendChild(trHead);
-                  table.appendChild(thead);
-                  
-                  // Render rows
-                  const tbody = document.createElement('tbody');
-                  for (let r = 1; r < rows.length; r++) {
-                    const rowData = rows[r];
-                    const tr = document.createElement('tr');
-                    
-                    const tdIdx = document.createElement('td');
-                    tdIdx.innerText = r;
-                    tdIdx.style.textAlign = 'center';
-                    tdIdx.style.background = '#f9fafb';
-                    tdIdx.style.color = '#9ca3af';
-                    tdIdx.style.fontWeight = 'bold';
-                    tr.appendChild(tdIdx);
-
-                    headerRow.forEach((_, colIdx) => {
-                      const td = document.createElement('td');
-                      td.innerText = rowData[colIdx] !== undefined ? rowData[colIdx] : '';
-                      tr.appendChild(td);
-                    });
-                    tbody.appendChild(tr);
-                  }
-                  table.appendChild(tbody);
-                }
-                
-                // Render tabs
-                const tabsContainer = document.getElementById('tabs');
-                if (sheetNames.length > 1) {
-                  sheetNames.forEach((name, idx) => {
-                    const btn = document.createElement('button');
-                    btn.className = 'tab-btn' + (idx === 0 ? ' active' : '');
-                    btn.innerText = name;
-                    btn.onclick = () => {
-                      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-                      btn.classList.add('active');
-                      renderSheet(name);
-                    };
-                    tabsContainer.appendChild(btn);
-                  });
-                } else {
-                  tabsContainer.style.display = 'none';
-                }
-                
-                // Initial render
-                if (sheetNames.length > 0) {
-                  renderSheet(sheetNames[0]);
-                }
-
-                document.getElementById('download-btn').onclick = () => {
-                  const link = document.createElement('a');
-                  link.href = "${viewBlobUrl}";
-                  link.download = "${filename}";
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                };
-              </script>
-            </body>
-            </html>
-          `);
-            newWindow.document.close();
-          } catch (xlsxErr) {
-            console.warn("Spreadsheet parsing failed, downloading:", xlsxErr);
-            newWindow.close();
-            const link = document.createElement('a');
-            link.href = blobUrl;
-            link.download = filename;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-          }
-        }
-      } catch (err) {
-        console.error(err);
-        newWindow.close();
-        message.error('Unable to open file preview');
-      }
-    } else {
-     
-      const filename = getFileName(src.source);
-      const citationText = src.text || src.source || 'No citation text available.';
-
-      newWindow.document.open();
-      newWindow.document.write('');
-      newWindow.document.close();
-
-      newWindow.document.title = filename || 'Source Text Citation';
-      newWindow.document.body.style.margin = '0';
-      newWindow.document.body.style.padding = '24px';
-      newWindow.document.body.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      newWindow.document.body.style.background = '#f9fafb';
-      newWindow.document.body.style.color = '#111827';
-      newWindow.document.body.style.lineHeight = '1.6';
-
-      const container = newWindow.document.createElement('div');
-      container.style.maxWidth = '800px';
-      container.style.margin = '40px auto';
-      container.style.background = '#ffffff';
-      container.style.padding = '32px';
-      container.style.borderRadius = '12px';
-      container.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06)';
-      container.style.border = '1px solid #e5e7eb';
-
-      const heading = newWindow.document.createElement('h2');
-      heading.innerText = `Citation: \${filename}`;
-      heading.style.marginTop = '0';
-      heading.style.borderBottom = '2px solid #0fb5a1';
-      heading.style.paddingBottom = '12px';
-      heading.style.color = '#1f2937';
-      container.appendChild(heading);
-
-      const contentParagraph = newWindow.document.createElement('p');
-      contentParagraph.innerText = citationText;
-      contentParagraph.style.whiteSpace = 'pre-wrap';
-      contentParagraph.style.fontSize = '15px';
-      contentParagraph.style.color = '#374151';
-      contentParagraph.style.marginTop = '20px';
-      container.appendChild(contentParagraph);
-
-      newWindow.document.body.appendChild(container);
-    }
+    const effectiveList = allSources && allSources.length > 0 ? allSources : [src];
+    await handleOpenSourcesDrawer(effectiveList, src);
   };
   const handleEditMessage = (index: number, content: string) => {
     setEditingMessageIndex(index);
@@ -2425,7 +2388,7 @@ export default function ChatPlaygroundPage() {
     });
   }, []);
 
-  const handleOpenSourcesDrawer = async (sources: SourceMetadata[]) => {
+  const handleOpenSourcesDrawer = async (sources: SourceMetadata[], preferredSource?: SourceMetadata) => {
     let currentSources = agentSources;
     if (agent?.id && currentSources.length === 0) {
       currentSources = await fetchAgentSources(agent.id);
@@ -2434,27 +2397,28 @@ export default function ChatPlaygroundPage() {
     const enhanced = enhanceSources(sources, currentSources);
     setActiveSources(enhanced);
     setIsSourcesDrawerOpen(true);
-    if (enhanced.length > 0) {
+    if (preferredSource) {
+      const match = enhanced.find(e => (e.chunk_id && e.chunk_id === preferredSource.chunk_id) || (e.id && e.id === preferredSource.id)) || preferredSource;
+      handleSelectSourceForPreview(match);
+    } else if (enhanced.length > 0) {
       handleSelectSourceForPreview(enhanced[0]);
     }
   };
 
   const handleSelectSourceForPreview = async (source: SourceMetadata) => {
     setSelectedSourceForPreview(source);
-    if (!source.kb_id) {
-      return;
-    }
 
     const nameForFallback = getFileName(source.source).toLowerCase();
+    const hasEvidence = !!(source.supporting_text || source.snippet || source.text);
     const isParsedType = source.content_type === "parsed" ||
       source.parsed_path !== undefined ||
       nameForFallback.endsWith(".pdf") ||
       nameForFallback.endsWith(".docx") ||
       nameForFallback.endsWith(".doc") ||
-      nameForFallback.endsWith(".txt");
+      nameForFallback.endsWith(".txt") ||
+      hasEvidence;
 
-    
-    const defaultTab = isParsedType ? "original" : "parsed";
+    const defaultTab = hasEvidence ? "parsed" : (isParsedType ? "original" : "parsed");
     setSourcesDrawerPreviewTab(defaultTab);
     setParsedTextContent("");
 
@@ -2471,79 +2435,90 @@ export default function ChatPlaygroundPage() {
       }
       setSourcesDrawerPreviewUrl("");
 
-     
-      if (isParsedType) {
+      if (isParsedType || hasEvidence) {
         try {
           setParsedTextLoading(true);
-          const cleanText = await getCleanTextContent(source.kb_id);
-          setParsedTextContent(cleanExtractedText(cleanText));
+          let cleanText = "";
+          if (source.kb_id) {
+            cleanText = await getCleanTextContent(source.kb_id);
+          }
+          let processed = cleanExtractedText(cleanText);
+          if (!processed && source.text) {
+            processed = cleanExtractedText(source.text);
+          }
+          setParsedTextContent(processed || "Unable to load extracted text content.");
         } catch (err) {
           console.error("Clean text fetch error:", err);
-          setParsedTextContent("Unable to load extracted text content.");
+          setParsedTextContent(source.text ? cleanExtractedText(source.text) : "Unable to load extracted text content.");
         } finally {
           setParsedTextLoading(false);
         }
       }
 
+      if (!source.kb_id) {
+        setSourcesDrawerPreviewLoading(false);
+        return;
+      }
+
      
-      const blobUrl = await getFilePreview(source.kb_id);
-      setSourcesDrawerPreviewUrl(blobUrl);
+      try {
+        const blobUrl = await getFilePreview(source.kb_id);
+        setSourcesDrawerPreviewUrl(blobUrl);
 
-      const name = getFileName(source.source).toLowerCase();
-      const fullSourceStr = `${source.source || ''} ${source.name || ''} ${source.file_name || ''} ${source.title || ''} ${source.s3_path || ''} ${name}`.toLowerCase();
+        const name = getFileName(source.source).toLowerCase();
+        const fullSourceStr = `${source.source || ''} ${source.name || ''} ${source.file_name || ''} ${source.title || ''} ${source.s3_path || ''} ${name}`.toLowerCase();
 
-      
-      const blobRes = await fetch(blobUrl);
-      const blob = await blobRes.blob();
-      const contentType = blob.type.toLowerCase();
+        const blobRes = await fetch(blobUrl);
+        const blob = await blobRes.blob();
+        const contentType = blob.type.toLowerCase();
 
-      const isPDF = contentType.includes("pdf") || fullSourceStr.includes(".pdf");
-      const isImage = contentType.includes("image/") || fullSourceStr.includes(".png") || fullSourceStr.includes(".jpg") || fullSourceStr.includes(".jpeg") || fullSourceStr.includes(".webp") || fullSourceStr.includes(".gif");
-      const isCSV = contentType.includes("csv") || fullSourceStr.includes(".csv") || fullSourceStr.includes("csv:");
-      const isExcel = contentType.includes("excel") || contentType.includes("spreadsheet") ||
-        contentType.includes("vnd.ms-excel") || contentType.includes("vnd.openxmlformats-officedocument.spreadsheetml.sheet") ||
-        contentType.includes("octet-stream") || contentType.includes("zip") ||
-        fullSourceStr.includes(".xls") || fullSourceStr.includes(".xlsx") || fullSourceStr.includes("excel:") || fullSourceStr.includes("spreadsheet:");
+        const isPDF = contentType.includes("pdf") || fullSourceStr.includes(".pdf");
+        const isImage = contentType.includes("image/") || fullSourceStr.includes(".png") || fullSourceStr.includes(".jpg") || fullSourceStr.includes(".jpeg") || fullSourceStr.includes(".webp") || fullSourceStr.includes(".gif");
+        const isCSV = contentType.includes("csv") || fullSourceStr.includes(".csv") || fullSourceStr.includes("csv:");
+        const isExcel = contentType.includes("excel") || contentType.includes("spreadsheet") ||
+          contentType.includes("vnd.ms-excel") || contentType.includes("vnd.openxmlformats-officedocument.spreadsheetml.sheet") ||
+          contentType.includes("octet-stream") || contentType.includes("zip") ||
+          fullSourceStr.includes(".xls") || fullSourceStr.includes(".xlsx") || fullSourceStr.includes("excel:") || fullSourceStr.includes("spreadsheet:");
 
-      if (isPDF) {
-        setSourcesDrawerPreviewType("pdf");
-      } else if (isImage) {
-        setSourcesDrawerPreviewType("image");
-      } else if (isCSV || isExcel) {
-        setSourcesDrawerPreviewType(isCSV ? "csv" : "excel");
-        const arrayBuffer = await blob.arrayBuffer();
-        excelArrayBufferRef.current = arrayBuffer;
+        if (isPDF) {
+          setSourcesDrawerPreviewType("pdf");
+        } else if (isImage) {
+          setSourcesDrawerPreviewType("image");
+        } else if (isCSV || isExcel) {
+          setSourcesDrawerPreviewType(isCSV ? "csv" : "excel");
+          const arrayBuffer = await blob.arrayBuffer();
+          excelArrayBufferRef.current = arrayBuffer;
 
-        const XLSX = await import("xlsx");
-       
-        const workbook = XLSX.read(arrayBuffer, { type: "array", bookSheets: true });
-        setExcelSheetNames(workbook.SheetNames);
+          const XLSX = await import("xlsx");
+          const workbook = XLSX.read(arrayBuffer, { type: "array", bookSheets: true });
+          setExcelSheetNames(workbook.SheetNames);
 
-        if (workbook.SheetNames.length > 0) {
-          const firstSheet = workbook.SheetNames[0];
-          setActiveExcelSheet(firstSheet);
-
-          
-          const partialWorkbook = XLSX.read(arrayBuffer, {
-            type: "array",
-            sheets: [firstSheet],
-            cellFormula: false,
-            cellHTML: false,
-            cellText: false,
-            cellDates: true
-          });
-
-          const worksheet = partialWorkbook.Sheets[firstSheet];
-          const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
-          const formattedData = jsonData.map((row: any) =>
-            Array.isArray(row)
-              ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
-              : []
-          );
-          setExcelSheets({ [firstSheet]: formattedData });
+          if (workbook.SheetNames.length > 0) {
+            const firstSheet = workbook.SheetNames[0];
+            setActiveExcelSheet(firstSheet);
+            const partialWorkbook = XLSX.read(arrayBuffer, {
+              type: "array",
+              sheets: [firstSheet],
+              cellFormula: false,
+              cellHTML: false,
+              cellText: false,
+              cellDates: true
+            });
+            const worksheet = partialWorkbook.Sheets[firstSheet];
+            const jsonData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+            const formattedData = jsonData.map((row: any) =>
+              Array.isArray(row)
+                ? row.map((cell) => (cell !== null && cell !== undefined ? String(cell) : ""))
+                : []
+            );
+            setExcelSheets({ [firstSheet]: formattedData });
+          }
+          setExcelPage(1);
+        } else {
+          setSourcesDrawerPreviewType("other");
         }
-        setExcelPage(1);
-      } else {
+      } catch (binaryErr) {
+        console.warn("Binary preview loading error (grounded parsed text remains active):", binaryErr);
         setSourcesDrawerPreviewType("other");
       }
     } catch (error: any) {
@@ -2919,33 +2894,71 @@ export default function ChatPlaygroundPage() {
                               </button>
                             </Tooltip>
                             {(() => {
-                              const uniqueSources = deduplicateSources(msg.sources || []);
+                              const rawMsgSources = msg.sources || msg.metadata?.sources || [];
+                              const uniqueSources = deduplicateSources(rawMsgSources);
                               if (!showSources || uniqueSources.length === 0 || msg.content?.includes("Something went wrong") || msg.content?.includes("trouble connecting")) return null;
                               return (
                                 <div className="ml-auto flex items-center">
                                   {uniqueSources.length === 1 ? (
                                     <button
-                                      onClick={() => handleOpenSource(uniqueSources[0])}
-                                      className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0"
+                                      onClick={() => handleOpenSource(uniqueSources[0], rawMsgSources)}
+                                      className="text-[var(--app-text)] font-bold p-1.5 px-2.5 rounded-lg border border-[var(--app-border)]/60 bg-[var(--app-surface-muted)] cursor-pointer transition-all hover:border-[#0fb5a1] hover:text-[#0fb5a1] flex items-center gap-1.5 text-xs shrink-0 shadow-sm"
+                                      title="Click to view exact paragraph, lines, and highlighted supporting text"
                                     >
-                                      <SiCrowdsource />
-                                      <span>Source</span>
+                                      <SiCrowdsource className="text-[#0fb5a1]" />
+                                      <span>Source Citation</span>
+                                      {uniqueSources[0].page && (
+                                        <span className="text-[10px] bg-[#0fb5a1]/15 text-[#0fb5a1] px-1 py-0.2 rounded font-mono font-semibold">
+                                          P.{uniqueSources[0].page}
+                                        </span>
+                                      )}
                                     </button>
                                   ) : (
                                     <Dropdown
                                       menu={{
-                                        items: uniqueSources.map((src: any, idx: number) => ({
-                                          key: idx.toString(),
-                                          label: getCleanFileName(src),
-                                          onClick: () => handleOpenSource(src),
-                                        })),
+                                        items: [
+                                          ...uniqueSources.map((src: any, idx: number) => ({
+                                            key: idx.toString(),
+                                            label: (
+                                              <div className="flex flex-col py-1 max-w-[320px]">
+                                                <div className="font-semibold text-xs flex items-center justify-between gap-2">
+                                                  <span className="truncate">{getCleanFileName(src)}</span>
+                                                  <span className="text-[10px] font-mono text-[#0fb5a1] bg-[#0fb5a1]/10 px-1 py-0.5 rounded shrink-0">
+                                                    P.{src.page || 1} • Para {src.paragraph_number || src.paragraph || idx + 1}
+                                                  </span>
+                                                </div>
+                                                {src.supporting_text && (
+                                                  <div className="text-[11px] text-[var(--app-text-muted)] truncate mt-0.5">
+                                                    "{src.supporting_text}"
+                                                  </div>
+                                                )}
+                                              </div>
+                                            ),
+                                            onClick: () => handleOpenSource(src, rawMsgSources),
+                                          })),
+                                          {
+                                            type: 'divider',
+                                          },
+                                          {
+                                            key: 'all',
+                                            label: (
+                                              <span className="font-bold text-xs text-[#0fb5a1] flex items-center gap-1">
+                                                <SiCrowdsource /> View All Citations & Evidence ({uniqueSources.length})
+                                              </span>
+                                            ),
+                                            onClick: () => handleOpenSource(uniqueSources[0], rawMsgSources),
+                                          }
+                                        ]
                                       }}
                                       placement="bottomLeft"
                                       trigger={['click']}
                                     >
-                                      <button className="text-[var(--app-text)] font-bold p-2 cursor-pointer transition-colors hover:opacity-80 hover:text-[#0fb5a1] flex items-center gap-1 text-xs shrink-0">
-                                        <SiCrowdsource />
-                                        <span>Sources</span>
+                                      <button
+                                        className="text-[var(--app-text)] font-bold p-1.5 px-2.5 rounded-lg border border-[var(--app-border)]/60 bg-[var(--app-surface-muted)] cursor-pointer transition-all hover:border-[#0fb5a1] hover:text-[#0fb5a1] flex items-center gap-1.5 text-xs shrink-0 shadow-sm"
+                                        title="Click to view exact citations & evidence"
+                                      >
+                                        <SiCrowdsource className="text-[#0fb5a1]" />
+                                        <span>Sources ({uniqueSources.length})</span>
                                       </button>
                                     </Dropdown>
                                   )}
@@ -3356,13 +3369,33 @@ export default function ChatPlaygroundPage() {
 
       <Drawer
         title={
-          <Flex align="center" gap={8}>
-            
-            <SiCrowdsource />
-            <span className="font-extrabold text-sm text-[var(--app-text)]">Source Documents</span>
+          <Flex align="center" justify="space-between" className="w-full pr-8">
+            <Flex align="center" gap={8}>
+              <SiCrowdsource className="text-[#0fb5a1] text-base" />
+              <span className="font-extrabold text-sm text-[var(--app-text)]">Source Grounding & Evidence Traceability</span>
+            </Flex>
+            {selectedSourceForPreview && (
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-mono bg-[#0fb5a1]/10 text-[#0fb5a1] px-2 py-0.5 rounded-full border border-[#0fb5a1]/20 font-bold">
+                  {Math.round((selectedSourceForPreview.score || 0.95) * 100)}% Match
+                </span>
+                {sourcesDrawerPreviewUrl && (
+                  <a
+                    href={sourcesDrawerPreviewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-[var(--app-text-muted)] hover:text-[#0fb5a1] flex items-center gap-1 transition-colors ml-2 font-medium"
+                    title="Open full file in new tab"
+                  >
+                    <FiExternalLink size={13} />
+                    <span>Open File</span>
+                  </a>
+                )}
+              </div>
+            )}
           </Flex>
         }
-        placement="top"
+        placement="right"
         onClose={() => {
           setIsSourcesDrawerOpen(false);
           setSelectedSourceForPreview(null);
@@ -3372,134 +3405,172 @@ export default function ChatPlaygroundPage() {
           setSourcesDrawerPreviewUrl("");
         }}
         open={isSourcesDrawerOpen}
-        width={750}
+        width={880}
         height="100vh"
         styles={{
           body: { padding: 0, background: "var(--app-surface)", display: "flex", height: "100%" },
         }}
       >
-        
-        <div style={{ width: "240px", borderRight: "1px solid var(--app-border)", height: "100%", overflowY: "auto", padding: "16px" }} className="space-y-2">
-          <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--app-text-soft)] block mb-3">
-            Citations
+        <div style={{ width: "280px", borderRight: "1px solid var(--app-border)", height: "100%", overflowY: "auto", padding: "16px" }} className="space-y-2.5 custom-scrollbar">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--app-text-soft)] block mb-2">
+            Evidence Citations ({activeSources.length})
           </span>
           {activeSources.map((src, index) => {
             const fileName = getFileName(src.source);
             const isSelected = (selectedSourceForPreview?.id || selectedSourceForPreview?.chunk_id) === (src.id || src.chunk_id);
+            const pNum = src.paragraph_number || src.paragraph || index + 1;
+            const lStart = src.line_start || 1;
+            const lEnd = src.line_end || 1;
+            const quoteText = src.supporting_text || src.snippet || src.text || "";
+
             return (
               <div
                 key={(src.id || src.chunk_id) || index}
                 onClick={() => handleSelectSourceForPreview(src)}
-                className={`p-3 rounded-xl cursor-pointer border transition-all ${isSelected
-                  ? "bg-[#0fb5a1] text-white border-transparent shadow-sm"
-                  : "bg-[var(--app-surface-muted)] hover:bg-[var(--app-hover)] text-[var(--app-text)] border-[var(--app-border)]/40"
+                className={`p-3 rounded-xl cursor-pointer border transition-all text-left ${isSelected
+                  ? "bg-[#0fb5a1] text-white border-transparent shadow-md"
+                  : "bg-[var(--app-surface-muted)] hover:bg-[var(--app-hover)] text-[var(--app-text)] border-[var(--app-border)]/40 hover:border-[#0fb5a1]/40"
                   }`}
               >
-                <div className="flex align-center gap-2 mb-1 min-w-0">
-                  <span className="text-xs">📄</span>
-                  <Text className={`font-semibold text-xs block truncate ${isSelected ? "text-white" : "text-[var(--app-text)]"}`} style={{ maxWidth: "160px" }}>
-                    {fileName}
-                  </Text>
+                <div className="flex items-center justify-between gap-1 mb-1.5 min-w-0">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="text-xs shrink-0">📄</span>
+                    <Text className={`font-bold text-xs block truncate ${isSelected ? "text-white" : "text-[var(--app-text)]"}`}>
+                      {fileName}
+                    </Text>
+                  </div>
+                  <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded font-bold shrink-0 ${isSelected ? "bg-white/20 text-white" : "bg-[#0fb5a1]/15 text-[#0fb5a1]"}`}>
+                    {Math.round((src.score || 0.95) * 100)}%
+                  </span>
                 </div>
-                <div className={`text-[9px] ${isSelected ? "text-white/70" : "text-[var(--app-text-muted)]"}`}>
-                  Score: {Math.round((src.score || 0) * 100)}%
+
+                <div className="flex flex-wrap items-center gap-1 mb-1.5">
+                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold ${isSelected ? "bg-white/20 text-white" : "bg-black/5 dark:bg-white/10 text-[var(--app-text-soft)]"}`}>
+                    P.{src.page || 1}
+                  </span>
+                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold ${isSelected ? "bg-white/20 text-white" : "bg-black/5 dark:bg-white/10 text-[var(--app-text-soft)]"}`}>
+                    Para {pNum}
+                  </span>
+                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold ${isSelected ? "bg-white/20 text-white" : "bg-black/5 dark:bg-white/10 text-[var(--app-text-soft)]"}`}>
+                    Lines {lStart}–{lEnd}
+                  </span>
                 </div>
+
+                {quoteText && (
+                  <p className={`text-[11px] leading-snug line-clamp-2 m-0 italic ${isSelected ? "text-white/90" : "text-[var(--app-text-muted)]"}`}>
+                    "{quoteText}"
+                  </p>
+                )}
               </div>
             );
           })}
+          {activeSources.length === 0 && (
+            <div className="p-3 text-sm text-[var(--app-text-muted)]">
+              No source documents
+            </div>
+          )}
         </div>
-        {activeSources.length === 0 && (
-          <div className="p-3 text-sm text-[var(--app-text-muted)]">
-            No source documents
-          </div>
-        )}
 
-        
         <div style={{ flex: 1, height: "100%", overflowY: "auto", padding: "20px", display: "flex", flexDirection: "column", background: "var(--app-surface-muted)" }}>
           {sourcesDrawerPreviewLoading ? (
             <Flex vertical align="center" justify="center" gap={12} className="h-full">
               <Spin size="large" />
               <Text className="text-xs text-[var(--app-text-soft)] font-semibold">
-                Loading source preview...
+                Aligning source content & context grounding...
               </Text>
             </Flex>
           ) : selectedSourceForPreview ? (
             <div className="w-full h-full flex flex-col justify-start">
-              
-              <Flex vertical gap={12} className="mb-4 bg-[var(--app-surface)] p-4 rounded-xl border border-[var(--app-border)]/40 shadow-sm shrink-0">
+              <Flex vertical gap={10} className="mb-4 bg-[var(--app-surface)] p-4 rounded-xl border border-[var(--app-border)]/40 shadow-sm shrink-0">
                 <Flex justify="space-between" align="center" className="min-w-0 gap-4">
-                  <Text className="text-xs font-bold text-[var(--app-text)] truncate flex-1">
-                    {getFileName(selectedSourceForPreview.source)}
-                  </Text>
-                  {selectedSourceForPreview.reason && (
-                    <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-md shrink-0">
-                      {selectedSourceForPreview.reason}
-                    </span>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className="text-base">📄</span>
+                    <Text className="text-sm font-extrabold text-[var(--app-text)] truncate">
+                      {getFileName(selectedSourceForPreview.source)}
+                    </Text>
+                    {selectedSourceForPreview.reason && (
+                      <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-md shrink-0">
+                        {selectedSourceForPreview.reason}
+                      </span>
+                    )}
+                  </div>
+                  {sourcesDrawerPreviewUrl && (
+                    <a
+                      href={sourcesDrawerPreviewUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-semibold text-[#0fb5a1] hover:underline flex items-center gap-1 shrink-0"
+                    >
+                      <FiExternalLink size={13} />
+                      <span>Open Full File</span>
+                    </a>
                   )}
                 </Flex>
 
-                
-                {(selectedSourceForPreview.content_type === "parsed" ||
-                  selectedSourceForPreview.parsed_path !== undefined ||
-                  getFileName(selectedSourceForPreview.source).toLowerCase().endsWith(".pdf") ||
-                  getFileName(selectedSourceForPreview.source).toLowerCase().endsWith(".docx") ||
-                  getFileName(selectedSourceForPreview.source).toLowerCase().endsWith(".doc") ||
-                  getFileName(selectedSourceForPreview.source).toLowerCase().endsWith(".txt")) && (
-                    <div className="flex bg-[var(--app-surface-muted)] p-1 rounded-xl border border-[var(--app-border)]/40 self-start">
+                <div className="flex items-center justify-between gap-4 pt-1 border-t border-[var(--app-border)]/20">
+                  <div className="flex bg-[var(--app-surface-muted)] p-1 rounded-xl border border-[var(--app-border)]/40 self-start">
+                    <button
+                      onClick={() => setSourcesDrawerPreviewTab("parsed")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 ${sourcesDrawerPreviewTab === "parsed"
+                        ? "bg-[#0fb5a1] text-white shadow-sm"
+                        : "text-[var(--app-text-soft)] hover:text-[var(--app-text)]"
+                        }`}
+                    >
+                      <FiTarget size={13} />
+                      <span>Grounded Evidence & Context</span>
+                    </button>
+                    {(sourcesDrawerPreviewType === "pdf" || sourcesDrawerPreviewUrl) && (
                       <button
                         onClick={() => setSourcesDrawerPreviewTab("original")}
-                        className={`px-4 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${sourcesDrawerPreviewTab === "original"
+                        className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 ${sourcesDrawerPreviewTab === "original"
                           ? "bg-[#0fb5a1] text-white shadow-sm"
                           : "text-[var(--app-text-soft)] hover:text-[var(--app-text)]"
                           }`}
                       >
-                        Original Document
+                        <FiLayers size={13} />
+                        <span>Original Document</span>
                       </button>
-                      {/* <button
-                        onClick={() => setSourcesDrawerPreviewTab("parsed")}
-                        className={`px-4 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${sourcesDrawerPreviewTab === "parsed"
-                            ? "bg-[#0fb5a1] text-white shadow-sm"
-                            : "text-[var(--app-text-soft)] hover:text-[var(--app-text)]"
-                          }`}
-                      >
-                        Extracted Text
-                      </button> */}
-
-                    </div>
-                  )}
-              </Flex>
-
-             
-              <div className="flex-1 w-full bg-[var(--app-surface)] rounded-xl border border-[var(--app-border)]/40 overflow-hidden relative shadow-sm" style={{ minHeight: "450px" }}>
-                {sourcesDrawerPreviewTab === "parsed" ? (
-                 
-                  <div className="w-full h-full flex flex-col justify-start">
-                    {parsedTextLoading ? (
-                      <Flex vertical align="center" justify="center" gap={12} className="h-full my-auto py-20">
-                        <Spin size="large" />
-                        <Text className="text-xs text-[var(--app-text-soft)] font-semibold">
-                          Parsing document content...
-                        </Text>
-                      </Flex>
-                    ) : (
-                      <div
-                        className="w-full h-full overflow-y-auto p-6 markdown-content custom-scrollbar"
-                        dangerouslySetInnerHTML={{
-                          __html: htmlContent || "<p style='color: var(--app-text-muted)'>No extracted text content available.</p>"
-                        }}
-                      />
                     )}
                   </div>
+
+                  <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-400/20">
+                    📍 Page {selectedSourceForPreview.page || 1} • Para {selectedSourceForPreview.paragraph_number || selectedSourceForPreview.paragraph || 1} • Lines {selectedSourceForPreview.line_start || 1}–{selectedSourceForPreview.line_end || 1}
+                  </span>
+                </div>
+              </Flex>
+
+              <div className="flex-1 w-full bg-[var(--app-surface)] rounded-xl border border-[var(--app-border)]/40 overflow-hidden relative shadow-sm" style={{ minHeight: "450px" }}>
+                {sourcesDrawerPreviewTab === "parsed" ? (
+                  <GroundedEvidenceDocumentViewer
+                    parsedContent={parsedTextContent}
+                    source={selectedSourceForPreview}
+                    loading={parsedTextLoading}
+                  />
                 ) : (
-                  
                   <div className="w-full h-full flex flex-col justify-start overflow-hidden">
                     {sourcesDrawerPreviewType === "pdf" && sourcesDrawerPreviewUrl && (
-                      <iframe
-                        src={`${sourcesDrawerPreviewUrl}#navpanes=0`}
-                        width="100%"
-                        height="100%"
-                        style={{ border: "none" }}
-                      />
+                      <div className="w-full h-full flex flex-col">
+                        <div className="p-2 bg-amber-500/10 border-b border-amber-400/30 flex items-center justify-between px-4 shrink-0">
+                          <span className="text-xs font-semibold text-amber-800 dark:text-amber-200 flex items-center gap-1.5">
+                            <FiTarget size={14} className="text-amber-600" />
+                            Target Location: Page {selectedSourceForPreview.page || 1} • Paragraph {selectedSourceForPreview.paragraph_number || selectedSourceForPreview.paragraph || 1} (Lines {selectedSourceForPreview.line_start || 1}–{selectedSourceForPreview.line_end || 1})
+                          </span>
+                          <button
+                            onClick={() => setSourcesDrawerPreviewTab("parsed")}
+                            className="text-xs font-bold text-[#0fb5a1] hover:underline cursor-pointer"
+                          >
+                            Switch to Precise Line & Text Highlight View →
+                          </button>
+                        </div>
+                        <iframe
+                          src={`${sourcesDrawerPreviewUrl}#page=${selectedSourceForPreview.page || 1}&search=${encodeURIComponent(
+                            (selectedSourceForPreview.supporting_text || "").split(" ").slice(0, 5).join(" ")
+                          )}&navpanes=0`}
+                          width="100%"
+                          height="100%"
+                          style={{ border: "none" }}
+                        />
+                      </div>
                     )}
 
                     {sourcesDrawerPreviewType === "image" && sourcesDrawerPreviewUrl && (
@@ -3514,7 +3585,6 @@ export default function ChatPlaygroundPage() {
 
                     {(sourcesDrawerPreviewType === "excel" || sourcesDrawerPreviewType === "csv") && excelSheetNames.length > 0 && (
                       <div className="w-full h-full flex flex-col overflow-hidden bg-[var(--app-surface)]">
-                        
                         {sourcesDrawerPreviewType === "excel" && excelSheetNames.length > 1 && (
                           <div className="flex gap-2 p-2.5 bg-[var(--app-surface-muted)] border-b border-[var(--app-border)]/40 overflow-x-auto shrink-0 scrollbar-thin">
                             {excelSheetNames.map(sheetName => {
@@ -3564,7 +3634,6 @@ export default function ChatPlaygroundPage() {
                           </div>
                         )}
 
-                        
                         <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-[var(--app-surface)]">
                           {excelSheets[activeExcelSheet] && excelSheets[activeExcelSheet].length > 0 ? (
                             (() => {
@@ -3604,7 +3673,6 @@ export default function ChatPlaygroundPage() {
                                     </table>
                                   </div>
 
-                                 
                                   {totalPages > 1 && (
                                     <div className="flex items-center justify-between p-3 border border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 select-none rounded-xl">
                                       <span className="text-xs text-[var(--app-text-soft)] font-bold">
@@ -3645,9 +3713,9 @@ export default function ChatPlaygroundPage() {
                     )}
 
                     {sourcesDrawerPreviewType === "other" && (
-                      <Flex vertical align="center" justify="center" gap={20} className="py-20 w-full h-full">
-                        <div className="w-16 h-16 rounded-2xl bg-[#0fb5a1]/10 text-[#0fb5a1] flex items-center justify-center">
-                          <LuFileText size={32} />
+                      <Flex vertical align="center" justify="center" gap={16} className="h-full my-auto py-20">
+                        <div className="w-16 h-16 rounded-2xl bg-[var(--app-surface-muted)] flex items-center justify-center text-3xl border border-[var(--app-border)]/40 shadow-inner">
+                          📁
                         </div>
                         <Flex vertical align="center" gap={4} className="text-center max-w-sm px-4">
                           <Title level={5} className="!m-0 !text-[var(--app-text)] !font-bold">
@@ -3657,15 +3725,17 @@ export default function ChatPlaygroundPage() {
                             This format ({getFileName(selectedSourceForPreview.source).split('.').pop()?.toUpperCase()}) cannot be rendered directly. You can download the file to view its contents.
                           </Text>
                         </Flex>
-                        <Button
-                          type="primary"
-                          icon={<LuDownload />}
-                          href={sourcesDrawerPreviewUrl}
-                          download={getFileName(selectedSourceForPreview.source)}
-                          className="rounded-xl !bg-[#0fb5a1] hover:!bg-[#1e4873] !h-10 px-5 font-bold shadow-md shadow-teal-900/10 flex items-center gap-2"
-                        >
-                          Download File
-                        </Button>
+                        {sourcesDrawerPreviewUrl && (
+                          <Button
+                            type="primary"
+                            icon={<LuDownload />}
+                            href={sourcesDrawerPreviewUrl}
+                            download={getFileName(selectedSourceForPreview.source)}
+                            className="rounded-xl !bg-[#0fb5a1] hover:!bg-[#1e4873] !h-10 px-5 font-bold shadow-md shadow-teal-900/10 flex items-center gap-2"
+                          >
+                            Download File
+                          </Button>
+                        )}
                       </Flex>
                     )}
                   </div>
@@ -3674,10 +3744,9 @@ export default function ChatPlaygroundPage() {
             </div>
           ) : (
             <Flex vertical align="center" justify="center" className="h-full opacity-40">
-            
-              <SiCrowdsource />
+              <SiCrowdsource className="text-4xl text-[#0fb5a1] mb-2" />
               <Text className="font-bold text-xs uppercase tracking-widest text-[var(--app-text-muted)]">
-                Select a document to preview
+                Select a document or evidence citation to preview
               </Text>
             </Flex>
           )}

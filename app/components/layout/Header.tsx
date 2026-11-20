@@ -18,7 +18,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [userName, setUserName] = useState("User");
-  const { isAdminMode, setIsAdminMode } = useStore();
+  const { isAdminMode, setIsAdminMode, setAgentList, setBotsCache } = useStore();
 
   useEffect(() => {
     const storedName = localStorage.getItem("userName");
@@ -30,6 +30,8 @@ export default function Header({ onMenuClick }: HeaderProps) {
   const handleLogout = () => {
     localStorage.clear();
     deleteCookie("AUTH_TOKEN");
+    setAgentList([]);
+    setBotsCache([]);
     router.push("/");
   };
 

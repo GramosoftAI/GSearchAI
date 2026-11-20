@@ -210,12 +210,13 @@ export default function AnalyticsPage() {
   const stats = useMemo(() => {
     if (!response) return [];
     const root = (response as any).data || response;
+    const hasData = (root.total_queries ?? 0) > 0;
     
     return [
-      { label: "Total Volume", value: String(root.total_queries ?? 0), change: "12%", icon: MessageSquare, isPositive: true },
-      { label: "Precision Score", value: `${root.accuracy_percent ?? 0}%`, change: "4%", icon: Target, isPositive: true },
-      { label: "Cognitive Gaps", value: String(root.unanswered_count ?? 0), change: "2%", icon: HelpCircle, isPositive: false },
-      { label: "Neural Confidence", value: `${Math.round((root.avg_confidence ?? 0) * 100)}%`, change: "1.2%", icon: TrendingUp, isPositive: true },
+      { label: "Total Volume", value: String(root.total_queries ?? 0), change: hasData ? "12%" : "0%", icon: MessageSquare, isPositive: true },
+      { label: "Precision Score", value: `${root.accuracy_percent ?? 0}%`, change: hasData ? "4%" : "0%", icon: Target, isPositive: true },
+      { label: "Cognitive Gaps", value: String(root.unanswered_count ?? 0), change: hasData ? "2%" : "0%", icon: HelpCircle, isPositive: false },
+      { label: "Neural Confidence", value: `${Math.round((root.avg_confidence ?? 0) * 100)}%`, change: hasData ? "1.2%" : "0%", icon: TrendingUp, isPositive: true },
     ];
   }, [response]);
 
