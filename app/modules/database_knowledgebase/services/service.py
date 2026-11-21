@@ -110,10 +110,12 @@ class DatabaseKnowledgebaseService:
         db: AsyncSession,
         tenant_id: str,
         secret_manager: Optional[SecretManager] = None,
+        user_id: Optional[Any] = None,
     ):
         self.db = db
         self.tenant_id = tenant_id
-        self.repo = DatabaseKnowledgebaseRepository(db, tenant_id)
+        self.user_id = uuid.UUID(str(user_id)) if user_id else None
+        self.repo = DatabaseKnowledgebaseRepository(db, tenant_id, user_id=self.user_id)
         self.secrets = secret_manager or get_secret_manager()
 
     def _entity_to_response(
@@ -183,10 +185,11 @@ class DatabaseKnowledgebaseService:
         return self._entity_to_response(entity)
 
     async def list_database_knowledgebases(
-        self, skip: int = 0, limit: int = 50, agent_id: Optional[uuid.UUID] = None
+        self, skip: int = 0, limit: int = 50, agent_id: Optional[uuid.UUID] = None, user_id: Optional[uuid.UUID] = None
     ) -> List[DatabaseKnowledgebaseResponse]:
-        """List all active database knowledgebases for current tenant."""
-        entities = await self.repo.list_kbs(skip=skip, limit=limit, agent_id=agent_id)
+        """List all active database knowledgebases for current tenant with account isolation."""
+        effective_user_id = user_id if user_id is not None else self.user_id
+        entities = await self.repo.list_kbs(skip=skip, limit=limit, agent_id=agent_id, user_id=effective_user_id)
         return [self._entity_to_response(e) for e in entities]
 
     async def update_database_knowledgebase(

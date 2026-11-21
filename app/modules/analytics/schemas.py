@@ -169,6 +169,7 @@ class DashboardMetrics(BaseModel):
     avg_confidence: float
     trend_queries: List[dict] # {date: string, count: int}
     confidence_distribution: List[dict] # {bucket: string, count: int}
+    unanswered_questions: List[str] = Field(default_factory=list)
 
 # ================= OPERATIONAL ANALYTICS =================
 

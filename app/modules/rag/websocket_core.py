@@ -97,6 +97,8 @@ async def run_unified_rag_websocket_loop(
             await adapter.send_error(websocket, str(e))
             continue
 
+        turn_start_time = time.perf_counter()
+
         if not active_session_id and request.session_id:
             active_session_id = request.session_id
 
@@ -258,6 +260,41 @@ async def run_unified_rag_websocket_loop(
             full_response = "".join(response_buffer)
 
             if has_error:
+                try:
+                    from app.modules.analytics.repository import AnalyticsRepository
+                    from app.modules.analytics.models import ResponseStatus
+                    from app.modules.chats.repository import safe_uuid
+                    from app.core.config import get_settings
+
+                    t_uuid = safe_uuid(tenant_id)
+                    u_uuid = safe_uuid(user_id)
+                    s_uuid = safe_uuid(active_session_id)
+                    latency_ms = (time.perf_counter() - turn_start_time) * 1000
+                    settings = get_settings()
+                    used_model_name = getattr(rag_service.llm_client, "model_answer", settings.model_answer) if hasattr(rag_service, "llm_client") else settings.model_answer
+
+                    analytics_repo = AnalyticsRepository(db, tenant_id=t_uuid, user_id=u_uuid)
+                    await analytics_repo.create_query_log({
+                        "tenant_id": t_uuid,
+                        "user_id": u_uuid,
+                        "session_id": s_uuid,
+                        "query": request.query,
+                        "response_status": ResponseStatus.ERROR,
+                        "confidence_score": 0.0,
+                        "latency_ms": latency_ms,
+                        "model_name": used_model_name,
+                        "llm_input_tokens": max(1, len(request.query) // 4),
+                        "llm_output_tokens": 0,
+                        "embedding_tokens": max(1, len(request.query) // 4),
+                        "total_tokens": max(1, len(request.query) // 4) * 2,
+                        "llm_cost_usd": 0.0,
+                        "embedding_cost_usd": 0.0,
+                        "total_cost_usd": 0.0,
+                    })
+                    await db.commit()
+                except Exception as log_err:
+                    logger.warning(f"Failed to record error analytics log in WebSocket loop: {log_err}")
+
                 await _persist_partial(db, chat_service, active_session_id, user_id, request.query, response_buffer, "rag_error")
                 break
 
@@ -285,6 +322,73 @@ async def run_unified_rag_websocket_loop(
                     await db.commit()
                 except Exception as e:
                     logger.error(f"Failed to persist response: {e}")
+
+            # Record Analytics Query Log & Token Usage
+            try:
+                from app.modules.analytics.repository import AnalyticsRepository
+                from app.modules.analytics.models import ResponseStatus
+                from app.modules.chats.repository import safe_uuid
+                from app.core.llm.pricing import calculate_token_cost
+                from app.core.config import get_settings
+
+                t_uuid = safe_uuid(tenant_id)
+                u_uuid = safe_uuid(user_id)
+                s_uuid = safe_uuid(active_session_id)
+                latency_ms = (time.perf_counter() - turn_start_time) * 1000
+
+                clean_ans = full_response.lower() if full_response else ""
+                is_unanswered = (
+                    has_error
+                    or not full_response.strip()
+                    or (not collected_sources and (
+                        "don't have that specific information" in clean_ans
+                        or "cannot find" in clean_ans
+                        or "no relevant information" in clean_ans
+                        or "i don't know" in clean_ans
+                    ))
+                )
+
+                query_status = ResponseStatus.UNANSWERED if is_unanswered else ResponseStatus.SUCCESS
+                confidence = 0.0 if is_unanswered else (0.95 if collected_sources else 0.88)
+
+                settings = get_settings()
+                used_model_name = getattr(rag_service.llm_client, "model_answer", settings.model_answer) if hasattr(rag_service, "llm_client") else settings.model_answer
+                llm_inp = max(1, len(request.query) // 4 + sum(len(str(s)) // 4 for s in collected_sources))
+                llm_out = max(1, len(full_response) // 4)
+                emb_tok = max(1, len(request.query) // 4)
+                llm_cost = calculate_token_cost(used_model_name, llm_inp, llm_out)
+                emb_cost = calculate_token_cost(settings.model_embedding, emb_tok, 0)
+
+                analytics_repo = AnalyticsRepository(db, tenant_id=t_uuid, user_id=u_uuid)
+                await analytics_repo.create_query_log({
+                    "tenant_id": t_uuid,
+                    "user_id": u_uuid,
+                    "session_id": s_uuid,
+                    "query": request.query,
+                    "response_status": query_status,
+                    "confidence_score": confidence,
+                    "latency_ms": latency_ms,
+                    "model_name": used_model_name,
+                    "llm_input_tokens": llm_inp,
+                    "llm_output_tokens": llm_out,
+                    "embedding_tokens": emb_tok,
+                    "total_tokens": llm_inp + llm_out + emb_tok,
+                    "llm_cost_usd": llm_cost,
+                    "embedding_cost_usd": emb_cost,
+                    "total_cost_usd": llm_cost + emb_cost,
+                })
+                await analytics_repo.log_usage(
+                    tenant_id=t_uuid,
+                    user_id=u_uuid,
+                    model_name=used_model_name,
+                    query_text=request.query,
+                    input_tokens=llm_inp,
+                    output_tokens=llm_out,
+                    task_name="chat_response"
+                )
+                await db.commit()
+            except Exception as log_err:
+                logger.warning(f"Failed to record analytics log in WebSocket loop: {log_err}")
 
             await adapter.send(websocket, LoopEvent(type="done", escalation_detected=is_escalated))
 

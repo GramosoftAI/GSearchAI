@@ -103,19 +103,26 @@ async def _verify_admin_access(request: Request, db: AsyncSession) -> User:
 )
 async def get_overview(
     request: Request,
+    tenant_id: Optional[UUID] = Query(None, description="Optional tenant_id to scope metrics to a single workspace"),
+    refresh: bool = Query(False, description="Force real-time recalculation of overview metrics"),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Returns aggregated metrics for the modernized Admin Overview dashboard:
-    - total_users (count): Total registered users in tenant (excl. widget & visitors)
+    - total_users (count): Total registered users platform-wide (excl. widget & visitors)
+    - total_agents (count): Total registered AI agents across all workspaces
     - active_endpoints (count): Total active API and agent endpoints
     - system_health: System health score in percentage (e.g. 99.4%)
     - total_knowledgebases: Total document and database knowledgebases
     - Detailed breakdowns, subsystem health statuses, and announcements
     """
     await _verify_admin_access(request, db)
-    tenant_id = _get_caller_tenant_id(request)
-    return await get_admin_overview_metrics(db, tenant_id, request.app)
+    return await get_admin_overview_metrics(
+        db=db,
+        tenant_id=tenant_id,
+        fastapi_app=request.app,
+        force_refresh=refresh,
+    )
 
 
 @router.get(
@@ -125,12 +132,12 @@ async def get_overview(
 )
 async def get_health_diagnostics(
     request: Request,
+    tenant_id: Optional[UUID] = Query(None, description="Optional tenant_id to scope diagnostics"),
     db: AsyncSession = Depends(get_db),
 ):
     """Probe PostgreSQL, Neo4j, Redis, LLM gateway and error logs for detailed health status."""
     await _verify_admin_access(request, db)
-    tenant_id = _get_caller_tenant_id(request)
-    return await get_system_health(db, tenant_id)
+    return await get_system_health(db, tenant_id=tenant_id)
 
 
 @router.get(
@@ -174,11 +181,11 @@ async def list_endpoints(
 )
 async def get_announcements(
     request: Request,
+    tenant_id: Optional[UUID] = Query(None, description="Optional tenant_id filter"),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all active announcements for the tenant."""
+    """List all active announcements for the platform or specific workspace."""
     await _verify_admin_access(request, db)
-    tenant_id = _get_caller_tenant_id(request)
     records = await list_announcements(db, tenant_id)
     return [
         AnnouncementResponse(

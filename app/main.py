@@ -700,6 +700,12 @@ try:
     if not any(getattr(r, "path", "").startswith("/api/v1/database-knowledgebases") for r in app.routes):
         app.include_router(db_kb_router)
         logger.info("[OK] Explicitly loaded database_knowledgebase router")
+
+    # Explicit guarantee for profile router
+    from app.modules.profile.routes import router as profile_router
+    if not any(getattr(r, "path", "").startswith("/api/v1/profile") for r in app.routes):
+        app.include_router(profile_router)
+        logger.info("[OK] Explicitly loaded profile router")
 except Exception as e:
     logger.error(f"[ERROR] Critical error loading routers: {e}")
     raise

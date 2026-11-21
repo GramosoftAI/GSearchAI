@@ -135,9 +135,38 @@ async def get_parsed_file_content(request: Request, file_id: str):
         result = await service.get_parsed_content(file_id, user_id)
         
         if not result.get("success"):
+            try:
+                from app.modules.knowledge_bases.models import DocumentChunk
+                chunk_q = (
+                    select(DocumentChunk.text)
+                    .where(DocumentChunk.kb_id == uuid.UUID(file_id))
+                    .order_by(DocumentChunk.chunk_index)
+                )
+                chunk_res = await db.execute(chunk_q)
+                chunks_list = chunk_res.scalars().all()
+                if chunks_list:
+                    assembled = "\n\n".join(chunks_list)
+                    result = {
+                        "success": True,
+                        "file_name": "Document Content",
+                        "content": assembled,
+                        "data": {"content": assembled}
+                    }
+            except Exception as e:
+                logger.warning(f"Chunk fallback failed: {e}")
+
+        if not result.get("success"):
             error_msg = result.get("error", "File not found")
             status_code = result.get("status_code", 404)
             raise HTTPException(status_code=status_code, detail=error_msg)
+
+        # Ensure both 'content' and 'data.content' are populated
+        content_val = result.get("content") or (result.get("data") or {}).get("content", "")
+        result["content"] = content_val
+        if "data" not in result or not isinstance(result["data"], dict):
+            result["data"] = {"content": content_val}
+        else:
+            result["data"]["content"] = content_val
 
         return result
 

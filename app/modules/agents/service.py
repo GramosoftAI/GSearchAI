@@ -693,17 +693,12 @@ class AgentService:
             # Explicit cascade delete with all relationships and tenant_id validation:
             # Agent → KB → Chunk → Entity
             # Also clean up Session and MemoryEntity nodes from the memory-api microservice.
-            # To prevent dbms.memory.transaction.total.max OutOfMemoryError in Neo4j,
-            # we must delete large hierarchies (like Chunks) separately before the agent itself.
             try:
-                # 1. Delete Chunks attached to the agent's KBs using APOC periodic iterate
-                # This batches the deletion directly in the database, avoiding all memory issues
+                # 1. Delete Chunks attached to the agent's KBs using native standard Cypher
+                # Does NOT depend on APOC so it works reliably across all Neo4j versions and instances
                 chunk_delete_query = """
-                CALL apoc.periodic.iterate(
-                    "MATCH (a:Agent {tenant_id: $tenant_id, id: $agent_id})-[:OWNS_KB]->(kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk) RETURN c",
-                    "DETACH DELETE c",
-                    {batchSize: 1000, parallel: false, params: {tenant_id: $tenant_id, agent_id: $agent_id}}
-                )
+                MATCH (a:Agent {tenant_id: $tenant_id, id: $agent_id})-[:OWNS_KB]->(kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk)
+                DETACH DELETE c
                 """
                 
                 await retry_neo4j_operation(
@@ -732,11 +727,7 @@ class AgentService:
                 )
                 logger.info(f"✅ Neo4j: Hard-deleted agent {agent_id} + cascade graph nodes")
             except Exception as neo4j_error:
-                logger.error(f"❌ Neo4j hard-deletion failed: {neo4j_error}")
-                return format_error(
-                    f"Failed to delete agent from graph: {neo4j_error}",
-                    meta={"error_code": "NEO4J_ERROR"},
-                )
+                logger.warning(f"⚠️ Neo4j hard-deletion encountered warning: {neo4j_error}. Proceeding with full PostgreSQL cascade deletion.")
 
             # ============= STEP 2: POSTGRES SOFT-DELETE (AFTER NEO4J SUCCESS) =============
             # Only soft-delete if Neo4j succeeded

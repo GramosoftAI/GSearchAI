@@ -9,6 +9,7 @@ from ..auth.dependencies import get_current_user
 from ..auth.models import User
 from ...core.database import get_db
 from . import services, schemas
+from ..profile import services as profile_services, schemas as profile_schemas
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
@@ -87,6 +88,46 @@ async def update_current_user_model_preference(
 ):
     """Update current authenticated user's LLM model preference"""
     return await services.update_user_llm_preference(str(current_user), pref_update, db)
+
+
+@router.get("/me/profile", response_model=profile_schemas.ProfileResponse)
+@router.get("/profile", response_model=profile_schemas.ProfileResponse)
+async def get_my_profile_alias(
+    db: Session = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+):
+    """Retrieve current authenticated user's profile (alias under /users)"""
+    user = await _get_caller_user(current_user, db)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return await profile_services.get_user_profile(user, db, include_summary=True)
+
+
+@router.put("/me/profile", response_model=profile_schemas.ProfileResponse)
+@router.put("/profile", response_model=profile_schemas.ProfileResponse)
+async def update_my_profile_alias(
+    data: profile_schemas.ProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+):
+    """Update current authenticated user's profile (alias under /users)"""
+    user = await _get_caller_user(current_user, db)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return await profile_services.update_user_profile(user, data, db)
+
+
+@router.delete("/me", response_model=profile_schemas.DeleteAccountResponse)
+async def delete_my_account_alias(
+    confirmation: Optional[profile_schemas.DeleteAccountRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+):
+    """Permanently delete user account and all resources (alias under /users/me)"""
+    user = await _get_caller_user(current_user, db)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return await profile_services.delete_user_account_completely(user, db, request=confirmation, is_admin_override=False)
 
 
 @router.get("/count")

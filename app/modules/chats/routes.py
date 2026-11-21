@@ -96,6 +96,8 @@ def _format_message_for_list(message) -> dict:
         msg_dict["confidence"] = confidence
     if nodes is not None:
         msg_dict["nodes"] = nodes
+    if sources:
+        msg_dict["sources"] = sources
     if message.created_at:
         msg_dict["timestamp"] = message.created_at.isoformat()
 
@@ -128,12 +130,14 @@ def _format_session(session) -> dict:
 
 def _format_message(message) -> dict:
     """Format a ChatMessage model into API response dict."""
+    metadata = message.message_metadata or {}
     formatted = {
         "id": str(message.id),
         "role": message.role,
         "content": message.content,
         "position": message.position,
-        "metadata": message.message_metadata,
+        "metadata": metadata,
+        "sources": metadata.get("sources", []),
         "created_at": (
             message.created_at.isoformat() if message.created_at else None
         ),

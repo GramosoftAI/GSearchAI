@@ -59,12 +59,27 @@ router = APIRouter(
 )
 
 
-def get_service(
+async def get_service(
     request: Request, db: AsyncSession = Depends(get_db)
 ) -> DatabaseKnowledgebaseService:
-    """Dependency helper to instantiate tenant-scoped service."""
+    """Dependency helper to instantiate tenant-scoped and user-isolated service."""
     tenant_id = str(request.state.tenant_id)
-    return DatabaseKnowledgebaseService(db=db, tenant_id=tenant_id)
+    user_id_raw = getattr(request.state, "user_id", None)
+    caller_user_id = uuid.UUID(str(user_id_raw)) if user_id_raw else None
+
+    # Account-level isolation:
+    # By default, every account only sees and accesses their own connected databases.
+    # If caller is admin AND explicitly passes all_users=true, bypass user-level scoping.
+    all_users = request.query_params.get("all_users", "false").lower() in ("true", "1")
+    scoped_user_id = caller_user_id
+    if all_users and caller_user_id:
+        from app.modules.auth.models import User
+        caller_user = await db.get(User, caller_user_id)
+        is_admin = bool(caller_user and (caller_user.is_admin or getattr(caller_user, "role", "") == "admin"))
+        if is_admin:
+            scoped_user_id = None
+
+    return DatabaseKnowledgebaseService(db=db, tenant_id=tenant_id, user_id=scoped_user_id)
 
 
 @router.post(
@@ -87,18 +102,20 @@ async def create_database_knowledgebase(
     "",
     response_model=DatabaseKnowledgebaseListResponse,
     summary="List Database Knowledgebases",
-    description="Lists all database knowledgebases belonging to the authenticated tenant.",
+    description="Lists all database knowledgebases belonging to the authenticated user (or tenant if admin with all_users=True).",
 )
 async def list_database_knowledgebases(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     agent_id: Optional[uuid.UUID] = Query(None),
+    all_users: bool = Query(False, description="If True and caller is admin, return all users' database knowledgebases"),
     service: DatabaseKnowledgebaseService = Depends(get_service),
 ):
     items = await service.list_database_knowledgebases(skip=skip, limit=limit, agent_id=agent_id)
     return DatabaseKnowledgebaseListResponse(
         success=True,
         data=items,
+        total=len(items),
         meta={"skip": skip, "limit": limit, "count": len(items)},
     )
 
@@ -189,6 +206,13 @@ async def introspect_database_schema(
     service: DatabaseKnowledgebaseService = Depends(get_service),
     db: AsyncSession = Depends(get_db),
 ):
+    entity = await service.repo.get_by_id(id)
+    if not entity:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database knowledgebase '{id}' not found."
+        )
+
     from app.core.config import get_settings
     settings = get_settings()
     if not getattr(settings, "old_database", False):
@@ -227,6 +251,13 @@ async def get_latest_schema(
     id: uuid.UUID,
     service: DatabaseKnowledgebaseService = Depends(get_service),
 ):
+    entity = await service.repo.get_by_id(id)
+    if not entity:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database knowledgebase '{id}' not found."
+        )
+
     from app.core.config import get_settings
     settings = get_settings()
     if not getattr(settings, "old_database", False):
@@ -336,6 +367,13 @@ async def query_database(
     service: DatabaseKnowledgebaseService = Depends(get_service),
     db: AsyncSession = Depends(get_db),
 ):
+    entity = await service.repo.get_by_id(id)
+    if not entity:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database knowledgebase '{id}' not found."
+        )
+
     from fastapi.responses import JSONResponse
     from .disambiguation.exceptions import DisambiguationRequiredError
     from app.core.config import get_settings
@@ -686,6 +724,13 @@ async def get_pipeline_status(
     service: DatabaseKnowledgebaseService = Depends(get_service),
     db: AsyncSession = Depends(get_db),
 ):
+    entity = await service.repo.get_by_id(id)
+    if not entity:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database knowledgebase '{id}' not found."
+        )
+
     from app.core.config import get_settings
     settings = get_settings()
     if not getattr(settings, "old_database", False):

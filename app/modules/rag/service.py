@@ -1679,20 +1679,16 @@ class RAGService:
                     for c in context.chunks:
                         logger.info(f"Chunk={c.chunk_id} Source={c.source} Score={c.hybrid_score}")
     
+                    from app.modules.rag.citation_utils import enrich_chunk_citations
+                    enriched_sources = enrich_chunk_citations(
+                        chunks=context.chunks,
+                        answer="",
+                        query=query
+                    )
+
                     metadata = {
                         "type": "metadata",
-                        "sources": [
-                            {
-                                "chunk_id": c.chunk_id,
-                                "source": c.source,
-                                "score": round(c.hybrid_score, 3),
-                                "position": c.position,
-                                "reason": c.reason,
-                                "kb_id": c.kb_id,
-                                "content_type": getattr(c, "content_type", "original")
-                            }
-                            for c in context.chunks
-                        ],
+                        "sources": enriched_sources,
                         "triplets": [
                             {"subject": t["subject"], "predicate": t["predicate"], "object": t["object"]}
                             for t in (context.triplets or [])
@@ -2611,19 +2607,12 @@ RESPONSE FORMAT
         if not validator.validate(answer, context):
             answer += "\n\n> [!WARNING]\n> Some numbers in this response could not be strictly verified against the retrieved context. Please double check the source documents."
 
-        sources = [
-            {
-                "chunk_id": chunk.chunk_id,
-                "score": chunk.hybrid_score,
-                "position": chunk.position,
-                "reason": chunk.reason,
-                "source": chunk.source,
-                "s3_path": getattr(chunk, "s3_path", None),
-                "kb_id": chunk.kb_id,
-                "content_type": getattr(chunk, "content_type", "original"),
-            }
-            for chunk in context.chunks
-        ]
+        from app.modules.rag.citation_utils import enrich_chunk_citations
+        sources = enrich_chunk_citations(
+            chunks=context.chunks,
+            answer=answer,
+            query=query
+        )
 
         nodes_used = len(context.chunks) + len(context.entity_mentions)
         confidence = (

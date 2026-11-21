@@ -361,36 +361,53 @@ async def generation_node(state: GraphState) -> dict:
         graph_triplets = state.get("graph_triplets", [])
         if graph_triplets:
             sources.append("Knowledge Graph")
-            source_documents.append({"source": "Knowledge Graph", "name": "Knowledge Graph", "kb_id": ""})
-            
-        for c in reranked_chunks:
-            prov = getattr(c, "provenance_metadata", {}) or {}
-            raw_source = getattr(c, "source", "") or prov.get("source", "") or getattr(c, "metadata", {}).get("source", "")
-            url = prov.get("url", "") or prov.get("source_url", "") or getattr(c, "metadata", {}).get("url", "") or getattr(c, "metadata", {}).get("source_url", "")
-            c_kb_id = str(getattr(c, "kb_id", "") or prov.get("kb_id", ""))
-            
-            clean_name = resolve_display_name_and_source(
-                raw_source=str(raw_source) if raw_source else "",
-                url=str(url) if url else "",
-                chunk_id=str(getattr(c, "chunk_id", "Unknown"))
-            )
-            
-            if getattr(c, "is_stitched_neighbor", False):
-                clean_name = f"{clean_name} (Neighbor Context)"
-                
+            source_documents.append({
+                "id": "kg_triplets",
+                "chunk_id": "kg_triplets",
+                "source": "Knowledge Graph",
+                "name": "Knowledge Graph",
+                "kb_id": "",
+                "score": 1.0,
+                "paragraph": 1,
+                "paragraph_number": 1,
+                "line_start": 1,
+                "line_end": 1,
+                "supporting_text": "Retrieved entities and relationships from the enterprise knowledge graph.",
+                "snippet": "Retrieved entities and relationships from the enterprise knowledge graph.",
+            })
+
+        from app.modules.rag.citation_utils import enrich_chunk_citations
+        enriched_docs = enrich_chunk_citations(
+            chunks=reranked_chunks,
+            answer=final_answer_text,
+            query=state.get("query", "")
+        )
+
+        for doc in enriched_docs:
+            clean_name = doc["source"]
             if clean_name not in sources:
                 sources.append(clean_name)
-                source_documents.append({
-                    "source": clean_name,
-                    "name": clean_name,
-                    "kb_id": c_kb_id,
-                })
-                
+            source_documents.append(doc)
+
         tabular_sources = state.get("tabular_sources", [])
         for ts in tabular_sources:
             if ts not in sources:
                 sources.append(ts)
-                source_documents.append({"source": ts, "name": ts, "kb_id": ""})
+                tab_text = str(state.get("tabular_results", ""))[:300]
+                source_documents.append({
+                    "id": f"tabular_{ts}",
+                    "chunk_id": f"tabular_{ts}",
+                    "source": ts,
+                    "name": ts,
+                    "kb_id": "",
+                    "score": 1.0,
+                    "paragraph": 1,
+                    "paragraph_number": 1,
+                    "line_start": 1,
+                    "line_end": 1,
+                    "supporting_text": tab_text,
+                    "snippet": tab_text[:280],
+                })
             
     return {
         "system_prompt": system_prompt,

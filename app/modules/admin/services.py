@@ -4,15 +4,15 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from uuid import UUID
 
-from sqlalchemy import select, func, text
+from sqlalchemy import select, func, text, not_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.modules.users.services import count_users
-from app.modules.auth.models import Tenant
+from app.modules.users.services import count_users, is_anonymous_or_widget_user
+from app.modules.auth.models import Tenant, User
 from app.modules.knowledge_bases.models import KnowledgeBase, DocumentChunk
 from app.modules.database_knowledgebase.models.database_knowledgebase import DatabaseKnowledgebase
 from app.modules.agents.models import Agent
@@ -37,6 +37,10 @@ settings = get_settings()
 # Cache for OpenAPI endpoints list to avoid re-generating on every hit
 _CACHED_ENDPOINTS: List[EndpointItem] = []
 _CACHED_ENDPOINTS_TIME: float = 0.0
+
+# In-memory high-performance cache for Admin Overview metrics (15-second real-time TTL)
+_OVERVIEW_METRICS_CACHE: Dict[str, Tuple[float, AdminOverviewResponse]] = {}
+_OVERVIEW_CACHE_TTL: float = 15.0
 
 
 def _extract_app_endpoints(fastapi_app: Any) -> List[EndpointItem]:
@@ -215,10 +219,36 @@ async def get_admin_overview_metrics(
     db: AsyncSession,
     tenant_id: Optional[UUID],
     fastapi_app: Any,
+    force_refresh: bool = False,
 ) -> AdminOverviewResponse:
-    """Aggregate metrics and health for Admin Overview screen."""
+    """
+    Aggregate metrics and health for Admin Overview screen.
+    - If tenant_id is None: Aggregates platform-wide metrics across all verified platform accounts.
+    - If tenant_id is provided: Scopes metrics to that specific tenant workspace.
+    - Employs a 15-second in-memory cache to guarantee sub-millisecond responses and prevent DB spikes.
+    """
+    global _OVERVIEW_METRICS_CACHE
+    cache_key = f"overview_{str(tenant_id) if tenant_id else 'platform'}"
+    now_ts = time.time()
+
+    if not force_refresh and cache_key in _OVERVIEW_METRICS_CACHE:
+        cached_time, cached_response = _OVERVIEW_METRICS_CACHE[cache_key]
+        if (now_ts - cached_time) < _OVERVIEW_CACHE_TTL:
+            return cached_response
+
+    # Subquery representing all valid, verified platform workspaces (excluding synthetic benchmark/widget users)
+    valid_tenants_subquery = (
+        select(Tenant.id)
+        .join(User, User.tenant_id == Tenant.id)
+        .where(not_(is_anonymous_or_widget_user()))
+    )
+
     # 1. Total Registered Users (Platform-wide real users, excluding anonymous, widget, and synthetic benchmark accounts)
-    total_users = await count_users(db, tenant_id=None, is_platform_admin=True)
+    total_users = await count_users(
+        db,
+        tenant_id=str(tenant_id) if tenant_id else None,
+        is_platform_admin=True if not tenant_id else False,
+    )
 
     # 2. Total Knowledgebases (Document + Database KBs)
     doc_kbs = 0
@@ -233,38 +263,52 @@ async def get_admin_overview_metrics(
             db_kb_res = await db.execute(db_kb_q)
             db_kbs = db_kb_res.scalar_one_or_none() or 0
         else:
-            doc_res = await db.execute(select(func.count(KnowledgeBase.id)))
+            doc_q = select(func.count(KnowledgeBase.id)).where(KnowledgeBase.tenant_id.in_(valid_tenants_subquery))
+            doc_res = await db.execute(doc_q)
             doc_kbs = doc_res.scalar_one_or_none() or 0
 
-            db_kb_res = await db.execute(select(func.count(DatabaseKnowledgebase.id)))
+            db_kb_q = select(func.count(DatabaseKnowledgebase.id)).where(DatabaseKnowledgebase.tenant_id.in_(valid_tenants_subquery))
+            db_kb_res = await db.execute(db_kb_q)
             db_kbs = db_kb_res.scalar_one_or_none() or 0
     except Exception as e:
         logger.error(f"Error counting knowledge bases: {e}")
 
     total_kbs = doc_kbs + db_kbs
 
-    # 3. Active Agents
+    # 3. Active Agents (Count across all verified platform accounts when tenant_id is None)
     active_agents = 0
     try:
         if tenant_id:
             agent_q = select(func.count(Agent.id)).where(Agent.tenant_id == tenant_id)
         else:
-            agent_q = select(func.count(Agent.id))
+            agent_q = select(func.count(Agent.id)).where(
+                or_(
+                    Agent.tenant_id.in_(valid_tenants_subquery),
+                    Agent.user_id.in_(select(User.id).where(not_(is_anonymous_or_widget_user())))
+                )
+            )
         agent_res = await db.execute(agent_q)
         active_agents = agent_res.scalar_one_or_none() or 0
     except Exception as e:
         logger.error(f"Error counting agents: {e}")
 
-    # 4. Total Organizations / Tenants
+    # 4. Total Organizations / Tenants (Real active platform workspaces with verified users)
     total_tenants = 0
     try:
-        tenant_q = select(func.count(Tenant.id))
-        tenant_res = await db.execute(tenant_q)
-        total_tenants = tenant_res.scalar_one_or_none() or 0
+        if tenant_id:
+            total_tenants = 1
+        else:
+            tenant_q = (
+                select(func.count(func.distinct(Tenant.id)))
+                .join(User, User.tenant_id == Tenant.id)
+                .where(not_(is_anonymous_or_widget_user()))
+            )
+            tenant_res = await db.execute(tenant_q)
+            total_tenants = tenant_res.scalar_one_or_none() or 0
     except Exception as e:
         logger.error(f"Error counting tenants: {e}")
 
-    # 5. Files Processed (Document KBs and Ingested Files)
+    # 5. Files Processed (Document KBs and Ingested Files across verified workspaces)
     files_processed = 0
     try:
         if tenant_id:
@@ -274,6 +318,7 @@ async def get_admin_overview_metrics(
             )
         else:
             files_q = select(func.count(KnowledgeBase.id)).where(
+                KnowledgeBase.tenant_id.in_(valid_tenants_subquery),
                 KnowledgeBase.source != "database"
             )
         files_res = await db.execute(files_q)
@@ -281,25 +326,25 @@ async def get_admin_overview_metrics(
     except Exception as e:
         logger.error(f"Error counting files processed: {e}")
 
-    # 6. Total Conversations
+    # 6. Total Conversations (Across verified workspaces)
     total_chats = 0
     try:
         if tenant_id:
             chat_q = select(func.count(ChatSession.id)).where(ChatSession.tenant_id == tenant_id)
         else:
-            chat_q = select(func.count(ChatSession.id))
+            chat_q = select(func.count(ChatSession.id)).where(ChatSession.tenant_id.in_(valid_tenants_subquery))
         chat_res = await db.execute(chat_q)
         total_chats = chat_res.scalar_one_or_none() or 0
     except Exception as e:
         logger.error(f"Error counting chat sessions: {e}")
 
-    # 7. Total Chunks
+    # 7. Total Chunks (Across verified workspaces)
     total_chunks = 0
     try:
         if tenant_id:
             chunk_q = select(func.count(DocumentChunk.id)).where(DocumentChunk.tenant_id == tenant_id)
         else:
-            chunk_q = select(func.count(DocumentChunk.id))
+            chunk_q = select(func.count(DocumentChunk.id)).where(DocumentChunk.tenant_id.in_(valid_tenants_subquery))
         chunk_res = await db.execute(chunk_q)
         total_chunks = chunk_res.scalar_one_or_none() or 0
     except Exception as e:
@@ -357,13 +402,17 @@ async def get_admin_overview_metrics(
         system_health_details=health_details,
     )
 
-    return AdminOverviewResponse(
+    response = AdminOverviewResponse(
         success=True,
         metrics=metrics,
         breakdown=breakdown,
         announcements=announcements_list,
         last_updated=datetime.now(timezone.utc).isoformat(),
     )
+
+    # Cache response
+    _OVERVIEW_METRICS_CACHE[cache_key] = (now_ts, response)
+    return response
 
 
 async def list_announcements(
