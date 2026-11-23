@@ -479,3 +479,35 @@ class OutlookSyncRequest(BaseModel):
                 "folder_ids": ["inbox"]
             }
         }
+
+
+class WebsiteMonitorCreate(BaseModel):
+    """Schema to register a website sitemap monitor."""
+    sitemap_url: str = Field(..., description="Full URL to the sitemap or sitemap index (e.g. https://domain.com/sitemap_index.xml)")
+    knowledge_base_id: Optional[UUID] = Field(None, description="Knowledge base to automatically ingest into")
+    schedule_interval_days: int = Field(1, ge=1, le=30, description="Schedule interval in days (default: 1)")
+    auto_crawl: bool = Field(True, description="Whether to automatically scrape and ingest new URLs into the knowledge base")
+    notify_email: Optional[str] = Field(None, description="Optional override email for change alerts")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "sitemap_url": "https://gramosoft.tech/sitemap_index.xml",
+                "schedule_interval_days": 1,
+                "auto_crawl": True
+            }
+        }
+
+
+class WebsiteMonitorResponse(BaseModel):
+    id: UUID
+    sitemap_url: str
+    knowledge_base_id: Optional[UUID]
+    schedule_interval_days: int
+    auto_crawl: bool
+    notify_email: Optional[str]
+    is_active: bool
+    total_urls_detected: int
+    last_checked_at: Optional[datetime]
+    created_at: datetime
+

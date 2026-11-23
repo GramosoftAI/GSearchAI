@@ -343,8 +343,8 @@ class GCrawlClient:
             raise LinkDiscoveryFailed(f"Invalid link discovery response: {e}, payload={data}")
 
     async def get_link_results(self, crawl_id: str) -> Dict[str, Any]:
-        """Step 2: GET /crawler/results/{crawl_id} to poll link discovery results."""
-        return await self._request("GET", f"/crawler/results/{crawl_id}", timeout=60)
+        """Step 2: GET /api/v1/crawler/results/{crawl_id} to poll link discovery results."""
+        return await self._request("GET", f"/api/v1/crawler/results/{crawl_id}", timeout=60)
 
     async def submit_scrape(self, urls: List[str]) -> ScrapeSubmissionResponse:
         """Step 3: POST /api/v1/batch to submit bulk scrape job."""
@@ -367,8 +367,8 @@ class GCrawlClient:
             raise ScrapeSubmissionFailed(f"Invalid scrape submission response: {e}, payload={data}")
 
     async def get_scrape_results(self, crawl_id: str) -> Dict[str, Any]:
-        """Step 4: GET /crawler/results/{crawl_id} to poll scraped contents."""
-        return await self._request("GET", f"/crawler/results/{crawl_id}", timeout=300)
+        """Step 4: GET /api/v1/crawler/results/{crawl_id} to poll scraped contents."""
+        return await self._request("GET", f"/api/v1/crawler/results/{crawl_id}", timeout=300)
 
 
 # =====================================================================

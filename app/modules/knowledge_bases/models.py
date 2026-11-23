@@ -535,3 +535,83 @@ class DocumentIngestionRun(Base):
 
     def __repr__(self) -> str:
         return f"<DocumentIngestionRun id={self.id} doc={self.document_id} status={self.status}>"
+
+
+class WebsiteMonitor(Base):
+    """
+    Website Monitor model - tracks sitemaps periodically for new/modified content.
+    """
+    __tablename__ = "website_monitors"
+
+    id = Column(
+        SQLAlchemyUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        index=True,
+        nullable=False,
+    )
+    tenant_id = Column(
+        SQLAlchemyUUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        SQLAlchemyUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    knowledge_base_id = Column(
+        SQLAlchemyUUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    sitemap_url = Column(String(1024), nullable=False)
+    gcrawl_monitor_id = Column(String(128), nullable=True, index=True)
+    manual_trigger = Column(Boolean, default=False, nullable=False)
+    schedule_interval_days = Column(Integer, default=1, nullable=True)
+    auto_crawl = Column(Boolean, default=True, nullable=False)
+    notify_email = Column(String(255), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    last_checked_at = Column(DateTime(timezone=True), nullable=True)
+    total_urls_detected = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_website_monitors_tenant_user", "tenant_id", "user_id"),
+        Index("ix_website_monitors_active", "is_active"),
+    )
+
+
+class MonitoredUrlSnapshot(Base):
+    """
+    Stores snapshots of URLs found in a monitored sitemap to detect diffs.
+    """
+    __tablename__ = "monitored_url_snapshots"
+
+    id = Column(
+        SQLAlchemyUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        index=True,
+        nullable=False,
+    )
+    monitor_id = Column(
+        SQLAlchemyUUID(as_uuid=True),
+        ForeignKey("website_monitors.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    url = Column(String(2048), nullable=False, index=True)
+    lastmod = Column(String(255), nullable=True)
+    last_scraped_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_monitored_snapshots_monitor_url", "monitor_id", "url", unique=True),
+    )
+

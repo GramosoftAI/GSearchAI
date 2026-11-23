@@ -1806,6 +1806,20 @@ class DatabaseKnowledgebaseService:
                 except Exception as ent_err:
                     logger.debug(f"[GROUNDED_PIPELINE] Dynamic dimension entity resolution skipped: {ent_err}")
 
+            if event_sink and (resolved_dimension_entities or disambiguation_notices):
+                await event_sink.emit(
+                    DatabaseStreamEventType.PLANNING_STARTED,
+                    stage="PLANNING",
+                    status="in_progress",
+                    data={
+                        "resolved_entities": [
+                            {"table": e.get("table"), "id": e.get("id"), "name": e.get("name"), "role": e.get("role")}
+                            for e in resolved_dimension_entities
+                        ],
+                        "notices": disambiguation_notices,
+                    },
+                )
+
             # 3. Dynamic Schema Graph Expansion:
             # Traverses the canonical schema's FK graph dynamically without hardcoded table lists:
             # a) All tables of resolved entities (users, projects, types, categories, etc.)
@@ -2102,6 +2116,7 @@ class DatabaseKnowledgebaseService:
                         "sql_llm_bypassed": False,
                         "repair_attempts": 0,
                         "latency_ms": round(t_sql_ms, 2),
+                        "sql_preview": candidate_sql_raw[:180] if candidate_sql_raw else None,
                     },
                     elapsed_stage_ms=t_sql_ms,
                 )

@@ -1,7 +1,9 @@
 from typing import Optional, List, Dict, Any
+from uuid import UUID
 """REST routes for Knowledge Base CRUD and document ingestion"""
 
 import os
+import asyncio
 import httpx
 import urllib.parse
 
@@ -218,28 +220,116 @@ async def create_kb(
         raise
 
     except Exception as e:
-
         logger.error(f"Create KB endpoint error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
+
+@router.get(
+    "/agent/{agent_id}",
+    response_model=dict,
+    summary="List Knowledge Bases for Agent (alias)",
+)
+@router.get(
+    "/agents/{agent_id}",
+    response_model=dict,
+    summary="List Knowledge Bases for Agent",
+    description="List all knowledge bases for a specific agent",
+)
+async def list_agent_kbs(
+
+    request: Request,
+    agent_id: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """
+    List knowledge bases for a specific agent.
+    """
+    logger.info(f"[KB_DEBUG] list_agent_kbs HIT! agent_id={agent_id}")
+    try:
+        tenant_id, _ = get_tenant_and_user(request)
+
+        if limit < 1 or limit > 1000:
+            limit = 50
+        if offset < 0:
+            offset = 0
+
+        async with AsyncSessionLocal() as db:
+            service = KnowledgeBaseService(db, tenant_id)
+            result = await service.list_kbs_by_agent(
+                agent_id, limit=limit, offset=offset
+            )
+
+            if not result.get("success"):
+                raise HTTPException(status_code=500, detail=result.get("error"))
+
+            return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"List agent KBs endpoint error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
 
+@router.get(
+    "/users/{user_id}",
+    response_model=dict,
+    summary="List Knowledge Bases for User",
+    description="List all knowledge bases uploaded by a specific user with optional date and agent filters",
+)
+async def list_user_kbs(
+    request: Request,
+    user_id: str,
+    date: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    try:
+        tenant_id, _ = get_tenant_and_user(request)
+
+        if limit < 1 or limit > 1000:
+            limit = 50
+        if offset < 0:
+            offset = 0
+
+        async with AsyncSessionLocal() as db:
+            service = KnowledgeBaseService(db, tenant_id)
+            result = await service.list_kbs_by_user(
+                user_id=user_id,
+                date=date,
+                agent_id=agent_id,
+                limit=limit,
+                offset=offset,
+            )
+
+            if not result.get("success"):
+                error_msg = result.get("error", "Unknown error")
+                status_code = result.get("status_code", 400)
+                raise HTTPException(status_code=status_code, detail=error_msg)
+
+            return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"List user KBs endpoint error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 
 
 @router.get(
-
     "/{kb_id}",
-
     response_model=dict,
-
     summary="Get Knowledge Base",
-
     description="Get a knowledge base by ID",
-
 )
-
 async def get_kb(request: Request, kb_id: str) -> dict:
+    logger.info(f"[KB_DEBUG] get_kb HIT! kb_id={kb_id}")
+
+
 
     """
 
@@ -400,173 +490,10 @@ async def list_kbs(request: Request, limit: int = 50, offset: int = 0) -> dict:
     except Exception as e:
 
         logger.error(f"List KBs endpoint error: {e}")
-
         raise HTTPException(status_code=500, detail="Internal server error")
-
-
-
-
-
-@router.get(
-
-    "/agents/{agent_id}",
-
-    response_model=dict,
-
-    summary="List Knowledge Bases for Agent",
-
-    description="List all knowledge bases for a specific agent",
-
-)
-
-async def list_agent_kbs(
-
-    request: Request,
-
-    agent_id: str,
-
-    limit: int = 50,
-
-    offset: int = 0,
-
-) -> dict:
-
-    """
-
-    List knowledge bases for a specific agent.
-
-
-
-    Args:
-
-        request: FastAPI request
-
-        agent_id: Agent UUID
-
-        limit: Max results (default 50)
-
-        offset: Pagination offset (default 0)
-
-
-
-    Returns:
-
-        JSON response with KBs list
-
-
-
-    Raises:
-
-        HTTPException 401: Not authenticated
-
-        HTTPException 500: Database error
-
-    """
-
-    try:
-
-        tenant_id, _ = get_tenant_and_user(request)
-
-
-
-        # Validate pagination
-
-        if limit < 1 or limit > 1000:
-
-            limit = 50
-
-        if offset < 0:
-
-            offset = 0
-
-
-
-        async with AsyncSessionLocal() as db:
-
-            service = KnowledgeBaseService(db, tenant_id)
-
-            result = await service.list_kbs_by_agent(
-
-                agent_id, limit=limit, offset=offset
-
-            )
-
-
-
-            if not result.get("success"):
-
-                raise HTTPException(status_code=500, detail=result.get("error"))
-
-
-
-            return result
-
-
-
-    except HTTPException:
-
-        raise
-
-    except Exception as e:
-
-        logger.error(f"List agent KBs endpoint error: {e}")
-
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@router.get(
-    "/users/{user_id}",
-    response_model=dict,
-    summary="List Knowledge Bases for User",
-    description="List all knowledge bases uploaded by a specific user with optional date and agent filters",
-)
-async def list_user_kbs(
-    request: Request,
-    user_id: str,
-    date: Optional[str] = None,
-    agent_id: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> dict:
-    try:
-        tenant_id, _ = get_tenant_and_user(request)
-
-        # Validate pagination
-        if limit < 1 or limit > 1000:
-            limit = 50
-        if offset < 0:
-            offset = 0
-
-        async with AsyncSessionLocal() as db:
-            service = KnowledgeBaseService(db, tenant_id)
-            result = await service.list_kbs_by_user(
-                user_id=user_id,
-                date=date,
-                agent_id=agent_id,
-                limit=limit,
-                offset=offset,
-            )
-
-            if not result.get("success"):
-                error_msg = result.get("error", "Unknown error")
-                status_code = result.get("status_code", 400)
-                raise HTTPException(status_code=status_code, detail=error_msg)
-
-            return result
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"List user KBs endpoint error: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-
-
 
 
 @router.post(
-
     "/{kb_id}/ingest",
 
     response_model=dict,
@@ -2890,5 +2817,195 @@ async def trigger_graph_cleanup(request: Request, kb_id: str = None):
         "success": True,
         "message": f"Graph cleanup task initiated in the background for tenant {tenant_id}"
     }
+
+
+# ============================================================================
+# WEBSITE SITEMAP MONITOR & SYNC ROUTES
+# ============================================================================
+
+@router.post(
+    "/monitor/website/preview-diff",
+    summary="Preview Sitemap Diff",
+    description="Inspects what pages in a sitemap are new versus already crawled. Returns un-crawled pages so user can review and confirm.",
+)
+async def preview_sitemap_diff(
+    request: Request,
+    payload: dict,
+) -> dict:
+    sitemap_url = (payload.get("sitemap_url") or payload.get("url") or "").strip()
+    kb_id = payload.get("kb_id")
+
+    if not sitemap_url:
+        raise HTTPException(status_code=400, detail="sitemap_url is required")
+
+    async with AsyncSessionLocal() as db:
+        from .services.monitor_service import SitemapMonitorService
+        res = await SitemapMonitorService.preview_sitemap_diff(db, sitemap_url=sitemap_url, kb_id=kb_id)
+        return format_success(res)
+
+
+@router.post(
+    "/monitor/website",
+
+    summary="Register Website Monitor",
+    description="Register a website sitemap URL to monitor for new/modified content. Automatically schedules periodic diff checks and triggers GCrawl auto-ingest into the knowledge base.",
+)
+async def create_website_monitor(
+    request: Request,
+    payload: schemas.WebsiteMonitorCreate,
+) -> dict:
+    """Create a website sitemap monitor."""
+    tenant_id, user_id = get_tenant_and_user(request)
+    user_email = getattr(request.state, "user_email", None)
+
+    async with AsyncSessionLocal() as db:
+        from .models import WebsiteMonitor
+        from .services.monitor_service import SitemapMonitorService
+        from app.modules.auth.models import User
+
+        recipient_email = payload.notify_email
+        if not recipient_email:
+            user_obj = await db.get(User, user_id)
+            if user_obj and user_obj.email:
+                recipient_email = user_obj.email
+
+        gcrawl_id = await SitemapMonitorService.register_gcrawl_monitor(
+            sitemap_url=payload.sitemap_url.strip(),
+            manual_trigger=getattr(payload, "manual_trigger", False),
+            schedule_interval_days=payload.schedule_interval_days or 1
+        )
+
+        monitor = WebsiteMonitor(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            knowledge_base_id=payload.knowledge_base_id,
+            sitemap_url=payload.sitemap_url.strip(),
+            gcrawl_monitor_id=gcrawl_id,
+            manual_trigger=getattr(payload, "manual_trigger", False),
+            schedule_interval_days=payload.schedule_interval_days,
+            auto_crawl=payload.auto_crawl,
+            notify_email=recipient_email,
+            is_active=True,
+        )
+        db.add(monitor)
+        await db.commit()
+        await db.refresh(monitor)
+
+        # Trigger initial snapshot run in background to establish baseline
+        async def initial_sync():
+            async with AsyncSessionLocal() as bg_db:
+                bg_m = await bg_db.get(WebsiteMonitor, monitor.id)
+                if bg_m:
+                    await SitemapMonitorService.check_and_sync(bg_db, bg_m)
+
+        asyncio.create_task(initial_sync())
+
+        return format_success(
+            {
+                "id": str(monitor.id),
+                "sitemap_url": monitor.sitemap_url,
+                "knowledge_base_id": str(monitor.knowledge_base_id) if monitor.knowledge_base_id else None,
+                "schedule_interval_days": monitor.schedule_interval_days,
+                "auto_crawl": monitor.auto_crawl,
+                "notify_email": monitor.notify_email,
+                "is_active": monitor.is_active,
+                "created_at": monitor.created_at.isoformat() if monitor.created_at else None,
+            },
+            meta={"message": "Website monitor registered successfully. Baseline scan initiated."}
+        )
+
+
+@router.get(
+    "/monitor/website",
+    summary="List Website Monitors",
+    description="List all website monitors registered by the user/tenant.",
+)
+async def list_website_monitors(request: Request) -> dict:
+    tenant_id, user_id = get_tenant_and_user(request)
+
+    async with AsyncSessionLocal() as db:
+        from .models import WebsiteMonitor
+        stmt = select(WebsiteMonitor).where(
+            WebsiteMonitor.tenant_id == tenant_id,
+            WebsiteMonitor.is_active == True
+        ).order_by(WebsiteMonitor.created_at.desc())
+
+        res = await db.execute(stmt)
+        monitors = res.scalars().all()
+
+        data = [
+            {
+                "id": str(m.id),
+                "sitemap_url": m.sitemap_url,
+                "knowledge_base_id": str(m.knowledge_base_id) if m.knowledge_base_id else None,
+                "schedule_interval_days": m.schedule_interval_days,
+                "auto_crawl": m.auto_crawl,
+                "notify_email": m.notify_email,
+                "total_urls_detected": m.total_urls_detected,
+                "last_checked_at": m.last_checked_at.isoformat() if m.last_checked_at else None,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in monitors
+        ]
+        return format_success(data)
+
+
+@router.post(
+    "/monitor/website/{monitor_id}/sync",
+    summary="Sync / Check Now",
+    description="Manual on-demand check for new or modified pages in the monitored sitemap. Immediately detects diffs, sends email alert, and triggers GCrawl auto-crawl.",
+)
+async def sync_website_monitor_now(
+    request: Request,
+    monitor_id: UUID,
+) -> dict:
+    tenant_id, user_id = get_tenant_and_user(request)
+    user_name = getattr(request.state, "user_name", None)
+
+    async with AsyncSessionLocal() as db:
+        from .models import WebsiteMonitor
+        from .services.monitor_service import SitemapMonitorService
+
+        monitor = await db.get(WebsiteMonitor, monitor_id)
+        if not monitor or monitor.tenant_id != tenant_id:
+            raise HTTPException(status_code=404, detail="Website monitor not found")
+
+        sync_result = await SitemapMonitorService.check_and_sync(
+            db=db,
+            monitor=monitor,
+            user_name=user_name
+        )
+
+        return format_success(
+            sync_result,
+            meta={"message": f"Sync completed. Found {sync_result.get('new_urls_count', 0)} new URLs."}
+        )
+
+
+@router.delete(
+    "/monitor/website/{monitor_id}",
+    summary="Delete Website Monitor",
+    description="Deactivates or deletes a website sitemap monitor.",
+)
+async def delete_website_monitor(
+    request: Request,
+    monitor_id: UUID,
+) -> dict:
+    tenant_id, _ = get_tenant_and_user(request)
+
+    async with AsyncSessionLocal() as db:
+        from .models import WebsiteMonitor
+        monitor = await db.get(WebsiteMonitor, monitor_id)
+        if not monitor or monitor.tenant_id != tenant_id:
+            raise HTTPException(status_code=404, detail="Website monitor not found")
+
+        await db.delete(monitor)
+        await db.commit()
+
+        return format_success(
+            {"id": str(monitor_id)},
+            meta={"message": "Website monitor deleted successfully"}
+        )
+
 
 

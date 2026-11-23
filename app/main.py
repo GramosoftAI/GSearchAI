@@ -217,6 +217,40 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"[STARTUP] Could not initialize pricing sync worker: {e}")
 
+        # Start recurring periodic Website Sitemap Monitor runner
+        async def run_periodic_sitemap_monitors():
+            from app.core.database import AsyncSessionLocal
+            from app.modules.knowledge_bases.models import WebsiteMonitor
+            from app.modules.knowledge_bases.services.monitor_service import SitemapMonitorService
+            from sqlalchemy import select
+            from datetime import datetime, timezone, timedelta
+
+            logger.info("[SITEMAP MONITOR] Periodic sitemap background runner started.")
+            # Sleep initial 60 seconds after server starts before first check
+            await asyncio.sleep(60)
+            while True:
+                try:
+                    async with AsyncSessionLocal() as db:
+                        stmt = select(WebsiteMonitor).where(WebsiteMonitor.is_active == True)
+                        res = await db.execute(stmt)
+                        monitors = res.scalars().all()
+                        now = datetime.now(timezone.utc)
+
+                        for m in monitors:
+                            interval_days = m.schedule_interval_days or 1
+                            due_time = (m.last_checked_at or datetime.min.replace(tzinfo=timezone.utc)) + timedelta(days=interval_days)
+                            if now >= due_time:
+                                logger.info(f"[SITEMAP MONITOR] Running periodic check for monitor {m.id} ({m.sitemap_url})")
+                                await SitemapMonitorService.check_and_sync(db, m)
+                except Exception as err:
+                    logger.error(f"[SITEMAP MONITOR] Error in periodic monitor check: {err}")
+                
+                # Check every hour for monitors that reached their scheduled interval
+                await asyncio.sleep(3600)
+
+        asyncio.create_task(run_periodic_sitemap_monitors())
+
+
         # Trigger background KB Summary backfill for legacy files
         try:
             from scripts.backfill_kb_summaries import main as backfill_kbs

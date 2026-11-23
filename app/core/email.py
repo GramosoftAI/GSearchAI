@@ -97,6 +97,104 @@ class EmailService:
         return await EmailService.send_email(to_email=email, subject=subject, body=body, html_body=html_body)
 
     @staticmethod
+    async def send_sitemap_monitor_alert(
+        email: str,
+        user_name: str,
+        sitemap_url: str,
+        total_urls: int,
+        new_urls: list,
+        modified_urls: list,
+        auto_crawled: bool = True
+    ) -> bool:
+        """
+        Send scheduled website monitor alert email detailing newly added and modified URLs.
+        Matches the GCrawl alert layout.
+        """
+        greeting = f"Hello {user_name}," if user_name else "Hello,"
+        change_summary = f"Sitemap changed: +{len(new_urls)} new URLs added, ~{len(modified_urls)} existing URLs modified. (Total: {total_urls})"
+
+        # Build list items for new URLs
+        new_urls_html = ""
+        if new_urls:
+            new_urls_html = """
+            <div style="margin-top: 20px;">
+                <h4 style="color: #27ae60; margin-bottom: 8px; font-size: 15px;">+ Newly Added URLs ({count}):</h4>
+                <ul style="padding-left: 20px; margin: 0; line-height: 1.8;">
+                    {items}
+                </ul>
+            </div>
+            """.format(
+                count=len(new_urls),
+                items="\n".join([f'<li><a href="{u}" style="color: #2b6cb0; text-decoration: underline;" target="_blank">{u}</a></li>' for u in new_urls[:50]])
+            )
+            if len(new_urls) > 50:
+                new_urls_html += f'<p style="color: #718096; font-size: 13px; margin-top: 5px;">...and {len(new_urls) - 50} more URLs</p>'
+
+        # Build list items for modified URLs
+        modified_urls_html = ""
+        if modified_urls:
+            modified_urls_html = """
+            <div style="margin-top: 20px;">
+                <h4 style="color: #d69e2e; margin-bottom: 8px; font-size: 15px;">~ Modified Existing URLs ({count}):</h4>
+                <ul style="padding-left: 20px; margin: 0; line-height: 1.8;">
+                    {items}
+                </ul>
+            </div>
+            """.format(
+                count=len(modified_urls),
+                items="\n".join([f'<li><a href="{u}" style="color: #2b6cb0; text-decoration: underline;" target="_blank">{u}</a></li>' for u in modified_urls[:30]])
+            )
+            if len(modified_urls) > 30:
+                modified_urls_html += f'<p style="color: #718096; font-size: 13px; margin-top: 5px;">...and {len(modified_urls) - 30} more URLs</p>'
+
+        crawl_notice = ""
+        if auto_crawled:
+            crawl_notice = """
+            <div style="background-color: #ebf8ff; border-left: 4px solid #3182ce; padding: 12px 16px; border-radius: 4px; margin-top: 25px;">
+                <p style="margin: 0; color: #2b6cb0; font-size: 13px; font-weight: 500;">
+                    🤖 <strong>Automatic Ingestion Active:</strong> These new URLs have been automatically queued and indexed into your Knowledge Base vector index.
+                </p>
+            </div>
+            """
+
+        subject = f"Website Monitor Alert: Changes detected in {sitemap_url}"
+        body = f"""{greeting}\n\nYour scheduled website monitor has completed its periodic check for:\n{sitemap_url}\n\n{change_summary}\n\nNewly Added ({len(new_urls)}):\n""" + "\n".join(new_urls[:20])
+
+        html_body = f"""
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 650px; margin: 0 auto; background-color: #f7fafc; padding: 25px;">
+            <div style="background: white; border-radius: 12px; padding: 35px; box-shadow: 0 4px 12px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;">
+                <p style="font-size: 16px; color: #2d3748; font-weight: 600; margin-top: 0;">{greeting}</p>
+                <p style="color: #4a5568; font-size: 14px; margin-bottom: 20px;">Your scheduled website monitor has completed its periodic check for:</p>
+                
+                <div style="border-left: 4px solid #3182ce; background-color: #f7fafc; padding: 15px 18px; border-radius: 0 8px 8px 0; margin-bottom: 24px;">
+                    <div style="font-size: 11px; text-transform: uppercase; color: #718096; font-weight: bold; letter-spacing: 0.5px;">MONITORED URL</div>
+                    <div style="font-size: 15px; color: #2b6cb0; word-break: break-all; font-weight: 600; margin-top: 4px;">{sitemap_url}</div>
+                </div>
+
+                <div style="display: flex; align-items: center; background-color: #fefcbf; border-radius: 8px; padding: 12px 16px; margin-bottom: 25px;">
+                    <span style="background-color: #ecc94b; color: #744210; font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 12px; margin-right: 12px; text-transform: uppercase;">CHANGES DETECTED</span>
+                    <span style="color: #744210; font-size: 13px; font-weight: 500;">{change_summary}</span>
+                </div>
+
+                <div style="font-size: 15px; font-weight: 700; color: #2d3748; margin-bottom: 12px;">
+                    Total Sitemap URLs: {total_urls}
+                </div>
+
+                {new_urls_html}
+                {modified_urls_html}
+                {crawl_notice}
+
+                <div style="margin-top: 35px; padding-top: 20px; border-top: 1px solid #edf2f7; text-align: center; color: #a0aec0; font-size: 12px;">
+                    <p style="margin: 0;">Automated alert generated by GSearchAI Website Monitor.</p>
+                </div>
+            </div>
+        </div>
+        """
+
+        return await EmailService.send_email(to_email=email, subject=subject, body=body, html_body=html_body)
+
+
+    @staticmethod
     async def send_registration_otp_email(email: str, otp: str, first_name: str = None) -> bool:
         """Send registration OTP to user"""
         subject = "GsearchAi - Registration Verification Code"
@@ -130,6 +228,104 @@ class EmailService:
         """
         
         return await EmailService.send_email(to_email=email, subject=subject, body=body, html_body=html_body)
+
+    @staticmethod
+    async def send_sitemap_monitor_alert(
+        email: str,
+        user_name: str,
+        sitemap_url: str,
+        total_urls: int,
+        new_urls: list,
+        modified_urls: list,
+        auto_crawled: bool = True
+    ) -> bool:
+        """
+        Send scheduled website monitor alert email detailing newly added and modified URLs.
+        Matches the GCrawl alert layout.
+        """
+        greeting = f"Hello {user_name}," if user_name else "Hello,"
+        change_summary = f"Sitemap changed: +{len(new_urls)} new URLs added, ~{len(modified_urls)} existing URLs modified. (Total: {total_urls})"
+
+        # Build list items for new URLs
+        new_urls_html = ""
+        if new_urls:
+            new_urls_html = """
+            <div style="margin-top: 20px;">
+                <h4 style="color: #27ae60; margin-bottom: 8px; font-size: 15px;">+ Newly Added URLs ({count}):</h4>
+                <ul style="padding-left: 20px; margin: 0; line-height: 1.8;">
+                    {items}
+                </ul>
+            </div>
+            """.format(
+                count=len(new_urls),
+                items="\n".join([f'<li><a href="{u}" style="color: #2b6cb0; text-decoration: underline;" target="_blank">{u}</a></li>' for u in new_urls[:50]])
+            )
+            if len(new_urls) > 50:
+                new_urls_html += f'<p style="color: #718096; font-size: 13px; margin-top: 5px;">...and {len(new_urls) - 50} more URLs</p>'
+
+        # Build list items for modified URLs
+        modified_urls_html = ""
+        if modified_urls:
+            modified_urls_html = """
+            <div style="margin-top: 20px;">
+                <h4 style="color: #d69e2e; margin-bottom: 8px; font-size: 15px;">~ Modified Existing URLs ({count}):</h4>
+                <ul style="padding-left: 20px; margin: 0; line-height: 1.8;">
+                    {items}
+                </ul>
+            </div>
+            """.format(
+                count=len(modified_urls),
+                items="\n".join([f'<li><a href="{u}" style="color: #2b6cb0; text-decoration: underline;" target="_blank">{u}</a></li>' for u in modified_urls[:30]])
+            )
+            if len(modified_urls) > 30:
+                modified_urls_html += f'<p style="color: #718096; font-size: 13px; margin-top: 5px;">...and {len(modified_urls) - 30} more URLs</p>'
+
+        crawl_notice = ""
+        if auto_crawled:
+            crawl_notice = """
+            <div style="background-color: #ebf8ff; border-left: 4px solid #3182ce; padding: 12px 16px; border-radius: 4px; margin-top: 25px;">
+                <p style="margin: 0; color: #2b6cb0; font-size: 13px; font-weight: 500;">
+                    🤖 <strong>Automatic Ingestion Active:</strong> These new URLs have been automatically queued and indexed into your Knowledge Base vector index.
+                </p>
+            </div>
+            """
+
+        subject = f"Website Monitor Alert: Changes detected in {sitemap_url}"
+        body = f"""{greeting}\n\nYour scheduled website monitor has completed its periodic check for:\n{sitemap_url}\n\n{change_summary}\n\nNewly Added ({len(new_urls)}):\n""" + "\n".join(new_urls[:20])
+
+        html_body = f"""
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 650px; margin: 0 auto; background-color: #f7fafc; padding: 25px;">
+            <div style="background: white; border-radius: 12px; padding: 35px; box-shadow: 0 4px 12px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;">
+                <p style="font-size: 16px; color: #2d3748; font-weight: 600; margin-top: 0;">{greeting}</p>
+                <p style="color: #4a5568; font-size: 14px; margin-bottom: 20px;">Your scheduled website monitor has completed its periodic check for:</p>
+                
+                <div style="border-left: 4px solid #3182ce; background-color: #f7fafc; padding: 15px 18px; border-radius: 0 8px 8px 0; margin-bottom: 24px;">
+                    <div style="font-size: 11px; text-transform: uppercase; color: #718096; font-weight: bold; letter-spacing: 0.5px;">MONITORED URL</div>
+                    <div style="font-size: 15px; color: #2b6cb0; word-break: break-all; font-weight: 600; margin-top: 4px;">{sitemap_url}</div>
+                </div>
+
+                <div style="display: flex; align-items: center; background-color: #fefcbf; border-radius: 8px; padding: 12px 16px; margin-bottom: 25px;">
+                    <span style="background-color: #ecc94b; color: #744210; font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 12px; margin-right: 12px; text-transform: uppercase;">CHANGES DETECTED</span>
+                    <span style="color: #744210; font-size: 13px; font-weight: 500;">{change_summary}</span>
+                </div>
+
+                <div style="font-size: 15px; font-weight: 700; color: #2d3748; margin-bottom: 12px;">
+                    Total Sitemap URLs: {total_urls}
+                </div>
+
+                {new_urls_html}
+                {modified_urls_html}
+                {crawl_notice}
+
+                <div style="margin-top: 35px; padding-top: 20px; border-top: 1px solid #edf2f7; text-align: center; color: #a0aec0; font-size: 12px;">
+                    <p style="margin: 0;">Automated alert generated by GSearchAI Website Monitor.</p>
+                </div>
+            </div>
+        </div>
+        """
+
+        return await EmailService.send_email(to_email=email, subject=subject, body=body, html_body=html_body)
+
 
     @staticmethod
     async def send_welcome_email(email: str, first_name: str) -> bool:
@@ -167,3 +363,101 @@ class EmailService:
         """
         
         return await EmailService.send_email(to_email=email, subject=subject, body=body, html_body=html_body)
+
+    @staticmethod
+    async def send_sitemap_monitor_alert(
+        email: str,
+        user_name: str,
+        sitemap_url: str,
+        total_urls: int,
+        new_urls: list,
+        modified_urls: list,
+        auto_crawled: bool = True
+    ) -> bool:
+        """
+        Send scheduled website monitor alert email detailing newly added and modified URLs.
+        Matches the GCrawl alert layout.
+        """
+        greeting = f"Hello {user_name}," if user_name else "Hello,"
+        change_summary = f"Sitemap changed: +{len(new_urls)} new URLs added, ~{len(modified_urls)} existing URLs modified. (Total: {total_urls})"
+
+        # Build list items for new URLs
+        new_urls_html = ""
+        if new_urls:
+            new_urls_html = """
+            <div style="margin-top: 20px;">
+                <h4 style="color: #27ae60; margin-bottom: 8px; font-size: 15px;">+ Newly Added URLs ({count}):</h4>
+                <ul style="padding-left: 20px; margin: 0; line-height: 1.8;">
+                    {items}
+                </ul>
+            </div>
+            """.format(
+                count=len(new_urls),
+                items="\n".join([f'<li><a href="{u}" style="color: #2b6cb0; text-decoration: underline;" target="_blank">{u}</a></li>' for u in new_urls[:50]])
+            )
+            if len(new_urls) > 50:
+                new_urls_html += f'<p style="color: #718096; font-size: 13px; margin-top: 5px;">...and {len(new_urls) - 50} more URLs</p>'
+
+        # Build list items for modified URLs
+        modified_urls_html = ""
+        if modified_urls:
+            modified_urls_html = """
+            <div style="margin-top: 20px;">
+                <h4 style="color: #d69e2e; margin-bottom: 8px; font-size: 15px;">~ Modified Existing URLs ({count}):</h4>
+                <ul style="padding-left: 20px; margin: 0; line-height: 1.8;">
+                    {items}
+                </ul>
+            </div>
+            """.format(
+                count=len(modified_urls),
+                items="\n".join([f'<li><a href="{u}" style="color: #2b6cb0; text-decoration: underline;" target="_blank">{u}</a></li>' for u in modified_urls[:30]])
+            )
+            if len(modified_urls) > 30:
+                modified_urls_html += f'<p style="color: #718096; font-size: 13px; margin-top: 5px;">...and {len(modified_urls) - 30} more URLs</p>'
+
+        crawl_notice = ""
+        if auto_crawled:
+            crawl_notice = """
+            <div style="background-color: #ebf8ff; border-left: 4px solid #3182ce; padding: 12px 16px; border-radius: 4px; margin-top: 25px;">
+                <p style="margin: 0; color: #2b6cb0; font-size: 13px; font-weight: 500;">
+                    🤖 <strong>Automatic Ingestion Active:</strong> These new URLs have been automatically queued and indexed into your Knowledge Base vector index.
+                </p>
+            </div>
+            """
+
+        subject = f"Website Monitor Alert: Changes detected in {sitemap_url}"
+        body = f"""{greeting}\n\nYour scheduled website monitor has completed its periodic check for:\n{sitemap_url}\n\n{change_summary}\n\nNewly Added ({len(new_urls)}):\n""" + "\n".join(new_urls[:20])
+
+        html_body = f"""
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 650px; margin: 0 auto; background-color: #f7fafc; padding: 25px;">
+            <div style="background: white; border-radius: 12px; padding: 35px; box-shadow: 0 4px 12px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;">
+                <p style="font-size: 16px; color: #2d3748; font-weight: 600; margin-top: 0;">{greeting}</p>
+                <p style="color: #4a5568; font-size: 14px; margin-bottom: 20px;">Your scheduled website monitor has completed its periodic check for:</p>
+                
+                <div style="border-left: 4px solid #3182ce; background-color: #f7fafc; padding: 15px 18px; border-radius: 0 8px 8px 0; margin-bottom: 24px;">
+                    <div style="font-size: 11px; text-transform: uppercase; color: #718096; font-weight: bold; letter-spacing: 0.5px;">MONITORED URL</div>
+                    <div style="font-size: 15px; color: #2b6cb0; word-break: break-all; font-weight: 600; margin-top: 4px;">{sitemap_url}</div>
+                </div>
+
+                <div style="display: flex; align-items: center; background-color: #fefcbf; border-radius: 8px; padding: 12px 16px; margin-bottom: 25px;">
+                    <span style="background-color: #ecc94b; color: #744210; font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 12px; margin-right: 12px; text-transform: uppercase;">CHANGES DETECTED</span>
+                    <span style="color: #744210; font-size: 13px; font-weight: 500;">{change_summary}</span>
+                </div>
+
+                <div style="font-size: 15px; font-weight: 700; color: #2d3748; margin-bottom: 12px;">
+                    Total Sitemap URLs: {total_urls}
+                </div>
+
+                {new_urls_html}
+                {modified_urls_html}
+                {crawl_notice}
+
+                <div style="margin-top: 35px; padding-top: 20px; border-top: 1px solid #edf2f7; text-align: center; color: #a0aec0; font-size: 12px;">
+                    <p style="margin: 0;">Automated alert generated by GSearchAI Website Monitor.</p>
+                </div>
+            </div>
+        </div>
+        """
+
+        return await EmailService.send_email(to_email=email, subject=subject, body=body, html_body=html_body)
+
