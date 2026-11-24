@@ -212,6 +212,7 @@ class URLSelectIngestRequest(BaseModel):
     Schema to bulk scrape and ingest a user-selected list of URLs.
     """
     urls: List[str] = Field(..., description="List of specific user-selected URLs to scrape and ingest")
+    kb_id: Optional[str] = Field(None, description="Optional existing KnowledgeBase ID to append new pages into instead of creating a new KB")
 
 
 class DatabaseConnectionRegister(BaseModel):

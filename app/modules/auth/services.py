@@ -648,12 +648,22 @@ async def authenticate_google_user(request: schemas.GoogleAuthRequest, db: Async
         from google.auth.transport import requests as google_requests
 
         # Verify Google ID token
-        # If google_client_id is configured, verify against it; otherwise verify signature and integrity
+        # If allowed client IDs are configured, verify against them; otherwise verify signature and integrity
+        allowed_audiences = []
+        if getattr(settings, "google_client_ids", None):
+            allowed_audiences.extend([cid.strip() for cid in settings.google_client_ids.split(",") if cid.strip()])
+        if settings.google_client_id and settings.google_client_id not in allowed_audiences:
+            allowed_audiences.append(settings.google_client_id.strip())
+
         id_info = id_token.verify_oauth2_token(
             request.credential,
             google_requests.Request(),
-            audience=settings.google_client_id if settings.google_client_id else None
         )
+
+        # Validate audience if client IDs are configured
+        if allowed_audiences and id_info.get("aud") not in allowed_audiences:
+            logger.warning(f"⚠️ Google token audience mismatch: {id_info.get('aud')} not in {allowed_audiences}")
+            return {"success": False, "error": "Invalid token audience"}
 
         email = id_info.get("email")
         if not email:

@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 USERINFO_EMAIL_SCOPE = "https://www.googleapis.com/auth/userinfo.email"
 
 # Dedicated, least-privilege scopes for Google Drive
+# Dedicated, non-sensitive scope for Google Drive
 DRIVE_SCOPES = [
-    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file",
 ]
 
 # Dedicated, least-privilege scopes for Gmail

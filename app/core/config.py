@@ -159,6 +159,7 @@ class Settings(BaseSettings):
     # ============= GOOGLE OAUTH =============
     google_client_id: Optional[str] = None
     google_client_secret: Optional[str] = None
+    google_client_ids: Optional[str] = None  # Comma-separated list of allowed client IDs (e.g. Web, iOS, Android)
 
     # ============= JWT / SECURITY =============
 

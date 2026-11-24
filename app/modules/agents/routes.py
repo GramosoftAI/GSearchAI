@@ -1822,22 +1822,33 @@ async def ingest_selected_url_links(
             job_id = str(job_result["data"]["job"].id)
 
             kb_service = KnowledgeBaseService(db, tenant_id)
-            raw_url = request_data.urls[0]
-            truncated_url = (raw_url[:180] + "...") if len(raw_url) > 180 else raw_url
-            kb_name = f"{truncated_url} (Selected Links)"
-            kb_request = KBCreate(
-                name=kb_name,
-                agent_id=uuid.UUID(agent_id),
-                description=f"User-selected web content ({len(request_data.urls)} URLs)",
-                source="url_crawl"
-            )
-            kb_result = await kb_service.create_knowledge_base(user_id, kb_request)
-            if not kb_result.get("success"):
-                err_detail = kb_result.get("error") or kb_result.get("message") or "Failed to create KnowledgeBase entry"
-                logger.error(f"[URL_SELECT_INGEST] KB creation failed: {err_detail}")
-                raise HTTPException(status_code=500, detail=f"Failed to create KnowledgeBase entry: {err_detail}")
+            target_kb_id = None
+            if request_data.kb_id:
+                # Check if existing KB is valid
+                existing_kb = await kb_service.get_kb(request_data.kb_id)
+                if existing_kb.get("success"):
+                    target_kb_id = request_data.kb_id
+                    logger.info(f"[URL_SELECT_INGEST] Appending {len(request_data.urls)} URLs to existing KB {target_kb_id}")
 
-            kb_id = str(kb_result["data"]["kb"].id)
+            if not target_kb_id:
+                raw_url = request_data.urls[0]
+                truncated_url = (raw_url[:180] + "...") if len(raw_url) > 180 else raw_url
+                kb_name = f"{truncated_url} (Selected Links)"
+                kb_request = KBCreate(
+                    name=kb_name,
+                    agent_id=uuid.UUID(agent_id),
+                    description=f"User-selected web content ({len(request_data.urls)} URLs)",
+                    source="url_crawl"
+                )
+                kb_result = await kb_service.create_knowledge_base(user_id, kb_request)
+                if not kb_result.get("success"):
+                    err_detail = kb_result.get("error") or kb_result.get("message") or "Failed to create KnowledgeBase entry"
+                    logger.error(f"[URL_SELECT_INGEST] KB creation failed: {err_detail}")
+                    raise HTTPException(status_code=500, detail=f"Failed to create KnowledgeBase entry: {err_detail}")
+
+                target_kb_id = str(kb_result["data"]["kb"].id)
+
+            kb_id = target_kb_id
             agent_name = agent_result["data"]["agent"]["name"]
 
         # Enqueue fully detached background task using asyncio
