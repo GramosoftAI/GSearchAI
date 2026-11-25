@@ -156,9 +156,10 @@ def get_configured_models_catalog() -> list[dict]:
     return catalog
 
 class AnalyticsRepository:
-    def __init__(self, db: AsyncSession, tenant_id: Optional[UUID] = None):
+    def __init__(self, db: AsyncSession, tenant_id: Optional[UUID] = None, user_id: Optional[UUID] = None):
         self.db = db
         self.tenant_id = tenant_id
+        self.user_id = user_id
 
     async def log_usage(
         self,
@@ -241,7 +242,11 @@ class AnalyticsRepository:
         return result.rowcount > 0
 
     async def create_query_log(self, log_data: dict) -> AnalyticsQueryLog:
-        log = AnalyticsQueryLog(**log_data, tenant_id=self.tenant_id)
+        if "tenant_id" not in log_data and self.tenant_id is not None:
+            log_data["tenant_id"] = self.tenant_id
+        if "user_id" not in log_data and self.user_id is not None:
+            log_data["user_id"] = self.user_id
+        log = AnalyticsQueryLog(**log_data)
         self.db.add(log)
         await self.db.flush()
         return log
@@ -250,6 +255,8 @@ class AnalyticsRepository:
         stmt = select(AnalyticsQueryLog)
         if self.tenant_id is not None:
             stmt = stmt.where(AnalyticsQueryLog.tenant_id == self.tenant_id)
+        if self.user_id is not None:
+            stmt = stmt.where(AnalyticsQueryLog.user_id == self.user_id)
         stmt = stmt.offset(skip).limit(limit).order_by(AnalyticsQueryLog.created_at.desc())
         result = await self.db.execute(stmt)
         return result.scalars().all()
@@ -268,6 +275,8 @@ class AnalyticsRepository:
         )
         if self.tenant_id is not None:
             stmt = stmt.where(AnalyticsQueryLog.tenant_id == self.tenant_id)
+        if self.user_id is not None:
+            stmt = stmt.where(AnalyticsQueryLog.user_id == self.user_id)
         
         result = await self.db.execute(stmt)
         row = result.first()
@@ -287,6 +296,8 @@ class AnalyticsRepository:
         )
         if self.tenant_id is not None:
             stmt = stmt.where(AnalyticsQueryLog.tenant_id == self.tenant_id)
+        if self.user_id is not None:
+            stmt = stmt.where(AnalyticsQueryLog.user_id == self.user_id)
         stmt = stmt.group_by("date").order_by("date").limit(30)
         
         result = await self.db.execute(stmt)
@@ -298,6 +309,8 @@ class AnalyticsRepository:
         )
         if self.tenant_id is not None:
             stmt = stmt.where(AnalyticsQueryLog.tenant_id == self.tenant_id)
+        if self.user_id is not None:
+            stmt = stmt.where(AnalyticsQueryLog.user_id == self.user_id)
         stmt = stmt.limit(limit).order_by(AnalyticsQueryLog.created_at.desc())
         result = await self.db.execute(stmt)
         return result.scalars().all()
@@ -311,6 +324,8 @@ class AnalyticsRepository:
         )
         if self.tenant_id is not None:
             stmt = stmt.where(AnalyticsQueryLog.tenant_id == self.tenant_id)
+        if self.user_id is not None:
+            stmt = stmt.where(AnalyticsQueryLog.user_id == self.user_id)
         stmt = stmt.group_by(bucket).order_by(bucket)
         
         result = await self.db.execute(stmt)
@@ -326,6 +341,8 @@ class AnalyticsRepository:
         }
         
         for floor_val, count in rows:
+            if floor_val is None:
+                continue
             if floor_val < 0.2: distribution["0.0-0.2"] += count
             elif floor_val < 0.4: distribution["0.2-0.4"] += count
             elif floor_val < 0.6: distribution["0.4-0.6"] += count
@@ -348,6 +365,8 @@ class AnalyticsRepository:
         )
         if self.tenant_id is not None:
             stmt = stmt.where(DocumentIngestionRun.tenant_id == self.tenant_id)
+        if self.user_id is not None:
+            stmt = stmt.join(KnowledgeBase, DocumentIngestionRun.document_id == KnowledgeBase.id).where(KnowledgeBase.user_id == self.user_id)
         
         result = await self.db.execute(stmt)
         row = result.first()
@@ -382,6 +401,8 @@ class AnalyticsRepository:
         )
         if self.tenant_id is not None:
             stmt = stmt.where(DocumentIngestionRun.tenant_id == self.tenant_id)
+        if self.user_id is not None:
+            stmt = stmt.join(KnowledgeBase, DocumentIngestionRun.document_id == KnowledgeBase.id).where(KnowledgeBase.user_id == self.user_id)
         stmt = stmt.group_by("date").order_by("date").limit(30)
         
         result = await self.db.execute(stmt)
@@ -407,6 +428,7 @@ class AnalyticsRepository:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None
     ) -> dict:
+        target_user = user_id or self.user_id
         # Category breakdown for Ingestions
         cat_stmt = select(
             DocumentIngestionRun.document_category,
@@ -418,8 +440,8 @@ class AnalyticsRepository:
         if self.tenant_id is not None:
             cat_stmt = cat_stmt.where(DocumentIngestionRun.tenant_id == self.tenant_id)
         
-        if user_id:
-            cat_stmt = cat_stmt.join(KnowledgeBase, DocumentIngestionRun.document_id == KnowledgeBase.id).where(KnowledgeBase.user_id == user_id)
+        if target_user:
+            cat_stmt = cat_stmt.join(KnowledgeBase, DocumentIngestionRun.document_id == KnowledgeBase.id).where(KnowledgeBase.user_id == target_user)
         if start_date:
             cat_stmt = cat_stmt.where(DocumentIngestionRun.started_at >= start_date)
         if end_date:
@@ -452,8 +474,8 @@ class AnalyticsRepository:
         if self.tenant_id is not None:
             chat_stmt = chat_stmt.where(AnalyticsQueryLog.tenant_id == self.tenant_id)
         
-        if user_id:
-            chat_stmt = chat_stmt.where(AnalyticsQueryLog.user_id == user_id)
+        if target_user:
+            chat_stmt = chat_stmt.where(AnalyticsQueryLog.user_id == target_user)
         if start_date:
             chat_stmt = chat_stmt.where(AnalyticsQueryLog.created_at >= start_date)
         if end_date:
@@ -487,8 +509,8 @@ class AnalyticsRepository:
         if self.tenant_id is not None:
             day_stmt = day_stmt.where(DocumentIngestionRun.tenant_id == self.tenant_id)
         
-        if user_id:
-            day_stmt = day_stmt.join(KnowledgeBase, DocumentIngestionRun.document_id == KnowledgeBase.id).where(KnowledgeBase.user_id == user_id)
+        if target_user:
+            day_stmt = day_stmt.join(KnowledgeBase, DocumentIngestionRun.document_id == KnowledgeBase.id).where(KnowledgeBase.user_id == target_user)
         if start_date:
             day_stmt = day_stmt.where(DocumentIngestionRun.started_at >= start_date)
         if end_date:
@@ -519,8 +541,8 @@ class AnalyticsRepository:
         if self.tenant_id is not None:
             chat_day_stmt = chat_day_stmt.where(AnalyticsQueryLog.tenant_id == self.tenant_id)
         
-        if user_id:
-            chat_day_stmt = chat_day_stmt.where(AnalyticsQueryLog.user_id == user_id)
+        if target_user:
+            chat_day_stmt = chat_day_stmt.where(AnalyticsQueryLog.user_id == target_user)
         if start_date:
             chat_day_stmt = chat_day_stmt.where(AnalyticsQueryLog.created_at >= start_date)
         if end_date:
@@ -812,6 +834,8 @@ class AnalyticsRepository:
         )
         if self.tenant_id is not None:
             stmt = stmt.where(DocumentIngestionRun.tenant_id == self.tenant_id)
+        if self.user_id is not None:
+            stmt = stmt.join(KnowledgeBase, DocumentIngestionRun.document_id == KnowledgeBase.id).where(KnowledgeBase.user_id == self.user_id)
         stmt = stmt.group_by("date").order_by("date").limit(30)
         
         res = await self.db.execute(stmt)
@@ -838,11 +862,12 @@ class AnalyticsRepository:
         limit: int = 50,
     ) -> dict:
         """Fetch aggregated and detailed token consumption metrics with multi-dimensional filtering."""
+        target_user = user_id or self.user_id
         conditions = []
         if self.tenant_id is not None:
             conditions.append(AnalyticsQueryLog.tenant_id == self.tenant_id)
-        if user_id:
-            conditions.append(AnalyticsQueryLog.user_id == user_id)
+        if target_user:
+            conditions.append(AnalyticsQueryLog.user_id == target_user)
         if model_name and model_name.strip():
             conditions.append(AnalyticsQueryLog.model_name == model_name.strip())
         if start_date:
@@ -887,7 +912,7 @@ class AnalyticsRepository:
             if end_date:
                 ingest_conditions.append(DocumentIngestionRun.started_at <= end_date)
 
-            if user_id:
+            if target_user:
                 ingest_sum_stmt = select(
                     func.sum(DocumentIngestionRun.llm_input_tokens).label("tot_inp"),
                     func.sum(DocumentIngestionRun.llm_output_tokens).label("tot_out"),
@@ -896,7 +921,7 @@ class AnalyticsRepository:
                     func.count(DocumentIngestionRun.id).label("tot_runs"),
                 ).select_from(DocumentIngestionRun).join(
                     KnowledgeBase, DocumentIngestionRun.document_id == KnowledgeBase.id
-                ).where(KnowledgeBase.user_id == user_id, *ingest_conditions)
+                ).where(KnowledgeBase.user_id == target_user, *ingest_conditions)
             else:
                 ingest_sum_stmt = select(
                     func.sum(DocumentIngestionRun.llm_input_tokens).label("tot_inp"),
@@ -1087,8 +1112,8 @@ class AnalyticsRepository:
             stage_conditions = []
             if self.tenant_id is not None:
                 stage_conditions.append(LLMStageUsageLog.tenant_id == self.tenant_id)
-            if user_id:
-                stage_conditions.append(LLMStageUsageLog.user_id == user_id)
+            if target_user:
+                stage_conditions.append(LLMStageUsageLog.user_id == target_user)
             if model_name and model_name.strip():
                 stage_conditions.append(LLMStageUsageLog.model_name == model_name.strip())
             if start_date:

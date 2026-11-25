@@ -188,33 +188,29 @@ async def register_user(request: schemas.RegisterRequest, db: AsyncSession) -> d
             
         latest_otp.is_used = True
 
-        # ============= CREATE TENANT =============
-        if request.tenant_name:
-            # Check if tenant already exists
-            logger.debug(f"  Checking if tenant '{request.tenant_name}' exists...")
-            existing_tenant = await db.execute(
-                select(Tenant).where(Tenant.name == request.tenant_name)
-            )
-            if existing_tenant.scalar_one_or_none():
-                logger.warning(f"   Tenant '{request.tenant_name}' already exists")
-                return {
-                    "success": False,
-                    "error": "Tenant name already registered",
-                }
+        # ============= CREATE ISOLATED TENANT =============
+        # Every new user registration MUST create a dedicated, private tenant workspace
+        # to ensure 100% tenant isolation across PostgreSQL RLS and Neo4j.
+        # Users should NEVER silently inherit or auto-join another user's or primary tenant.
+        tenant_name_clean = (request.tenant_name or "").strip()
+        if not tenant_name_clean:
+            first = (request.first_name or "").strip()
+            tenant_name_clean = f"{first}'s Workspace" if first else f"{request.email.split('@')[0]}'s Workspace"
 
-            # Create new tenant
-            tenant_id = uuid.uuid4()
-            tenant = Tenant(
-                id=tenant_id,
-                name=request.tenant_name,
-                slug=request.tenant_name.lower().replace(" ", "-"),
-            )
-            db.add(tenant)
-            logger.info(f"   Created tenant: {tenant.id} ({request.tenant_name})")
-        else:
-            # For now, require tenant_name
-            logger.warning(f"   No tenant_name provided for signup")
-            return {"success": False, "error": "tenant_name required for registration"}
+        import re
+        base_slug = re.sub(r'[^a-z0-9\-]', '', tenant_name_clean.lower().replace(" ", "-")) or "workspace"
+        unique_suffix = str(uuid.uuid4())[:8]
+        slug = f"{base_slug}-{unique_suffix}"
+
+        tenant_id = uuid.uuid4()
+        tenant = Tenant(
+            id=tenant_id,
+            name=tenant_name_clean,
+            slug=slug,
+            is_active=True,
+        )
+        db.add(tenant)
+        logger.info(f"   Created isolated tenant: {tenant.id} ({tenant.name})")
 
         # ============= CREATE USER =============
         logger.debug(f"  Creating user: {request.email}...")

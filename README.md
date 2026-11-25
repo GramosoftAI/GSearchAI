@@ -27,7 +27,9 @@
 - [GRAG vs Glean vs GoSearch vs Guru vs Onyx](#-comparison-grag-vs-the-market)
 - [Who is this for?](#-who-is-this-for)
 - [Core Capabilities](#-core-capabilities)
+- [Enterprise Connectors & Integrations](#-enterprise-connectors--integrations)
 - [Architecture & Workflow](#-architecture--workflow)
+- [Project Directory Structure](#-project-directory-structure)
 - [RDF & Ontology Support](#-rdf--ontology-support)
 - [Tech Stack](#-tech-stack)
 - [Security & Multi-Tenant Isolation](#-security--multi-tenant-isolation)
@@ -102,9 +104,35 @@ These capabilities are implemented in the current open-source release:
 - **Neo4j Composite Indexing:** Pre-indexed `MERGE` properties optimize write performance and avoid full-graph scans.
 - **RDF-Backed Persistent Memory:** Graph-native session and personal memory utilizing RDF triplet representations for accurate contextual recall across long-running interactions.
 - **EventHub Architecture:** Robust event-driven backbone facilitating decoupled processing, real-time telemetry, and asynchronous knowledge ingestion.
+- **Enterprise Workplace Connectors:** Native, incremental synchronization for **Slack**, **Microsoft SharePoint**, **Microsoft Outlook**, Google Drive, and Gmail with token lifecycle auto-refresh, pagination, and rate-limit backoff.
+- **Relational Database Knowledge Bases:** Direct database reflection and semantic indexing across **Microsoft SQL Server (MSSQL)**, PostgreSQL, MySQL, and SQLite with automated schema extraction and query enrichment.
 - **Advanced Analysis Codebase:** Comprehensive analytical modules enabling deep insights and metrics from the underlying knowledge graph and tenant interactions.
 
 > **A note on honesty:** GRAG ships a complete, runnable retrieval and ingestion pipeline today. Several *intelligence* layers — production-grade semantic embeddings, activated generative LLM responses, and LLM-grade entity extraction — are scaffolded and tracked on the [Roadmap](#-roadmap) below rather than overclaimed here. We'd rather you trust the README than be surprised by the code.
+
+## 🔌 Enterprise Connectors & Integrations
+
+GRAG features unified, enterprise-grade connectors designed for permission-aware data indexing:
+
+### 💬 Slack Connector (`app/modules/connectors/slack`)
+- **Centralized Router:** Aggregated under `/api/v1/connectors/slack/*` with event subscriptions, interactive components, and workspace authorization.
+- **Incremental Crawling:** Sync public and private channels, extract multi-user conversation threads, and index file attachments.
+- **Event Pipeline:** Background processing worker consuming Slack webhook events for near real-time graph updates.
+
+### 🏢 Microsoft 365: SharePoint & Outlook (`app/modules/connectors/sharepoint`)
+- **SharePoint Document Ingestion:**
+  - Automated site URL resolution, drive discovery, and recursive Breadth-First Search (BFS) directory crawling.
+  - Native indexing of Microsoft Graph drive items, folders, and binary documents (PDF, DOCX, XLSX, PPTX).
+- **Outlook Mailbox Sync:**
+  - Dynamic folder listing (`/me/mailFolders`), HTML body sanitization, and threaded email extraction.
+  - Granular folder selection (Inbox, Sent Items, custom folders) and per-knowledge-base message deduplication.
+- **Enterprise Token Lifecycle & Resiliency:**
+  - Automated proactive token refresh before expiration with secure credential persistence.
+  - Built-in resilience against Microsoft Graph 429 rate limits and 5xx transient errors via exponential backoff and jitter.
+
+### 🗄️ Relational Database Knowledge Bases (`app/modules/database_knowledgebase`)
+- **Multi-RDBMS Connectors:** Pre-built connectors for **Microsoft SQL Server (MSSQL)**, **PostgreSQL**, **MySQL**, and **SQLite**.
+- **Schema Reflection & Query Enrichment:** Automatic table schema extraction, foreign key graph mapping, and natural language query enrichment for structured enterprise data.
 
 ## 🏗️ Architecture & Workflow
 
@@ -127,6 +155,29 @@ graph LR
 2. **Graph Construction:** Facts are extracted as `(Subject, Predicate, Object)` triplets adhering to the registered ontology; chunks are embedded via pgvector.
 3. **Retrieval:** Queries trigger a hybrid search — fetching semantically relevant chunks while expanding structural boundaries through Neo4j relationships.
 4. **Generation:** Context plus strict ontology rules are injected into the prompt, forcing the agent to reason deterministically.
+
+## 📁 Project Directory Structure
+
+```text
+graphmind/
+├── app/
+│   ├── core/                    # Security, auth middleware, configs, and DB connections
+│   ├── modules/
+│   │   ├── connectors/          # Unified enterprise connectors
+│   │   │   ├── sharepoint/      # Microsoft Graph (SharePoint & Outlook) crawlers & auth
+│   │   │   ├── slack/           # Slack bot, events, and OAuth routes
+│   │   │   └── routes.py        # Centralized connectors API router
+│   │   ├── database_knowledgebase/ # Relational connectors (MSSQL, PostgreSQL, MySQL)
+│   │   ├── knowledge_bases/     # Multi-tenant KB management, sync workers & chunking
+│   │   ├── ingestion/           # Document parsing (PDF, Excel, CSV, tables)
+│   │   ├── graph/               # Neo4j Active Ontology, RDF triplets & hybrid retrieval
+│   │   └── ...
+│   ├── worker/                  # Background task queues (Celery/Redis worker)
+│   └── main.py                  # FastAPI application entrypoint
+├── migrations/                  # Alembic database migrations
+├── docker-compose.yml           # Multi-container orchestration (API, Neo4j, Postgres, Redis)
+└── requirements.txt             # Core Python dependencies
+```
 
 ## 🔗 RDF & Ontology Support
 
@@ -189,8 +240,11 @@ The following deepen GRAG's semantic-web compliance and are tracked openly:
 | **Graph Database** | Neo4j (native vector index + composite indexing) |
 | **RDF / Ontology** | rdflib + rdflib-neo4j (OWL / SKOS / Turtle ingestion) |
 | **Relational + Vectors** | PostgreSQL + pgvector |
+| **Enterprise Connectors** | Microsoft Graph API (SharePoint, Outlook), Slack Bolt API, Google Workspace |
+| **Database Connectors** | Microsoft SQL Server (pyodbc/pymssql), PostgreSQL, MySQL, SQLite |
 | **API Layer** | FastAPI (Python) |
 | **Auth** | Stateless JWT |
+| **Background Workers** | Celery / Redis |
 | **Orchestration** | Docker / Docker Compose |
 | **LLM Inference** | DeepInfra-compatible (pluggable) |
 
@@ -223,6 +277,32 @@ docker-compose up -d --build
 curl -X GET "http://localhost:8000/api/v1/health" \
      -H "Accept: application/json"
 # Expected: {"status": "healthy", "database": "connected", "graph": "connected"}
+```
+
+### ⚙️ Environment Configuration
+
+Sample configuration variables for `.env`:
+
+```ini
+# Core Infrastructure
+DATABASE_URL=postgresql://grag:grag_password@localhost:5432/grag_db
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=grag_password
+REDIS_URL=redis://localhost:6379/0
+
+# Microsoft Graph OAuth (SharePoint & Outlook)
+MS_CLIENT_ID=your_azure_client_id
+MS_CLIENT_SECRET=your_azure_client_secret
+MS_TENANT_ID=common  # or your Azure Tenant ID
+MS_SHAREPOINT_REDIRECT_URI=http://localhost:8000/api/v1/knowledge-bases/sharepoint/callback
+MS_OUTLOOK_REDIRECT_URI=http://localhost:8000/api/v1/knowledge-bases/outlook/callback
+
+# Slack Connector
+SLACK_CLIENT_ID=your_slack_client_id
+SLACK_CLIENT_SECRET=your_slack_client_secret
+SLACK_SIGNING_SECRET=your_slack_signing_secret
+SLACK_BOT_TOKEN=xoxb-your-token
 ```
 
 **Note on Graph Cleanup:**
@@ -277,8 +357,8 @@ No. GRAG is self-hosted. The only external call is to your chosen LLM provider �
 **Does GRAG support RDF and standard ontologies?**
 Yes. GRAG's `(Subject, Predicate, Object)` triplet model is RDF-native, and it integrates with rdflib and rdflib-neo4j to load standard OWL, RDFS, and SKOS ontologies directly into Neo4j. Your knowledge graph stays portable and W3C-standards-compliant rather than locked into a proprietary schema. SHACL validation, OWL inferencing, and a SPARQL endpoint are on the roadmap.
 
-**What document formats are supported?**
-PDF, Excel, and CSV out of the box, with smart chunking and table extraction. Additional loaders are welcomed via contributions.
+**What document formats and data sources are supported?**
+GRAG supports rich enterprise workplace sources including **Slack workspaces**, **Microsoft SharePoint**, **Microsoft Outlook**, and **relational databases (Microsoft SQL Server, PostgreSQL, MySQL, SQLite)**. For documents and files, GRAG provides out-of-the-box parsing for PDF, Word (DOCX), Excel (XLSX), CSV, and web pages with structural table extraction. Additional loaders are welcomed via contributions.
 
 ## 🤝 Contributing
 

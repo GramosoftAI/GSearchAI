@@ -3206,7 +3206,7 @@ class QueryPlanner:
                                     logical_operator="AND",
                                 )
                             )
-                            bound = True
+                            bound = True 
                             break
                     if not bound and ids_list:
                         # Check for FK column on work_packages / tasks table (e.g. assigned_to_id)

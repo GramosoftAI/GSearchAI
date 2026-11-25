@@ -2,68 +2,139 @@
 
 
 
+
+
+
+
 from fastapi import APIRouter, Request, HTTPException, status, UploadFile, File
 
+
+
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from sqlalchemy import text
+
+
 
 from typing import Optional, List, Dict, Any
 
+
+
 import io
+
+
 
 try:
 
+
+
     import pdfplumber
+
+
 
 except ImportError:
 
+
+
     pass
+
+
 
 import logging
 
+
+
 import uuid
+
+
 
 import asyncio
 
+
+
 import re
+
+
+
+
 
 
 
 from .service import AgentService
 
+from ..auth.models import User
+
+
+
 from . import schemas
+
+
 
 from ...core.database import AsyncSessionLocal
 
+
+
 from ...utils.formatters import format_error, format_success
+
+
 
 from ..knowledge_bases.service import KnowledgeBaseService
 
+
+
 from ..knowledge_bases.schemas import KBCreate, KBURLIngest, URLDiscoverRequest, URLSelectIngestRequest
+
+
 
 from ..knowledge_bases.services.scraper_service import ScraperService
 
+
+
 import httpx
+
+
 
 try:
 
+
+
     from bs4 import BeautifulSoup
+
+
 
 except ImportError:
 
+
+
     pass  # Handled at route level
+
+
 
 from ...core.llm.deepinfra_llm import get_llm_client
 
+
+
 from ...core.config import get_settings
+
+
 
 import re
 
 
 
+
+
+
+
 logger = logging.getLogger(__name__)
 
+
+
 settings = get_settings()
+
+
+
+
 
 
 
@@ -73,11 +144,27 @@ router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
 
 
+
+
+
+
+
+
 # ============================================================================
+
+
 
 # REQUEST CONTEXT HELPERS
 
+
+
 # ============================================================================
+
+
+
+
+
+
 
 
 
@@ -85,41 +172,81 @@ router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
 def get_tenant_and_user(request: Request) -> tuple[str, str]:
 
+
+
     """
+
+
 
     Extract tenant_id and user_id from request context (set by middleware).
 
 
 
+
+
+
+
     CRITICAL: These are injected by TenantContextMiddleware.
+
+
 
     Never trust values from request body or query params.
 
 
 
+
+
+
+
     Returns:
+
+
 
         Tuple of (tenant_id, user_id)
 
 
 
+
+
+
+
     Raises:
+
+
 
         HTTPException if not found in request state
 
+
+
     """
 
+
+
     tenant_id = getattr(request.state, "tenant_id", None)
+
+
 
     user_id = getattr(request.state, "user_id", None)
 
 
 
+
+
+
+
     if not tenant_id or not user_id:
+
+
 
         logger.error("Missing tenant_id or user_id in request state")
 
+
+
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+
+
 
 
 
@@ -129,117 +256,237 @@ def get_tenant_and_user(request: Request) -> tuple[str, str]:
 
 
 
+
+
+
+
+
+
 # ============================================================================
+
+
 
 # ENDPOINTS
 
+
+
 # ============================================================================
 
 
 
 
 
+
+
+
+
+
+
 @router.post(
+
+
 
     "",
 
+
+
     response_model=dict,
 
+
+
     status_code=status.HTTP_200_OK,
+
+
 
     summary="Create Agent",
 
+
+
     description="Create a new agent for the current tenant",
 
+
+
 )
+
+
 
 @router.post(
 
+
+
     "/",
+
+
 
     response_model=dict,
 
+
+
     status_code=status.HTTP_200_OK,
+
+
 
     include_in_schema=False,
 
+
+
 )
+
+
 
 async def create_agent(
 
+
+
     request: Request,
+
+
 
     agent_request: schemas.AgentCreate,
 
+
+
 ) -> dict:
 
+
+
     """
+
+
 
     Create a new agent.
 
 
 
+
+
+
+
     Creates agent in BOTH:
 
+
+
     1. PostgreSQL (metadata storage)
+
+
 
     2. Neo4j (graph node for future KB/Chunk relationships)
 
 
 
+
+
+
+
     TRANSACTION SAFETY:
 
+
+
     - If either database fails, entire operation is rolled back
+
+
 
     - No orphaned nodes or records
 
 
 
+
+
+
+
     Args:
 
+
+
         request: FastAPI request (contains tenant_id in state)
+
+
 
         agent_request: AgentCreate schema with name, system_prompt, etc.
 
 
 
+
+
+
+
     Returns:
+
+
 
         JSON response with created agent
 
 
 
+
+
+
+
     Raises:
+
+
 
         HTTPException 401: Not authenticated
 
+
+
         HTTPException 400: Invalid request
+
+
 
         HTTPException 500: Database error
 
+
+
     """
 
+
+
     try:
+
+
 
         tenant_id, user_id = get_tenant_and_user(request)
 
 
 
+
+
+
+
         async with AsyncSessionLocal() as db:
 
+
+
             service = AgentService(db, tenant_id)
+
+
 
             result = await service.create_agent(user_id, agent_request)
 
 
 
+
+
+
+
             if not result.get("success"):
+
+
 
                 error_msg = result.get("error", "Unknown error")
 
+
+
                 status_code = result.get("status_code", 400)
 
+
+
                 raise HTTPException(status_code=status_code, detail=error_msg)
+
+
+
+
 
 
 
@@ -247,13 +494,25 @@ async def create_agent(
 
 
 
+
+
+
+
     except HTTPException:
+
+
 
         raise
 
+
+
     except Exception as e:
 
+
+
         logger.error(f"Unexpected error creating agent: {e}")
+
+
 
         raise HTTPException(status_code=500, detail="Internal server error")
 
@@ -261,67 +520,135 @@ async def create_agent(
 
 
 
+
+
+
+
+
+
 @router.get(
+
+
 
     "/detailed",
 
+
+
     response_model=dict,
+
+
 
     summary="List Agents Detailed (Audit View)",
 
+
+
     description="List all agents with owner names, tenant names, and linked KB IDs. Supports smart search across names.",
+
+
 
 )
 
+
+
 async def list_agents_detailed(
+
+
 
     request: Request,
 
+
+
     search: schemas.Optional[str] = None,
+
+
 
     limit: int = 50,
 
+
+
     offset: int = 0,
+
+
 
 ) -> dict:
 
+
+
     """
+
+
 
     Get comprehensive list of agents with User, Tenant, and KB details.
 
+
+
     
+
+
 
     SEARCH CAPABILITY:
 
+
+
     - If 'search' is provided, filters results where username, agent name, or tenant name match.
+
+
 
     """
 
+
+
     try:
+
+
 
         tenant_id, _ = get_tenant_and_user(request)
 
 
 
+
+
+
+
         async with AsyncSessionLocal() as db:
+
+
 
             agent_service = AgentService(db, tenant_id)
 
+
+
             return await agent_service.list_agents_enhanced(
 
+
+
                 search=search, limit=limit, offset=offset
+
+
 
             )
 
 
 
+
+
+
+
     except HTTPException:
+
+
 
         raise
 
+
+
     except Exception as e:
 
+
+
         logger.error(f"Failed to list enhanced agents: {e}")
+
+
 
         return format_error(f"Internal server error: {str(e)}")
 
@@ -329,117 +656,263 @@ async def list_agents_detailed(
 
 
 
+
+
+
+
+
+
 @router.get(
+
+
 
     "",
 
+
+
     response_model=dict,
+
+
 
     summary="List Agents",
 
+
+
     description="List all agents for the current tenant",
 
+
+
 )
+
+
 
 @router.get(
 
+
+
     "/",
+
+
 
     response_model=dict,
 
+
+
     include_in_schema=False,
+
+
 
 )
 
+
+
 async def list_agents(
+
+
 
     request: Request,
 
+
+
     limit: int = 50,
+
+
 
     offset: int = 0,
 
+
+
+    all_users: bool = False,
+
+
+
 ) -> dict:
+
+
 
     """
 
-    List all agents for tenant.
+
+
+    List all agents for tenant with account-level isolation.
 
 
 
-    TENANT ISOLATION: Only returns agents belonging to current tenant.
+
+
+
+
+    ACCOUNT ISOLATION: By default, returns only agents owned by the current user.
+
+
+
+    If caller is admin and all_users=True, returns all agents in the tenant.
+
+
 
     Supports pagination via limit/offset.
 
 
 
+
+
+
+
     Args:
+
+
 
         request: FastAPI request
 
+
+
         limit: Max agents to return (default 50)
+
+
 
         offset: Pagination offset (default 0)
 
 
 
+        all_users: If True and caller is admin, return all users' agents
+
+
+
+
+
+
+
     Returns:
+
+
 
         JSON response with agents list and total count
 
 
 
+
+
+
+
     Raises:
+
+
 
         HTTPException 401: Not authenticated
 
+
+
         HTTPException 500: Database error
+
+
 
     """
 
+
+
     try:
 
-        tenant_id, _ = get_tenant_and_user(request)
+
+
+        tenant_id, user_id = get_tenant_and_user(request)
+
+
+
+
 
 
 
         # Validate pagination params
 
+
+
         if limit > 1000:
+
+
 
             limit = 1000
 
+
+
         if offset < 0:
+
+
 
             offset = 0
 
 
 
+
+
+
+
         async with AsyncSessionLocal() as db:
+
+
+
+            caller_user = await db.get(User, uuid.UUID(user_id)) if user_id else None
+
+
+
+            is_admin = bool(caller_user and (caller_user.is_admin or getattr(caller_user, "role", "") == "admin"))
+
+
+
+            scoped_user_id = None if (all_users and is_admin) else user_id
+
+
+
+
+
+
 
             service = AgentService(db, tenant_id)
 
-            result = await service.list_agents(limit=limit, offset=offset)
+
+
+            result = await service.list_agents(limit=limit, offset=offset, user_id=scoped_user_id)
+
+
+
+
 
 
 
             if not result.get("success"):
+
+
 
                 raise HTTPException(status_code=500, detail="Failed to list agents")
 
 
 
+
+
+
+
             return result
+
+
+
+
 
 
 
     except HTTPException:
 
+
+
         raise
+
+
 
     except Exception as e:
 
+
+
         logger.error(f"Unexpected error listing agents: {e}")
+
+
 
         raise HTTPException(status_code=500, detail="Internal server error")
 
@@ -447,77 +920,175 @@ async def list_agents(
 
 
 
+
+
+
+
+
+
 @router.get(
+
+
 
     "/by-user",
 
+
+
     response_model=dict,
+
+
 
     summary="List Agents by User ID",
 
+
+
     description="List all agents created by a specific user (identified by user_id)",
+
+
 
 )
 
+
+
 async def list_agents_by_user(
+
+
 
     request: Request,
 
+
+
     user_id: str,
+
+
 
     limit: int = 50,
 
+
+
     offset: int = 0,
+
+
 
 ) -> dict:
 
+
+
     """
+
+
 
     List all agents created by a specific user (identified by user_id).
 
+
+
+    Non-admin callers can only query their own user ID.
+
+
+
     """
+
+
 
     try:
 
-        tenant_id, _ = get_tenant_and_user(request)
+
+
+        tenant_id, caller_user_id = get_tenant_and_user(request)
+
+
+
+
 
 
 
         async with AsyncSessionLocal() as db:
 
+
+
+            caller_user = await db.get(User, uuid.UUID(caller_user_id)) if caller_user_id else None
+
+
+
+            is_admin = bool(caller_user and (caller_user.is_admin or getattr(caller_user, "role", "") == "admin"))
+
+
+
+            target_user_id = user_id if is_admin else caller_user_id
+
+
+
+
+
+
+
             service = AgentService(db, tenant_id)
+
+
 
             result = await service.list_agents_by_user(
 
-                user_id=user_id, limit=limit, offset=offset
+
+
+                user_id=target_user_id, limit=limit, offset=offset
+
+
 
             )
 
 
 
+
+
+
+
             if not result.get("success"):
+
+
 
                 raise HTTPException(
 
+
+
                     status_code=404 if "not found" in result.get("error", "").lower() else 500,
 
+
+
                     detail=result.get("error", "Failed to list agents for user")
+
+
 
                 )
 
 
 
+
+
+
+
             return result
+
+
+
+
 
 
 
     except HTTPException:
 
+
+
         raise
+
+
 
     except Exception as e:
 
+
+
         logger.error(f"Unexpected error listing agents by user ID: {e}")
+
+
 
         raise HTTPException(status_code=500, detail="Internal server error")
 
@@ -525,81 +1096,181 @@ async def list_agents_by_user(
 
 
 
+
+
+
+
+
+
 @router.get(
+
+
 
     "/{agent_id}",
 
+
+
     response_model=dict,
+
+
 
     summary="Get Agent",
 
+
+
     description="Retrieve a specific agent by ID",
+
+
 
 )
 
+
+
 async def get_agent(
+
+
 
     request: Request,
 
+
+
     agent_id: str,
+
+
 
 ) -> dict:
 
+
+
     """
+
+
 
     Get agent by ID.
 
 
 
-    TENANT ISOLATION: Only returns agent if it belongs to current tenant.
+
+
+
+
+    ACCOUNT ISOLATION: Only returns agent if it belongs to current user/tenant.
+
+
+
+
 
 
 
     Args:
 
+
+
         request: FastAPI request
+
+
 
         agent_id: Agent UUID
 
 
 
+
+
+
+
     Returns:
+
+
 
         JSON response with agent details
 
 
 
+
+
+
+
     Raises:
+
+
 
         HTTPException 401: Not authenticated
 
+
+
         HTTPException 404: Agent not found
+
+
 
         HTTPException 500: Database error
 
+
+
     """
+
+
 
     try:
 
-        tenant_id, _ = get_tenant_and_user(request)
+
+
+        tenant_id, user_id = get_tenant_and_user(request)
+
+
+
+
 
 
 
         async with AsyncSessionLocal() as db:
 
+
+
+            caller_user = await db.get(User, uuid.UUID(user_id)) if user_id else None
+
+
+
+            is_admin = bool(caller_user and (caller_user.is_admin or getattr(caller_user, "role", "") == "admin"))
+
+
+
+            scoped_user_id = None if is_admin else user_id
+
+
+
+
+
+
+
             service = AgentService(db, tenant_id)
 
-            result = await service.get_agent(agent_id)
+
+
+            result = await service.get_agent(agent_id, user_id=scoped_user_id)
+
+
+
+
 
 
 
             if not result.get("success"):
 
+
+
                 status_code = result.get("status_code", 404)
+
+
 
                 error_msg = result.get("error", "Agent not found")
 
+
+
                 raise HTTPException(status_code=status_code, detail=error_msg)
+
+
+
+
 
 
 
@@ -607,15 +1278,48 @@ async def get_agent(
 
 
 
+
+
+
+
     except HTTPException:
+
+
 
         raise
 
+
+
     except Exception as e:
+
+
 
         logger.error(f"Unexpected error getting agent: {e}")
 
+
+
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -637,72 +1341,142 @@ async def get_agent(
 
 
 @router.get(
+
     "/{agent_id}/integration/{integration_type}",
+
     response_model=dict,
+
     summary="Get Integration Status",
+
     description="Returns true if the agent is connected to the specified integration",
+
 )
+
 async def get_integration_status(
+
     request: Request,
+
     agent_id: str,
+
     integration_type: str,
+
 ) -> dict:
+
     """
+
     Check if a specific integration is active for this agent.
+
     """
+
     try:
+
         tenant_id, _ = get_tenant_and_user(request)
+
         async with AsyncSessionLocal() as db:
+
             service = AgentService(db, tenant_id)
+
             result = await service.get_agent(agent_id)
+
             
+
             if not result.get("success"):
+
                 status_code = result.get("status_code", 404)
+
                 error_msg = result.get("error", "Agent not found")
+
                 raise HTTPException(status_code=status_code, detail=error_msg)
+
                 
+
             agent_data = result["data"]["agent"]
+
             connected_integrations = agent_data.get("connected_integrations", [])
+
             
+
             is_connected = integration_type in connected_integrations
+
             
+
             return format_success({
+
                 "integration_type": integration_type,
+
                 "is_connected": is_connected
+
             }, meta={"message": "Status fetched successfully"})
+
             
+
     except HTTPException:
+
         raise
+
     except Exception as e:
+
         logger.error(f"Unexpected error getting integration status: {e}")
+
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+
 
 
 @router.patch(
 
+
+
     "/{agent_id}",
+
+
 
     response_model=dict,
 
+
+
     summary="Update Agent",
+
+
 
     description="Update agent properties",
 
+
+
 )
+
+
 
 async def update_agent(
 
+
+
     request: Request,
+
+
 
     agent_id: str,
 
+
+
     agent_request: schemas.AgentUpdate,
+
+
 
 ) -> dict:
 
+
+
     """
 
+
+
     Update agent (partial update).
+
+
+
+
 
 
 
@@ -710,55 +1484,123 @@ async def update_agent(
 
 
 
+
+
+
+
     Args:
+
+
 
         request: FastAPI request
 
+
+
         agent_id: Agent UUID
+
+
 
         agent_request: AgentUpdate schema with optional fields
 
 
 
+
+
+
+
     Returns:
+
+
 
         JSON response with updated agent
 
 
 
+
+
+
+
     Raises:
+
+
 
         HTTPException 401: Not authenticated
 
+
+
         HTTPException 404: Agent not found
+
+
 
         HTTPException 400: Invalid request
 
+
+
         HTTPException 500: Database error
+
+
 
     """
 
+
+
     try:
+
+
 
         tenant_id, user_id = get_tenant_and_user(request)
 
 
 
+
+
+
+
         async with AsyncSessionLocal() as db:
+
+
+
+            caller_user = await db.get(User, uuid.UUID(user_id)) if user_id else None
+
+
+
+            is_admin = bool(caller_user and (caller_user.is_admin or getattr(caller_user, "role", "") == "admin"))
+
+
+
+
+
+
 
             service = AgentService(db, tenant_id)
 
-            result = await service.update_agent(user_id, agent_id, agent_request)
+
+
+            result = await service.update_agent(user_id, agent_id, agent_request, is_admin=is_admin)
+
+
+
+
 
 
 
             if not result.get("success"):
 
+
+
                 status_code = result.get("status_code", 400)
+
+
 
                 error_msg = result.get("error", "Failed to update agent")
 
+
+
                 raise HTTPException(status_code=status_code, detail=error_msg)
+
+
+
+
 
 
 
@@ -766,15 +1608,33 @@ async def update_agent(
 
 
 
+
+
+
+
     except HTTPException:
+
+
 
         raise
 
+
+
     except Exception as e:
+
+
 
         logger.error(f"Unexpected error updating agent: {e}")
 
+
+
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+
+
+
+
 
 
 
@@ -782,93 +1642,197 @@ async def update_agent(
 
 @router.delete(
 
+
+
     "/{agent_id}",
+
+
 
     response_model=dict,
 
+
+
     status_code=status.HTTP_200_OK,
+
+
 
     summary="Delete Agent",
 
+
+
     description="Delete an agent and cascade delete related data",
+
+
 
 )
 
+
+
 async def delete_agent(
+
+
 
     request: Request,
 
+
+
     agent_id: str,
+
+
 
 ) -> dict:
 
+
+
     """
+
+
 
     Delete agent from both PostgreSQL and Neo4j.
 
 
 
+
+
+
+
     CASCADE DELETES:
 
+
+
     - PostgreSQL: Agent marked as inactive (soft delete)
+
+
 
     - Neo4j: Agent node and all related nodes (KBs, Chunks, Entities)
 
 
 
+
+
+
+
     TRANSACTION SAFETY:
 
+
+
     - If Neo4j deletion fails, PostgreSQL is not touched
+
+
 
     - Ensures consistency between databases
 
 
 
+
+
+
+
     Args:
 
+
+
         request: FastAPI request
+
+
 
         agent_id: Agent UUID
 
 
 
+
+
+
+
     Returns:
+
+
 
         JSON response with deletion confirmation
 
 
 
+
+
+
+
     Raises:
+
+
 
         HTTPException 401: Not authenticated
 
+
+
         HTTPException 404: Agent not found
+
+
 
         HTTPException 500: Database error
 
+
+
     """
 
+
+
     try:
+
+
 
         tenant_id, user_id = get_tenant_and_user(request)
 
 
 
+
+
+
+
         async with AsyncSessionLocal() as db:
+
+
+
+            caller_user = await db.get(User, uuid.UUID(user_id)) if user_id else None
+
+
+
+            is_admin = bool(caller_user and (caller_user.is_admin or getattr(caller_user, "role", "") == "admin"))
+
+
+
+
+
+
 
             service = AgentService(db, tenant_id)
 
-            result = await service.delete_agent(user_id, agent_id)
+
+
+            result = await service.delete_agent(user_id, agent_id, is_admin=is_admin)
+
+
+
+
 
 
 
             if not result.get("success"):
 
+
+
                 status_code = result.get("status_code", 500)
+
+
 
                 error_msg = result.get("error", "Failed to delete agent")
 
+
+
                 raise HTTPException(status_code=status_code, detail=error_msg)
+
+
+
+
 
 
 
@@ -876,13 +1840,25 @@ async def delete_agent(
 
 
 
+
+
+
+
     except HTTPException:
+
+
 
         raise
 
+
+
     except Exception as e:
 
+
+
         logger.error(f"Unexpected error deleting agent: {e}")
+
+
 
         raise HTTPException(status_code=500, detail="Internal server error")
 
@@ -890,83 +1866,167 @@ async def delete_agent(
 
 
 
+
+
+
+
+
+
 # ============================================================================
+
+
 
 # INSTANT INGESTION OVERRIDES (For Dashboard UI)
 
+
+
 # ============================================================================
+
+
+
+
 
 
 
 @router.post(
 
+
+
     "/{agent_id}/sources",
+
+
 
     response_model=dict,
 
+
+
     status_code=status.HTTP_200_OK,
+
+
 
     summary="Generic Source Ingestion",
 
+
+
     description="Automatically detect and ingest a source (File, URL, or Text) for the given agent.",
+
+
 
 )
 
+
+
 async def generic_ingest_source(
+
+
 
     request: Request,
 
+
+
     agent_id: str,
+
+
 
     file: Optional[UploadFile] = File(None),
 
+
+
 ) -> dict:
 
+
+
     """
+
+
 
     INTELLIGENT DISPATCHER:
 
+
+
     1. If a file is provided  Route to PDF ingestion
+
+
 
     2. If JSON body has 'url'  Route to URL ingestion
 
+
+
     3. If JSON body has 'text'  Route to Text ingestion
+
+
 
     """
 
+
+
     # 1. Handle File Upload (PDF)
 
+
+
     if file and file.filename:
+
+
 
         return await instant_ingest_pdf(request, agent_id, file)
 
 
 
+
+
+
+
     # 2. Handle JSON Body (URL or Text)
+
+
 
     try:
 
+
+
         body = await request.json()
+
+
 
         if "url" in body:
 
+
+
             from ..knowledge_bases.schemas import KBURLIngest
+
+
 
             url_data = KBURLIngest(**body)
 
+
+
             return await instant_ingest_url(request, agent_id, url_data)
+
+
 
         elif "text" in body:
 
+
+
             return await instant_ingest_text(request, agent_id, body)
+
+
 
         else:
 
+
+
             raise HTTPException(status_code=400, detail="Invalid source format. Expected 'file', 'url', or 'text'.")
+
+
 
     except Exception as e:
 
+
+
         if isinstance(e, HTTPException): raise
+
+
 
         raise HTTPException(status_code=400, detail=f"Request body parsing failed: {str(e)}")
 
@@ -974,203 +2034,407 @@ async def generic_ingest_source(
 
 
 
+
+
+
+
+
+
 from fastapi import BackgroundTasks
 
+
+
 @router.post(
+
     "/{agent_id}/sources/pdf",
+
     response_model=dict,
+
     status_code=status.HTTP_200_OK,
+
     summary="Instant File Ingestion",
+
     description="Automatically create a knowledge base data source and parse the uploaded PDF, Excel, or CSV directly for the given agent.",
+
 )
+
 async def instant_ingest_pdf(
+
     request: Request,
+
     agent_id: str,
+
     file: UploadFile = File(...),
+
 ) -> dict:
 
+
+
     """
+
+
 
     COMBINED ROUTE: Create KB + Ingest PDF/Excel/CSV.
 
 
 
+
+
+
+
     EXTRACTION STRATEGY:
+
+
 
     1. For PDFs: Gdocz SDK (primary)  Cloud API, handles complex/scanned PDFs, falls back to pdfplumber
 
+
+
     2. For Excel/CSV: ExcelIngestionService ontology-based graph ingestion
+
+
 
     """
 
+
+
     try:
 
+
+
         tenant_id, user_id = get_tenant_and_user(request)
+
+
+
+
 
 
 
         filename = file.filename
 
+
+
         ext = filename.lower().split(".")[-1]
+
+
 
         if ext not in ["pdf", "csv", "xlsx", "xls", "docx", "doc", "txt", "md"]:
 
+
+
             raise HTTPException(
+
+
 
                 status_code=400,
 
+
+
                 detail="Unsupported file format. Supported formats: PDF, CSV, Excel (.xlsx, .xls), DOCX, DOC, TXT, MD"
 
+
+
             )
+
+
+
+
 
 
 
         content = await file.read()
 
+
+
         # Calculate file hash
+
         import hashlib
+
         import uuid
+
         file_hash = hashlib.sha256(content).hexdigest()
 
+
+
         # Check database for duplicate hash
+
         async with AsyncSessionLocal() as db:
+
             from sqlalchemy import select, or_
+
             from app.modules.knowledge_bases.models import KnowledgeBase
+
             from ...core.s3 import S3StorageService
+
             
+
             s3_service = S3StorageService()
+
             s3_url = s3_service.get_s3_url(str(tenant_id), filename)
+
             is_spreadsheet = filename.lower().endswith(('.csv', '.xls', '.xlsx'))
+
             is_document = filename.lower().endswith(('.doc', '.docx', '.txt', '.md'))
+
             kb_name = f"Spreadsheet: {filename}" if is_spreadsheet else (f"Document: {filename}" if is_document else f"PDF: {filename}")
 
+
+
             # 1. Check for exact duplicate content first
+
             stmt = select(KnowledgeBase).where(
+
                 KnowledgeBase.tenant_id == uuid.UUID(tenant_id),
+
                 KnowledgeBase.file_hash == file_hash,
+
                 KnowledgeBase.is_active == True
+
             )
+
             res = await db.execute(stmt)
+
             existing_kb = res.scalars().first()
+
             if existing_kb:
+
                 logger.info(f"Duplicate file hash detected in instant_ingest_pdf for tenant {tenant_id}: {filename} (Hash: {file_hash}). Rejecting upload.")
+
                 raise HTTPException(
+
                     status_code=400,
+
                     detail="File already uploaded. Duplicates are not allowed."
+
                 )
+
+
 
             # 2. Check for same filename/s3_url but different hash (modified content)
+
             stmt_modified = select(KnowledgeBase).where(
+
                 KnowledgeBase.tenant_id == uuid.UUID(tenant_id),
+
                 KnowledgeBase.is_active == True,
+
                 or_(
+
                     KnowledgeBase.s3_path == s3_url,
+
                     KnowledgeBase.name == kb_name
+
                 )
+
             )
+
             res_modified = await db.execute(stmt_modified)
+
             existing_kb_modified = res_modified.scalars().first()
+
             if existing_kb_modified:
+
                 logger.info(f"Modified file upload detected for {filename}. Deleting old KB {existing_kb_modified.id} before re-ingestion.")
+
                 from app.modules.knowledge_bases.service import KnowledgeBaseService
+
                 kb_service = KnowledgeBaseService(db, tenant_id)
+
                 await kb_service.delete_kb(str(existing_kb_modified.id), user_id=user_id)
 
+
+
         # ----------------------------------------------------
+
         # S3 STORAGE & DUPLICATE PREVENTION
+
         # ----------------------------------------------------
+
         from ...core.s3 import S3StorageService
+
         s3_service = S3StorageService()
+
         await s3_service.store_file_if_not_duplicate(str(tenant_id), filename, content)
 
 
+
+
+
         # ----------------------------------------------------
+
         # DOCUMENT PIPELINE (BACKGROUND JOBS)
+
         # ----------------------------------------------------
+
         from app.modules.jobs.service import JobService
+
         from app.modules.jobs.schemas import JobCreate
+
         from app.modules.jobs.worker import run_pdf_ingestion_job
+
         from ...core.pdf_extractor import PDFExtractor
 
+
+
         async with AsyncSessionLocal() as db:
+
             # Set context
+
             await db.execute(
+
                 text("SELECT set_config('app.current_tenant', :tenant_id, false)"),
+
                 {"tenant_id": str(tenant_id)}
+
             )
+
             
+
             # 1. Verify Agent belongs to User/Tenant
+
             agent_service = AgentService(db, tenant_id)
+
             agent_result = await agent_service.get_agent(agent_id)
+
             if not agent_result.get("success"):
+
                 raise HTTPException(status_code=404, detail="Agent not found")
+
                 
+
         # 2. Create Job in DB
+
             job_service = JobService(db, tenant_id)
+
             is_spreadsheet = filename.lower().endswith(('.csv', '.xls', '.xlsx'))
+
             job_type = "excel_ingestion" if is_spreadsheet else "pdf_ingestion"
+
             job_create = JobCreate(job_type=job_type, file_name=filename)
+
             job_result = await job_service.create_job(user_id, job_create)
+
             
+
             if not job_result.get("success"):
+
                 raise HTTPException(status_code=500, detail="Failed to create processing job")
+
                 
+
             job_id = str(job_result["data"]["job"].id)
+
             
+
         # 3. Launch ingestion as an independent async task
+
         import asyncio
 
+
+
         def _task_done_cb(task: asyncio.Task):
+
             """Log any unhandled exception from background ingestion tasks."""
+
             if task.cancelled():
+
                 logger.warning(f"Ingestion task for job {job_id} was cancelled.")
+
                 return
+
             exc = task.exception()
+
             if exc:
+
                 logger.error(f"Ingestion task for job {job_id} failed with unhandled exception: {exc}", exc_info=exc)
 
+
+
         if is_spreadsheet:
+
             from app.modules.jobs.worker import run_excel_ingestion_job
+
             task = asyncio.create_task(
+
                 run_excel_ingestion_job(
+
                     tenant_id=str(tenant_id),
+
                     user_id=str(user_id),
+
                     agent_id=str(agent_id),
+
                     job_id=job_id,
+
                     filename=filename,
+
                     content=content
+
                 )
+
             )
-            task.add_done_callback(_task_done_cb)
-        else:
-            task = asyncio.create_task(
-                run_pdf_ingestion_job(
-                    tenant_id=str(tenant_id),
-                    user_id=str(user_id),
-                    agent_id=str(agent_id),
-                    job_id=job_id,
-                    filename=filename,
-                    content=content
-                )
-            )
+
             task.add_done_callback(_task_done_cb)
 
+        else:
+
+            task = asyncio.create_task(
+
+                run_pdf_ingestion_job(
+
+                    tenant_id=str(tenant_id),
+
+                    user_id=str(user_id),
+
+                    agent_id=str(agent_id),
+
+                    job_id=job_id,
+
+                    filename=filename,
+
+                    content=content
+
+                )
+
+            )
+
+            task.add_done_callback(_task_done_cb)
+
+
+
         return {
+
             "success": True,
+
             "job_id": job_id,
+
             "status": "queued",
+
             "meta": {"message": "Document ingestion has been queued in the background. Use the job_id to poll for status."}
+
         }
+
+
+
+
 
 
 
     except HTTPException:
 
+
+
         raise
+
+
 
     except Exception as e:
 
+
+
         logger.error(f"Instant Ingest file error: {e}")
+
+
 
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1178,182 +2442,365 @@ async def instant_ingest_pdf(
 
 
 
+
+
+
+
+
+
 @router.post(
+
+
 
     "/{agent_id}/sources/text",
 
+
+
     response_model=dict,
+
+
 
     status_code=status.HTTP_200_OK,
 
+
+
     summary="Instant Raw Text Ingestion",
+
+
 
     description="Automatically create a knowledge base data source from provided raw text for the given agent.",
 
+
+
 )
+
+
 
 async def instant_ingest_text(
 
+
+
     request: Request,
+
+
 
     agent_id: str,
 
+
+
     text_data: dict,  # {"text": "..."}
+
+
 
 ) -> dict:
 
+
+
     """
+
+
 
     COMBINED ROUTE: Create KB + Ingest Raw Text.
 
+
+
     """
+
+
 
     try:
 
+
+
         tenant_id, user_id = get_tenant_and_user(request)
+
+
+
+
 
 
 
         document_text = text_data.get("text")
 
+
+
         if not document_text or not document_text.strip():
+
+
 
             raise HTTPException(status_code=400, detail="Text content cannot be empty")
 
 
 
+
+
+
+
         async with AsyncSessionLocal() as db:
+
+
 
             # 2. Verify Agent
 
+
+
             agent_service = AgentService(db, tenant_id)
+
+
 
             agent_result = await agent_service.get_agent(agent_id)
 
+
+
             if not agent_result.get("success"):
 
+
+
                 raise HTTPException(status_code=404, detail="Agent not found")
+
+
+
+
 
 
 
             # 3. Create Source Metadata
 
+
+
             kb_service = KnowledgeBaseService(db, tenant_id)
+
+
 
             kb_request = KBCreate(
 
+
+
                 name=f"Text Source: {document_text[:30]}...",
+
+
 
                 description=f"Raw text input via dashboard",
 
+
+
                 agent_id=uuid.UUID(agent_id),
+
+
 
                 source="raw_text"
 
+
+
             )
+
+
 
             
 
+
+
             kb_result = await kb_service.create_knowledge_base(user_id, kb_request)
+
+
 
             if not kb_result.get("success"):
 
+
+
                 raise HTTPException(status_code=500, detail="Backend logic failure")
 
+
+
                 
+
+
 
             kb_id = str(kb_result["data"]["kb"].id)
 
 
 
+
+
+
+
             # 4. Ingest
+
             try:
+
                 ingest_result = await kb_service.ingest_document(kb_id, document_text)
+
                 if not ingest_result.get("success"):
+
                     try:
+
                         logger.info(f"Instant Ingest Text failed. Cleaning up KnowledgeBase {kb_id}.")
+
                         await kb_service.delete_kb(kb_id, user_id=user_id)
+
                     except Exception as cleanup_err:
+
                         logger.error(f"Failed to clean up KnowledgeBase {kb_id} after text ingestion failure: {cleanup_err}")
+
                     error_msg = ingest_result.get("error", "Unknown error")
+
                     status_code = ingest_result.get("status_code", 400)
+
                     raise HTTPException(status_code=status_code, detail=error_msg)
+
             except Exception as ingest_err:
+
                 if isinstance(ingest_err, HTTPException):
+
                     raise
+
                 try:
+
                     logger.info(f"Instant Ingest Text encountered error. Cleaning up KnowledgeBase {kb_id}.")
+
                     await kb_service.delete_kb(kb_id, user_id=user_id)
+
                 except Exception as cleanup_err:
+
                     logger.error(f"Failed to clean up KnowledgeBase {kb_id} after text ingestion error: {cleanup_err}")
+
                 raise ingest_err
 
+
+
             # Add agent name to response
+
             agent_name = agent_result["data"]["agent"]["name"]
+
             ingest_result["data"]["agent_name"] = agent_name
+
             ingest_result["meta"]["message"] = f"Text knowledge stored to agent: {agent_name}"
+
             
+
             return ingest_result
+
+
+
+
 
 
 
     except HTTPException:
 
+
+
         raise
+
+
 
     except Exception as e:
 
+
+
         logger.error(f"Instant Ingest Text error: {e}")
+
+
 
         raise HTTPException(status_code=500, detail=str(e))
 
 
 
+
+
+
+
 async def crawl_url(url: str, mode: str = "single", proxy_mode: str = "basic") -> str:
 
+
+
     """
+
+
 
     Refactored crawling process using ScraperService.
 
+
+
     Uses Gcrawl API as primary with BS4 fallback.
+
+
 
     """
 
+
+
     logger.info(f" ScraperService Crawl: {url} (mode: {mode}, proxy: {proxy_mode})")
 
+
+
     
+
+
 
     documents = await ScraperService.extract_website_content(
 
+
+
         url=url,
+
+
 
         crawl_type=mode,
 
+
+
         proxy_mode=proxy_mode
+
+
 
     )
 
+
+
     
+
+
 
     if not documents:
 
+
+
         return ""
 
+
+
         
+
+
 
     # Combine content from all pages
 
+
+
     final_doc = ""
+
+
 
     for doc in documents:
 
+
+
         if len(documents) > 1:
+
+
 
             final_doc += f"\n\n# SOURCE: {doc['source']}\n\n"
 
+
+
         final_doc += doc["content"]
 
+
+
         
+
+
 
     return final_doc.strip()
 
@@ -1361,154 +2808,309 @@ async def crawl_url(url: str, mode: str = "single", proxy_mode: str = "basic") -
 
 
 
+
+
+
+
+
+
 @router.post(
+
+
 
     "/{agent_id}/sources/url",
 
+
+
     response_model=dict,
+
+
 
     status_code=status.HTTP_200_OK,
 
+
+
     summary="Instant URL Ingestion",
+
+
 
     description="Automatically crawl a URL and ingest its content into the graph for the given agent.",
 
+
+
 )
+
+
 
 async def instant_ingest_url(
 
+
+
     request: Request,
+
+
 
     agent_id: str,
 
+
+
     url_data: KBURLIngest,
+
+
 
 ) -> dict:
 
+
+
     """
+
+
 
     COMBINED ROUTE: Create KB + Crawl URL (Primary/Fallback) + Ingest.
 
+
+
     """
 
+
+
     try:
+
         tenant_id, user_id = get_tenant_and_user(request)
+
+
+
+
 
 
 
         async with AsyncSessionLocal() as db:
 
+
+
             # 2. Verify Agent
+
+
 
             agent_service = AgentService(db, tenant_id)
 
+
+
             agent_result = await agent_service.get_agent(agent_id)
 
+
+
             if not agent_result.get("success"):
+
+
 
                 raise HTTPException(status_code=404, detail="Agent not found")
 
 
+
+
+
             kb_result = await kb_service.create_knowledge_base(user_id, kb_request)
+
+
 
             if not kb_result.get("success"):
 
+
+
                 raise HTTPException(status_code=500, detail="Backend logic failure")
 
+
+
                 
+
+
 
             kb_id = str(kb_result["data"]["kb"].id)
 
 
 
+
+
+
+
             # 4. Ingest
+
             try:
+
                 ingest_result = await kb_service.ingest_document(kb_id, document_text)
+
                 if not ingest_result.get("success"):
+
                     try:
+
                         logger.info(f"Instant Ingest Text failed. Cleaning up KnowledgeBase {kb_id}.")
+
                         await kb_service.delete_kb(kb_id, user_id=user_id)
+
                     except Exception as cleanup_err:
+
                         logger.error(f"Failed to clean up KnowledgeBase {kb_id} after text ingestion failure: {cleanup_err}")
+
                     error_msg = ingest_result.get("error", "Unknown error")
+
                     status_code = ingest_result.get("status_code", 400)
+
                     raise HTTPException(status_code=status_code, detail=error_msg)
+
             except Exception as ingest_err:
+
                 if isinstance(ingest_err, HTTPException):
+
                     raise
+
                 try:
+
                     logger.info(f"Instant Ingest Text encountered error. Cleaning up KnowledgeBase {kb_id}.")
+
                     await kb_service.delete_kb(kb_id, user_id=user_id)
+
                 except Exception as cleanup_err:
+
                     logger.error(f"Failed to clean up KnowledgeBase {kb_id} after text ingestion error: {cleanup_err}")
+
                 raise ingest_err
 
+
+
             # Add agent name to response
+
             agent_name = agent_result["data"]["agent"]["name"]
+
             ingest_result["data"]["agent_name"] = agent_name
+
             ingest_result["meta"]["message"] = f"Text knowledge stored to agent: {agent_name}"
+
             
+
             return ingest_result
+
+
+
+
 
 
 
     except HTTPException:
 
+
+
         raise
+
+
 
     except Exception as e:
 
+
+
         logger.error(f"Instant Ingest Text error: {e}")
+
+
 
         raise HTTPException(status_code=500, detail=str(e))
 
 
 
+
+
+
+
 async def crawl_url(url: str, mode: str = "single", proxy_mode: str = "basic") -> str:
 
+
+
     """
+
+
 
     Refactored crawling process using ScraperService.
 
+
+
     Uses Gcrawl API as primary with BS4 fallback.
+
+
 
     """
 
+
+
     logger.info(f" ScraperService Crawl: {url} (mode: {mode}, proxy: {proxy_mode})")
 
+
+
     
+
+
 
     documents = await ScraperService.extract_website_content(
 
+
+
         url=url,
+
+
 
         crawl_type=mode,
 
+
+
         proxy_mode=proxy_mode
+
+
 
     )
 
+
+
     
+
+
 
     if not documents:
 
+
+
         return ""
 
+
+
         
+
+
 
     # Combine content from all pages
 
+
+
     final_doc = ""
+
+
 
     for doc in documents:
 
+
+
         if len(documents) > 1:
+
+
 
             final_doc += f"\n\n# SOURCE: {doc['source']}\n\n"
 
+
+
         final_doc += doc["content"]
 
+
+
         
+
+
 
     return final_doc.strip()
 
@@ -1516,117 +3118,220 @@ async def crawl_url(url: str, mode: str = "single", proxy_mode: str = "basic") -
 
 
 
+
+
+
+
+
+
 @router.post(
+
+
 
     "/{agent_id}/sources/url",
 
+
+
     response_model=dict,
 
+
+
     status_code=status.HTTP_200_OK,
+
+
 
     summary="Instant URL Ingestion",
 
+
+
     description="Automatically crawl a URL and ingest its content into the graph for the given agent.",
 
+
+
 )
+
+
 
 async def instant_ingest_url(
 
+
+
     request: Request,
 
+
+
     agent_id: str,
+
+
 
     url_data: KBURLIngest,
 
+
+
 ) -> dict:
 
+
+
     """
+
+
 
     COMBINED ROUTE: Create KB + Crawl URL (Primary/Fallback) + Ingest.
 
+
+
     """
+
+
 
     try:
 
+
+
         tenant_id, user_id = get_tenant_and_user(request)
 
+
+
         import time
+
         t_total_start = time.time()
+
+
 
         # 1. Crawl URL (Robust primary + Fallback)
 
+
+
         try:
+
             t_gcrawl_start = time.time()
+
             document_text = await crawl_url(
+
+
 
                 url=url_data.url, 
 
+
+
                 mode=url_data.crawl_type, 
+
+
 
                 proxy_mode="default"
 
+
+
             )
+
             t_gcrawl_end = time.time()
+
             gcrawl_time_seconds = round(t_gcrawl_end - t_gcrawl_start, 2)
 
+
+
         except HTTPException:
+
             raise
+
         except Exception as e:
+
             err_str = str(e)
+
             if "429" in err_str or "Too Many Requests" in err_str:
+
                 raise HTTPException(
+
                     status_code=503,
+
                     detail="The web crawling service is currently rate-limited. Please wait a moment and try again."
+
                 )
+
         # ----------------------------------------------------
+
         # DOCUMENT PIPELINE (BACKGROUND JOBS)
+
         # ----------------------------------------------------
+
         from app.modules.jobs.service import JobService
+
         from app.modules.jobs.schemas import JobCreate
+
         from app.modules.jobs.worker import run_url_ingestion_job
 
+
+
         async with AsyncSessionLocal() as db:
+
             # Set context
+
             from sqlalchemy import text
+
             await db.execute(
+
                 text("SELECT set_config('app.current_tenant', :tenant_id, false)"),
+
                 {"tenant_id": str(tenant_id)}
+
             )
+
             job_service = JobService(db, tenant_id)
+
             
+
             # Create a tracking job
+
             job_req = JobCreate(
+
                 job_type="url_ingestion",
+
                 filename=url_data.url,
+
                 agent_id=uuid.UUID(agent_id),
+
                 status="pending"
+
             )
+
             job_result = await job_service.create_job(user_id, job_req)
+
             job_id = str(job_result["data"]["job"].id)
+
             
+
             import asyncio
+
             asyncio.create_task(run_url_ingestion_job(
+
                 tenant_id=str(tenant_id),
+
                 user_id=user_id,
+
                 agent_id=agent_id,
+
                 job_id=job_id,
+
                 url=url_data.url,
+
                 crawl_type=url_data.crawl_type
+
             ))
 
+
+
         return {
+
             "success": True,
+
             "job_id": job_id,
+
             "status": "queued",
+
             "meta": {"message": "URL ingestion has been queued in the background. Use the job_id to poll for status."}
+
         }
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Instant Ingest URL error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 
     except HTTPException:
@@ -1638,190 +3343,399 @@ async def instant_ingest_url(
         logger.error(f"Instant Ingest URL error: {e}")
 
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+
+
+
+    except HTTPException:
+
+
+
+        raise
+
+
+
+    except Exception as e:
+
+
+
+        logger.error(f"Instant Ingest URL error: {e}")
+
+
+
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
 
 
 @router.post(
+
     "/{agent_id}/sources/url/discover",
+
     response_model=dict,
+
     status_code=status.HTTP_200_OK,
+
     summary="Discover Website Links for UI Selection",
+
     description="Discover and filter all internal URLs on a website so the user can select which pages to ingest.",
+
 )
+
 async def discover_url_links_for_ui(
+
     request: Request,
+
     agent_id: str,
+
     request_data: URLDiscoverRequest,
+
 ) -> dict:
+
     """
+
     Step 1 of Interactive UI Crawl: Return discovered & filtered links for UI checkboxes.
+
     """
+
     try:
+
         tenant_id, user_id = get_tenant_and_user(request)
+
         result = await ScraperService.discover_site_links(request_data.url, max_pages=request_data.max_pages)
+
         return format_success(
+
             data=result,
+
             meta={"message": "Discovered internal links for UI selection"}
+
         )
+
     except Exception as e:
+
         logger.error(f"Link discovery error for {request_data.url}: {e}", exc_info=True)
+
         raise HTTPException(status_code=400, detail=f"Failed to discover links: {str(e)}")
+
+
+
 
 
 import asyncio
 
+
+
 async def _background_scrape_and_ingest_detached(
+
     tenant_id: str,
+
     user_id: str,
+
     agent_id: str,
+
     kb_id: str,
+
     urls: list,
+
     job_id: str
+
 ):
+
     """Fully detached background task using asyncio and JobService tracking."""
+
     try:
+
         import time
+
         from app.modules.jobs.service import JobService
 
+
+
         logger.info(f"[Background Job] Starting ingestion for KB {kb_id}. Total URLs to crawl: {len(urls)}")
+
         t_gcrawl_start = time.time()
+
         
-        async with AsyncSessionLocal() as db:
-            job_service = JobService(db, tenant_id)
-            await job_service.update_job_progress(job_id, status="processing", progress=10, current_step="Scraping URLs", kb_id=kb_id)
-        
-        # Scrape
-        logger.info(f"[Background Job] KB {kb_id} -> Submitting URLs to ScraperService...")
-        documents, failed_urls = await ScraperService.scrape_selected_urls(urls)
-        
-        if failed_urls:
-            logger.warning(f"[Background Job] KB {kb_id} -> Scraped with partial failures: {len(documents)} succeeded, {len(failed_urls)} failed/timed out: {failed_urls}")
-        
-        if not documents:
-            failed_list_str = f" ({', '.join(failed_urls)})" if failed_urls else ""
-            err_msg = f"No extractable text content returned from the selected URL(s){failed_list_str}"
-            logger.error(f"[Background Job] KB {kb_id} -> {err_msg}. Cleaning up KnowledgeBase.")
-            async with AsyncSessionLocal() as db:
-                kb_service = KnowledgeBaseService(db, tenant_id)
-                await kb_service.delete_kb(kb_id, user_id=user_id)
-                job_service = JobService(db, tenant_id)
-                await job_service.update_job_progress(job_id, status="failed", progress=100, current_step="Failed", error_message=err_msg, kb_id=kb_id)
-            return
 
         async with AsyncSessionLocal() as db:
+
             job_service = JobService(db, tenant_id)
+
+            await job_service.update_job_progress(job_id, status="processing", progress=10, current_step="Scraping URLs", kb_id=kb_id)
+
+        
+
+        # Scrape
+
+        logger.info(f"[Background Job] KB {kb_id} -> Submitting URLs to ScraperService...")
+
+        documents, failed_urls = await ScraperService.scrape_selected_urls(urls)
+
+        
+
+        if failed_urls:
+
+            logger.warning(f"[Background Job] KB {kb_id} -> Scraped with partial failures: {len(documents)} succeeded, {len(failed_urls)} failed/timed out: {failed_urls}")
+
+        
+
+        if not documents:
+
+            failed_list_str = f" ({', '.join(failed_urls)})" if failed_urls else ""
+
+            err_msg = f"No extractable text content returned from the selected URL(s){failed_list_str}"
+
+            logger.error(f"[Background Job] KB {kb_id} -> {err_msg}. Cleaning up KnowledgeBase.")
+
+            async with AsyncSessionLocal() as db:
+
+                kb_service = KnowledgeBaseService(db, tenant_id)
+
+                await kb_service.delete_kb(kb_id, user_id=user_id)
+
+                job_service = JobService(db, tenant_id)
+
+                await job_service.update_job_progress(job_id, status="failed", progress=100, current_step="Failed", error_message=err_msg, kb_id=kb_id)
+
+            return
+
+
+
+        async with AsyncSessionLocal() as db:
+
+            job_service = JobService(db, tenant_id)
+
             await job_service.update_job_progress(job_id, status="processing", progress=50, current_step="Preparing text", kb_id=kb_id)
+
+
 
         logger.info(f"[Background Job] KB {kb_id} -> ScraperService finished. Received {len(documents)} valid documents. Preparing for vector ingestion...")
 
+
+
         # Calculate a rough total character length for validation
+
         total_chars = sum(len(doc.get("content", "")) for doc in documents)
 
+
+
         if total_chars == 0:
+
             logger.error(f"[Background Job] KB {kb_id} -> Scraped pages contained no text. Cleaning up KnowledgeBase.")
+
             async with AsyncSessionLocal() as db:
+
                 kb_service = KnowledgeBaseService(db, tenant_id)
+
                 await kb_service.delete_kb(kb_id, user_id=user_id)
+
                 job_service = JobService(db, tenant_id)
+
                 await job_service.update_job_progress(job_id, status="failed", progress=100, current_step="Failed", error_message="Scraped pages contained no text", kb_id=kb_id)
+
             return
 
+
+
         # Ingest
+
         logger.info(f"[Background Job] KB {kb_id} -> Starting Vector Database ingestion for {len(documents)} documents ({total_chars} chars)...")
+
         async with AsyncSessionLocal() as db:
+
             job_service = JobService(db, tenant_id)
+
             await job_service.update_job_progress(job_id, status="processing", progress=75, current_step="Vector Database Ingestion", kb_id=kb_id)
+
             kb_service = KnowledgeBaseService(db, tenant_id)
+
             ingest_result = await kb_service.ingest_document(
+
                 kb_id=kb_id, 
+
                 document_text="", # Passed as empty because we use documents_list
+
                 source="url_list", 
+
                 documents_list=documents
+
             )
+
             
+
             if not ingest_result.get("success"):
+
                 err_msg = ingest_result.get("error", "Vector Ingestion failed")
+
                 logger.error(f"[Background Job] KB {kb_id} -> Vector Ingestion failed: {err_msg}. Cleaning up KnowledgeBase.")
+
                 await kb_service.delete_kb(kb_id, user_id=user_id)
+
                 await job_service.update_job_progress(
+
                     job_id,
+
                     status="failed",
+
                     progress=100,
+
                     current_step="Failed",
+
                     error_message=err_msg,
+
                     kb_id=kb_id
-                )
-            else:
-                total_time = round(time.time() - t_gcrawl_start, 2)
-                logger.info(f"[Background Job] KB {kb_id} -> SUCCESS! Background ingestion fully completed in {total_time}s.")
-                await job_service.update_job_progress(
-                    job_id,
-                    status="completed",
-                    progress=100,
-                    current_step="Complete",
-                    kb_id=kb_id
+
                 )
 
-    except Exception as e:
-        logger.error(f"[Background Job] KB {kb_id} -> FATAL ERROR during background scrape/ingest: {e}", exc_info=True)
-        try:
-            async with AsyncSessionLocal() as db:
-                job_service = JobService(db, tenant_id)
+            else:
+
+                total_time = round(time.time() - t_gcrawl_start, 2)
+
+                logger.info(f"[Background Job] KB {kb_id} -> SUCCESS! Background ingestion fully completed in {total_time}s.")
+
                 await job_service.update_job_progress(
+
                     job_id,
-                    status="failed",
+
+                    status="completed",
+
                     progress=100,
-                    current_step="Failed",
-                    error_message=f"Internal Server Error: {str(e)}",
+
+                    current_step="Complete",
+
                     kb_id=kb_id
+
                 )
+
+
+
+    except Exception as e:
+
+        logger.error(f"[Background Job] KB {kb_id} -> FATAL ERROR during background scrape/ingest: {e}", exc_info=True)
+
+        try:
+
+            async with AsyncSessionLocal() as db:
+
+                job_service = JobService(db, tenant_id)
+
+                await job_service.update_job_progress(
+
+                    job_id,
+
+                    status="failed",
+
+                    progress=100,
+
+                    current_step="Failed",
+
+                    error_message=f"Internal Server Error: {str(e)}",
+
+                    kb_id=kb_id
+
+                )
+
                 kb_service = KnowledgeBaseService(db, tenant_id)
+
                 await kb_service.delete_kb(kb_id, user_id=user_id)
+
         except Exception as cleanup_err:
+
             logger.error(f"[Background Job] KB {kb_id} -> Failed to clean up KB/Job after fatal error: {cleanup_err}")
 
 
+
+
+
 @router.post(
+
     "/{agent_id}/sources/url/select",
+
     response_model=dict,
+
     status_code=status.HTTP_200_OK,
+
     summary="Ingest Selected URLs (Detached)",
+
     description="Scrape and ingest the selected URLs asynchronously in a fully detached task to prevent Cloudflare timeouts.",
+
 )
+
 async def ingest_selected_url_links(
+
     request: Request,
+
     agent_id: str,
+
     request_data: URLSelectIngestRequest,
+
 ) -> dict:
+
     """
+
     Step 2 of Interactive UI Crawl: Trigger fully detached background scrape to bypass Cloudflare 524 limits.
+
     Step 2 of Interactive UI Crawl: Trigger fully detached background scrape with Job tracking.
+
     """
+
     try:
+
         tenant_id, user_id = get_tenant_and_user(request)
 
+
+
         if not request_data.urls:
+
             raise HTTPException(status_code=400, detail="No URLs provided for ingestion")
 
+
+
         from app.modules.jobs.service import JobService
+
         from app.modules.jobs.schemas import JobCreate
 
+
+
         async with AsyncSessionLocal() as db:
+
             agent_service = AgentService(db, tenant_id)
+
             agent_result = await agent_service.get_agent(agent_id)
+
             if not agent_result.get("success"):
+
                 raise HTTPException(status_code=404, detail="Agent not found")
 
+
+
             # Create Job in DB
+
             job_service = JobService(db, tenant_id)
+
             job_create = JobCreate(job_type="url_ingestion", file_name=f"{len(request_data.urls)} Selected URLs")
+
             job_result = await job_service.create_job(user_id, job_create)
+
             
+
             if not job_result.get("success"):
+
                 raise HTTPException(status_code=500, detail="Failed to create processing job")
+
                 
+
             job_id = str(job_result["data"]["job"].id)
 
+
+
             kb_service = KnowledgeBaseService(db, tenant_id)
+
             target_kb_id = None
             if request_data.kb_id:
                 # Check if existing KB is valid
@@ -1849,30 +3763,58 @@ async def ingest_selected_url_links(
                 target_kb_id = str(kb_result["data"]["kb"].id)
 
             kb_id = target_kb_id
+
             agent_name = agent_result["data"]["agent"]["name"]
 
+
+
         # Enqueue fully detached background task using asyncio
+
         asyncio.create_task(
+
             _background_scrape_and_ingest_detached(
+
                 tenant_id,
+
                 user_id,
+
                 agent_id,
+
                 kb_id,
+
                 request_data.urls,
+
                 job_id
+
             )
+
         )
 
+
+
         return {
+
             "success": True,
+
             "job_id": job_id,
+
             "status": "queued",
+
             "meta": {"message": f"Document ingestion has been queued in the background for {len(request_data.urls)} URLs. Use the job_id to poll for status."}
+
         }
 
+
+
     except HTTPException:
+
         raise
+
     except Exception as e:
+
         logger.error(f"Ingest selected URLs error: {e}", exc_info=True)
+
         error_msg = str(e) if str(e).strip() else f"{type(e).__name__} occurred while ingesting URLs."
+
         raise HTTPException(status_code=500, detail=error_msg)
+

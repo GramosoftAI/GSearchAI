@@ -371,6 +371,7 @@ async def init_rls_policies():
         "schema_doc_columns",
         "schema_doc_examples",
         "schema_doc_embeddings",
+        "user_profiles",
     ]
 
 
@@ -631,6 +632,7 @@ async def verify_rls_enabled():
         "password_reset_tokens",
         "database_knowledgebases",
         "db_schema_snapshots",
+        "user_profiles",
     ]
 
 
@@ -762,6 +764,8 @@ async def init_db():
         from ..modules.chats.models import ChatSession, ChatMessage
 
         from ..modules.personalities.models import Personality
+
+        from ..modules.profile.models import UserProfile
 
         from ..modules.connectors.google.models import GmailMessage, GmailSyncState
         from ..modules.jobs.models import ProcessingJob

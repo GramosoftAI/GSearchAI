@@ -1,4 +1,5 @@
 from typing import Optional, List, Dict, Any
+from sqlalchemy import select, and_, or_, func, text
 from uuid import UUID
 """REST routes for Knowledge Base CRUD and document ingestion"""
 
@@ -247,7 +248,7 @@ async def list_agent_kbs(
     """
     logger.info(f"[KB_DEBUG] list_agent_kbs HIT! agent_id={agent_id}")
     try:
-        tenant_id, _ = get_tenant_and_user(request)
+        tenant_id, user_id = get_tenant_and_user(request)
 
         if limit < 1 or limit > 1000:
             limit = 50
@@ -255,6 +256,26 @@ async def list_agent_kbs(
             offset = 0
 
         async with AsyncSessionLocal() as db:
+            from ..auth.models import User
+            from ..agents.models import Agent
+
+            caller_user = await db.get(User, uuid.UUID(user_id)) if user_id else None
+            is_admin = bool(caller_user and (caller_user.is_admin or getattr(caller_user, "role", "") == "admin"))
+
+            if not is_admin and user_id:
+                target_agent = await db.scalar(
+                    select(Agent).where(
+                        and_(
+                            Agent.id == uuid.UUID(agent_id),
+                            Agent.tenant_id == uuid.UUID(tenant_id),
+                            Agent.user_id == uuid.UUID(user_id),
+                            Agent.is_active == True,
+                        )
+                    )
+                )
+                if not target_agent:
+                    raise HTTPException(status_code=404, detail="Agent not found")
+
             service = KnowledgeBaseService(db, tenant_id)
             result = await service.list_kbs_by_agent(
                 agent_id, limit=limit, offset=offset
@@ -288,7 +309,7 @@ async def list_user_kbs(
     offset: int = 0,
 ) -> dict:
     try:
-        tenant_id, _ = get_tenant_and_user(request)
+        tenant_id, user_id = get_tenant_and_user(request)
 
         if limit < 1 or limit > 1000:
             limit = 50
@@ -296,6 +317,26 @@ async def list_user_kbs(
             offset = 0
 
         async with AsyncSessionLocal() as db:
+            from ..auth.models import User
+            from ..agents.models import Agent
+
+            caller_user = await db.get(User, uuid.UUID(user_id)) if user_id else None
+            is_admin = bool(caller_user and (caller_user.is_admin or getattr(caller_user, "role", "") == "admin"))
+
+            if not is_admin and user_id:
+                target_agent = await db.scalar(
+                    select(Agent).where(
+                        and_(
+                            Agent.id == uuid.UUID(agent_id),
+                            Agent.tenant_id == uuid.UUID(tenant_id),
+                            Agent.user_id == uuid.UUID(user_id),
+                            Agent.is_active == True,
+                        )
+                    )
+                )
+                if not target_agent:
+                    raise HTTPException(status_code=404, detail="Agent not found")
+
             service = KnowledgeBaseService(db, tenant_id)
             result = await service.list_kbs_by_user(
                 user_id=user_id,
@@ -449,7 +490,7 @@ async def list_kbs(request: Request, limit: int = 50, offset: int = 0) -> dict:
 
     try:
 
-        tenant_id, _ = get_tenant_and_user(request)
+        tenant_id, user_id = get_tenant_and_user(request)
 
 
 
@@ -467,9 +508,19 @@ async def list_kbs(request: Request, limit: int = 50, offset: int = 0) -> dict:
 
         async with AsyncSessionLocal() as db:
 
+            from ..auth.models import User
+
+            caller_user = await db.get(User, uuid.UUID(user_id)) if user_id else None
+
+            is_admin = bool(caller_user and (caller_user.is_admin or getattr(caller_user, "role", "") == "admin"))
+
+            scoped_user_id = None if is_admin else user_id
+
+
+
             service = KnowledgeBaseService(db, tenant_id)
 
-            result = await service.list_kbs(limit=limit, offset=offset)
+            result = await service.list_kbs(limit=limit, offset=offset, user_id=scoped_user_id)
 
 
 

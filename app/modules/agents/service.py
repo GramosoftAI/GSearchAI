@@ -348,7 +348,7 @@ class AgentService:
             
         return responses
 
-    async def get_agent(self, agent_id: str) -> dict:
+    async def get_agent(self, agent_id: str, user_id: Optional[str] = None) -> dict:
         """
         Get agent by ID (PostgreSQL only, Neo4j not needed for read).
 
@@ -359,7 +359,7 @@ class AgentService:
             Dict with success, agent, or error
         """
         try:
-            agent = await self.repository.get_by_id(agent_id)
+            agent = await self.repository.get_by_id(agent_id, user_id=user_id)
 
             if not agent:
                 return format_error(f"Agent not found: {agent_id}", meta={"status_code": 404})
@@ -376,13 +376,13 @@ class AgentService:
             logger.error(f"Failed to get agent: {e}")
             return format_error(f"Failed to retrieve agent: {str(e)}")
 
-    async def list_agents(self, limit: int = 50, offset: int = 0) -> dict:
+    async def list_agents(self, limit: int = 50, offset: int = 0, user_id: Optional[str] = None) -> dict:
         """
         List all agents for tenant (PostgreSQL only).
         """
         try:
             agents, total = await self.repository.list_agents(
-                limit=limit, offset=offset
+                limit=limit, offset=offset, user_id=user_id
             )
 
             enriched = await self._enrich_agents_with_connections(agents, schemas.AgentResponse)
@@ -549,7 +549,7 @@ class AgentService:
             logger.error(f"Failed to list agents for user {email}: {e}")
             return format_error(f"Failed to retrieve agents for user: {str(e)}")
 
-    async def update_agent(self, user_id: str, agent_id: str, request: schemas.AgentUpdate) -> dict:
+    async def update_agent(self, user_id: str, agent_id: str, request: schemas.AgentUpdate, is_admin: bool = False) -> dict:
         """
         Update agent (PostgreSQL + Neo4j sync).
 
@@ -573,7 +573,8 @@ class AgentService:
                 return format_error("No fields provided for update", meta={"status_code": 400})
 
             # ============= STEP 1: POSTGRES UPDATE =============
-            agent = await self.repository.update(agent_id, **update_data)
+            scoped_user_id = None if is_admin else user_id
+            agent = await self.repository.update(agent_id, user_id=scoped_user_id, **update_data)
 
             if not agent:
                 return format_error(f"Agent not found: {agent_id}", meta={"status_code": 404})
@@ -644,7 +645,7 @@ class AgentService:
             logger.error(f"Failed to update agent: {e}")
             return format_error(f"Failed to update agent: {str(e)}")
 
-    async def delete_agent(self, user_id: str, agent_id: str) -> dict:
+    async def delete_agent(self, user_id: str, agent_id: str, is_admin: bool = False) -> dict:
         """
         HARD DELETE agent and ALL associated resources permanently from PostgreSQL, S3,
         local Parquet datasets, and Neo4j graph storage.
@@ -670,12 +671,17 @@ class AgentService:
 
             agent_uuid = uuid.UUID(agent_id) if isinstance(agent_id, str) else agent_id
 
-            # Verify Agent exists before deletion
+            # Verify Agent exists before deletion and belongs to user
+            delete_filters = [
+                Agent.id == agent_uuid,
+                Agent.tenant_id == self.tenant_id
+            ]
+            if not is_admin and user_id:
+                user_uuid = uuid.UUID(str(user_id)) if not isinstance(user_id, uuid.UUID) else user_id
+                delete_filters.append(Agent.user_id == user_uuid)
+
             agent = await self.db.scalar(
-                select(Agent).where(
-                    Agent.id == agent_uuid,
-                    Agent.tenant_id == self.tenant_id
-                )
+                select(Agent).where(and_(*delete_filters))
             )
             if not agent:
                 logger.warning(f"Cannot hard delete: agent not found: {agent_id}")
@@ -687,17 +693,12 @@ class AgentService:
             # Explicit cascade delete with all relationships and tenant_id validation:
             # Agent → KB → Chunk → Entity
             # Also clean up Session and MemoryEntity nodes from the memory-api microservice.
-            # To prevent dbms.memory.transaction.total.max OutOfMemoryError in Neo4j,
-            # we must delete large hierarchies (like Chunks) separately before the agent itself.
             try:
-                # 1. Delete Chunks attached to the agent's KBs using APOC periodic iterate
-                # This batches the deletion directly in the database, avoiding all memory issues
+                # 1. Delete Chunks attached to the agent's KBs using native standard Cypher
+                # Does NOT depend on APOC so it works reliably across all Neo4j versions and instances
                 chunk_delete_query = """
-                CALL apoc.periodic.iterate(
-                    "MATCH (a:Agent {tenant_id: $tenant_id, id: $agent_id})-[:OWNS_KB]->(kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk) RETURN c",
-                    "DETACH DELETE c",
-                    {batchSize: 1000, parallel: false, params: {tenant_id: $tenant_id, agent_id: $agent_id}}
-                )
+                MATCH (a:Agent {tenant_id: $tenant_id, id: $agent_id})-[:OWNS_KB]->(kb:KnowledgeBase)-[:HAS_CHUNK]->(c:Chunk)
+                DETACH DELETE c
                 """
                 
                 await retry_neo4j_operation(
@@ -726,15 +727,11 @@ class AgentService:
                 )
                 logger.info(f"✅ Neo4j: Hard-deleted agent {agent_id} + cascade graph nodes")
             except Exception as neo4j_error:
-                logger.error(f"❌ Neo4j hard-deletion failed: {neo4j_error}")
-                return format_error(
-                    f"Failed to delete agent from graph: {neo4j_error}",
-                    meta={"error_code": "NEO4J_ERROR"},
-                )
+                logger.warning(f"⚠️ Neo4j hard-deletion encountered warning: {neo4j_error}. Proceeding with full PostgreSQL cascade deletion.")
 
             # ============= STEP 2: POSTGRES SOFT-DELETE (AFTER NEO4J SUCCESS) =============
             # Only soft-delete if Neo4j succeeded
-            deleted = await self.repository.soft_delete(agent_id)
+            deleted = await self.repository.soft_delete(agent_id, user_id=None if is_admin else user_id)
             
             # CRITICAL: Cascade delete KnowledgeBases and DocumentChunks from Postgres
             from sqlalchemy import update, delete, select

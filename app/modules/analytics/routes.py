@@ -86,7 +86,22 @@ async def get_analytics_service(
             if not is_platform_admin:
                 target_tenant_id = safe_uuid(current_tenant_id)
                 
-        repo = AnalyticsRepository(db, target_tenant_id)
+        all_users = request.query_params.get("all_users", "false").lower() in ("true", "1")
+        req_user_id = request.query_params.get("user_id")
+
+        if is_platform_admin:
+            if all_users:
+                scoped_user_id = None
+            elif req_user_id:
+                scoped_user_id = safe_uuid(req_user_id)
+            elif request.url.path.endswith("/costs/users") or request.url.path.endswith("/capacity"):
+                scoped_user_id = None
+            else:
+                scoped_user_id = safe_uuid(user_id)
+        else:
+            scoped_user_id = safe_uuid(user_id)
+
+        repo = AnalyticsRepository(db, target_tenant_id, user_id=scoped_user_id)
         service = AnalyticsService(repo)
         yield service
         await db.commit()

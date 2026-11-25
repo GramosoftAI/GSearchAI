@@ -21,8 +21,9 @@ class DatabaseKnowledgebaseRepository(BaseRepository):
     Data access repository for Database Knowledgebase entities and Schema Snapshots.
     """
 
-    def __init__(self, db: AsyncSession, tenant_id: str):
+    def __init__(self, db: AsyncSession, tenant_id: str, user_id: Optional[Any] = None):
         super().__init__(db, tenant_id)
+        self.user_id = uuid.UUID(str(user_id)) if user_id else None
 
     async def create_db_kb(
         self,
@@ -50,24 +51,30 @@ class DatabaseKnowledgebaseRepository(BaseRepository):
         await self.db.flush()
         return entity
 
-    async def get_by_id(self, kb_id: uuid.UUID) -> Optional[DatabaseKnowledgebase]:
-        """Fetch active DatabaseKnowledgebase by ID with strict tenant scoping."""
+    async def get_by_id(self, kb_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> Optional[DatabaseKnowledgebase]:
+        """Fetch active DatabaseKnowledgebase by ID with strict tenant scoping and account isolation."""
         stmt = select(DatabaseKnowledgebase).where(
             DatabaseKnowledgebase.id == kb_id,
             DatabaseKnowledgebase.tenant_id == self.tenant_id,
             DatabaseKnowledgebase.is_active == True,
         )
+        effective_user_id = user_id if user_id is not None else self.user_id
+        if effective_user_id:
+            stmt = stmt.where(DatabaseKnowledgebase.user_id == effective_user_id)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def list_kbs(
-        self, skip: int = 0, limit: int = 50, agent_id: Optional[uuid.UUID] = None
+        self, skip: int = 0, limit: int = 50, agent_id: Optional[uuid.UUID] = None, user_id: Optional[uuid.UUID] = None
     ) -> List[DatabaseKnowledgebase]:
-        """List active DatabaseKnowledgebase records for current tenant."""
+        """List active DatabaseKnowledgebase records for current tenant with account isolation."""
         stmt = select(DatabaseKnowledgebase).where(
             DatabaseKnowledgebase.tenant_id == self.tenant_id,
             DatabaseKnowledgebase.is_active == True,
         )
+        effective_user_id = user_id if user_id is not None else self.user_id
+        if effective_user_id:
+            stmt = stmt.where(DatabaseKnowledgebase.user_id == effective_user_id)
         if agent_id:
             stmt = stmt.where(DatabaseKnowledgebase.agent_id == agent_id)
 
@@ -160,6 +167,9 @@ class DatabaseKnowledgebaseRepository(BaseRepository):
         self, db_kb_id: uuid.UUID
     ) -> Optional[DatabaseSchemaSnapshot]:
         """Fetch most recent schema snapshot for this knowledgebase."""
+        kb = await self.get_by_id(db_kb_id)
+        if not kb:
+            return None
         stmt = (
             select(DatabaseSchemaSnapshot)
             .where(
@@ -176,6 +186,9 @@ class DatabaseKnowledgebaseRepository(BaseRepository):
         self, db_kb_id: uuid.UUID, schema_version: str
     ) -> Optional[DatabaseSchemaSnapshot]:
         """Fetch specific schema snapshot version."""
+        kb = await self.get_by_id(db_kb_id)
+        if not kb:
+            return None
         stmt = select(DatabaseSchemaSnapshot).where(
             DatabaseSchemaSnapshot.db_knowledgebase_id == db_kb_id,
             DatabaseSchemaSnapshot.tenant_id == self.tenant_id,
@@ -188,6 +201,9 @@ class DatabaseKnowledgebaseRepository(BaseRepository):
         self, db_kb_id: uuid.UUID, limit: int = 10
     ) -> List[DatabaseSchemaSnapshot]:
         """List historical schema snapshots for a knowledgebase."""
+        kb = await self.get_by_id(db_kb_id)
+        if not kb:
+            return []
         stmt = (
             select(DatabaseSchemaSnapshot)
             .where(

@@ -51,13 +51,18 @@ class AnalyticsService:
         # Real distribution from logs
         distribution = await self.repo.get_confidence_distribution()
 
+        # Knowledge gaps / unanswered questions
+        unanswered_logs = await self.repo.get_unanswered_logs(limit=10)
+        unanswered_questions = [log.query for log in unanswered_logs if log.query]
+
         return DashboardMetrics(
             total_queries=stats["total_queries"],
             accuracy_percent=round(accuracy, 2),
             unanswered_count=stats["unanswered_queries"],
             avg_confidence=round(stats["avg_confidence"], 4),
             trend_queries=trend_list,
-            confidence_distribution=distribution
+            confidence_distribution=distribution,
+            unanswered_questions=unanswered_questions
         )
 
     async def log_query(self, data: AnalyticsQueryLogCreate) -> AnalyticsQueryLog:
