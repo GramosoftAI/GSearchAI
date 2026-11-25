@@ -1,4 +1,4 @@
-﻿import GoogleProvider from "next-auth/providers/google";
+import GoogleProvider from "next-auth/providers/google";
 import AzureADProvider from "next-auth/providers/azure-ad";
 import { AuthOptions } from "next-auth";
 
@@ -13,7 +13,7 @@ export const authOptions: AuthOptions = {
       authorization: {
         params: {
           scope:
-            "openid email profile https://www.googleapis.com/auth/drive.readonly",
+            "openid email profile https://www.googleapis.com/auth/drive.file",
           access_type: "offline",
           prompt: "consent",
         },

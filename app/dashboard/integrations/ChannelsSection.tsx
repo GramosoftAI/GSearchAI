@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useEffect } from "react";
 import { Card, Flex, Button, Typography, Modal, Spin } from "antd";
@@ -605,6 +605,7 @@ export default function ChannelsSection() {
           setGoogleModal(false);
         }}
         session={session?.user?.email}
+        
       />
       
       <SharePointFolderModal
@@ -616,6 +617,7 @@ export default function ChannelsSection() {
           setSharePointModal(false);
         }}
         session={session?.user?.email}
+        
       />
 
       <OneDriveFolderModal
@@ -627,6 +629,7 @@ export default function ChannelsSection() {
           setOneDriveModal(false);
         }}
         session={session?.user?.email}
+        
       />
 
 

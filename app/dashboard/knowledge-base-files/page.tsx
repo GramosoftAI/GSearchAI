@@ -19,7 +19,7 @@ import {
   Segmented,
   Tag,
 } from "antd";
-import { Eye, Search } from "lucide-react";
+import { Eye, Search, RefreshCw, CheckCircle2 } from "lucide-react";
 import dayjs from "dayjs";
 import { marked } from "marked";
 import useAxios from "../../hooks/useAxios";
@@ -211,7 +211,16 @@ export default function KnowledgeBaseFilesPage() {
   const [previewTab, setPreviewTab] = useState<"original" | "parsed">("original");
   const [previewItem, setPreviewItem] = useState<any>(null);
   const [previewUrl, setPreviewUrl] = useState<string>("");
-  const [parsedText, setParsedText] = useState<string>("");
+    const [parsedText, setParsedText] = useState<string>("");
+  
+  // Sitemap Sync & Diff Modal State
+  const [syncModalVisible, setSyncModalVisible] = useState(false);
+  const [syncChecking, setSyncChecking] = useState(false);
+  const [syncExtracting, setSyncExtracting] = useState(false);
+  const [activeSyncItem, setActiveSyncItem] = useState<any>(null);
+  const [syncDiffResult, setSyncDiffResult] = useState<any>(null);
+  const [selectedDiffUrls, setSelectedDiffUrls] = useState<string[]>([]);
+  const [syncTab, setSyncTab] = useState<"pending" | "indexed">("pending");
   const [previewType, setPreviewType] = useState<string>("other");
   const [spreadsheetData, setSpreadsheetData] = useState<{ [sheetName: string]: string[][] } | null>(null);
   const [spreadsheetSheets, setSpreadsheetSheets] = useState<string[]>([]);
@@ -283,6 +292,95 @@ export default function KnowledgeBaseFilesPage() {
     setDateRange(null);
     setSelectedAgent(null);
     setOffset(0);
+  };
+
+    const handleCheckSitemapDiff = async (item: any) => {
+    setActiveSyncItem(item);
+    setSyncModalVisible(true);
+    setSyncChecking(true);
+    setSyncDiffResult(null);
+    setSelectedDiffUrls([]);
+    setSyncTab("pending");
+
+    const rawSource = item.name || item.source || "";
+    let extractedUrl = "";
+    const urlMatch = rawSource.match(/(https?:\/\/[^\s]+)/i);
+    if (urlMatch) {
+      extractedUrl = urlMatch[1];
+    } else {
+      const domainMatch = rawSource.match(/([a-zA-Z0-9-]+\.[a-zA-Z]{2,}[^\s]*)/);
+      if (domainMatch) extractedUrl = "https://" + domainMatch[1];
+      else extractedUrl = rawSource;
+    }
+
+    // Extract origin/root domain so subpages don't create broken sitemap paths
+    // Priority: try sitemap_index.xml first; backend automatically verifies and falls back to sitemap.xml
+    let sitemapUrl = extractedUrl;
+    try {
+      const parsed = new URL(extractedUrl.startsWith("http") ? extractedUrl : `https://${extractedUrl}`);
+      if (!parsed.pathname.endsWith(".xml")) {
+        sitemapUrl = `${parsed.origin}/sitemap_index.xml`;
+      }
+    } catch {
+      extractedUrl = extractedUrl.replace(/\/+$/, "");
+      sitemapUrl = extractedUrl.endsWith(".xml") ? extractedUrl : `${extractedUrl}/sitemap_index.xml`;
+    }
+
+    try {
+      const token = getCookie("AUTH_TOKEN") || getCookie("token") || (typeof window !== "undefined" ? (localStorage.getItem("AUTH_TOKEN") || localStorage.getItem("token")) : "");
+      const res = await fetch("http://localhost:8001/api/v1/knowledge-bases/monitor/website/preview-diff", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ sitemap_url: sitemapUrl, kb_id: item.id })
+      });
+      const data = await res.json();
+      if (data?.data?.success) {
+        setSyncDiffResult(data.data);
+        setSelectedDiffUrls(data.data.new_urls || []);
+      } else {
+        toast.error(data?.data?.message || "Could not fetch sitemap diff");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to check sitemap diff");
+    } finally {
+      setSyncChecking(false);
+    }
+  };
+
+  const handleProceedCrawl = async () => {
+    if (!selectedDiffUrls.length) {
+      toast.error("Please select at least one URL to crawl");
+      return;
+    }
+    setSyncExtracting(true);
+    try {
+      const token = getCookie("AUTH_TOKEN") || getCookie("token") || (typeof window !== "undefined" ? (localStorage.getItem("AUTH_TOKEN") || localStorage.getItem("token")) : "");
+      const agentId = activeSyncItem?.agent_id || activeSyncItem?.agent?.id;
+      const kbId = activeSyncItem?.id;
+      
+      const res = await fetch(`http://localhost:8001/api/v1/agents/${agentId}/sources/url/select`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          urls: selectedDiffUrls,
+          kb_id: kbId
+        })
+      });
+      const data = await res.json();
+      toast.success(`Started syncing ${selectedDiffUrls.length} pages to this Knowledge Base!`);
+      setSyncModalVisible(false);
+      fetchKbs();
+    } catch (err: any) {
+      toast.error(err.message || "Extraction failed");
+    } finally {
+      setSyncExtracting(false);
+    }
   };
 
   const handlePreview = async (item: any) => {
@@ -550,6 +648,18 @@ export default function KnowledgeBaseFilesPage() {
               onClick={() => handlePreview(record)}
             />
           </Tooltip>
+          {((record.name || record.source || "").toLowerCase().includes("http") || (record.name || record.source || "").toLowerCase().includes("selected links") || (record.name || record.source || "").toLowerCase().includes(".tech") || (record.name || record.source || "").toLowerCase().includes(".com")) && (
+            <Tooltip title="Check Sitemap for New Pages & Upgrade Knowledge">
+              <Button
+                size="small"
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg bg-[#0fb5a1]/10 text-[#0fb5a1] border border-[#0fb5a1]/30 hover:bg-[#0fb5a1] hover:text-white transition-all shadow-sm"
+                icon={<RefreshCw size={13} />}
+                onClick={() => handleCheckSitemapDiff(record)}
+              >
+                Sync Now
+              </Button>
+            </Tooltip>
+          )}
         </Space>
       ),
     },
@@ -915,6 +1025,207 @@ export default function KnowledgeBaseFilesPage() {
             )}
           </div>
         )}
+      </Modal>
+
+      {/* Sitemap Diff & Upgrade Knowledge Modal */}
+      <Modal
+        title={
+          <Flex align="center" gap={8}>
+            <RefreshCw className="text-[#0fb5a1]" size={18} />
+            <Text className="font-bold text-slate-800 dark:text-slate-200">
+              Sitemap Sync & Content Upgrade
+            </Text>
+          </Flex>
+        }
+        open={syncModalVisible}
+        onCancel={() => setSyncModalVisible(false)}
+        footer={
+          !syncChecking && syncTab === "pending" && selectedDiffUrls.length > 0 ? (
+            <Flex justify="end" gap={8}>
+              <Button onClick={() => setSyncModalVisible(false)}>Cancel</Button>
+              <Button
+                type="primary"
+                loading={syncExtracting}
+                onClick={handleProceedCrawl}
+                style={{ backgroundColor: "#0fb5a1", borderColor: "#0fb5a1" }}
+              >
+                Proceed & Crawl ({selectedDiffUrls.length} pages)
+              </Button>
+            </Flex>
+          ) : (
+            <Flex justify="end">
+              <Button onClick={() => setSyncModalVisible(false)}>Close</Button>
+            </Flex>
+          )
+        }
+        width={720}
+        centered
+        destroyOnClose
+      >
+        {syncChecking ? (
+          <Flex vertical align="center" justify="center" className="py-12 gap-3">
+            <Spin size="large" />
+            <Text className="text-sm font-medium text-slate-500">
+              Fetching live sitemap and inspecting crawled content...
+            </Text>
+          </Flex>
+        ) : syncDiffResult ? (
+          <div className="space-y-4 py-2">
+            <div className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+              <div>
+                <Text className="text-xs text-slate-500 block">Sitemap Inspected</Text>
+                <Text className="text-xs font-mono font-semibold text-slate-700 dark:text-slate-300">
+                  {syncDiffResult.sitemap_url}
+                </Text>
+              </div>
+              <div className="flex gap-2">
+                <Tag color="default">Total: {syncDiffResult.total_sitemap_urls}</Tag>
+                <Tag color="success" className="font-semibold text-emerald-600 bg-emerald-50 border-emerald-300">
+                  Indexed in KB: {syncDiffResult.already_crawled_count}
+                </Tag>
+                <Tag color="error" className="font-semibold text-rose-600 bg-rose-50 border-rose-300">
+                  New to Crawl: {syncDiffResult.new_urls_count}
+                </Tag>
+              </div>
+            </div>
+
+            {/* Toggle Tabs */}
+            <div className="flex border-b border-slate-200 dark:border-slate-800 gap-4">
+              <button
+                type="button"
+                onClick={() => setSyncTab("pending")}
+                className={`pb-2 px-1 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 ${
+                  syncTab === "pending"
+                    ? "border-rose-500 text-rose-600 dark:text-rose-400"
+                    : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-rose-500 inline-block"></span>
+                New & Uncrawled Pages ({syncDiffResult.new_urls_count})
+              </button>
+              <button
+                type="button"
+                onClick={() => setSyncTab("indexed")}
+                className={`pb-2 px-1 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 ${
+                  syncTab === "indexed"
+                    ? "border-emerald-500 text-emerald-600 dark:text-emerald-400"
+                    : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+                Already Present in KB ({syncDiffResult.already_crawled_count})
+              </button>
+            </div>
+
+            {syncTab === "pending" ? (
+              syncDiffResult.new_urls?.length > 0 ? (
+                <>
+                  <div className="flex justify-between items-center bg-rose-50/50 dark:bg-rose-950/20 p-2.5 rounded-lg border border-rose-200/50 dark:border-rose-900/30">
+                    <span className="font-semibold text-xs text-rose-700 dark:text-rose-300">
+                      Select New / Uncrawled Pages ({selectedDiffUrls.length} / {syncDiffResult.new_urls.length})
+                    </span>
+                    <Button
+                      size="small"
+                      type="link"
+                      className="text-rose-600 hover:text-rose-700 font-semibold text-xs p-0"
+                      onClick={() => {
+                        if (selectedDiffUrls.length === syncDiffResult.new_urls.length) {
+                          setSelectedDiffUrls([]);
+                        } else {
+                          setSelectedDiffUrls(syncDiffResult.new_urls);
+                        }
+                      }}
+                    >
+                      {selectedDiffUrls.length === syncDiffResult.new_urls.length ? "Deselect All" : "Select All"}
+                    </Button>
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto space-y-2 border border-slate-200 dark:border-slate-800 rounded-xl p-3 bg-slate-50 dark:bg-slate-950/50">
+                    {syncDiffResult.new_urls.map((link: string) => {
+                      const isSelected = selectedDiffUrls.includes(link);
+                      const isBrandNew = syncDiffResult.brand_new_urls?.includes(link);
+
+                      return (
+                        <div
+                          key={link}
+                          onClick={() => {
+                            if (isSelected) {
+                              setSelectedDiffUrls(prev => prev.filter(u => u !== link));
+                            } else {
+                              setSelectedDiffUrls(prev => [...prev, link]);
+                            }
+                          }}
+                          className={`flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer text-xs ${
+                            isSelected
+                              ? "bg-rose-50/80 dark:bg-rose-950/30 border-rose-400 text-rose-900 dark:text-rose-200 shadow-sm"
+                              : "bg-white dark:bg-slate-900 border-rose-200/70 dark:border-rose-900/40 text-slate-700 dark:text-slate-300 hover:border-rose-300"
+                          }`}
+                        >
+                          <div className="flex items-start gap-2 flex-1 min-w-0 pr-2">
+                            <span className="font-bold mt-0.5 text-rose-500">
+                              {isSelected ? "✓" : "+"}
+                            </span>
+                            <span className="font-mono break-all leading-tight">
+                              {link}
+                            </span>
+                          </div>
+                          {isBrandNew ? (
+                            <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-300 border border-rose-300 shrink-0">
+                              NEW SITEMAP
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 border border-rose-200 shrink-0">
+                              Uncrawled
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <Flex vertical align="center" justify="center" className="py-8 text-center">
+                  <CheckCircle2 size={40} className="text-emerald-500 mb-2" />
+                  <Text className="font-bold text-slate-700 dark:text-slate-200">
+                    All pages are already crawled in this Knowledge Base!
+                  </Text>
+                  <Text className="text-xs text-slate-500 mt-1">
+                    Check the "Already Present in KB" tab above to view all {syncDiffResult.already_crawled_count} indexed pages.
+                  </Text>
+                </Flex>
+              )
+            ) : (
+              /* Already Present in KB Tab (GREEN) */
+              <div className="space-y-2">
+                <div className="bg-emerald-50/60 dark:bg-emerald-950/20 p-2.5 rounded-lg border border-emerald-200/50 dark:border-emerald-900/30 flex items-center justify-between">
+                  <span className="font-semibold text-xs text-emerald-800 dark:text-emerald-300">
+                    Pages Crawled & Present in this Knowledge Base ({syncDiffResult.already_crawled_count})
+                  </span>
+                  <Tag color="success" className="m-0 text-[10px]">Indexed</Tag>
+                </div>
+
+                <div className="max-h-72 overflow-y-auto space-y-2 border border-slate-200 dark:border-slate-800 rounded-xl p-3 bg-slate-50 dark:bg-slate-950/50">
+                  {syncDiffResult.already_crawled_urls?.map((link: string) => (
+                    <div
+                      key={link}
+                      className="flex items-center justify-between p-2.5 rounded-lg border bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/40 text-emerald-900 dark:text-emerald-200 text-xs"
+                    >
+                      <div className="flex items-start gap-2 flex-1 min-w-0 pr-2">
+                        <CheckCircle2 size={14} className="text-emerald-600 mt-0.5 shrink-0" />
+                        <span className="font-mono break-all leading-tight">
+                          {link}
+                        </span>
+                      </div>
+                      <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 shrink-0">
+                        In KB
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
       </Modal>
 
       {/* Style Overrides for Dark Mode and Antd elements */}
