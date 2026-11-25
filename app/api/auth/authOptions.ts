@@ -1,8 +1,9 @@
-﻿import GoogleProvider from "next-auth/providers/google";
+import GoogleProvider from "next-auth/providers/google";
 import AzureADProvider from "next-auth/providers/azure-ad";
 import { AuthOptions } from "next-auth";
 
 export const authOptions: AuthOptions = {
+  secret: process.env.NEXTAUTH_SECRET || "22e2e4ab-4caa-4f4b-881d-90e4ca912018",
   providers: [
     // 1. Dedicated Google Drive Provider (Only Drive scopes)
     GoogleProvider({

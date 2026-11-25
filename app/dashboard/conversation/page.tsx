@@ -2581,11 +2581,7 @@ export default function ChatPlaygroundPage() {
     const enhanced = enhanceSources(sources, currentSources);
     setActiveSources(enhanced);
     setIsSourcesDrawerOpen(true);
-    if (forceAll !== undefined) {
-      setIsAllEvidenceMode(forceAll);
-    } else {
-      setIsAllEvidenceMode(enhanced.length > 1);
-    }
+    setIsAllEvidenceMode(true);
     if (preferredSource) {
       const match = enhanced.find(e => (e.chunk_id && e.chunk_id === preferredSource.chunk_id) || (e.id && e.id === preferredSource.id)) || preferredSource;
       handleSelectSourceForPreview(match);
@@ -3086,71 +3082,22 @@ export default function ChatPlaygroundPage() {
                               const rawMsgSources = msg.sources || msg.metadata?.sources || [];
                               const uniqueSources = deduplicateSources(rawMsgSources);
                               if (!showSources || uniqueSources.length === 0 || msg.content?.includes("Something went wrong") || msg.content?.includes("trouble connecting")) return null;
+                              const evidenceCount = rawMsgSources.length || uniqueSources.length;
                               return (
                                 <div className="ml-auto flex items-center">
-                                  {uniqueSources.length === 1 ? (
-                                    <button
-                                      onClick={() => handleOpenSource(uniqueSources[0], rawMsgSources, msg.content, true)}
-                                      className="text-[var(--app-text)] font-bold p-1.5 px-2.5 rounded-lg border border-[var(--app-border)]/60 bg-[var(--app-surface-muted)] cursor-pointer transition-all hover:border-[#0fb5a1] hover:text-[#0fb5a1] flex items-center gap-1.5 text-xs shrink-0 shadow-sm"
-                                      title="Click to view exact paragraph, lines, and highlighted supporting text"
-                                    >
-                                      <SiCrowdsource className="text-[#0fb5a1]" />
-                                      <span>Source Citation</span>
-                                      {uniqueSources[0].page && (
-                                        <span className="text-[10px] bg-[#0fb5a1]/15 text-[#0fb5a1] px-1 py-0.2 rounded font-mono font-semibold">
-                                          P.{uniqueSources[0].page}
-                                        </span>
-                                      )}
-                                    </button>
-                                  ) : (
-                                    <Dropdown
-                                      menu={{
-                                        items: [
-                                          ...uniqueSources.map((src: any, idx: number) => ({
-                                            key: idx.toString(),
-                                            label: (
-                                              <div className="flex flex-col py-1 max-w-[320px]">
-                                                <div className="font-semibold text-xs flex items-center justify-between gap-2">
-                                                  <span className="truncate">{getCleanFileName(src)}</span>
-                                                  <span className="text-[10px] font-mono text-[#0fb5a1] bg-[#0fb5a1]/10 px-1 py-0.5 rounded shrink-0">
-                                                    P.{src.page || 1} • Para {src.paragraph_number || src.paragraph || idx + 1}
-                                                  </span>
-                                                </div>
-                                                {src.supporting_text && (
-                                                  <div className="text-[11px] text-[var(--app-text-muted)] truncate mt-0.5">
-                                                    "{src.supporting_text}"
-                                                  </div>
-                                                )}
-                                              </div>
-                                            ),
-                                            onClick: () => handleOpenSource(src, rawMsgSources, msg.content, false),
-                                          })),
-                                          {
-                                            type: 'divider',
-                                          },
-                                          {
-                                            key: 'all',
-                                            label: (
-                                              <span className="font-bold text-xs text-[#0fb5a1] flex items-center gap-1">
-                                                <SiCrowdsource /> View All Citations & Evidence ({uniqueSources.length})
-                                              </span>
-                                            ),
-                                            onClick: () => handleOpenSource(uniqueSources[0], rawMsgSources, msg.content, true),
-                                          }
-                                        ]
-                                      }}
-                                      placement="bottomLeft"
-                                      trigger={['click']}
-                                    >
-                                      <button
-                                        className="text-[var(--app-text)] font-bold p-1.5 px-2.5 rounded-lg border border-[var(--app-border)]/60 bg-[var(--app-surface-muted)] cursor-pointer transition-all hover:border-[#0fb5a1] hover:text-[#0fb5a1] flex items-center gap-1.5 text-xs shrink-0 shadow-sm"
-                                        title="Click to view exact citations & evidence"
-                                      >
-                                        <SiCrowdsource className="text-[#0fb5a1]" />
-                                        <span>Sources ({uniqueSources.length})</span>
-                                      </button>
-                                    </Dropdown>
-                                  )}
+                                  <button
+                                    onClick={() => handleOpenSource(uniqueSources[0], rawMsgSources, msg.content, true)}
+                                    className="text-[var(--app-text)] font-bold p-1.5 px-2.5 rounded-lg border border-[var(--app-border)]/60 bg-[var(--app-surface-muted)] cursor-pointer transition-all hover:border-[#0fb5a1] hover:text-[#0fb5a1] flex items-center gap-1.5 text-xs shrink-0 shadow-sm"
+                                    title="Click to view all supporting evidence & verified citations"
+                                  >
+                                    <SiCrowdsource className="text-[#0fb5a1]" />
+                                    <span>Source Citation{evidenceCount > 1 ? ` (${evidenceCount})` : ""}</span>
+                                    {uniqueSources[0].page && (
+                                      <span className="text-[10px] bg-[#0fb5a1]/15 text-[#0fb5a1] px-1 py-0.2 rounded font-mono font-semibold">
+                                        P.{uniqueSources[0].page}
+                                      </span>
+                                    )}
+                                  </button>
                                 </div>
                               );
                             })()}
@@ -3601,7 +3548,7 @@ export default function ChatPlaygroundPage() {
         }}
       >
         {/* Source Selector Bar for Multi-Source Responses */}
-        {activeSources.length > 1 && (
+        {activeSources.length > 0 && (
           <div className="flex items-center gap-2 overflow-x-auto py-2.5 px-6 border-b border-[var(--app-border)]/40 bg-[var(--app-surface-muted)] shrink-0 custom-scrollbar">
             <span className="text-[10px] font-bold text-[var(--app-text-muted)] uppercase tracking-wider shrink-0 mr-1">
               Evidence Citations ({activeSources.length}):
@@ -3610,39 +3557,47 @@ export default function ChatPlaygroundPage() {
               onClick={() => {
                 setIsAllEvidenceMode(true);
               }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
-                isAllEvidenceMode
-                  ? "bg-[#0fb5a1] text-white shadow-sm font-bold"
-                  : "bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-hover)] border border-[var(--app-border)]/40"
-              }`}
+              className="px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 bg-[#0fb5a1] text-white shadow-sm"
             >
               <span>⭐</span>
               <span>All Supporting Evidence ({activeSources.length})</span>
             </button>
-            {activeSources.map((src, index) => {
-              const fileName = getFileName(src.source);
-              const badgeLabel = getSourceTabLabel(src, index);
-              const isSelected = !isAllEvidenceMode && ((selectedSourceForPreview?.id || selectedSourceForPreview?.chunk_id) === (src.id || src.chunk_id));
-              return (
-                <button
-                  key={(src.id || src.chunk_id) || index}
-                  onClick={() => {
-                    setIsAllEvidenceMode(false);
-                    handleSelectSourceForPreview(src);
-                  }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
-                    isSelected
-                      ? "bg-[#0fb5a1] text-white shadow-sm font-bold"
-                      : "bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-hover)] border border-[var(--app-border)]/40"
-                  }`}
-                  title={`${fileName} - ${badgeLabel}`}
-                >
-                  <span>📄</span>
-                  <span>#{index + 1} {badgeLabel}</span>
-                  {src.page && <span className="text-[10px] opacity-75 font-mono">P.{src.page}</span>}
-                </button>
-              );
-            })}
+            {(() => {
+              const uniqueFilesMap = new Map<string, SourceMetadata>();
+              activeSources.forEach((src) => {
+                const fname = getCleanFileName(src).toLowerCase().trim();
+                if (fname && !uniqueFilesMap.has(fname)) {
+                  uniqueFilesMap.set(fname, src);
+                }
+              });
+              const uniqueFileList = Array.from(uniqueFilesMap.values());
+              if (uniqueFileList.length <= 1) return null;
+
+              return uniqueFileList.map((src) => {
+                const fileName = getCleanFileName(src);
+                const fileCitationsCount = activeSources.filter(s => getCleanFileName(s).toLowerCase().trim() === fileName.toLowerCase().trim()).length;
+                const isSelected = !isAllEvidenceMode && getCleanFileName(selectedSourceForPreview).toLowerCase().trim() === fileName.toLowerCase().trim();
+                return (
+                  <button
+                    key={fileName}
+                    onClick={() => {
+                      setIsAllEvidenceMode(false);
+                      handleSelectSourceForPreview(src);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                      isSelected
+                        ? "bg-[#0fb5a1] text-white shadow-sm font-bold"
+                        : "bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-hover)] border border-[var(--app-border)]/40"
+                    }`}
+                    title={fileName}
+                  >
+                    <span>📄</span>
+                    <span className="truncate max-w-[200px]">{fileName}</span>
+                    <span className="text-[10px] opacity-75 font-mono">({fileCitationsCount})</span>
+                  </button>
+                );
+              });
+            })()}
           </div>
         )}
 
