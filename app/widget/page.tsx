@@ -10,6 +10,19 @@ type SourceItem = {
   id?: string;
   kb_id?: string;
   source?: string;
+  source_type?: string;
+  ticket_num?: string;
+  status_code?: string;
+  mapped_status?: string;
+  effective_state?: string;
+  resolution_quality?: string;
+  freshness_status?: string;
+  last_synced_at?: string | null;
+  subject?: string;
+  cleaned_description?: string;
+  action_taken_resolution?: string | null;
+  branch_name?: string;
+  resolve_date?: string | null;
   name?: string;
   text?: string;
   url?: string;
@@ -93,7 +106,9 @@ function matchesCitation(src: any, citedFilenames: string[]): boolean {
     src.name,
     src.file_name,
     src.s3_path,
-    src.source
+    src.source,
+    src.ticket_num,
+    src.ticket_num ? `ticket ${src.ticket_num}` : undefined,
   ].filter(Boolean).map(val => String(val).toLowerCase());
 
   return candidates.some(candidate => {
@@ -1123,6 +1138,12 @@ function WidgetContent() {
     }
 
     setActiveSourceModal({ ...targetSrc });
+
+    if (targetSrc.source_type === "database_record" || targetSrc.ticket_num) {
+      setSourceModalPreviewType("text");
+      setSourceModalLoading(false);
+      return;
+    }
 
     const kbId = targetSrc.kb_id || targetSrc.id;
     let previewBlobUrl: string | null = null;
@@ -3531,9 +3552,42 @@ function WidgetContent() {
                       </div>
                     </div>
                   )}
-                  <div style={{ whiteSpace: "pre-wrap" }}>
-                    {activeSourceModal.text || activeSourceModal.content || activeSourceModal.page_content || activeSourceModal.snippet || "Cited knowledge base reference used to generate the answer."}
-                  </div>
+                  {(activeSourceModal.source_type === "database_record" || activeSourceModal.ticket_num) ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center" }}>
+                        {activeSourceModal.ticket_num && (
+                          <span style={{ fontWeight: "800", color: "#0f766e", background: "#ccfbf1", padding: "2px 8px", borderRadius: "6px", fontSize: "11px" }}>
+                            {activeSourceModal.ticket_num}
+                          </span>
+                        )}
+                        {activeSourceModal.mapped_status && (
+                          <span style={{ fontWeight: "700", color: "#334155", fontSize: "11px" }}>
+                            {activeSourceModal.mapped_status}
+                          </span>
+                        )}
+                        {activeSourceModal.freshness_status && (
+                          <span style={{ fontWeight: "700", color: "#0369a1", background: "#e0f2fe", padding: "2px 6px", borderRadius: "6px", fontSize: "10px" }}>
+                            {activeSourceModal.freshness_status}
+                          </span>
+                        )}
+                      </div>
+                      {activeSourceModal.subject && (
+                        <div style={{ fontWeight: "700", color: "#0f172a" }}>{activeSourceModal.subject}</div>
+                      )}
+                      {activeSourceModal.cleaned_description && (
+                        <div style={{ whiteSpace: "pre-wrap", color: "#475569" }}>
+                          <strong>Issue:</strong> {activeSourceModal.cleaned_description}
+                        </div>
+                      )}
+                      <div style={{ whiteSpace: "pre-wrap", color: "#0f172a" }}>
+                        <strong>Resolution:</strong> {activeSourceModal.action_taken_resolution || "No actionable resolution steps recorded."}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ whiteSpace: "pre-wrap" }}>
+                      {activeSourceModal.text || activeSourceModal.content || activeSourceModal.page_content || activeSourceModal.snippet || "Cited knowledge base reference used to generate the answer."}
+                    </div>
+                  )}
                 </div>
               )}
 

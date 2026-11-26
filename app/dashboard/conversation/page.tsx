@@ -45,6 +45,19 @@ type SourceMetadata = {
   reason?: string;
   source: string;
   kb_id: string;
+  source_type?: string;
+  ticket_num?: string;
+  status_code?: string;
+  mapped_status?: string;
+  effective_state?: string;
+  resolution_quality?: string;
+  freshness_status?: string;
+  last_synced_at?: string | null;
+  subject?: string;
+  cleaned_description?: string;
+  action_taken_resolution?: string | null;
+  branch_name?: string;
+  resolve_date?: string | null;
   content_type?: 'parsed' | 'original';
   s3_path?: string;
   parsed_path?: string;
@@ -138,19 +151,40 @@ async function fetchSessionMessages(agentId: string, sessionId: string): Promise
 
 async function fetchAgentSources(agentId: string): Promise<any[]> {
   try {
-    const res = await fetch(`${API_BASE_URL}/knowledge-bases/agents/${agentId}?limit=100&offset=0`, {
-      headers: authHeaders(),
-    });
-    if (!res.ok) throw new Error(`${res.status}`);
-    const result = await res.json();
-    const data = result.data ?? result;
-    return Array.isArray(data)
-      ? data
-      : Array.isArray(data?.sources)
-        ? data.sources
-        : Array.isArray(data?.kbs)
-          ? data.kbs
-          : [];
+    const [docRes, dbRes] = await Promise.all([
+      fetch(`${API_BASE_URL}/knowledge-bases/agents/${agentId}?limit=100&offset=0`, {
+        headers: authHeaders(),
+      }),
+      fetch(`${API_BASE_URL}/database-knowledgebases?agent_id=${agentId}`, {
+        headers: authHeaders(),
+      }).catch(() => null),
+    ]);
+
+    let docs: any[] = [];
+    if (docRes.ok) {
+      const result = await docRes.json();
+      const data = result.data ?? result;
+      docs = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.sources)
+          ? data.sources
+          : Array.isArray(data?.kbs)
+            ? data.kbs
+            : [];
+    }
+
+    let dbKbs: any[] = [];
+    if (dbRes && dbRes.ok) {
+      const dbJson = await dbRes.json().catch(() => ({}));
+      const rawDbs = Array.isArray(dbJson?.data) ? dbJson.data : [];
+      dbKbs = rawDbs.map((db: any) => ({
+        ...db,
+        source_type: "database_kb",
+        source: db.name,
+      }));
+    }
+
+    return [...docs, ...dbKbs];
   } catch (e) {
     console.error("fetchAgentSources failed:", e);
     return [];
@@ -411,6 +445,9 @@ function getCleanSourceName(rawName: string): string {
 
 function getCleanFileName(src: any): string {
   if (!src) return "";
+  if (src.source_type === "database_record" || src.ticket_num) {
+    return src.ticket_num ? `Ticket ${src.ticket_num}` : (src.source || "Ticket Record");
+  }
   const rawName = src.name || src.file_name || src.s3_path || src.source || "Source";
   return getCleanSourceName(rawName);
 }
@@ -531,7 +568,9 @@ function matchesCitation(src: any, citedFilenames: string[]): boolean {
     src.name,
     src.file_name,
     src.s3_path,
-    src.source
+    src.source,
+    src.ticket_num,
+    src.ticket_num ? `ticket ${src.ticket_num}` : undefined,
   ].filter(Boolean).map(val => String(val).toLowerCase());
 
   return candidates.some(candidate => {
@@ -1144,6 +1183,95 @@ function parseMarkdownTable(block: string): { headers: string[]; rows: string[][
   const rows = parsedRows.slice(1);
   return { headers, rows };
 }
+
+const TicketEvidenceCard = ({ source }: { source: SourceMetadata }) => {
+  const freshnessColor =
+    source.freshness_status === "LIVE_VERIFIED"
+      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+      : source.freshness_status === "STALE_FALLBACK"
+        ? "bg-amber-50 text-amber-700 border-amber-200"
+        : "bg-rose-50 text-rose-700 border-rose-200";
+
+  const stateColor =
+    source.effective_state === "VERIFIED_RESOLVED"
+      ? "bg-teal-50 text-teal-700 border-teal-200"
+      : source.effective_state === "DISPUTED_PENDING"
+        ? "bg-rose-50 text-rose-700 border-rose-200"
+        : "bg-slate-100 text-slate-700 border-slate-200";
+
+  return (
+    <div className="rounded-2xl border border-[var(--app-border)]/70 bg-[var(--app-surface)] p-5 shadow-sm flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--app-border)]/40 pb-3">
+        <div className="flex items-center gap-2">
+          <span className="px-2.5 py-1 rounded-lg bg-[#0fb5a1]/15 text-[#0f766e] font-mono text-xs font-extrabold">
+            {source.ticket_num || source.source}
+          </span>
+          {source.mapped_status && (
+            <span className="text-xs font-bold text-[var(--app-text)]">
+              {source.mapped_status}
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {source.effective_state && (
+            <span className={`px-2 py-0.5 rounded-md border text-[10px] font-bold ${stateColor}`}>
+              {source.effective_state}
+            </span>
+          )}
+          {source.resolution_quality && (
+            <span className="px-2 py-0.5 rounded-md border border-sky-200 bg-sky-50 text-sky-700 text-[10px] font-bold">
+              {source.resolution_quality}
+            </span>
+          )}
+          {source.freshness_status && (
+            <span className={`px-2 py-0.5 rounded-md border text-[10px] font-bold ${freshnessColor}`}>
+              {source.freshness_status}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {source.subject && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wider font-bold text-[var(--app-text-muted)]">
+            Subject
+          </div>
+          <div className="text-sm font-bold text-[var(--app-text)] mt-0.5">{source.subject}</div>
+        </div>
+      )}
+
+      {(source.branch_name || source.resolve_date || source.last_synced_at) && (
+        <div className="flex flex-wrap gap-3 text-[11px] text-[var(--app-text-soft)]">
+          {source.branch_name && <span>Branch: <b>{source.branch_name}</b></span>}
+          {source.resolve_date && <span>Resolved: <b>{source.resolve_date}</b></span>}
+          {source.last_synced_at && (
+            <span>Synced: <b>{new Date(source.last_synced_at).toLocaleString()}</b></span>
+          )}
+        </div>
+      )}
+
+      {source.cleaned_description && (
+        <div className="rounded-xl bg-[var(--app-surface-muted)] p-3 border border-[var(--app-border)]/40">
+          <div className="text-[10px] uppercase tracking-wider font-bold text-[var(--app-text-muted)] mb-1">
+            Issue Description
+          </div>
+          <div className="text-xs text-[var(--app-text)] whitespace-pre-wrap leading-relaxed">
+            {source.cleaned_description}
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-xl bg-teal-50/50 dark:bg-teal-950/20 p-3 border border-teal-200/70 dark:border-teal-800/40">
+        <div className="text-[10px] uppercase tracking-wider font-bold text-[#0f766e] mb-1">
+          Recorded Resolution
+        </div>
+        <div className="text-xs text-[var(--app-text)] whitespace-pre-wrap leading-relaxed">
+          {source.action_taken_resolution || "No actionable resolution steps recorded on this ticket."}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const GroundedEvidenceDocumentViewer = ({
   parsedContent,
@@ -2593,6 +2721,30 @@ export default function ChatPlaygroundPage() {
   const handleSelectSourceForPreview = async (source: SourceMetadata) => {
     setSelectedSourceForPreview(source);
 
+    if (source.source_type === "database_record" || source.ticket_num) {
+      setSourcesDrawerPreviewTab("parsed");
+      setSourcesDrawerPreviewType("other");
+      setSourcesDrawerCsvData([]);
+      setExcelSheets({});
+      setExcelSheetNames([]);
+      setActiveExcelSheet("");
+      setExcelPage(1);
+      if (sourcesDrawerPreviewUrl) {
+        URL.revokeObjectURL(sourcesDrawerPreviewUrl);
+      }
+      setSourcesDrawerPreviewUrl("");
+      setSourcesDrawerPreviewLoading(false);
+      setParsedTextLoading(false);
+      setParsedTextContent(
+        source.supporting_text ||
+        source.action_taken_resolution ||
+        source.cleaned_description ||
+        source.text ||
+        ""
+      );
+      return;
+    }
+
     const nameForFallback = getFileName(source.source).toLowerCase();
     const hasEvidence = !!(source.supporting_text || source.snippet || source.text);
     const isParsedType = source.content_type === "parsed" ||
@@ -3591,7 +3743,9 @@ export default function ChatPlaygroundPage() {
                     }`}
                     title={fileName}
                   >
-                    <span>📄</span>
+                    <span aria-hidden="true">
+                      {src.source_type === "database_record" || src.ticket_num ? "🎫" : "📄"}
+                    </span>
                     <span className="truncate max-w-[200px]">{fileName}</span>
                     <span className="text-[10px] opacity-75 font-mono">({fileCitationsCount})</span>
                   </button>
@@ -3738,15 +3892,32 @@ export default function ChatPlaygroundPage() {
                     )}
                   </div>
                 </div>
+              ) : (selectedSourceForPreview.source_type === "database_record" || selectedSourceForPreview.ticket_num) && !isAllEvidenceMode ? (
+                <div className="p-6 overflow-y-auto custom-scrollbar flex flex-col gap-4">
+                  <TicketEvidenceCard source={selectedSourceForPreview} />
+                </div>
               ) : (
-                <GroundedEvidenceDocumentViewer
-                  parsedContent={parsedTextContent}
-                  source={selectedSourceForPreview}
-                  allSources={activeSources}
-                  isAllMode={isAllEvidenceMode}
-                  responseContent={activeMessageContent}
-                  loading={parsedTextLoading}
-                />
+                <div className="flex flex-col gap-4 w-full h-full">
+                  {isAllEvidenceMode && activeSources.some((s) => s.source_type === "database_record" || s.ticket_num) && (
+                    <div className="px-6 pt-6 flex flex-col gap-4">
+                      {activeSources
+                        .filter((s) => s.source_type === "database_record" || s.ticket_num)
+                        .map((ticketSrc, idx) => (
+                          <TicketEvidenceCard key={ticketSrc.id || ticketSrc.ticket_num || idx} source={ticketSrc} />
+                        ))}
+                    </div>
+                  )}
+                  {(!isAllEvidenceMode || activeSources.some((s) => s.source_type !== "database_record" && !s.ticket_num)) && (
+                    <GroundedEvidenceDocumentViewer
+                      parsedContent={parsedTextContent}
+                      source={selectedSourceForPreview}
+                      allSources={activeSources}
+                      isAllMode={isAllEvidenceMode}
+                      responseContent={activeMessageContent}
+                      loading={parsedTextLoading}
+                    />
+                  )}
+                </div>
               )}
             </div>
           ) : (

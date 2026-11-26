@@ -80,6 +80,7 @@ const { TextArea } = Input;
 
 interface DBKnowledgebase {
   id: string;
+  agent_id?: string | null;
   name: string;
   description: string;
   database_type: string;
@@ -88,6 +89,67 @@ interface DBKnowledgebase {
   last_introspected_at?: string;
   created_at: string;
   updated_at: string;
+}
+
+interface AgentSummary {
+  id: string;
+  name: string;
+  is_active?: boolean;
+}
+
+interface StructuredProfileItem {
+  schema_name: string;
+  table_name: string;
+  primary_key: string;
+  business_key?: string;
+  status_column?: string;
+  subject_column?: string;
+  description_columns?: string[];
+  resolution_columns?: string[];
+  updated_at_column?: string;
+  created_at_column?: string;
+  pii_blocked_columns?: string[];
+  filter_allowlist_columns?: string[];
+  attachment_path_columns?: string[];
+  status_mapping_version?: string;
+  status_mapping?: Record<string, any>;
+}
+
+interface SyncCheckpointSummary {
+  id: string;
+  schema_name: string;
+  table_name: string;
+  watermark_ts?: string | null;
+  watermark_pk?: string | null;
+  overlap_window_seconds?: number;
+  last_successful_sync_at?: string | null;
+  last_reconciliation_at?: string | null;
+  sync_lag_seconds?: number | null;
+  active_status?: string;
+  consecutive_failures?: number;
+  last_error?: string | null;
+}
+
+interface SyncRunSummary {
+  id: string;
+  mode: string;
+  status: string;
+  rows_scanned: number;
+  rows_inserted: number;
+  rows_updated: number;
+  rows_reembedded: number;
+  rows_skipped_unchanged: number;
+  rows_marked_deleted: number;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error_detail?: string | null;
+}
+
+interface SyncStatusResponse {
+  success: boolean;
+  kb_id: string;
+  checkpoints: SyncCheckpointSummary[];
+  recent_runs: SyncRunSummary[];
 }
 
 interface TableColumn {
@@ -329,6 +391,9 @@ export default function DatabaseKnowledgePage() {
   // Form State
   const [formDbType, setFormDbType] = useState<"postgresql" | "mariadb" | "mysql" | "sqlserver">("postgresql");
   const [formName, setFormName] = useState("Database Agent Name");
+  const [formAgentId, setFormAgentId] = useState<string | undefined>(undefined);
+  const [agentsList, setAgentsList] = useState<AgentSummary[]>([]);
+  const [agentBindSaving, setAgentBindSaving] = useState(false);
 
   const handleDbTypeChange = (newType: "postgresql" | "mariadb" | "mysql" | "sqlserver") => {
     setFormDbType(newType);
@@ -932,6 +997,31 @@ export default function DatabaseKnowledgePage() {
 
   // Phase 3B Tabs & Observability State
   const [activeTab, setActiveTab] = useState<string>("query");
+  const [structuredProfiles, setStructuredProfiles] = useState<StructuredProfileItem[]>([]);
+  const [syncStatusData, setSyncStatusData] = useState<SyncStatusResponse | null>(null);
+  const [syncPanelLoading, setSyncPanelLoading] = useState(false);
+  const [triggerSyncLoading, setTriggerSyncLoading] = useState<string | null>(null);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSchemaName, setProfileSchemaName] = useState("public");
+  const [profileTableName, setProfileTableName] = useState("ticket");
+  const [profilePrimaryKey, setProfilePrimaryKey] = useState("ticket_id");
+  const [profileBusinessKey, setProfileBusinessKey] = useState("ticket_num");
+  const [profileStatusCol, setProfileStatusCol] = useState("ticket_status");
+  const [profileSubjectCol, setProfileSubjectCol] = useState("subject");
+  const [profileDescCols, setProfileDescCols] = useState("description_plain_text, description");
+  const [profileResCols, setProfileResCols] = useState("action_taken_resolution");
+  const [profileUpdatedCol, setProfileUpdatedCol] = useState("last_modified_date");
+  const [profileCreatedCol, setProfileCreatedCol] = useState("entered_on");
+  const [profilePiiCols, setProfilePiiCols] = useState(
+    "sender_email, service_desk_email, cc, user_ph_number, additional_contact_number, contact_code, entered_by, entered_by2, agent_code, assignee_code"
+  );
+  const [statusMapModalOpen, setStatusMapModalOpen] = useState(false);
+  const [statusMapTargetTable, setStatusMapTargetTable] = useState("ticket");
+  const [statusMapTargetSchema, setStatusMapTargetSchema] = useState("public");
+  const [statusMapVersion, setStatusMapVersion] = useState("v1");
+  const [statusMapJson, setStatusMapJson] = useState("{}");
+  const [statusMapSaving, setStatusMapSaving] = useState(false);
   const [metricsData, setMetricsData] = useState<OperationalMetrics | null>(null);
   const [healthData, setHealthData] = useState<DBHealthStatus | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
@@ -941,6 +1031,183 @@ export default function DatabaseKnowledgePage() {
   const [auditStatusFilter, setAuditStatusFilter] = useState<string>("ALL");
   const [auditLoading, setAuditLoading] = useState(false);
   const [inspectedTrace, setInspectedTrace] = useState<any>(null);
+
+  const fetchAgentsList = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/agents?limit=100&offset=0`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const rawAgents = json?.data?.agents ?? json?.agents ?? [];
+        setAgentsList(Array.isArray(rawAgents) ? rawAgents : []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch agents:", err);
+    }
+  };
+
+  const fetchStructuredProfilesAndSync = async (kbId: string) => {
+    setSyncPanelLoading(true);
+    try {
+      const [pRes, sRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/database-knowledgebases/${kbId}/structured-profiles`, { headers: getAuthHeaders() }),
+        fetch(`${API_BASE_URL}/database-knowledgebases/${kbId}/sync-status`, { headers: getAuthHeaders() }),
+      ]);
+      if (pRes.ok) {
+        const pJson = await pRes.json();
+        setStructuredProfiles(Array.isArray(pJson?.profiles) ? pJson.profiles : []);
+      }
+      if (sRes.ok) {
+        const sJson = await sRes.json();
+        setSyncStatusData(sJson);
+      }
+    } catch (err) {
+      console.error("Failed to load structured profiles/sync status:", err);
+    } finally {
+      setSyncPanelLoading(false);
+    }
+  };
+
+  const handleBindAgentToKb = async (kbId: string, nextAgentId: string | null) => {
+    setAgentBindSaving(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/database-knowledgebases/${kbId}`, {
+        method: "PUT",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ agent_id: nextAgentId || null }),
+      });
+      if (res.ok) {
+        const updated: DBKnowledgebase = await res.json();
+        setKbList((prev) => prev.map((k) => (k.id === kbId ? updated : k)));
+        setSelectedKb((prev) => (prev && prev.id === kbId ? updated : prev));
+        toast.success(nextAgentId ? "Database bound to agent successfully." : "Agent binding cleared.");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || "Failed to update agent binding.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Network error updating agent binding.");
+    } finally {
+      setAgentBindSaving(false);
+    }
+  };
+
+  const handleTriggerRecordSync = async (mode: "incremental" | "initial" | "reconcile", tableName?: string, schemaName = "public") => {
+    if (!selectedKb) return;
+    const targetTable = tableName || structuredProfiles[0]?.table_name || "ticket";
+    const targetSchema = schemaName || structuredProfiles[0]?.schema_name || "public";
+    setTriggerSyncLoading(mode);
+    try {
+      const res = await fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/sync-records`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          mode,
+          schema_name: targetSchema,
+          table_name: targetTable,
+          run_inline: true,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast.success(`Structured sync (${mode}) completed cleanly.`);
+        await fetchStructuredProfilesAndSync(selectedKb.id);
+      } else {
+        toast.error(json.detail || `Sync (${mode}) failed.`);
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to run structured record sync.");
+    } finally {
+      setTriggerSyncLoading(null);
+    }
+  };
+
+  const handleSaveStructuredProfile = async () => {
+    if (!selectedKb) return;
+    if (!profileTableName.trim() || !profilePrimaryKey.trim()) {
+      toast.error("Table name and Primary Key are required.");
+      return;
+    }
+    setProfileSaving(true);
+    try {
+      const splitCsv = (val: string) =>
+        val
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+      const payload = {
+        schema_name: profileSchemaName.trim() || "public",
+        table_name: profileTableName.trim(),
+        primary_key: profilePrimaryKey.trim(),
+        business_key: profileBusinessKey.trim() || profilePrimaryKey.trim(),
+        status_column: profileStatusCol.trim() || undefined,
+        subject_column: profileSubjectCol.trim() || undefined,
+        description_columns: splitCsv(profileDescCols),
+        resolution_columns: splitCsv(profileResCols),
+        lifecycle_dates: {
+          created_at: profileCreatedCol.trim() || undefined,
+          updated_at: profileUpdatedCol.trim() || undefined,
+        },
+        pii_blocked_columns: splitCsv(profilePiiCols),
+      };
+      const res = await fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/structured-profiles`, {
+        method: "PUT",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        toast.success("Structured Entity Profile saved!");
+        setProfileModalOpen(false);
+        await fetchStructuredProfilesAndSync(selectedKb.id);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || "Failed to save Structured Entity Profile.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Error saving Structured Entity Profile.");
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const handleSaveStatusMapping = async () => {
+    if (!selectedKb || !statusMapTargetTable) return;
+    let parsedMapping: Record<string, any>;
+    try {
+      parsedMapping = JSON.parse(statusMapJson);
+    } catch {
+      toast.error("Invalid JSON in status mapping editor.");
+      return;
+    }
+    setStatusMapSaving(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/structured-profiles/${encodeURIComponent(statusMapTargetTable)}/status-mapping`,
+        {
+          method: "PUT",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            schema_name: statusMapTargetSchema || "public",
+            status_mapping_version: statusMapVersion.trim() || "v1",
+            status_mapping: parsedMapping,
+          }),
+        }
+      );
+      const json = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast.success(`Status mapping updated (${json.recomputed_count ?? 0} local records recomputed).`);
+        setStatusMapModalOpen(false);
+        await fetchStructuredProfilesAndSync(selectedKb.id);
+      } else {
+        toast.error(json.detail || "Failed to update status mapping.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Error updating status mapping.");
+    } finally {
+      setStatusMapSaving(false);
+    }
+  };
 
   const fetchKnowledgebases = async () => {
     setLoading(true);
@@ -1012,6 +1279,7 @@ export default function DatabaseKnowledgePage() {
 
   useEffect(() => {
     fetchKnowledgebases();
+    fetchAgentsList();
   }, []);
 
   useEffect(() => {
@@ -1026,6 +1294,7 @@ export default function DatabaseKnowledgePage() {
     if (selectedKb) {
       fetchMetricsAndHealth(selectedKb.id);
       fetchAuditLogs(selectedKb.id, 1, auditStatusFilter);
+      fetchStructuredProfilesAndSync(selectedKb.id);
     }
     if (selectedKb?.id) {
       fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/schema`, {
@@ -1107,6 +1376,7 @@ export default function DatabaseKnowledgePage() {
         body: JSON.stringify({
           name: formName,
           description: formDesc,
+          agent_id: formAgentId || null,
           connection: {
             db_type: formDbType,
             host: formHost,
@@ -2276,6 +2546,12 @@ export default function DatabaseKnowledgePage() {
                         ENGINE: {kb.database_type.toUpperCase()}
                       </span>
 
+                      {kb.agent_id && (
+                        <Tag color="geekblue" style={{ margin: 0, fontSize: 10, borderRadius: 6, fontWeight: 600 }}>
+                          Agent: {agentsList.find((a) => a.id === kb.agent_id)?.name || "Bound"}
+                        </Tag>
+                      )}
+
                       {kb.schema_version && (
                         <Tooltip title={`Fingerprint: ${kb.schema_version}`}>
                           <span
@@ -2463,6 +2739,19 @@ export default function DatabaseKnowledgePage() {
 
                   {/* Right Action Buttons */}
                   <div className="shrink-0 flex items-center gap-2.5 flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-semibold text-slate-500">Agent:</span>
+                      <Select
+                        allowClear
+                        placeholder="Bind AI Agent"
+                        value={selectedKb.agent_id || undefined}
+                        loading={agentBindSaving}
+                        onChange={(val) => handleBindAgentToKb(selectedKb.id, val || null)}
+                        style={{ width: 175 }}
+                        size="middle"
+                        options={agentsList.map((a) => ({ label: a.name, value: a.id }))}
+                      />
+                    </div>
                     <Button
                       type="primary"
                       icon={<TableOutlined />}
@@ -2586,6 +2875,8 @@ export default function DatabaseKnowledgePage() {
                     fetchMetricsAndHealth(selectedKb.id);
                   } else if (key === "audit" && selectedKb) {
                     fetchAuditLogs(selectedKb.id, 1, auditStatusFilter);
+                  } else if (key === "sync" && selectedKb) {
+                    fetchStructuredProfilesAndSync(selectedKb.id);
                   }
                 }}
                 style={{ marginTop: 4 }}
@@ -4568,6 +4859,223 @@ export default function DatabaseKnowledgePage() {
                       </Card>
                     ),
                   },
+                  {
+                    key: "sync",
+                    label: (
+                      <span style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 650, fontSize: 13 }}>
+                        <SyncOutlined style={{ color: activeTab === "sync" ? "#0d6e65" : "#94a3b8" }} />
+                        Live Sync & Profiles
+                      </span>
+                    ),
+                    children: (
+                      <div className="flex flex-col gap-4">
+                        <Card
+                          size="small"
+                          style={{ borderRadius: 12 }}
+                          title={
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="font-bold text-slate-800">Live Structured Record Sync & Reconciliation</span>
+                              <Space wrap>
+                                <Button
+                                  size="small"
+                                  icon={<SyncOutlined />}
+                                  loading={triggerSyncLoading === "incremental"}
+                                  onClick={() => handleTriggerRecordSync("incremental")}
+                                >
+                                  Incremental Sync
+                                </Button>
+                                <Button
+                                  size="small"
+                                  icon={<DatabaseOutlined />}
+                                  loading={triggerSyncLoading === "initial"}
+                                  onClick={() => handleTriggerRecordSync("initial")}
+                                >
+                                  Full Backfill
+                                </Button>
+                                <Button
+                                  size="small"
+                                  type="primary"
+                                  style={{ backgroundColor: "#0d6e65", borderColor: "#0d6e65" }}
+                                  loading={triggerSyncLoading === "reconcile"}
+                                  onClick={() => handleTriggerRecordSync("reconcile")}
+                                >
+                                  Snapshot Reconcile
+                                </Button>
+                              </Space>
+                            </div>
+                          }
+                        >
+                          {syncPanelLoading && !syncStatusData ? (
+                            <Spin />
+                          ) : (
+                            <div className="flex flex-col gap-4">
+                              {syncStatusData?.checkpoints && syncStatusData.checkpoints.length > 0 ? (
+                                <Table
+                                  size="small"
+                                  rowKey={(r) => `${r.schema_name}.${r.table_name}`}
+                                  pagination={false}
+                                  dataSource={syncStatusData.checkpoints}
+                                  columns={[
+                                    {
+                                      title: "Entity Table",
+                                      key: "table",
+                                      render: (_, r) => <Tag color="cyan">{`${r.schema_name}.${r.table_name}`}</Tag>,
+                                    },
+                                    {
+                                      title: "Status",
+                                      dataIndex: "active_status",
+                                      key: "active_status",
+                                      render: (st) => (
+                                        <Tag color={st === "IDLE" ? "green" : st === "ERROR" ? "red" : "blue"}>
+                                          {st || "IDLE"}
+                                        </Tag>
+                                      ),
+                                    },
+                                    {
+                                      title: "Lag (sec)",
+                                      dataIndex: "sync_lag_seconds",
+                                      key: "lag",
+                                      render: (v) => (v !== null && v !== undefined ? `${Number(v).toFixed(1)}s` : "—"),
+                                    },
+                                    {
+                                      title: "Last Cursor",
+                                      key: "cursor",
+                                      render: (_, r) => (
+                                        <span className="font-mono text-[11px] text-slate-600">
+                                          {r.watermark_ts ? `${r.watermark_ts} (${r.watermark_pk || ""})` : "Not synced yet"}
+                                        </span>
+                                      ),
+                                    },
+                                    {
+                                      title: "Last Reconciled",
+                                      dataIndex: "last_reconciliation_at",
+                                      key: "reconcile",
+                                      render: (v) => (v ? new Date(v).toLocaleString() : "Never"),
+                                    },
+                                  ]}
+                                />
+                              ) : (
+                                <Alert
+                                  type="info"
+                                  showIcon
+                                  title="No sync checkpoints yet. Configure an Entity Profile below and trigger a Full Backfill."
+                                />
+                              )}
+
+                              {syncStatusData?.recent_runs && syncStatusData.recent_runs.length > 0 && (
+                                <div>
+                                  <Text strong className="text-xs text-slate-600 block mb-2">Recent Sync Runs</Text>
+                                  <Table
+                                    size="small"
+                                    rowKey="id"
+                                    pagination={false}
+                                    dataSource={syncStatusData.recent_runs.slice(0, 8)}
+                                    columns={[
+                                      { title: "Mode", dataIndex: "mode", key: "mode", render: (v) => <Tag>{v}</Tag> },
+                                      {
+                                        title: "Status",
+                                        dataIndex: "status",
+                                        key: "status",
+                                        render: (v) => (
+                                          <Tag color={v === "SUCCESS" || v === "completed" || v === "success" ? "green" : v === "FAILED" || v === "failed" ? "red" : "blue"}>
+                                            {v}
+                                          </Tag>
+                                        ),
+                                      },
+                                      { title: "Scanned", dataIndex: "rows_scanned", key: "rows_scanned" },
+                                      { title: "Inserted", dataIndex: "rows_inserted", key: "rows_inserted" },
+                                      { title: "Updated", dataIndex: "rows_updated", key: "rows_updated" },
+                                      { title: "Embedded", dataIndex: "rows_reembedded", key: "rows_reembedded" },
+                                      { title: "Deleted", dataIndex: "rows_marked_deleted", key: "rows_marked_deleted" },
+                                    ]}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </Card>
+
+                        <Card
+                          size="small"
+                          style={{ borderRadius: 12 }}
+                          title={
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="font-bold text-slate-800">Configured Structured Entity Profiles</span>
+                              <Button
+                                size="small"
+                                type="primary"
+                                icon={<PlusOutlined />}
+                                style={{ backgroundColor: "#0d6e65", borderColor: "#0d6e65" }}
+                                onClick={() => setProfileModalOpen(true)}
+                              >
+                                Configure Entity Profile
+                              </Button>
+                            </div>
+                          }
+                        >
+                          {structuredProfiles.length > 0 ? (
+                            <Table
+                              size="small"
+                              rowKey={(p) => `${p.schema_name}.${p.table_name}`}
+                              pagination={false}
+                              dataSource={structuredProfiles}
+                              columns={[
+                                {
+                                  title: "Table",
+                                  key: "table",
+                                  render: (_, p) => <Tag color="teal">{`${p.schema_name}.${p.table_name}`}</Tag>,
+                                },
+                                {
+                                  title: "PK / Business Key",
+                                  key: "keys",
+                                  render: (_, p) => (
+                                    <span className="font-mono text-xs">
+                                      {p.primary_key} / {p.business_key || p.primary_key}
+                                    </span>
+                                  ),
+                                },
+                                {
+                                  title: "Status Col",
+                                  dataIndex: "status_column",
+                                  key: "status_column",
+                                  render: (v) => <span className="font-mono text-xs">{v || "—"}</span>,
+                                },
+                                {
+                                  title: "PII Blocked",
+                                  dataIndex: "pii_blocked_columns",
+                                  key: "pii",
+                                  render: (cols: string[] = []) => (
+                                    <span className="text-xs text-slate-600">{cols.length} protected</span>
+                                  ),
+                                },
+                                {
+                                  title: "Status Mapping",
+                                  key: "actions",
+                                  render: (_, p) => (
+                                    <Button
+                                      size="small"
+                                      icon={<EditOutlined />}
+                                      onClick={() => {
+                                        setStatusMapTargetSchema(p.schema_name || "public");
+                                        setStatusMapTargetTable(p.table_name);
+                                        setStatusMapVersion(p.status_mapping_version || "v1");
+                                        setStatusMapJson(JSON.stringify(p.status_mapping || {}, null, 2));
+                                        setStatusMapModalOpen(true);
+                                      }}
+                                    >
+                                      Status Mapping ({p.status_mapping_version || "v1"})
+                                    </Button>
+                                  ),
+                                },
+                              ]}
+                            />
+                          ) : (
+                            <Empty description="No Structured Entity Profile configured yet (click Configure Entity Profile for ticket or custom operational tables)." />
+                          )}
+                        </Card>
+                      </div>
+                    ),
+                  },
                 ]}
               />
             </>
@@ -4623,6 +5131,18 @@ export default function DatabaseKnowledgePage() {
               onChange={(e) => setFormDesc(e.target.value)}
               placeholder="Optional description of this relational database source"
               className="mt-1"
+            />
+          </div>
+
+          <div>
+            <Text strong>Bind to AI Agent (Optional)</Text>
+            <Select
+              allowClear
+              placeholder="Select an AI Agent to attach this database (recommended for hybrid RAG)"
+              value={formAgentId}
+              onChange={(val) => setFormAgentId(val)}
+              className="w-full mt-1"
+              options={agentsList.map((a) => ({ label: a.name, value: a.id }))}
             />
           </div>
 
@@ -6146,6 +6666,111 @@ export default function DatabaseKnowledgePage() {
           <Alert title="No trace telemetry available for this query." type="info" />
         )}
       </Drawer>
+
+      {/* Configure Structured Entity Profile Modal */}
+      <Modal
+        title="Configure Structured Entity Profile"
+        open={profileModalOpen}
+        onCancel={() => setProfileModalOpen(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setProfileModalOpen(false)}>Cancel</Button>,
+          <Button
+            key="save"
+            type="primary"
+            loading={profileSaving}
+            style={{ backgroundColor: "#0d6e65", borderColor: "#0d6e65" }}
+            onClick={handleSaveStructuredProfile}
+          >
+            Save Profile
+          </Button>,
+        ]}
+        width={640}
+      >
+        <div className="flex flex-col gap-3 pt-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Text strong className="text-xs">Schema Name</Text>
+              <Input value={profileSchemaName} onChange={(e) => setProfileSchemaName(e.target.value)} className="mt-1" />
+            </div>
+            <div>
+              <Text strong className="text-xs">Table Name</Text>
+              <Input value={profileTableName} onChange={(e) => setProfileTableName(e.target.value)} className="mt-1" />
+            </div>
+            <div>
+              <Text strong className="text-xs">Primary Key Column</Text>
+              <Input value={profilePrimaryKey} onChange={(e) => setProfilePrimaryKey(e.target.value)} className="mt-1" />
+            </div>
+            <div>
+              <Text strong className="text-xs">Business Key Column</Text>
+              <Input value={profileBusinessKey} onChange={(e) => setProfileBusinessKey(e.target.value)} className="mt-1" />
+            </div>
+            <div>
+              <Text strong className="text-xs">Status Column</Text>
+              <Input value={profileStatusCol} onChange={(e) => setProfileStatusCol(e.target.value)} className="mt-1" />
+            </div>
+            <div>
+              <Text strong className="text-xs">Subject Column</Text>
+              <Input value={profileSubjectCol} onChange={(e) => setProfileSubjectCol(e.target.value)} className="mt-1" />
+            </div>
+            <div>
+              <Text strong className="text-xs">Created At Column</Text>
+              <Input value={profileCreatedCol} onChange={(e) => setProfileCreatedCol(e.target.value)} className="mt-1" />
+            </div>
+            <div>
+              <Text strong className="text-xs">Updated At Column</Text>
+              <Input value={profileUpdatedCol} onChange={(e) => setProfileUpdatedCol(e.target.value)} className="mt-1" />
+            </div>
+          </div>
+          <div>
+            <Text strong className="text-xs">Description Columns (comma-separated)</Text>
+            <Input value={profileDescCols} onChange={(e) => setProfileDescCols(e.target.value)} className="mt-1" />
+          </div>
+          <div>
+            <Text strong className="text-xs">Resolution Columns (comma-separated)</Text>
+            <Input value={profileResCols} onChange={(e) => setProfileResCols(e.target.value)} className="mt-1" />
+          </div>
+          <div>
+            <Text strong className="text-xs">PII Blocked Columns (comma-separated)</Text>
+            <Input.TextArea rows={2} value={profilePiiCols} onChange={(e) => setProfilePiiCols(e.target.value)} className="mt-1" />
+          </div>
+        </div>
+      </Modal>
+
+      {/* Edit Status Mapping Modal */}
+      <Modal
+        title={`Status Code Mapping — ${statusMapTargetSchema}.${statusMapTargetTable}`}
+        open={statusMapModalOpen}
+        onCancel={() => setStatusMapModalOpen(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setStatusMapModalOpen(false)}>Cancel</Button>,
+          <Button
+            key="save"
+            type="primary"
+            loading={statusMapSaving}
+            style={{ backgroundColor: "#0d6e65", borderColor: "#0d6e65" }}
+            onClick={handleSaveStatusMapping}
+          >
+            Save & Recompute Local Mirror
+          </Button>,
+        ]}
+        width={620}
+      >
+        <div className="flex flex-col gap-3 pt-2">
+          <div>
+            <Text strong className="text-xs">Mapping Version</Text>
+            <Input value={statusMapVersion} onChange={(e) => setStatusMapVersion(e.target.value)} className="mt-1" />
+          </div>
+          <div>
+            <Text strong className="text-xs">Status Mapping JSON</Text>
+            <Input.TextArea
+              rows={10}
+              value={statusMapJson}
+              onChange={(e) => setStatusMapJson(e.target.value)}
+              className="mt-1 font-mono text-xs"
+            />
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
