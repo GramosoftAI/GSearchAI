@@ -328,7 +328,7 @@ export default function KnowledgeBaseFilesPage() {
 
     try {
       const token = getCookie("AUTH_TOKEN") || getCookie("token") || (typeof window !== "undefined" ? (localStorage.getItem("AUTH_TOKEN") || localStorage.getItem("token")) : "");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || "/api/v1"}/knowledge-bases/monitor/website/preview-diff"`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || "/api/v1"}/knowledge-bases/monitor/website/preview-diff`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
