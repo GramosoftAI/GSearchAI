@@ -328,7 +328,7 @@ export default function KnowledgeBaseFilesPage() {
 
     try {
       const token = getCookie("AUTH_TOKEN") || getCookie("token") || (typeof window !== "undefined" ? (localStorage.getItem("AUTH_TOKEN") || localStorage.getItem("token")) : "");
-      const res = await fetch("http://localhost:8001/api/v1/knowledge-bases/monitor/website/preview-diff", {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || "/api/v1"}/knowledge-bases/monitor/website/preview-diff"`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -361,7 +361,7 @@ export default function KnowledgeBaseFilesPage() {
       const agentId = activeSyncItem?.agent_id || activeSyncItem?.agent?.id;
       const kbId = activeSyncItem?.id;
       
-      const res = await fetch(`http://localhost:8001/api/v1/agents/${agentId}/sources/url/select`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || "/api/v1"}/agents/${agentId}/sources/url/select`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
