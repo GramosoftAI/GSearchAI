@@ -265,7 +265,7 @@ export default function OutlookFolderModal({
         onCancel={onClose}
         footer={null}
         width={700}
-        destroyOnClose
+        destroyOnHidden
         className="ol-modal"
         title={null}
         closable

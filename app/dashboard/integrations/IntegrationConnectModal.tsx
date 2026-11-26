@@ -192,7 +192,7 @@ export default function IntegrationConnectModal({
     } catch (err) {
       console.error("Failed to load integrations data", err);
       notification.error({
-        message: "Failed to load agents",
+        title: "Failed to load agents",
         description: "An error occurred while loading agents details.",
       });
     } finally {
@@ -236,7 +236,7 @@ export default function IntegrationConnectModal({
           localStorage.setItem(`mock_connections_${agentId}`, JSON.stringify(updated));
 
           notification.success({
-            message: "Disconnected",
+            title: "Disconnected",
             description: `${providerLabel} has been disconnected from "${agentName}".`,
           });
 
@@ -248,7 +248,7 @@ export default function IntegrationConnectModal({
         } catch (err) {
           console.error("Disconnect error:", err);
           notification.error({
-            message: "Disconnect Failed",
+            title: "Disconnect Failed",
             description: "An error occurred during disconnection.",
           });
         }
@@ -275,7 +275,7 @@ export default function IntegrationConnectModal({
 
     if (!kbId) {
       notification.error({
-        message: "Knowledge Base Error",
+        title: "Knowledge Base Error",
         description: `Knowledge Base for agent "${selectedAgent.name}" could not be created or fetched.`,
       });
       return;
@@ -294,7 +294,7 @@ export default function IntegrationConnectModal({
       onCancel={onClose}
       footer={null}
       width={580}
-      destroyOnClose
+      destroyOnHidden
       title={null}
       closable
       className="custom-integration-modal"

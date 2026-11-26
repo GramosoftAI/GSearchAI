@@ -605,6 +605,7 @@ export default function ChannelsSection() {
           setGoogleModal(false);
         }}
         session={session?.user?.email}
+        accessToken={session?.accessToken}
         
       />
       
@@ -617,7 +618,6 @@ export default function ChannelsSection() {
           setSharePointModal(false);
         }}
         session={session?.user?.email}
-        
       />
 
       <OneDriveFolderModal
@@ -629,7 +629,6 @@ export default function ChannelsSection() {
           setOneDriveModal(false);
         }}
         session={session?.user?.email}
-        
       />
 
 

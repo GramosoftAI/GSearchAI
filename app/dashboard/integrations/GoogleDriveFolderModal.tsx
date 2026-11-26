@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Modal, Button, Spin, Input, message, notification } from "antd";
+import { Modal, Button, Spin, Input, App } from "antd";
 import { toast } from "react-hot-toast";
 import {
   FolderOpenOutlined,
@@ -20,7 +20,8 @@ interface Props {
   token: string;
   onClose: () => void;
   onSuccess?: () => void;
-  session : string
+  session : string;
+  accessToken?: string;
 }
 
 interface DriveItem {
@@ -36,8 +37,10 @@ export default function GoogleDriveFolderModal({
   token,
   onClose,
   onSuccess,
-  session
+  session,
+  accessToken
 }: Props) {
+  const { message, notification } = App.useApp();
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<DriveItem[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
@@ -237,7 +240,7 @@ export default function GoogleDriveFolderModal({
     const notifKey = `sync_${jobId}`;
     notification.open({
       key: notifKey,
-      message: "Syncing Google Drive",
+      title: "Syncing Google Drive",
       description: "Processing your files in the background. You can continue using the dashboard.",
       icon: <LoadingOutlined style={{ color: "#1890ff" }} spin />,
       duration: 0,
@@ -266,7 +269,7 @@ export default function GoogleDriveFolderModal({
           if (result && result.success === false) {
             notification.error({
               key: notifKey,
-              message: "Google Drive Sync Failed",
+              title: "Google Drive Sync Failed",
               description: result.error || "An error occurred during synchronization.",
               duration: 6,
               placement: "topRight",
@@ -275,7 +278,7 @@ export default function GoogleDriveFolderModal({
             const filesCount = result?.files_synced;
             notification.success({
               key: notifKey,
-              message: "Google Drive Sync Completed",
+              title: "Google Drive Sync Completed",
               description: filesCount !== undefined ? `Successfully synced ${filesCount} file(s).` : "Files synchronized successfully with Knowledge Base!",
               duration: 5,
               placement: "topRight",
@@ -286,7 +289,7 @@ export default function GoogleDriveFolderModal({
           clearInterval(interval);
           notification.error({
             key: notifKey,
-            message: "Google Drive Sync Failed",
+            title: "Google Drive Sync Failed",
             description: "The background sync job failed. Please try again.",
             duration: 6,
             placement: "topRight",
@@ -296,6 +299,95 @@ export default function GoogleDriveFolderModal({
         console.error("Job poll error:", pollErr);
       }
     }, 2500);
+  };
+
+
+  const openGooglePicker = () => {
+    const oauthToken = accessToken;
+    if (!oauthToken) {
+      message.warning("OAuth Access Token not found. Please reconnect Google Drive.");
+      return;
+    }
+
+    const loadPicker = () => {
+      // @ts-ignore
+      if (!window.google || !window.google.picker) {
+        // @ts-ignore
+        if (window.gapi) {
+          // @ts-ignore
+          window.gapi.load("picker", () => showPicker(oauthToken));
+        } else {
+          const script = document.createElement("script");
+          script.src = "https://apis.google.com/js/api.js";
+          script.onload = () => {
+            // @ts-ignore
+            window.gapi.load("picker", () => showPicker(oauthToken));
+          };
+          document.body.appendChild(script);
+        }
+      } else {
+        showPicker(oauthToken);
+      }
+    };
+
+    const showPicker = (tokenStr: string) => {
+      try {
+        // @ts-ignore
+        const google = window.google;
+        const view = new google.picker.DocsView(google.picker.ViewId.DOCS);
+        view.setMimeTypes(
+          "application/pdf,application/vnd.google-apps.document,application/vnd.google-apps.spreadsheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,text/plain"
+        );
+
+        const picker = new google.picker.PickerBuilder()
+          .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+          .setOAuthToken(tokenStr)
+          .addView(view)
+          .addView(new google.picker.DocsView(google.picker.ViewId.FOLDERS))
+          .setCallback(async (data: any) => {
+            if (data.action === google.picker.Action.PICKED) {
+              const pickedDocs = data.docs || [];
+              const pickedFileIds: string[] = [];
+              const pickedFolderIds: string[] = [];
+              const newItems: DriveItem[] = [];
+
+              pickedDocs.forEach((doc: any) => {
+                const isFolder = doc.type === "folder" || doc.mimeType === "application/vnd.google-apps.folder";
+                if (isFolder) {
+                  pickedFolderIds.push(doc.id);
+                } else {
+                  pickedFileIds.push(doc.id);
+                }
+                newItems.push({
+                  id: doc.id,
+                  name: doc.name,
+                  isFolder: isFolder,
+                });
+              });
+
+              // Add to items list if not already present
+              setItems((prev) => {
+                const existingIds = new Set(prev.map((i) => i.id));
+                const additions = newItems.filter((i) => !existingIds.has(i.id));
+                return [...prev, ...additions];
+              });
+
+              // Mark picked items as selected
+              setSelectedFiles((prev) => [...new Set([...prev, ...pickedFileIds])]);
+              setSelectedFolders((prev) => [...new Set([...prev, ...pickedFolderIds])]);
+
+              toast.success(`Selected ${pickedDocs.length} item(s) from Google Drive!`);
+            }
+          })
+          .build();
+        picker.setVisible(true);
+      } catch (err: any) {
+        console.error("Picker initialization error:", err);
+        message.error("Failed to launch Google Picker");
+      }
+    };
+
+    loadPicker();
   };
 
   const handleSync = async () => {
@@ -743,7 +835,7 @@ export default function GoogleDriveFolderModal({
         onCancel={onClose}
         footer={null}
         width={780}
-        destroyOnClose
+        destroyOnHidden
         className="gd-modal"
         title={null}
         closable
@@ -763,14 +855,30 @@ export default function GoogleDriveFolderModal({
           </div>
         </div>
 
-        <div className="gd-search-bar">
+        <div className="gd-search-bar" style={{ display: "flex", gap: "10px", alignItems: "center" }}>
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search in Drive"
             prefix={<SearchOutlined style={{ color: "#9aa0a6" }} />}
             allowClear
+            style={{ flex: 1 }}
           />
+          <Button
+            type="primary"
+            onClick={openGooglePicker}
+            style={{
+              background: "#1a73e8",
+              borderRadius: "6px",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              fontWeight: 500,
+            }}
+          >
+            <CloudSyncOutlined />
+            Browse / Pick Files
+          </Button>
         </div>
 
         <div className="gd-breadcrumb">
@@ -815,8 +923,24 @@ export default function GoogleDriveFolderModal({
             <div className="gd-empty">
               <FolderOpenOutlined style={{ fontSize: 48 }} />
               <span style={{ fontSize: 14 }}>
-                {search ? "No matching files" : "This folder is empty"}
+                {search ? "No matching files" : "No files selected yet from Drive"}
               </span>
+              <Button
+                type="primary"
+                onClick={openGooglePicker}
+                style={{
+                  background: "#1a73e8",
+                  borderRadius: "6px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  fontWeight: 500,
+                  marginTop: "8px",
+                }}
+              >
+                <CloudSyncOutlined />
+                Select Files from Google Drive
+              </Button>
             </div>
           ) : (
             [...filteredItems]

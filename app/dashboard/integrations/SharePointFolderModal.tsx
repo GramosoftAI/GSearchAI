@@ -533,7 +533,7 @@ export default function SharePointFolderModal({
         onCancel={onClose}
         footer={null}
         width={780}
-        destroyOnClose
+        destroyOnHidden
         className="gd-modal"
         title={null}
         closable

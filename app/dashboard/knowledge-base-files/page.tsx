@@ -732,7 +732,7 @@ export default function KnowledgeBaseFilesPage() {
                 <DatePicker.RangePicker
                   size="large"
                   className="w-full"
-                  popupClassName="single-month-rangepicker"
+                  classNames={{ popup: { root: "single-month-rangepicker" } }}
                   value={dateRange ? [dayjs(dateRange[0]), dayjs(dateRange[1])] : null}
                   onChange={handleDateRangeChange}
                   format="YYYY-MM-DD"

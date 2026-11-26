@@ -3443,7 +3443,7 @@ export default function ChatPlaygroundPage() {
                       },
                       style: { maxHeight: "250px", overflowY: "auto" }
                     }}
-                    dropdownRender={(menu) => (
+                    popupRender={(menu) => (
                       <div className="bg-[var(--app-surface)] border border-[var(--app-border)] rounded-xl shadow-lg p-2 min-w-[200px]">
                         {(botsCache || []).length > 5 && (
                           <Input
