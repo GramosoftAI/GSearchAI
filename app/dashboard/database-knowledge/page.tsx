@@ -32,6 +32,7 @@ import {
   Segmented,
   Checkbox,
   Switch,
+  Pagination,
 } from "antd";
 import {
   DatabaseOutlined,
@@ -150,6 +151,72 @@ interface SyncStatusResponse {
   kb_id: string;
   checkpoints: SyncCheckpointSummary[];
   recent_runs: SyncRunSummary[];
+}
+
+interface SourceTableEntry {
+  schema_name: string;
+  table_name: string;
+  table_type: string;
+  column_count: number;
+  primary_key_columns: string[];
+  columns: Array<{ name: string; data_type: string; is_primary_key: boolean }>;
+}
+
+interface DuckDBTableSummary {
+  id: string;
+  tenant_id: string;
+  agent_id: string;
+  db_knowledgebase_id: string;
+  schema_name: string;
+  table_name: string;
+  duckdb_table_name: string;
+  primary_key_columns: string[];
+  column_schema: Array<{
+    name: string;
+    source_type?: string;
+    duckdb_type?: string;
+    type?: string;
+    nullable?: boolean;
+    is_primary_key?: boolean;
+  }>;
+  row_count: number;
+  sync_enabled: boolean;
+  sync_status: string;
+  last_loaded_at?: string | null;
+  last_synced_at?: string | null;
+  last_sync_inserted: number;
+  last_sync_updated: number;
+  last_sync_deleted: number;
+  last_error?: string | null;
+}
+
+interface DuckDBPreviewPayload {
+  id: string;
+  agent_id: string;
+  schema_name: string;
+  table_name: string;
+  primary_key_columns: string[];
+  column_schema: Array<{
+    name: string;
+    source_type?: string;
+    duckdb_type?: string;
+    type?: string;
+    nullable?: boolean;
+    is_primary_key?: boolean;
+  }>;
+  columns: Array<{ name: string; type: string; nullable: boolean }>;
+  total_rows: number;
+  sample_rows: Record<string, any>[];
+  limit: number;
+  offset: number;
+  sync_enabled: boolean;
+  sync_status: string;
+  last_loaded_at?: string | null;
+  last_synced_at?: string | null;
+  last_sync_inserted: number;
+  last_sync_updated: number;
+  last_sync_deleted: number;
+  last_error?: string | null;
 }
 
 interface TableColumn {
@@ -418,6 +485,7 @@ export default function DatabaseKnowledgePage() {
   const [formUser, setFormUser] = useState("e.g. db_user, read_only_user.");
   const [formPassword, setFormPassword] = useState("Enter database user password");
   const [formSsl, setFormSsl] = useState("disable");
+  const [formTimeout, setFormTimeout] = useState<number>(30);
 
   // Schema Explorer state
   const [schemaModalOpen, setSchemaModalOpen] = useState(false);
@@ -1032,6 +1100,201 @@ export default function DatabaseKnowledgePage() {
   const [auditLoading, setAuditLoading] = useState(false);
   const [inspectedTrace, setInspectedTrace] = useState<any>(null);
 
+  // DuckDB Agent-Isolated Table Knowledgebase State
+  const [sourceTables, setSourceTables] = useState<SourceTableEntry[]>([]);
+  const [selectedSourceTableKey, setSelectedSourceTableKey] = useState<string | undefined>(undefined);
+  const [duckdbTargetAgentId, setDuckdbTargetAgentId] = useState<string | undefined>(undefined);
+  const [duckdbInitialSyncEnabled, setDuckdbInitialSyncEnabled] = useState<boolean>(false);
+  const [duckdbTables, setDuckdbTables] = useState<DuckDBTableSummary[]>([]);
+  const [duckdbLoading, setDuckdbLoading] = useState<boolean>(false);
+  const [duckdbLoadBusy, setDuckdbLoadBusy] = useState<boolean>(false);
+  const [duckdbSyncBusyId, setDuckdbSyncBusyId] = useState<string | null>(null);
+  const [duckdbPreview, setDuckdbPreview] = useState<DuckDBPreviewPayload | null>(null);
+  const [duckdbPreviewLoading, setDuckdbPreviewLoading] = useState<boolean>(false);
+  const [duckdbPreviewOffset, setDuckdbPreviewOffset] = useState<number>(0);
+  const [duckdbPreviewLimit, setDuckdbPreviewLimit] = useState<number>(25);
+  const [duckdbColumnSearch, setDuckdbColumnSearch] = useState<string>("");
+
+  const fetchSourceTablesAndDuckDB = async (kbId: string) => {
+    setDuckdbLoading(true);
+    try {
+      const [tRes, dRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/database-knowledgebases/${kbId}/tables`, { headers: getAuthHeaders() }),
+        fetch(`${API_BASE_URL}/database-knowledgebases/${kbId}/duckdb-tables`, { headers: getAuthHeaders() }),
+      ]);
+      if (tRes.ok) {
+        const tJson = await tRes.json();
+        const list: SourceTableEntry[] = Array.isArray(tJson?.tables) ? tJson.tables : [];
+        setSourceTables(list);
+        if (list.length > 0 && !selectedSourceTableKey) {
+          const ticketTbl = list.find((t) => t.table_name.toLowerCase().includes("ticket"));
+          const chosen = ticketTbl || list[0];
+          setSelectedSourceTableKey(`${chosen.schema_name}.${chosen.table_name}`);
+        }
+      }
+      if (dRes.ok) {
+        const dJson = await dRes.json();
+        const loaded: DuckDBTableSummary[] = Array.isArray(dJson?.tables) ? dJson.tables : [];
+        setDuckdbTables(loaded);
+        if (loaded.length > 0) {
+          await handlePreviewDuckDBTable(kbId, loaded[0].id, 0, duckdbPreviewLimit);
+        } else {
+          setDuckdbPreview(null);
+        }
+      }
+    } catch (err) {
+      console.error("Failed loading source tables / DuckDB state:", err);
+    } finally {
+      setDuckdbLoading(false);
+    }
+  };
+
+  const handlePreviewDuckDBTable = async (kbId: string, tableId: string, offset = 0, limit = duckdbPreviewLimit) => {
+    setDuckdbPreviewLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/database-knowledgebases/${kbId}/duckdb-tables/${tableId}/preview?limit=${limit}&offset=${offset}`,
+        { headers: getAuthHeaders() }
+      );
+      if (res.ok) {
+        const json = await res.json();
+        setDuckdbPreview(json);
+        setDuckdbPreviewOffset(offset);
+        setDuckdbPreviewLimit(limit);
+      }
+    } catch (err) {
+      console.error("Failed loading DuckDB preview:", err);
+    } finally {
+      setDuckdbPreviewLoading(false);
+    }
+  };
+
+  const handleLoadTableToDuckDB = async () => {
+    if (!selectedKb) return;
+    const effectiveAgentId = duckdbTargetAgentId || selectedKb.agent_id;
+    if (!effectiveAgentId) {
+      toast.error("Please select a Target AI Agent to isolate this DuckDB knowledgebase.");
+      return;
+    }
+    if (!selectedSourceTableKey) {
+      toast.error("Please select a database table to load into DuckDB.");
+      return;
+    }
+    const [schemaName, ...rest] = selectedSourceTableKey.split(".");
+    const tableName = rest.join(".") || schemaName;
+    const resolvedSchema = rest.length > 0 ? schemaName : "public";
+
+    setDuckdbLoadBusy(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/duckdb-tables/load`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          agent_id: effectiveAgentId,
+          schema_name: resolvedSchema,
+          table_name: tableName,
+          sync_enabled: duckdbInitialSyncEnabled,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.success) {
+        toast.success(`Loaded ${json.table?.row_count ?? 0} rows of ${resolvedSchema}.${tableName} into DuckDB!`);
+        if (json.preview) {
+          setDuckdbPreview(json.preview);
+          setDuckdbPreviewOffset(0);
+        }
+        await fetchSourceTablesAndDuckDB(selectedKb.id);
+      } else {
+        toast.error(json.detail || "Failed to load table into DuckDB.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Error loading table into DuckDB.");
+    } finally {
+      setDuckdbLoadBusy(false);
+    }
+  };
+
+  const handleToggleDuckDBSync = async (tableId: string, nextEnabled: boolean) => {
+    if (!selectedKb) return;
+    setDuckdbSyncBusyId(tableId);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/duckdb-tables/${tableId}/sync-config`,
+        {
+          method: "PUT",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ sync_enabled: nextEnabled }),
+        }
+      );
+      if (res.ok) {
+        toast.success(nextEnabled ? "Incremental sync enabled." : "Incremental sync disabled.");
+        await fetchSourceTablesAndDuckDB(selectedKb.id);
+      } else {
+        toast.error("Failed to update sync setting.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed updating sync setting.");
+    } finally {
+      setDuckdbSyncBusyId(null);
+    }
+  };
+
+  const handleSyncDuckDBNow = async (tableId: string) => {
+    if (!selectedKb) return;
+    setDuckdbSyncBusyId(tableId);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/duckdb-tables/${tableId}/sync`,
+        {
+          method: "POST",
+          headers: getAuthHeaders(),
+        }
+      );
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.success) {
+        const t = json.table || {};
+        toast.success(
+          `Synced! +${t.last_sync_inserted ?? 0} inserted, ~${t.last_sync_updated ?? 0} updated, -${t.last_sync_deleted ?? 0} deleted.`
+        );
+        if (json.preview) {
+          setDuckdbPreview(json.preview);
+        }
+        await fetchSourceTablesAndDuckDB(selectedKb.id);
+      } else {
+        toast.error(json.detail || "Failed syncing DuckDB table.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed syncing DuckDB table.");
+    } finally {
+      setDuckdbSyncBusyId(null);
+    }
+  };
+
+  const handleDeleteDuckDBTable = async (tableId: string) => {
+    if (!selectedKb) return;
+    setDuckdbSyncBusyId(tableId);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/duckdb-tables/${tableId}`,
+        {
+          method: "DELETE",
+          headers: getAuthHeaders(),
+        }
+      );
+      if (res.ok) {
+        toast.success("Removed DuckDB table snapshot.");
+        if (duckdbPreview?.id === tableId) {
+          setDuckdbPreview(null);
+        }
+        await fetchSourceTablesAndDuckDB(selectedKb.id);
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Delete failed.");
+    } finally {
+      setDuckdbSyncBusyId(null);
+    }
+  };
+
   const fetchAgentsList = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/agents?limit=100&offset=0`, {
@@ -1295,6 +1558,9 @@ export default function DatabaseKnowledgePage() {
       fetchMetricsAndHealth(selectedKb.id);
       fetchAuditLogs(selectedKb.id, 1, auditStatusFilter);
       fetchStructuredProfilesAndSync(selectedKb.id);
+      setDuckdbTargetAgentId(selectedKb.agent_id || undefined);
+      setSelectedSourceTableKey(undefined);
+      fetchSourceTablesAndDuckDB(selectedKb.id);
     }
     if (selectedKb?.id) {
       fetch(`${API_BASE_URL}/database-knowledgebases/${selectedKb.id}/schema`, {
@@ -1338,6 +1604,7 @@ export default function DatabaseKnowledgePage() {
           username: formUser,
           password: formPassword,
           ssl_mode: formSsl,
+          connection_timeout: formTimeout,
         }),
       });
       const data = await res.json();
@@ -1385,6 +1652,7 @@ export default function DatabaseKnowledgePage() {
             username: formUser,
             password: formPassword,
             ssl_mode: formSsl,
+            connection_timeout: formTimeout,
           },
         }),
       });
@@ -2877,6 +3145,8 @@ export default function DatabaseKnowledgePage() {
                     fetchAuditLogs(selectedKb.id, 1, auditStatusFilter);
                   } else if (key === "sync" && selectedKb) {
                     fetchStructuredProfilesAndSync(selectedKb.id);
+                  } else if (key === "duckdb" && selectedKb) {
+                    fetchSourceTablesAndDuckDB(selectedKb.id);
                   }
                 }}
                 style={{ marginTop: 4 }}
@@ -5076,6 +5346,350 @@ export default function DatabaseKnowledgePage() {
                       </div>
                     ),
                   },
+                  {
+                    key: "duckdb",
+                    label: (
+                      <span style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 650, fontSize: 13 }}>
+                        <TableOutlined style={{ color: activeTab === "duckdb" ? "#0d6e65" : "#94a3b8" }} />
+                        DuckDB Table Knowledgebase ({duckdbTables.length})
+                      </span>
+                    ),
+                    children: (
+                      <div className="flex flex-col gap-4">
+                        <Card
+                          size="small"
+                          style={{ borderRadius: 12 }}
+                          title={<span className="font-bold text-slate-800">1. Select Table & Load Full Dataset into Agent DuckDB Store</span>}
+                        >
+                          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                            <div className="md:col-span-4">
+                              <Text strong className="text-xs block mb-1">Target AI Agent (Exclusive Isolation)</Text>
+                              <Select
+                                allowClear
+                                showSearch
+                                optionFilterProp="label"
+                                placeholder="Select Agent owning this table"
+                                value={duckdbTargetAgentId}
+                                onChange={(val) => setDuckdbTargetAgentId(val)}
+                                className="w-full"
+                                options={agentsList.map((a) => ({ label: a.name, value: a.id }))}
+                              />
+                            </div>
+                            <div className="md:col-span-5">
+                              <Text strong className="text-xs block mb-1">
+                                Source Table ({sourceTables.length} discovered)
+                              </Text>
+                              <Select
+                                showSearch
+                                optionFilterProp="label"
+                                placeholder="Search & pick table (e.g. sftb_ticket)"
+                                value={selectedSourceTableKey}
+                                onChange={(val) => setSelectedSourceTableKey(val)}
+                                className="w-full"
+                                loading={duckdbLoading}
+                                options={sourceTables.map((t) => ({
+                                  label: `${t.schema_name}.${t.table_name} (${t.column_count} cols${t.primary_key_columns.length ? ` • PK: ${t.primary_key_columns.join(",")}` : ""})`,
+                                  value: `${t.schema_name}.${t.table_name}`,
+                                }))}
+                              />
+                            </div>
+                            <div className="md:col-span-3 flex items-center justify-between gap-2">
+                              <div className="flex flex-col">
+                                <span className="text-[11px] font-semibold text-slate-600">Enable Sync</span>
+                                <Switch
+                                  size="small"
+                                  checked={duckdbInitialSyncEnabled}
+                                  onChange={(v) => setDuckdbInitialSyncEnabled(v)}
+                                />
+                              </div>
+                              <Button
+                                type="primary"
+                                loading={duckdbLoadBusy}
+                                icon={<DatabaseOutlined />}
+                                style={{ backgroundColor: "#0d6e65", borderColor: "#0d6e65", fontWeight: 700 }}
+                                onClick={handleLoadTableToDuckDB}
+                              >
+                                Load Full Table
+                              </Button>
+                            </div>
+                          </div>
+                        </Card>
+
+                        <Card
+                          size="small"
+                          style={{ borderRadius: 12 }}
+                          title={
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-slate-800">2. Agent-Isolated DuckDB Tables & Optional Sync</span>
+                              <Button size="small" icon={<SyncOutlined />} onClick={() => selectedKb && fetchSourceTablesAndDuckDB(selectedKb.id)}>
+                                Refresh
+                              </Button>
+                            </div>
+                          }
+                        >
+                          {duckdbTables.length > 0 ? (
+                            <Table
+                              size="small"
+                              rowKey="id"
+                              pagination={false}
+                              dataSource={duckdbTables}
+                              scroll={{ x: "max-content" }}
+                              columns={[
+                                {
+                                  title: "Source Table",
+                                  key: "table",
+                                  render: (_, r) => <Tag color="teal">{`${r.schema_name}.${r.table_name}`}</Tag>,
+                                },
+                                {
+                                  title: "Exclusive Agent",
+                                  dataIndex: "agent_id",
+                                  key: "agent_id",
+                                  render: (aid) => (
+                                    <Tag color="geekblue">{agentsList.find((a) => a.id === aid)?.name || aid}</Tag>
+                                  ),
+                                },
+                                {
+                                  title: "Rows / Cols",
+                                  key: "counts",
+                                  render: (_, r) => (
+                                    <span className="font-mono text-xs font-semibold">
+                                      {r.row_count.toLocaleString()} rows • {(r.column_schema || []).length} cols
+                                    </span>
+                                  ),
+                                },
+                                {
+                                  title: "Sync Status",
+                                  dataIndex: "sync_status",
+                                  key: "sync_status",
+                                  render: (st, r) => (
+                                    <div className="flex flex-col gap-0.5">
+                                      <Tag color={st === "synced" ? "green" : st === "error" ? "red" : "blue"}>
+                                        {st?.toUpperCase()}
+                                      </Tag>
+                                      {r.last_error && (
+                                        <span className="text-[10px] text-red-500 max-w-[160px] truncate" title={r.last_error}>
+                                          {r.last_error}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ),
+                                },
+                                {
+                                  title: "Last Sync / Delta",
+                                  key: "sync_meta",
+                                  render: (_, r) => (
+                                    <div className="text-[11px] text-slate-600">
+                                      <div>
+                                        {r.last_synced_at
+                                          ? `Synced: ${new Date(r.last_synced_at).toLocaleString()}`
+                                          : r.last_loaded_at
+                                            ? `Loaded: ${new Date(r.last_loaded_at).toLocaleString()}`
+                                            : "—"}
+                                      </div>
+                                      <div className="font-mono text-[10px] text-slate-500">
+                                        +{r.last_sync_inserted} / ~{r.last_sync_updated} / -{r.last_sync_deleted}
+                                      </div>
+                                    </div>
+                                  ),
+                                },
+                                {
+                                  title: "Enable Sync",
+                                  key: "sync_enabled",
+                                  render: (_, r) => (
+                                    <Switch
+                                      size="small"
+                                      checked={Boolean(r.sync_enabled)}
+                                      loading={duckdbSyncBusyId === r.id}
+                                      onChange={(chk) => handleToggleDuckDBSync(r.id, chk)}
+                                    />
+                                  ),
+                                },
+                                {
+                                  title: "Actions",
+                                  key: "actions",
+                                  render: (_, r) => (
+                                    <Space size="small">
+                                      <Button
+                                        size="small"
+                                        icon={<EyeOutlined />}
+                                        onClick={() => selectedKb && handlePreviewDuckDBTable(selectedKb.id, r.id, 0)}
+                                      >
+                                        Preview
+                                      </Button>
+                                      <Button
+                                        size="small"
+                                        type="primary"
+                                        style={{ backgroundColor: "#0d6e65", borderColor: "#0d6e65" }}
+                                        icon={<SyncOutlined spin={duckdbSyncBusyId === r.id} />}
+                                        loading={duckdbSyncBusyId === r.id}
+                                        onClick={() => handleSyncDuckDBNow(r.id)}
+                                      >
+                                        Sync Now
+                                      </Button>
+                                      <Popconfirm
+                                        title="Delete this DuckDB table snapshot?"
+                                        onConfirm={() => handleDeleteDuckDBTable(r.id)}
+                                      >
+                                        <Button size="small" danger icon={<DeleteOutlined />} />
+                                      </Popconfirm>
+                                    </Space>
+                                  ),
+                                },
+                              ]}
+                            />
+                          ) : (
+                            <Empty description="No tables loaded into DuckDB yet. Pick an Agent and a Source Table above to load full table data." />
+                          )}
+                        </Card>
+
+                        {duckdbPreview && (() => {
+                          const priorityColSet = new Set(["action_taken_resolution", "subject", "description", "description_plain_text", "ticket_num", "ticket_code"]);
+                          const colSearchQ = duckdbColumnSearch.trim().toLowerCase();
+                          const filteredCols = colSearchQ
+                            ? duckdbPreview.columns.filter(
+                                (c) =>
+                                  c.name.toLowerCase().includes(colSearchQ) ||
+                                  c.type.toLowerCase().includes(colSearchQ)
+                              )
+                            : duckdbPreview.columns;
+                          const currentPage = Math.floor(duckdbPreviewOffset / duckdbPreviewLimit) + 1;
+
+                          return (
+                            <Card
+                              size="small"
+                              style={{ borderRadius: 12 }}
+                              title={
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="font-bold text-slate-800">
+                                    3. DuckDB Complete Data Preview — {duckdbPreview.schema_name}.{duckdbPreview.table_name} ({duckdbPreview.total_rows.toLocaleString()} total records, {duckdbPreview.columns.length} columns)
+                                  </span>
+                                  <Space wrap>
+                                    <Tag color="geekblue">
+                                      Agent: {agentsList.find((a) => a.id === duckdbPreview.agent_id)?.name || duckdbPreview.agent_id}
+                                    </Tag>
+                                    <Tag color={duckdbPreview.sync_enabled ? "green" : "default"}>
+                                      {duckdbPreview.sync_enabled ? "SYNC ENABLED" : "MANUAL SNAPSHOT"}
+                                    </Tag>
+                                  </Space>
+                                </div>
+                              }
+                            >
+                              {duckdbPreviewLoading ? (
+                                <Spin />
+                              ) : (
+                                <div className="flex flex-col gap-4">
+                                  {/* Column Search + Filter Bar */}
+                                  <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <Input
+                                      prefix={<SearchOutlined style={{ color: "#94a3b8" }} />}
+                                      allowClear
+                                      placeholder="Search columns by name or type (e.g. action_taken_resolution, subject, description, ticket_num)..."
+                                      value={duckdbColumnSearch}
+                                      onChange={(e) => setDuckdbColumnSearch(e.target.value)}
+                                      style={{ maxWidth: 480 }}
+                                    />
+                                    <span className="text-xs font-semibold text-slate-600">
+                                      Showing {filteredCols.length} of {duckdbPreview.columns.length} columns
+                                    </span>
+                                  </div>
+
+                                  <div>
+                                    <Text strong className="text-xs text-slate-600 block mb-2">
+                                      Loaded Schema & Data Types (Critical ticket fields highlighted in teal)
+                                    </Text>
+                                    <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-2 rounded-lg bg-slate-50 border border-slate-200">
+                                      {filteredCols.map((c) => {
+                                        const isPriority = priorityColSet.has(c.name.toLowerCase());
+                                        return (
+                                          <Tag
+                                            key={c.name}
+                                            color={isPriority ? "teal" : "cyan"}
+                                            style={{
+                                              fontSize: 11,
+                                              fontFamily: "ui-monospace, monospace",
+                                              fontWeight: isPriority ? 700 : 500,
+                                            }}
+                                          >
+                                            {isPriority ? "★ " : ""}
+                                            {c.name}: <b>{c.type}</b>
+                                          </Tag>
+                                        );
+                                      })}
+                                      {filteredCols.length === 0 && (
+                                        <span className="text-xs text-slate-400 italic">No columns match &quot;{duckdbColumnSearch}&quot;</span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                      <Text strong className="text-xs text-slate-600">
+                                        Records ({duckdbPreview.total_rows === 0 ? 0 : duckdbPreview.offset + 1}–{Math.min(duckdbPreview.offset + duckdbPreview.sample_rows.length, duckdbPreview.total_rows)} of {duckdbPreview.total_rows.toLocaleString()} total records)
+                                      </Text>
+                                      <Pagination
+                                        size="small"
+                                        current={currentPage}
+                                        pageSize={duckdbPreviewLimit}
+                                        total={duckdbPreview.total_rows}
+                                        showSizeChanger
+                                        pageSizeOptions={["10", "25", "50", "100"]}
+                                        showTotal={(tot, range) => `${range[0]}-${range[1]} of ${tot}`}
+                                        onChange={(page, pageSize) => {
+                                          if (!selectedKb) return;
+                                          const newLimit = pageSize || duckdbPreviewLimit;
+                                          const nextPage = newLimit !== duckdbPreviewLimit ? 1 : page;
+                                          const nextOffset = (nextPage - 1) * newLimit;
+                                          handlePreviewDuckDBTable(selectedKb.id, duckdbPreview.id, nextOffset, newLimit);
+                                        }}
+                                      />
+                                    </div>
+
+                                    <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-[480px]">
+                                      <Table
+                                        size="small"
+                                        pagination={false}
+                                        rowKey={(rec) => String((rec as Record<string, unknown>).__previewRowKey)}
+                                        dataSource={duckdbPreview.sample_rows.map((r, i) => ({
+                                          ...r,
+                                          __previewRowKey: `${duckdbPreview.offset + i}:${String(r.id ?? r.ticket_num ?? "")}`,
+                                        }))}
+                                        scroll={{ x: "max-content" }}
+                                        columns={filteredCols.map((c) => {
+                                          const isPriority = priorityColSet.has(c.name.toLowerCase());
+                                          return {
+                                            title: (
+                                              <div className="text-[11px] font-mono">
+                                                <div className={isPriority ? "text-teal-700 font-bold" : ""}>
+                                                  {isPriority ? "★ " : ""}
+                                                  {c.name}
+                                                </div>
+                                                <div className="text-[9px] text-teal-700 font-normal">{c.type}</div>
+                                              </div>
+                                            ),
+                                            dataIndex: c.name,
+                                            key: c.name,
+                                            width: isPriority ? 260 : 180,
+                                            render: (val: any) =>
+                                              val === null || val === undefined ? (
+                                                <Tag color="default" style={{ fontSize: 10 }}>NULL</Tag>
+                                              ) : (
+                                                <span className="text-xs font-mono break-all line-clamp-3" title={String(val)}>
+                                                  {String(val)}
+                                                </span>
+                                              ),
+                                          };
+                                        })}
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </Card>
+                          );
+                        })()}
+                      </div>
+                    ),
+                  },
                 ]}
               />
             </>
@@ -5176,8 +5790,8 @@ export default function DatabaseKnowledgePage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="col-span-1">
               <Text strong>Host</Text>
               <Input
                 value={formHost}
@@ -5191,6 +5805,16 @@ export default function DatabaseKnowledgePage() {
               <InputNumber
                 value={formPort}
                 onChange={(v) => setFormPort(v || (formDbType === "postgresql" ? 5432 : formDbType === "sqlserver" ? 1433 : 3306))}
+                className="w-full mt-1"
+              />
+            </div>
+            <div>
+              <Text strong>Timeout (sec, 0=No Limit)</Text>
+              <InputNumber
+                min={0}
+                max={600}
+                value={formTimeout}
+                onChange={(v) => setFormTimeout(v === null || v === undefined ? 30 : v)}
                 className="w-full mt-1"
               />
             </div>
@@ -6344,7 +6968,7 @@ export default function DatabaseKnowledgePage() {
             </span>
           </div>
         }
-        width={750}
+        size={750}
         open={observabilityOpen}
         onClose={() => {
           setObservabilityOpen(false);

@@ -1139,7 +1139,7 @@ function WidgetContent() {
 
     setActiveSourceModal({ ...targetSrc });
 
-    if (targetSrc.source_type === "database_record" || targetSrc.ticket_num) {
+    if (targetSrc.source_type === "database_record" || targetSrc.source_type === "duckdb_table" || targetSrc.ticket_num) {
       setSourceModalPreviewType("text");
       setSourceModalLoading(false);
       return;
@@ -3552,7 +3552,7 @@ function WidgetContent() {
                       </div>
                     </div>
                   )}
-                  {(activeSourceModal.source_type === "database_record" || activeSourceModal.ticket_num) ? (
+                  {(activeSourceModal.source_type === "database_record" || activeSourceModal.source_type === "duckdb_table" || activeSourceModal.ticket_num) ? (
                     <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center" }}>
                         {activeSourceModal.ticket_num && (

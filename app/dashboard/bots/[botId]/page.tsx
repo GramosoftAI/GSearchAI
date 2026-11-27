@@ -34,6 +34,7 @@ export default function AgentDetailPage() {
     const [getAgent, res] = useAxios<any>({ endpoint: "GETAGENTLIST" })
     const [docSources, setDocSources] = useState<AttachedDocSource[]>([])
     const [dbKbs, setDbKbs] = useState<AttachedDbKb[]>([])
+    const [duckdbTables, setDuckdbTables] = useState<any[]>([])
     const [sourcesLoading, setSourcesLoading] = useState(false)
 
     useEffect(() => {
@@ -53,8 +54,11 @@ export default function AgentDetailPage() {
             fetch(`${API_BASE_URL}/database-knowledgebases?agent_id=${id}`, { headers })
                 .then((r) => (r.ok ? r.json() : null))
                 .catch(() => null),
+            fetch(`${API_BASE_URL}/database-knowledgebases/agent/${id}/duckdb-tables`, { headers })
+                .then((r) => (r.ok ? r.json() : null))
+                .catch(() => null),
         ])
-            .then(([docJson, dbJson]) => {
+            .then(([docJson, dbJson, duckJson]) => {
                 const rawDoc = docJson?.data ?? docJson
                 const docs = Array.isArray(rawDoc)
                     ? rawDoc
@@ -65,6 +69,7 @@ export default function AgentDetailPage() {
                             : []
                 setDocSources(docs)
                 setDbKbs(Array.isArray(dbJson?.data) ? dbJson.data : [])
+                setDuckdbTables(Array.isArray(duckJson?.tables) ? duckJson.tables : [])
             })
             .finally(() => setSourcesLoading(false))
     }, [id])
@@ -203,11 +208,11 @@ export default function AgentDetailPage() {
                         <Flex justify="space-between" align="center" style={{ marginBottom: 8 }}>
                             <Text strong style={{ color: '#fff', display: 'block' }}>Attached Knowledge Sources</Text>
                             <Flex gap={8}>
-                                <Tag color={docSources.length > 0 && dbKbs.length > 0 ? "cyan" : dbKbs.length > 0 ? "teal" : "blue"}>
-                                    {docSources.length > 0 && dbKbs.length > 0
-                                        ? "Hybrid (Docs + Live DB)"
-                                        : dbKbs.length > 0
-                                            ? "Structured DB Only"
+                                <Tag color={docSources.length > 0 && (dbKbs.length > 0 || duckdbTables.length > 0) ? "cyan" : (dbKbs.length > 0 || duckdbTables.length > 0) ? "teal" : "blue"}>
+                                    {docSources.length > 0 && (dbKbs.length > 0 || duckdbTables.length > 0)
+                                        ? "Hybrid (Docs + Live/DuckDB)"
+                                        : (dbKbs.length > 0 || duckdbTables.length > 0)
+                                            ? "Structured DB / DuckDB"
                                             : "Documents / URLs"}
                                 </Tag>
                                 <Button size="small" onClick={() => router.push('/dashboard/database-knowledge')}>
@@ -236,6 +241,25 @@ export default function AgentDetailPage() {
                                             </div>
                                         </Flex>
                                         <Tag color="green">LIVE STRUCTURED KB</Tag>
+                                    </Flex>
+                                ))}
+                                {duckdbTables.map((dt) => (
+                                    <Flex key={dt.id} justify="space-between" align="center" style={{
+                                        background: '#0c2733',
+                                        border: '1px solid #0e7490',
+                                        borderRadius: 8,
+                                        padding: '10px 14px',
+                                    }}>
+                                        <Flex align="center" gap={10}>
+                                            <DatabaseOutlined style={{ color: '#22d3ee', fontSize: 16 }} />
+                                            <div>
+                                                <Text strong style={{ color: '#fff', fontSize: 13 }}>{dt.schema_name}.{dt.table_name}</Text>
+                                                <Text style={{ color: '#a5f3fc', fontSize: 11, display: 'block' }}>
+                                                    Agent DuckDB Store • {(dt.row_count ?? 0).toLocaleString()} rows • {dt.sync_enabled ? `Sync: ${dt.sync_status}` : 'Manual Snapshot'}
+                                                </Text>
+                                            </div>
+                                        </Flex>
+                                        <Tag color="cyan">DUCKDB TABLE KB</Tag>
                                     </Flex>
                                 ))}
                                 {docSources.map((doc) => (

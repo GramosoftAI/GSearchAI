@@ -1,6 +1,6 @@
 "use client";
 
-import { Flex, Typography, Button, Input, Tooltip, Avatar, Drawer, Grid, Upload, message, Spin,  Dropdown, Modal, Radio } from "antd";
+import { Flex, Typography, Button, Input, Tooltip, Avatar, Drawer, Grid, Upload, App, Spin, Dropdown, Modal, Radio } from "antd";
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { LuBot, LuSearch, LuPaperclip, LuFileText, LuDownload, LuSparkles,  LuArrowRight } from "react-icons/lu";
 import { SiCrowdsource } from "react-icons/si";
@@ -1517,6 +1517,7 @@ const GroundedEvidenceDocumentViewer = ({
 
 
 export default function ChatPlaygroundPage() {
+  const { message } = App.useApp();
   const [agent, setAgent] = useState<{ id: string; name: string } | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -2721,7 +2722,7 @@ export default function ChatPlaygroundPage() {
   const handleSelectSourceForPreview = async (source: SourceMetadata) => {
     setSelectedSourceForPreview(source);
 
-    if (source.source_type === "database_record" || source.ticket_num) {
+    if (source.source_type === "database_record" || source.source_type === "duckdb_table" || source.ticket_num) {
       setSourcesDrawerPreviewTab("parsed");
       setSourcesDrawerPreviewType("other");
       setSourcesDrawerCsvData([]);
@@ -3051,7 +3052,7 @@ export default function ChatPlaygroundPage() {
           placement="left"
           onClose={() => setMobileSidebarOpen(false)}
           open={mobileSidebarOpen}
-          width={260}
+          size={260}
           closeIcon={null}
           styles={{
             body: { padding: 0, background: 'var(--app-surface-muted)', height: '100%' }
@@ -3595,7 +3596,7 @@ export default function ChatPlaygroundPage() {
                       },
                       style: { maxHeight: "250px", overflowY: "auto" }
                     }}
-                    dropdownRender={(menu) => (
+                    popupRender={(menu) => (
                       <div className="bg-[var(--app-surface)] border border-[var(--app-border)] rounded-xl shadow-lg p-2 min-w-[200px]">
                         {(botsCache || []).length > 5 && (
                           <Input
@@ -3693,8 +3694,7 @@ export default function ChatPlaygroundPage() {
           setSourcesDrawerPreviewUrl("");
         }}
         open={isSourcesDrawerOpen}
-        width={880}
-        height="100vh"
+        size={880}
         styles={{
           body: { padding: 0, background: "var(--app-surface)", display: "flex", flexDirection: "column", height: "100%" },
         }}
@@ -3744,7 +3744,7 @@ export default function ChatPlaygroundPage() {
                     title={fileName}
                   >
                     <span aria-hidden="true">
-                      {src.source_type === "database_record" || src.ticket_num ? "🎫" : "📄"}
+                      {src.source_type === "database_record" || src.source_type === "duckdb_table" || src.ticket_num ? "🎫" : "📄"}
                     </span>
                     <span className="truncate max-w-[200px]">{fileName}</span>
                     <span className="text-[10px] opacity-75 font-mono">({fileCitationsCount})</span>
@@ -3892,22 +3892,22 @@ export default function ChatPlaygroundPage() {
                     )}
                   </div>
                 </div>
-              ) : (selectedSourceForPreview.source_type === "database_record" || selectedSourceForPreview.ticket_num) && !isAllEvidenceMode ? (
+              ) : (selectedSourceForPreview.source_type === "database_record" || selectedSourceForPreview.source_type === "duckdb_table" || selectedSourceForPreview.ticket_num) && !isAllEvidenceMode ? (
                 <div className="p-6 overflow-y-auto custom-scrollbar flex flex-col gap-4">
                   <TicketEvidenceCard source={selectedSourceForPreview} />
                 </div>
               ) : (
                 <div className="flex flex-col gap-4 w-full h-full">
-                  {isAllEvidenceMode && activeSources.some((s) => s.source_type === "database_record" || s.ticket_num) && (
+                  {isAllEvidenceMode && activeSources.some((s) => s.source_type === "database_record" || s.source_type === "duckdb_table" || s.ticket_num) && (
                     <div className="px-6 pt-6 flex flex-col gap-4">
                       {activeSources
-                        .filter((s) => s.source_type === "database_record" || s.ticket_num)
+                        .filter((s) => s.source_type === "database_record" || s.source_type === "duckdb_table" || s.ticket_num)
                         .map((ticketSrc, idx) => (
                           <TicketEvidenceCard key={ticketSrc.id || ticketSrc.ticket_num || idx} source={ticketSrc} />
                         ))}
                     </div>
                   )}
-                  {(!isAllEvidenceMode || activeSources.some((s) => s.source_type !== "database_record" && !s.ticket_num)) && (
+                  {(!isAllEvidenceMode || activeSources.some((s) => s.source_type !== "database_record" && s.source_type !== "duckdb_table" && !s.ticket_num)) && (
                     <GroundedEvidenceDocumentViewer
                       parsedContent={parsedTextContent}
                       source={selectedSourceForPreview}
